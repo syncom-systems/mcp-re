@@ -567,7 +567,8 @@ def run_battery(
                 # Absent file = nothing reported: every declared control reads as never
                 # having run, which the adjudicator fails rather than satisfies.
                 observed = parse_libtest_logfile(
-                    libtest_log.read_text() if libtest_log.exists() else ""
+                    libtest_log.read_text() if libtest_log.exists() else "",
+                    grouped[target],
                 )
             else:
                 observed = parse_results(eco, combined)

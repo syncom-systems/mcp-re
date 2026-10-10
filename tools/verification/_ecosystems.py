@@ -62,6 +62,7 @@ not build. `_rust_targets` holds the build graph's answer to what each label is.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from dataclasses import field
 import json
@@ -514,23 +515,56 @@ _LIBTEST_RESULT = re.compile(
     + r")$"
 )
 
-#: One line of libtest's `--logfile` record: `failed block::tests::round_trips`. The harness
-#: writes the file itself, so no test output can reach it; names never contain a space.
-_LIBTEST_LOGFILE_LINE = re.compile(r"^(?P<status>ok|failed|ignored) (?P<name>\S+)$")
-_LIBTEST_LOGFILE_STATUS = {"ok": "ok", "failed": "FAILED", "ignored": "ignored"}
+#: libtest's `--logfile` grammar (`write_log_result`): one record per test, `<result> <name>`,
+#: where `<result>` is `ok`, `failed`, `ignored`, `failed (time limit exceeded)`, or a
+#: result that carries the harness's own message: `failed: <message>` / `ignored: <message>`.
+#: The harness writes the file itself, so no test output can reach it. A name never contains
+#: a space; a MESSAGE may contain spaces and, for a multi-line panic message, newlines.
+_LIBTEST_LOGFILE_PLAIN = re.compile(
+    r"^(?P<status>ok|failed|ignored|failed \(time limit exceeded\)) (?P<name>\S+)$"
+)
+_LIBTEST_LOGFILE_OPENS_MESSAGE = re.compile(r"^(?P<status>failed|ignored): ")
+_LIBTEST_LOGFILE_STATUS = {
+    "ok": "ok",
+    "failed": "FAILED",
+    "ignored": "ignored",
+    "failed (time limit exceeded)": "FAILED",
+}
 
 
-def parse_libtest_logfile(text: str) -> dict[str, str]:
+def parse_libtest_logfile(text: str, selected: Iterable[str] = ()) -> dict[str, str]:
     """The lane's one vocabulary, read from libtest's `--logfile` record.
 
-    Only a line of exactly `<status> <name>` counts. The file is the harness's channel, so
-    there is no stream to disentangle and nothing to search for inside a line.
+    A plain record is a whole `<result> <name>` line. A message-bearing record
+    (`failed: <message> <name>`) has no delimiter between message and name, so its name is
+    resolved against the EXACT names this run selected: the record closes at the first line
+    that ends with ` <selected name>`, and any other tail is not a record. With nothing
+    selected, a message-bearing record resolves to nothing rather than to its last token.
+    A plain record always starts a fresh record, so an unterminated message cannot swallow
+    the results after it.
     """
+    names = tuple(sorted(set(selected), key=len, reverse=True))
     out: dict[str, str] = {}
+    open_status: str | None = None
+    open_text = ""
     for line in text.splitlines():
-        match = _LIBTEST_LOGFILE_LINE.match(line)
-        if match:
-            out[match.group("name")] = _LIBTEST_LOGFILE_STATUS[match.group("status")]
+        plain = _LIBTEST_LOGFILE_PLAIN.match(line)
+        if plain:
+            out[plain.group("name")] = _LIBTEST_LOGFILE_STATUS[plain.group("status")]
+            open_status = None
+            continue
+        if open_status is None:
+            opened = _LIBTEST_LOGFILE_OPENS_MESSAGE.match(line)
+            if not opened:
+                continue
+            open_status, open_text = opened.group("status"), line
+        else:
+            open_text += "\n" + line
+        for name in names:
+            if open_text.endswith(" " + name):
+                out[name] = _LIBTEST_LOGFILE_STATUS[open_status]
+                open_status = None
+                break
     return out
 
 

@@ -821,6 +821,31 @@ def test_unrelated_stderr_does_not_count_as_the_control_having_run():
     assert ran and results == {}
 
 
+def test_a_should_panic_control_that_goes_red_is_read_as_red_not_as_never_ran():
+    """M325's declared control is a `#[should_panic]` test. Under the weakening libtest writes
+    `failed: test did not panic as expected ... <name>`, and that is the red the lane reads."""
+    control = "tests::a_key_the_target_does_not_set_is_refused"
+    label = "//mcp-re-test-paths:mcp_re_test_paths_test"
+    record = f"failed: test did not panic as expected at mcp-re-test-paths/src/lib.rs:69:8 {control}\n"
+    import subprocess
+
+    def fake_run(argv, **_kwargs):
+        path = [a for a in argv if a.startswith("--test_arg=--logfile=")]
+        Path(path[0].split("=", 2)[2]).write_text(record)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    original = lane.subprocess.run
+    lane.subprocess.run = fake_run
+    try:
+        with tempfile.TemporaryDirectory() as scratch:
+            tree = Path(scratch) / "tree"
+            tree.mkdir()
+            ran, results = lane.run_battery(tree, None, {label: [control]}, lane.RUST)
+    finally:
+        lane.subprocess.run = original
+    assert ran and results == {f"{label}#{control}": "FAILED"}
+
+
 def test_a_different_test_name_does_not_satisfy_the_control():
     ran, results = _run_rust_battery(None, logfile=f"failed {_CONTROL}_other\n")
     assert f"{_LABEL}#{_CONTROL}" not in results
