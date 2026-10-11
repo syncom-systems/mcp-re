@@ -11,7 +11,7 @@
     "theorem_id": "THM-0073",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-R2-REVIEW-1.md (CONFIRMED). The correction that review raised was ruled on by the owner and is applied in this tree before this record. This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-R2-REVIEW-1.md (CONFIRMED). The correction that review raised was ruled on by the owner and is applied in this tree before this record. This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 4f9eb062 after the CodeQL remediation (work/security-audit-2026-09-22-r12/CODEQL-REREVIEW.md): test sources only; the accept-any-server TLS test verifier was replaced by verification against the test's server CA, no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -32,7 +32,7 @@
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:54466ec6dbf938373d2eef96ee5b603c7ac13315c81e94b84c96b9150fce3be5",
         "test_selection": "sha256:5f4bffe2fdd297c3ea3a577b8ffe03ddb1d75a9eb3831d4843ab1624fa83d6c5",
-        "test_sources": "sha256:2ac5135af2aacf059a5454e8a181a06af5bae67d0fcb1da90f7ded2f3bef1517",
+        "test_sources": "sha256:d265094cce6904cfed8737c619a3a8f428d51cf262e08a36b8e751f1aa67f3c1",
         "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "unit_id": "sha256:b9eab70f235f08c33bc0e927da178ccfa504b4a135a57715aed6199d787f551c"
       },
@@ -65,7 +65,7 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:56a2cb6376428c30c80bb82adfffd85b4951152f81529198fbd5d1b64c85d57a",
+  "review_digest": "sha256:189acbd608e09531060ee2d6a584a4c3c397efbe4f9e5c72850bc657dbc68377",
   "reviewed_fingerprint": "sha256:14a931f5c1cfa81f9a4d9d82cec8500d4916cabb86ca9a95b1666e25ee483159",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0073"

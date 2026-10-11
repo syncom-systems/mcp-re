@@ -9,7 +9,7 @@
     "theorem_id": "THM-0040",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G8.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 115b1e4b after the step 9 verification-platform repairs (work/security-audit-2026-09-22-r12/STEP9-REREVIEW.md): M75 control moved to new direct unit controls on PdpDecisionEvaluator::action_matches (served path never reaches the Absent arm); weakening red, baseline green. Claim, premises, dependencies and entry text unchanged.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G8.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 115b1e4b after the step 9 verification-platform repairs (work/security-audit-2026-09-22-r12/STEP9-REREVIEW.md): M75 control moved to new direct unit controls on PdpDecisionEvaluator::action_matches (served path never reaches the Absent arm); weakening red, baseline green. Claim, premises, dependencies and entry text unchanged. Re-read at HEAD 4f9eb062 after the CodeQL remediation (work/security-audit-2026-09-22-r12/CODEQL-REREVIEW.md): test sources only; the accept-any-server TLS test verifier was replaced by verification against the test's server CA, no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -50,7 +50,7 @@
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:ae09f06387836973545175edc04919e4f83561712c0a0cf86cebc4c46e560d83",
         "test_selection": "sha256:4e37a51023c03571907767ac221279038bdf6897507d1cd247c6b47df2e5ac09",
-        "test_sources": "sha256:598bae3a2279b7805c8c451885acfc1f7f69684757cb23feeab4837eacf2452f",
+        "test_sources": "sha256:2aeb3cb5bc6abbfd52363cd3de3d9ca7d122341eb849874bd60230c20eaee7b0",
         "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "unit_id": "sha256:16e280bda0144bef3ba3f9e37006a6bc0b5d5f47dca51ebc52c8d7d640ace166"
       }
@@ -61,7 +61,7 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:96de7d3306ff26c1fe0dc53f58bed404312fd6a6823d1aed4ce6af6a079f18e1",
+  "review_digest": "sha256:75a573bf7fcafdd578298fb24a3e2584fd96d8f2a380629b851fd6e68db76bfa",
   "reviewed_fingerprint": "sha256:4c5d90700148aa8e237985e63f5fef13b281746c45bbf1a33d51fafbab2f8fd3",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0040"

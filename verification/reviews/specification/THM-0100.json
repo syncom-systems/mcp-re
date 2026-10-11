@@ -9,7 +9,7 @@
     "theorem_id": "THM-0100",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-R2-REVIEW-1.md (CONFIRMED). The correction that review raised was ruled on by the owner and is applied in this tree before this record. This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 115b1e4b after the step 9 verification-platform repairs (work/security-audit-2026-09-22-r12/STEP9-REREVIEW.md): M107 control retargeted to the_loop_sleeps_exactly_the_cadence_before_each_read (bounds elapsed time per cycle); x10 sleep red. Claim, premises, dependencies and entry text unchanged.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-R2-REVIEW-1.md (CONFIRMED). The correction that review raised was ruled on by the owner and is applied in this tree before this record. This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 115b1e4b after the step 9 verification-platform repairs (work/security-audit-2026-09-22-r12/STEP9-REREVIEW.md): M107 control retargeted to the_loop_sleeps_exactly_the_cadence_before_each_read (bounds elapsed time per cycle); x10 sleep red. Claim, premises, dependencies and entry text unchanged. Re-read at HEAD 4f9eb062 after the CodeQL remediation (work/security-audit-2026-09-22-r12/CODEQL-REREVIEW.md): test sources only; the accept-any-server TLS test verifier was replaced by verification against the test's server CA, no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -32,7 +32,7 @@
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:165a71d606ca9d82b8e874949a15a5890b551bef8a698d7cc48bc7cee4e95ead",
         "test_selection": "sha256:814bbbcdd5a06679818473ea837763086d7c1ad05447002df809aadb7f03292b",
-        "test_sources": "sha256:2ac5135af2aacf059a5454e8a181a06af5bae67d0fcb1da90f7ded2f3bef1517",
+        "test_sources": "sha256:d265094cce6904cfed8737c619a3a8f428d51cf262e08a36b8e751f1aa67f3c1",
         "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "unit_id": "sha256:36d3bdd8e74a06d0f9f66313dffda10b7a8073838c8207caeaf9198354e0e5ea"
       },
@@ -83,7 +83,7 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:16f4e75656db1d241b2f3ee86bc374312afa1152eb704af0cecbbbf13cf5dda8",
+  "review_digest": "sha256:131d3220d00923df0e94fd183c0f9130f2de7780d70dec2d2d42dc1bbc8f1768",
   "reviewed_fingerprint": "sha256:5027b6a894e9091efbab423fa9be5cd729f37acd5c2af8acc311977c5b9fc199",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0100"
