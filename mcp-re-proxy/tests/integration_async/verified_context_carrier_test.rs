@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use mcp_re_core::SigningKey;
+use mcp_re_test_paths::unique_test_nonce;
 use mcp_re_http_profile::extract_verified_context;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::ActorIdentity;
@@ -234,7 +235,7 @@ fn served(req: &HttpRequest) -> ServedHttpRequest {
 async fn trusted_channel_carries_the_peps_verified_context() {
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
     let p = proxy(VerifiedContextPolicy::Trusted, Arc::clone(&seen));
-    let req = signed_request("n-carry", None);
+    let req = signed_request(&unique_test_nonce(), None);
     let out = p.handle(served(&req), NOW).await;
     assert_eq!(out.status, 200);
 
@@ -276,7 +277,7 @@ async fn trusted_channel_carries_the_peps_verified_context() {
 async fn disabled_by_default_the_inner_server_sees_clean_mcp() {
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
     let p = proxy(VerifiedContextPolicy::Disabled, Arc::clone(&seen));
-    let req = signed_request("n-clean", None);
+    let req = signed_request(&unique_test_nonce(), None);
     assert_eq!(p.handle(served(&req), NOW).await.status, 200);
 
     let forwarded = seen.lock().unwrap()[0].clone();
@@ -310,7 +311,7 @@ async fn a_caller_seeded_verified_context_never_reaches_the_inner_server() {
     ] {
         let seen: Seen = Arc::new(Mutex::new(Vec::new()));
         let p = proxy(policy, Arc::clone(&seen));
-        let req = signed_request("n-forge", Some(forged.clone()));
+        let req = signed_request(&unique_test_nonce(), Some(forged.clone()));
 
         // The request is legitimately signed and verifies: this is not tampering.
         assert_eq!(p.handle(served(&req), NOW).await.status, 200);
@@ -353,7 +354,7 @@ async fn unrelated_application_meta_survives_the_guard() {
     ] {
         let seen: Seen = Arc::new(Mutex::new(Vec::new()));
         let p = proxy(policy, Arc::clone(&seen));
-        let req = signed_request("n-keep", Some(serde_json::json!({ "actor_id": "forged" })));
+        let req = signed_request(&unique_test_nonce(), Some(serde_json::json!({ "actor_id": "forged" })));
         assert_eq!(p.handle(served(&req), NOW).await.status, 200);
 
         let forwarded = seen.lock().unwrap()[0].clone();
@@ -447,7 +448,7 @@ async fn a_params_meta_seeded_verified_context_never_reaches_the_inner_server() 
     ] {
         let seen: Seen = Arc::new(Mutex::new(Vec::new()));
         let p = proxy(policy, Arc::clone(&seen));
-        let req = signed_request_seeding_params_meta("n-forge-params", forged.clone());
+        let req = signed_request_seeding_params_meta(&unique_test_nonce(), forged.clone());
         assert_eq!(p.handle(served(&req), NOW).await.status, 200);
 
         let forwarded = seen.lock().unwrap()[0].clone();
@@ -482,12 +483,12 @@ async fn transport_contract_is_enforced_on_the_served_path() {
     let p = proxy(VerifiedContextPolicy::Disabled, Arc::clone(&seen));
 
     // A conforming request is served: the profile's signer derived and covered the headers.
-    let ok = signed_request("n-tx-ok", None);
+    let ok = signed_request(&unique_test_nonce(), None);
     assert_eq!(p.handle(served(&ok), NOW).await.status, 200);
 
     // A request OMITTING Mcp-Method is rejected before it reaches the inner server.
     let before = seen.lock().unwrap().len();
-    let missing = resign_as_given(signed_request("n-tx-miss", None), "n-tx-miss2");
+    let missing = resign_as_given(signed_request(&unique_test_nonce(), None), &unique_test_nonce());
     let out = p.handle(served(&missing), NOW).await;
     assert_eq!(out.status, 403, "a required-header omission is refused");
     assert_eq!(

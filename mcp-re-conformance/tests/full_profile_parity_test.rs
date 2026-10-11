@@ -64,6 +64,7 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
+use mcp_re_test_paths::unique_test_nonce;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const SERVER_SEED: [u8; 32] = [22u8; 32];
@@ -248,7 +249,7 @@ fn response_body() -> Vec<u8> {
 #[test]
 fn full_exchange_activates_all_blocks() {
     let block = full_block();
-    let (req, ev) = signed_request(&block, "nonce-1");
+    let (req, ev) = signed_request(&block, &unique_test_nonce());
 
     // Request body block is active: audience + block surfaced by verification.
     let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -305,7 +306,7 @@ fn full_exchange_activates_all_blocks() {
 #[test]
 fn body_tamper_fails_in_integrated_path() {
     let block = full_block();
-    let (mut req, _ev) = signed_request(&block, "nonce-1");
+    let (mut req, _ev) = signed_request(&block, &unique_test_nonce());
     // Flip a byte of the covered content after signing.
     let last = req.body.len() - 1;
     req.body[last] ^= 0x01;
@@ -320,7 +321,7 @@ fn body_tamper_fails_in_integrated_path() {
 #[test]
 fn response_splice_fails_in_integrated_path() {
     let block = full_block();
-    let (req_a, _ev_a) = signed_request(&block, "nonce-a");
+    let (req_a, _ev_a) = signed_request(&block, &unique_test_nonce());
     let _verified_a = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req_a, &audience(), &rar_material(), NOW)
         .expect("req_a verifies");
@@ -338,7 +339,7 @@ fn response_splice_fails_in_integrated_path() {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "nonce-b",
+        &unique_test_nonce(),
     )
     .expect("sign b");
     let mut rsp_b = HttpResponse {
@@ -370,14 +371,14 @@ fn response_splice_fails_in_integrated_path() {
 #[test]
 fn response_evidence_mismatch_emits_request_binding_mismatch() {
     let block = full_block();
-    let (req_a, _ev_a) = signed_request(&block, "nonce-a");
+    let (req_a, _ev_a) = signed_request(&block, &unique_test_nonce());
     let verified_a = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req_a, &audience(), &rar_material(), NOW)
         .expect("req_a verifies");
 
     // A different request's evidence handle, advertised by a response whose ;req
     // is still bound to req_a: the crypto floor passes, the body comparison trips.
-    let (_req_b, ev_b) = signed_request(&block, "nonce-b");
+    let (_req_b, ev_b) = signed_request(&block, &unique_test_nonce());
     assert_ne!(ev_b.digest_value(), verified_a.evidence().digest_value());
 
     let mut rsp = HttpResponse {
@@ -409,7 +410,7 @@ fn artifact_mismatch_fails_in_integrated_path() {
     // The RAR binding commits to RAR_DETAILS, but the material closure hands back
     // different bytes: strict artifact enforcement rejects.
     let block = full_block();
-    let (req, _ev) = signed_request(&block, "nonce-1");
+    let (req, _ev) = signed_request(&block, &unique_test_nonce());
     let wrong_rar = |b: &ArtifactBinding| match b.artifact_type() {
         ArtifactType::OauthRar => Some(b"a-different-rar-detail".to_vec()),
         _ => None,
@@ -425,7 +426,7 @@ fn artifact_mismatch_fails_in_integrated_path() {
 #[test]
 fn replay_fails_in_integrated_path() {
     let block = full_block();
-    let (req, _ev) = signed_request(&block, "nonce-1");
+    let (req, _ev) = signed_request(&block, &unique_test_nonce());
     let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req, &audience(), &rar_material(), NOW)
         .expect("verifies");
@@ -442,7 +443,7 @@ fn replay_fails_in_integrated_path() {
 #[test]
 fn continuation_mismatch_fails_in_integrated_path() {
     let block = full_block();
-    let (req, _ev) = signed_request(&block, "nonce-1");
+    let (req, _ev) = signed_request(&block, &unique_test_nonce());
     let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req, &audience(), &rar_material(), NOW)
         .expect("verifies");

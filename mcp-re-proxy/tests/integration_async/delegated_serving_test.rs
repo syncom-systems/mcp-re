@@ -366,7 +366,7 @@ async fn delegated_bound_rejection_verifies() {
     rotor.rotate(NOW).expect("issue");
     let proxy = delegated_proxy(Arc::clone(&signer));
 
-    let (req, _ev, _verified_req) = signed_request("nonce-bound-1");
+    let (req, _ev, _verified_req) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     // First is served; the replayed second is rejected — bound to the request.
     assert_eq!(proxy.handle(served_of(&req), NOW).await.status, 200);
     let served = proxy.handle(served_of(&req), NOW).await;
@@ -397,7 +397,7 @@ async fn delegated_preflight_rejection_verifies_unbound() {
     let proxy = delegated_proxy(Arc::clone(&signer));
 
     // Tamper the body AFTER signing so verify_request_full fails (content-digest).
-    let (mut req, _ev, _v) = signed_request("nonce-preflight-1");
+    let (mut req, _ev, _v) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     let last = req.body.len() - 2;
     req.body[last] ^= 0x01;
 
@@ -421,7 +421,7 @@ async fn delegated_preflight_rejection_verifies_unbound() {
         .verify_delegated_unbound_response(&resp, &expectations(&[EPOCH]), &|_| false, NOW)
         .expect("preflight delegated rejection verifies unbound");
     // And it must NOT verify through the bound path (there is no trusted request).
-    let (fresh, _e, _verified_fresh) = signed_request("nonce-preflight-probe");
+    let (fresh, _e, _verified_fresh) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     let r2 = resolver();
     assert!(
         Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r2(k, s))
@@ -445,7 +445,7 @@ async fn missing_delegated_key_fails_closed() {
     let signer = Arc::new(DelegatedServerSigner::new());
     let proxy = delegated_proxy(Arc::clone(&signer));
 
-    let (req, _ev, _v) = signed_request("nonce-failclosed-1");
+    let (req, _ev, _v) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     let served = proxy.handle(served_of(&req), NOW).await;
     assert_ne!(served.status, 200, "no delegated key ⇒ never a signed 200");
     assert_eq!(served.status, 503, "fail-closed unavailable");
@@ -505,7 +505,7 @@ async fn a_request_that_cannot_be_answered_never_reaches_the_backend() {
         signer,
     );
 
-    let (req, _ev, _v) = signed_request("nonce-no-sideeffect-1");
+    let (req, _ev, _v) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     let served = proxy.handle(served_of(&req), NOW).await;
     assert_eq!(served.status, 503, "fail-closed unavailable");
     assert_eq!(
@@ -595,7 +595,7 @@ async fn a_credential_that_cannot_outlive_the_dispatch_refuses_before_the_backen
         }),
     );
 
-    let (req, _ev, _v) = signed_request("nonce-window-shorter-than-dispatch");
+    let (req, _ev, _v) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     let served = proxy.handle(served_of(&req), NOW).await;
 
     assert_eq!(
@@ -629,7 +629,7 @@ async fn a_credential_with_room_for_the_dispatch_still_reaches_the_backend() {
         }),
     );
 
-    let (req, _ev, _v) = signed_request("nonce-window-covers-dispatch");
+    let (req, _ev, _v) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     let served = proxy.handle(served_of(&req), NOW).await;
 
     assert_eq!(served.status, 200, "a covered dispatch is served normally");
@@ -682,7 +682,7 @@ async fn an_inner_plane_that_states_no_completion_bound_is_refused_before_the_ba
         Box::new(UnboundedInner(Arc::clone(&dispatched))),
     );
 
-    let (req, _ev, _v) = signed_request("nonce-unstated-bound");
+    let (req, _ev, _v) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     let served = proxy.handle(served_of(&req), NOW).await;
 
     assert_eq!(served.status, 503, "an unstated bound is refused");
@@ -699,7 +699,7 @@ async fn an_inner_plane_that_states_no_completion_bound_is_refused_before_the_ba
 fn direct_root_response_rejected_in_delegated_required_mode() {
     // A pre-052 server directly root-signs the response (no delegation credential) —
     // built from the test-only fixture, since no direct-root serving mode exists.
-    let (req, ev, _verified_req) = signed_request("nonce-directroot-1");
+    let (req, ev, _verified_req) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     let resp = sign_legacy_direct_root_response_for_negative_test(&req, &ev);
 
     // A delegated-signing verifier rejects it: no inline credential.
@@ -759,7 +759,7 @@ async fn a_notification_is_served_a_verifiable_delegated_202() {
     rotor.rotate(NOW).expect("issue first delegated key");
     let proxy = delegated_proxy(Arc::clone(&signer));
 
-    let note = signed_notification("nonce-note-1");
+    let note = signed_notification(&mcp_re_test_paths::unique_test_nonce());
     let served = proxy.handle(served_of(&note), NOW).await;
     assert_eq!(
         served.status, 202,
@@ -819,7 +819,7 @@ async fn the_client_facing_crate_can_verify_the_202_the_server_emits() {
     rotor.rotate(NOW).expect("issue first delegated key");
     let proxy = delegated_proxy(Arc::clone(&signer));
 
-    let note = signed_notification("nonce-note-client-1");
+    let note = signed_notification(&mcp_re_test_paths::unique_test_nonce());
     let ack = http_response(proxy.handle(served_of(&note), NOW).await);
     assert_eq!(ack.status, 202);
 
@@ -876,7 +876,7 @@ async fn the_client_cores_own_notification_envelope_earns_a_202() {
             ArtifactType::OauthDpop,
             ACCESS_TOKEN.as_bytes(),
         )],
-        "nonce-sdk-envelope-1-padded-to-floor",
+        mcp_re_test_paths::unique_test_nonce(),
         CREATED,
         EXPIRES,
     )

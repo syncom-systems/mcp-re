@@ -304,7 +304,9 @@ mod tests {
 
     /// The ledger identity the tier charges `subject` to: the principal its keys project to.
     fn principal_of(subject: &str) -> String {
-        replay_key(subject, "n", 0).principal().to_owned()
+        replay_key(subject, &mcp_re_test_paths::unique_test_nonce(), 0)
+            .principal()
+            .to_owned()
     }
 
     /// The key a prepared dispatch hands the tier — the only public way to one — for a
@@ -402,9 +404,12 @@ mod tests {
             // THE PROPERTY: a signer that has sent nothing is still served while the
             // greedy one is refused.
             assert_eq!(
-                tier.check_and_insert(&replay_key(QUIET, "quiet-0", 9_000), 1_000)
-                    .await
-                    .expect("the quiet actor must still be admitted"),
+                tier.check_and_insert(
+                    &replay_key(QUIET, &mcp_re_test_paths::unique_test_nonce(), 9_000),
+                    1_000
+                )
+                .await
+                .expect("the quiet actor must still be admitted"),
                 ReplayDecision::Fresh
             );
 
@@ -412,7 +417,10 @@ mod tests {
             // an allow, because an unrecorded nonce can be replayed.
             let before = store.dispatches();
             let refused = tier
-                .check_and_insert(&replay_key(GREEDY, "greedy-99", 9_000), 1_000)
+                .check_and_insert(
+                    &replay_key(GREEDY, &mcp_re_test_paths::unique_test_nonce(), 9_000),
+                    1_000,
+                )
                 .await
                 .expect_err("over budget");
             assert_eq!(
@@ -427,7 +435,10 @@ mod tests {
             // over-budget actor is denied either way, and asking the store would mean
             // performing the very insert the budget refuses to fund.
             assert!(tier
-                .check_and_insert(&replay_key(GREEDY, "greedy-0", 9_000), 1_000)
+                .check_and_insert(
+                    &replay_key(GREEDY, &mcp_re_test_paths::unique_test_nonce(), 9_000),
+                    1_000
+                )
                 .await
                 .is_err());
             assert_eq!(
@@ -448,10 +459,11 @@ mod tests {
             10,
         );
         const ACTOR: &str = "did:example:repeater";
+        let nonce = mcp_re_test_paths::unique_test_nonce();
         block(async {
             for _ in 0..5 {
                 let _ = tier
-                    .check_and_insert(&replay_key(ACTOR, "one-nonce", 9_000), 1_000)
+                    .check_and_insert(&replay_key(ACTOR, &nonce, 9_000), 1_000)
                     .await;
             }
             assert_eq!(
@@ -501,9 +513,12 @@ mod tests {
         };
         block(async {
             assert_eq!(
-                tier.check_and_insert(&replay_key(ACTOR, "kept", retain_until), 900)
-                    .await
-                    .expect("admitted"),
+                tier.check_and_insert(
+                    &replay_key(ACTOR, &mcp_re_test_paths::unique_test_nonce(), retain_until),
+                    900
+                )
+                .await
+                .expect("admitted"),
                 ReplayDecision::Fresh
             );
         });
@@ -587,7 +602,10 @@ mod tests {
             // The SECOND sees it spent, because there is one account and not two.
             assert!(
                 second
-                    .check_and_insert(&replay_key(SUBJECT, "n-from-the-clone", 9_000), 1_000)
+                    .check_and_insert(
+                        &replay_key(SUBJECT, &mcp_re_test_paths::unique_test_nonce(), 9_000),
+                        1_000
+                    )
                     .await
                     .is_err(),
                 "a clone must not hand the same actor a second budget"
@@ -635,7 +653,10 @@ mod tests {
         const ACTOR: &str = "did:example:unlucky";
         block(async {
             let refused = tier
-                .check_and_insert(&replay_key(ACTOR, "nonce-0", 9_000), 1_000)
+                .check_and_insert(
+                    &replay_key(ACTOR, &mcp_re_test_paths::unique_test_nonce(), 9_000),
+                    1_000,
+                )
                 .await
                 .expect_err("a failing store must not produce a decision");
             assert_eq!(
@@ -714,7 +735,14 @@ mod tests {
             assert!(
                 tokio::time::timeout(
                     std::time::Duration::from_millis(1),
-                    tier.check_and_insert(&replay_key("did:example:other", "n", 9_000), 1_000)
+                    tier.check_and_insert(
+                        &replay_key(
+                            "did:example:other",
+                            &mcp_re_test_paths::unique_test_nonce(),
+                            9_000
+                        ),
+                        1_000
+                    )
                 )
                 .await
                 .is_err(),
@@ -779,9 +807,12 @@ mod tests {
             );
 
             // Past their retain-until, the next reservation triggers the cadence.
-            tier.check_and_insert(&replay_key(ACTOR, "nonce-live", 9_000), 2_000)
-                .await
-                .unwrap();
+            tier.check_and_insert(
+                &replay_key(ACTOR, &mcp_re_test_paths::unique_test_nonce(), 9_000),
+                2_000,
+            )
+            .await
+            .unwrap();
             assert_eq!(
                 tier.ledger.held_by(&principal_of(ACTOR)),
                 1,

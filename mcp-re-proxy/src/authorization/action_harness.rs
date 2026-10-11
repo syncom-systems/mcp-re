@@ -107,7 +107,7 @@ pub(crate) fn sign_and_verify(spec: RequestSpec<'_>) -> Signed {
         spec.keyid,
         CREATED,
         EXPIRES,
-        "n",
+        &mcp_re_test_paths::unique_test_nonce(),
     )
     .expect("the harness request signs");
     let (subject, keyid, public) = (

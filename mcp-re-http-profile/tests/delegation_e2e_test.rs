@@ -50,6 +50,7 @@ use mcp_re_http_profile::JWK_KTY_OKP;
 use mcp_re_http_profile::KEY_USE_RESPONSE_SIGNING;
 use mcp_re_http_profile::PROFILE_TAG;
 use mcp_re_http_profile::RESPONSE_EVIDENCE_BLOCK_KEY;
+use mcp_re_test_paths::unique_test_nonce;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const ROOT_SEED: [u8; 32] = [33u8; 32];
@@ -157,7 +158,7 @@ fn signed_request() -> (HttpRequest, RequestRoleEvidence, VerifiedMcpRequest) {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "nonce-1",
+        &unique_test_nonce(),
     )
     .expect("sign request");
     let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -665,7 +666,7 @@ fn another_request() -> (HttpRequest, RequestRoleEvidence) {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "nonce-DIFFERENT",
+        &unique_test_nonce(),
     )
     .expect("sign b");
     (req_b, ev_b)

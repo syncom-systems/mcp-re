@@ -916,6 +916,7 @@ nt_rust_test(
     crate_features = ["scitt_registration"],
     edition = "2021",
     deps = [
+        "//mcp-re-test-paths:mcp_re_test_paths",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-policy:mcp_re_policy",
         "@crates_mcp_re//:libc",
@@ -986,6 +987,7 @@ nt_rust_test(
     crate = ":mcp_re_proxy",
     edition = "2021",
     deps = [
+        "//mcp-re-test-paths:mcp_re_test_paths",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-policy:mcp_re_policy",
         "@crates_mcp_re//:libc",
@@ -1501,6 +1503,7 @@ nt_rust_test(
     crate_features = _PROXY_EXT_FEATURES,
     edition = "2021",
     deps = _PROXY_LIB_DEPS + _PROXY_EXT_CRATES + [
+        "//mcp-re-test-paths:mcp_re_test_paths",
         "@crates_mcp_re//:rcgen",
         # #4063 (MCPS-088): the in-tree Ed25519 signer used to mint a genuinely
         # signed OCSP response fixture for the admit/forge acceptance tests.
@@ -1519,6 +1522,7 @@ nt_rust_test(
     crate_features = ["aws_kms_keysource"],
     edition = "2021",
     deps = [
+        "//mcp-re-test-paths:mcp_re_test_paths",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-policy:mcp_re_policy",
         "@crates_mcp_re//:hmac",
@@ -1599,6 +1603,7 @@ nt_rust_test(
         "MCP_RE_REQUIRE_LIVE_INFRA",
     ],
     deps = [
+        "//mcp-re-test-paths:mcp_re_test_paths",
         ":mcp_re_proxy_ext",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
@@ -1649,6 +1654,7 @@ nt_rust_test(
         "MCP_RE_ROOT_B_KEY_VERSION",
     ],
     deps = [
+        "//mcp-re-test-paths:mcp_re_test_paths",
         ":mcp_re_proxy_ext_pre052",  # keep
         "//mcp-re-client-core:mcp_re_client_core_pre052",  # keep
         "//mcp-re-core:mcp_re_core",
@@ -1695,6 +1701,7 @@ nt_rust_test(
         "MCP_RE_REQUIRE_LIVE_INFRA",
     ],
     deps = [
+        "//mcp-re-test-paths:mcp_re_test_paths",
         ":mcp_re_proxy_ext_pre052",  # keep
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile_pre052",  # keep

@@ -23,6 +23,7 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::STATUS_ACCEPTED;
+use mcp_re_test_paths::unique_test_nonce;
 
 const CREATED: i64 = 1_700_000_000;
 const EXPIRES: i64 = 1_700_000_300;
@@ -87,7 +88,7 @@ fn notification(nonce: &str, method: &str) -> HttpRequest {
 
 #[test]
 fn signed_202_verifies_against_its_notification() {
-    let note = notification("n-init", "notifications/initialized");
+    let note = notification(&unique_test_nonce(), "notifications/initialized");
     let ack = sign_pre_052_root_signed_202_for_negative_test(
         &note,
         &server_key(),
@@ -138,8 +139,8 @@ fn signed_202_verifies_against_its_notification() {
 /// changes, this test is the one that must change with it.
 #[test]
 fn an_acknowledgement_binds_to_one_transmission_not_to_content() {
-    let note_a = notification("n-a", "notifications/initialized");
-    let note_b = notification("n-b", "notifications/cancelled");
+    let note_a = notification(&unique_test_nonce(), "notifications/initialized");
+    let note_b = notification(&unique_test_nonce(), "notifications/cancelled");
     let ack_a = sign_pre_052_root_signed_202_for_negative_test(
         &note_a,
         &server_key(),
@@ -174,7 +175,7 @@ fn an_acknowledgement_binds_to_one_transmission_not_to_content() {
     // them and A's acknowledgement verified against this too, so a captured ack could
     // be presented as evidence for a later resend that the server had in fact rejected
     // as a replay. The server could tell the two apart; the client could not.
-    let note_a_again = notification("n-a-again", "notifications/initialized");
+    let note_a_again = notification(&unique_test_nonce(), "notifications/initialized");
     assert_ne!(
         signature_input_of(&note_a),
         signature_input_of(&note_a_again),
@@ -199,7 +200,7 @@ fn an_acknowledgement_binds_to_one_transmission_not_to_content() {
 /// signature is valid over it.
 #[test]
 fn a_forged_request_evidence_header_is_refused() {
-    let note_a = notification("n-a", "notifications/initialized");
+    let note_a = notification(&unique_test_nonce(), "notifications/initialized");
     let mut ack = sign_pre_052_root_signed_202_for_negative_test(
         &note_a,
         &server_key(),
@@ -229,7 +230,7 @@ fn a_forged_request_evidence_header_is_refused() {
 /// a REQUIRED covered component, so its absence fails closed rather than falling back.
 #[test]
 fn a_missing_request_evidence_header_is_refused() {
-    let note_a = notification("n-a", "notifications/initialized");
+    let note_a = notification(&unique_test_nonce(), "notifications/initialized");
     let mut ack = sign_pre_052_root_signed_202_for_negative_test(
         &note_a,
         &server_key(),
@@ -269,7 +270,7 @@ fn signature_input_of(request: &HttpRequest) -> String {
 /// would be indistinguishable. Inject content and the digest no longer holds.
 #[test]
 fn content_injected_into_a_signed_202_is_caught() {
-    let note = notification("n-inj", "notifications/initialized");
+    let note = notification(&unique_test_nonce(), "notifications/initialized");
     let mut ack = sign_pre_052_root_signed_202_for_negative_test(
         &note,
         &server_key(),
@@ -296,7 +297,7 @@ fn content_injected_into_a_signed_202_is_caught() {
 /// otherwise. The named set is enforced exactly, in both directions.
 #[test]
 fn content_type_on_a_bodyless_202_is_rejected() {
-    let note = notification("n-ct", "notifications/initialized");
+    let note = notification(&unique_test_nonce(), "notifications/initialized");
     let mut ack = sign_pre_052_root_signed_202_for_negative_test(
         &note,
         &server_key(),
@@ -323,7 +324,7 @@ fn content_type_on_a_bodyless_202_is_rejected() {
 /// acknowledgement floats free of any request.
 #[test]
 fn a_202_without_its_req_binding_is_rejected() {
-    let note = notification("n-nb", "notifications/initialized");
+    let note = notification(&unique_test_nonce(), "notifications/initialized");
     let mut ack = sign_pre_052_root_signed_202_for_negative_test(
         &note,
         &server_key(),
@@ -353,7 +354,7 @@ fn a_202_without_its_req_binding_is_rejected() {
 /// under it is not an acceptance acknowledgement.
 #[test]
 fn a_bodyless_response_that_is_not_202_is_rejected() {
-    let note = notification("n-st", "notifications/initialized");
+    let note = notification(&unique_test_nonce(), "notifications/initialized");
     let mut ack = sign_pre_052_root_signed_202_for_negative_test(
         &note,
         &server_key(),
@@ -379,7 +380,7 @@ fn a_bodyless_response_that_is_not_202_is_rejected() {
 /// trust seam decides who may acknowledge, exactly as for any response.
 #[test]
 fn a_202_signed_by_a_request_key_fails_the_response_slot() {
-    let note = notification("n-slot", "notifications/initialized");
+    let note = notification(&unique_test_nonce(), "notifications/initialized");
     let ack = sign_pre_052_root_signed_202_for_negative_test(
         &note,
         &client_key(),
@@ -416,7 +417,7 @@ fn bodyless_request_round_trips() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-del",
+        &unique_test_nonce(),
     )
     .expect("a bodyless request signs");
     assert!(
@@ -447,7 +448,7 @@ fn bodyless_get_request_round_trips() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-get",
+        &unique_test_nonce(),
     )
     .expect("signs");
     verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).expect("verifies");
@@ -467,7 +468,7 @@ fn content_type_on_a_bodyless_request_is_rejected() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-x",
+        &unique_test_nonce(),
     )
     .expect("signs");
     req.headers
@@ -483,7 +484,7 @@ fn content_type_on_a_bodyless_request_is_rejected() {
 /// messages must not have weakened the bodied set.
 #[test]
 fn the_bodied_request_set_still_requires_content_type() {
-    let note = notification("n-bodied", "notifications/initialized");
+    let note = notification(&unique_test_nonce(), "notifications/initialized");
     let mut stripped = note.clone();
     stripped
         .headers
@@ -522,7 +523,7 @@ fn a_bodyless_request_covers_a_present_authorization_header() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-auth",
+        &unique_test_nonce(),
     )
     .expect("signs");
     assert!(
@@ -551,7 +552,7 @@ fn swapping_a_covered_bearer_token_on_a_bodyless_request_is_caught() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-swap",
+        &unique_test_nonce(),
     )
     .expect("signs");
     for (name, value) in req.headers.iter_mut() {
@@ -582,7 +583,7 @@ fn an_uncovered_authorization_header_on_a_bodyless_request_is_rejected() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-inject",
+        &unique_test_nonce(),
     )
     .expect("signs");
     // An intermediary attaches a credential the signature says nothing about.
@@ -625,7 +626,7 @@ fn uncovered_dpop_and_mcp_transport_headers_on_a_bodyless_request_are_rejected()
             CLIENT_KEY_ID,
             CREATED,
             EXPIRES,
-            "n-h",
+            &unique_test_nonce(),
         )
         .expect("signs");
         req.headers.push((header.into(), "injected".into()));
@@ -660,7 +661,7 @@ fn the_bodyless_signer_covers_every_conditionally_mandatory_header() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-all",
+        &unique_test_nonce(),
     )
     .expect("signs");
     let input = signature_input_of(&req);
@@ -696,7 +697,7 @@ fn the_bodyless_signer_covers_every_conditionally_mandatory_header() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-unrouted",
+        &unique_test_nonce(),
     )
     .expect("signs");
     assert!(signature_input_of(&unrouted).contains("\"mcp-protocol-version\""));
@@ -737,7 +738,7 @@ fn a_configured_transport_contract_is_refused_rather_than_ignored() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-transport",
+        &unique_test_nonce(),
     )
     .expect("signs");
 
@@ -764,7 +765,7 @@ fn a_configured_transport_contract_is_refused_rather_than_ignored() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-transport-ok",
+        &unique_test_nonce(),
     )
     .expect("signs");
     verify_bodyless_request(&ok_req, &Verifier::new(&strict, &resolver()), NOW)
@@ -795,7 +796,7 @@ fn a_bodyless_request_outside_its_signature_window_is_refused() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-stale",
+        &unique_test_nonce(),
     )
     .expect("a bodyless request signs");
     let stale = EXPIRES + policy().max_clock_skew() + 1;

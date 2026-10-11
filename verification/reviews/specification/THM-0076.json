@@ -23,7 +23,7 @@
     "theorem_id": "THM-0076",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G11.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G11.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -42,7 +42,7 @@
         "mutation_probes": "sha256:7e04bcdaf238e840b8704f44b494ef6d1f084f88290c8cbbafa35c30c70397ef",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:ee0917ede263aa494894f4767018c14ad9c362c803efdf752349c21806add11f",
+        "source_inputs": "sha256:ece730bf1907ca0adcc984251b7541e231e8151b471345e8f48edd67c93a57f5",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:76a9faea1acf118b3960272f664a14d32d48c8674c7674741abddd2ec03c0611",
         "test_selection": "sha256:35b14f53b8c51788a824b51631b1c4b033947b6d4f6d8283e02423b96b9c940c",
@@ -62,7 +62,7 @@
         "mutation_probes": "sha256:412331e5b36180a17d617f1c460d3a7e0e41de4e96c157d18ef523237da6982c",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:7ea2d945b312a6e6dad9871b2a59d88f1b349f3176b3cd638fc70ba5966372e1",
+        "source_inputs": "sha256:b352d352f21be44d892f95e35266e574f0b3a754cd57bdcf213a75726d3b32d8",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:ac9ace5d660de05521b8ba4c162f28a29fe08db71cff75dc2d4e0d8f1ed5b9be",
         "test_selection": "sha256:c945f75fc2f776011e26fd76fbff4f3959f8a01ff6b244373e1a9aff37c0ab1f",
@@ -91,7 +91,7 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:e859777d3ecadfac6ac8e504264cff59e36d4edd3e1128085673ff6605a4b7f4",
+  "review_digest": "sha256:76eed0ad2f0ef3206514c81c7ff0a3f68248e6b136fab5637cbf03f159ef2e35",
   "reviewed_fingerprint": "sha256:85db395bd03211097e6a2fea99370444452ce77a2fd61c70f1611519c3c2b3af",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0076"

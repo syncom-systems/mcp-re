@@ -79,6 +79,8 @@ verify = true
 # DEV-dependency edge, never a normal one — cargo unifies normal-dependency features across
 # the whole invocation, which would put the fixtures back into the production closure.
 mcp-re-http-profile = { path = ".", features = ["pre_052_fixtures"] }
+# `unique_test_nonce`: tests draw a nonce unless its exact value is the property under test.
+mcp-re-test-paths = { path = "../mcp-re-test-paths" }
 
 [lib]
 name = "mcp_re_http_profile"

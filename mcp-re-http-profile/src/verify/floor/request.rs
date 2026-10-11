@@ -184,7 +184,7 @@ mod tests {
             body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
                 .to_vec(),
         };
-        sign_request(&mut r, &key(), KEY_ID, CREATED, EXPIRES, "n-floor")
+        sign_request(&mut r, &key(), KEY_ID, CREATED, EXPIRES, &mcp_re_test_paths::unique_test_nonce())
             .expect("signing succeeds");
         r
     }

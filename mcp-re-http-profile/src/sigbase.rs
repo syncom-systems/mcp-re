@@ -545,7 +545,7 @@ mod tests {
                 "k\"x",
                 1_700_000_000,
                 1_700_000_300,
-                "n",
+                &mcp_re_test_paths::unique_test_nonce(),
             )
             .unwrap_err(),
             HttpProfileError::MalformedEvidence("keyid signature parameter"),

@@ -25,6 +25,7 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
+use mcp_re_test_paths::unique_test_nonce;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const SERVER_SEED: [u8; 32] = [22u8; 32];
@@ -131,7 +132,7 @@ fn signed(nonce: &str, body: &[u8]) -> (HttpRequest, mcp_re_http_profile::Reques
 // ---- §A: Message authenticity ------------------------------------------------
 #[test]
 fn tampered_request_body_is_rejected() {
-    let (mut req, _) = signed("n-auth", CALL);
+    let (mut req, _) = signed(&unique_test_nonce(), CALL);
     // Control: the untampered request verifies.
     Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req, &audience(), &no_material(), NOW)
@@ -150,7 +151,7 @@ fn tampered_request_body_is_rejected() {
 // ---- §A: Integrity (body + id) ----------------------------------------------
 #[test]
 fn mutated_payload_is_rejected() {
-    let (mut req, _) = signed("n-int", CALL);
+    let (mut req, _) = signed(&unique_test_nonce(), CALL);
     // Mutate the JSON-RPC id (inside the signed body) → rejected.
     req.body =
         br#"{"jsonrpc":"2.0","id":999,"method":"tools/call","params":{"name":"read"}}"#.to_vec();
@@ -165,7 +166,7 @@ fn mutated_payload_is_rejected() {
 // ---- §A: Audience binding ----------------------------------------------------
 #[test]
 fn wrong_audience_is_rejected() {
-    let (req, _) = signed("n-aud", CALL);
+    let (req, _) = signed(&unique_test_nonce(), CALL);
     let wrong = AudienceTuple {
         audience_id: "verifier-OTHER".into(),
         target_uri: TARGET.into(),
@@ -182,7 +183,7 @@ fn wrong_audience_is_rejected() {
 // ---- §A: Delegation / authorization binding ---------------------------------
 #[test]
 fn authorization_artifact_binding_is_bound_and_verified() {
-    let (req, _) = signed("n-authz", CALL);
+    let (req, _) = signed(&unique_test_nonce(), CALL);
     let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req, &audience(), &no_material(), NOW)
         .expect("verifies");
@@ -202,7 +203,7 @@ const SKEW: i64 = mcp_re_http_profile::VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW;
 
 #[test]
 fn expired_request_is_rejected() {
-    let (req, _) = signed("n-fresh", CALL);
+    let (req, _) = signed(&unique_test_nonce(), CALL);
     // Verify past `expires` AND past the tolerated skew → stale-window rejection.
     assert!(
         Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -217,7 +218,7 @@ fn expired_request_is_rejected() {
 /// tolerance as a real, tested edge rather than an unexercised default.
 #[test]
 fn request_within_the_skew_bound_is_accepted_but_beyond_it_is_not() {
-    let (req, _) = signed("n-skew", CALL);
+    let (req, _) = signed(&unique_test_nonce(), CALL);
     assert!(
         Verifier::new(&VerifierPolicy::default(), &resolver())
             .verify_request(&req, &audience(), &no_material(), EXPIRES + SKEW - 1)
@@ -236,7 +237,7 @@ fn request_within_the_skew_bound_is_accepted_but_beyond_it_is_not() {
 /// clock disagreement and gets the same bounded tolerance.
 #[test]
 fn future_dated_request_within_the_skew_bound_is_accepted() {
-    let (req, _) = signed("n-future", CALL);
+    let (req, _) = signed(&unique_test_nonce(), CALL);
     assert!(
         Verifier::new(&VerifierPolicy::default(), &resolver())
             .verify_request(&req, &audience(), &no_material(), CREATED - SKEW + 1)
@@ -256,7 +257,7 @@ fn future_dated_request_within_the_skew_bound_is_accepted() {
 #[test]
 fn strict_tier_policy_restores_exact_freshness() {
     use mcp_re_http_profile::VerifierPolicy;
-    let (req, _) = signed("n-strict", CALL);
+    let (req, _) = signed(&unique_test_nonce(), CALL);
     let strict = VerifierPolicy::new(&["ed25519"], 0).expect("strict tier is a valid bound");
     assert!(
         Verifier::new(&strict, &resolver())
@@ -278,7 +279,7 @@ fn replayed_request_is_rejected_by_the_replay_tier() {
     use mcp_re_core::InMemoryReplayCache;
     use mcp_re_http_profile::dispatch_request;
     use mcp_re_http_profile::DispatchError;
-    let (req, _) = signed("n-replay", CALL);
+    let (req, _) = signed(&unique_test_nonce(), CALL);
     let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req, &audience(), &no_material(), NOW)
         .expect("verifies");
@@ -303,7 +304,7 @@ fn replayed_request_is_rejected_by_the_replay_tier() {
 fn untrusted_signer_key_is_rejected() {
     // A resolver that trusts NO request key → actor_binding_failed.
     let empty = |_k: &str, _s: SignerSlot| None;
-    let (req, _) = signed("n-revoke", CALL);
+    let (req, _) = signed(&unique_test_nonce(), CALL);
     assert!(
         Verifier::new(&VerifierPolicy::default(), &empty)
             .verify_request(&req, &audience(), &no_material(), NOW)
@@ -324,7 +325,7 @@ fn unauthorized_key_id_is_rejected() {
         "unknown-key-99",
         CREATED,
         EXPIRES,
-        "n-key",
+        &unique_test_nonce(),
     )
     .expect("sign");
     assert!(
@@ -340,7 +341,7 @@ fn unauthorized_key_id_is_rejected() {
 fn transport_identity_binds_to_the_request_actor() {
     // The verified request actor id is the stable identity a transport binding ties
     // the channel identity to (proxy Mode-A ExactMatch binds `resolved_actor.actor_id()`).
-    let (req, _) = signed("n-ingress", CALL);
+    let (req, _) = signed(&unique_test_nonce(), CALL);
     let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req, &audience(), &no_material(), NOW)
         .expect("verifies");
@@ -354,9 +355,9 @@ fn transport_identity_binds_to_the_request_actor() {
 // ---- §A: Response binding ----------------------------------------------------
 #[test]
 fn response_bound_to_the_wrong_request_is_rejected() {
-    let (req_a, _ev_a) = signed("n-respA", CALL);
+    let (req_a, _ev_a) = signed(&unique_test_nonce(), CALL);
     let (req_b, _ev_b) = signed(
-        "n-respB",
+        &unique_test_nonce(),
         br#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list"}}"#,
     );
     let verified_b = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -394,7 +395,7 @@ fn caller_supplied_proxy_meta_is_not_the_signed_authority() {
     // The signed request evidence block is authored by the client core and covered by
     // Content-Digest; a caller cannot pre-seed a DIFFERENT top-level _meta and have it
     // survive as signed evidence — verify recomputes the digest over the signed body.
-    let (mut req, _) = signed("n-ctx", CALL);
+    let (mut req, _) = signed(&unique_test_nonce(), CALL);
     // Inject a forged top-level _meta AFTER signing → digest mismatch, rejected.
     req.body = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"},"_meta":{"forged":true}}"#.to_vec();
     assert!(

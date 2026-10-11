@@ -175,6 +175,7 @@ mod tests {
     use mcp_re_http_profile::ArtifactType;
     use mcp_re_http_profile::AudienceTuple;
     use mcp_re_http_profile::BindingType;
+    use mcp_re_test_paths::unique_test_nonce;
 
     const DECISION: &str = "aGVhZGVy.Y2xhaW1z.c2ln";
 
@@ -190,7 +191,7 @@ mod tests {
                 ArtifactType::OauthDpop,
                 b"tok",
             )],
-            "nonce-0001",
+            unique_test_nonce(),
             1,
             2,
         )

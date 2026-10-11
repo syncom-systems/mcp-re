@@ -23,6 +23,7 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
+use mcp_re_test_paths::unique_test_nonce;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const SERVER_SEED: [u8; 32] = [22u8; 32];
@@ -114,6 +115,13 @@ fn base_request() -> HttpRequest {
 fn signed_full_request(
     block: &HttpRequestEvidenceBlock,
 ) -> (HttpRequest, mcp_re_http_profile::RequestRoleEvidence) {
+    signed_full_request_with(block, &unique_test_nonce())
+}
+
+fn signed_full_request_with(
+    block: &HttpRequestEvidenceBlock,
+    nonce: &str,
+) -> (HttpRequest, mcp_re_http_profile::RequestRoleEvidence) {
     let mut req = base_request();
     let ev = sign_request_full(
         &mut req,
@@ -122,7 +130,7 @@ fn signed_full_request(
         "client-key-1",
         CREATED,
         EXPIRES,
-        "nonce-1",
+        nonce,
     )
     .expect("full sign");
     (req, ev)
@@ -142,7 +150,8 @@ fn foreign_signed_full_request(block: &HttpRequestEvidenceBlock) -> HttpRequest 
 
     let mut valid = block.clone();
     valid.profile = PROFILE_TAG.into();
-    let (mut req, _) = signed_full_request(&valid);
+    let nonce = unique_test_nonce();
+    let (mut req, _) = signed_full_request_with(&valid, &nonce);
     req.body = mcp_re_http_profile::body::insert_meta_block(
         &base_request().body,
         mcp_re_http_profile::REQUEST_EVIDENCE_BLOCK_KEY,
@@ -165,7 +174,7 @@ fn foreign_signed_full_request(block: &HttpRequestEvidenceBlock) -> HttpRequest 
     let params = SignatureParams {
         created: Some(CREATED),
         expires: Some(EXPIRES),
-        nonce: Some("nonce-1".into()),
+        nonce: Some(nonce),
         keyid: Some("client-key-1".into()),
         alg: Some(mcp_re_http_profile::ALG_ED25519.into()),
         tag: Some(PROFILE_TAG.into()),
@@ -260,7 +269,7 @@ fn missing_request_block_fails_in_full_profile() {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "n",
+        &unique_test_nonce(),
     )
     .expect("minimal sign");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -285,7 +294,7 @@ fn wrong_profile_in_block_fails() {
             "client-key-1",
             CREATED,
             EXPIRES,
-            "nonce-1",
+            &unique_test_nonce(),
         )
         .unwrap_err(),
         HttpProfileError::UnknownProfileTag,
@@ -512,7 +521,7 @@ fn response_request_evidence_mismatch_emits_request_binding_mismatch() {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "nonce-DIFFERENT",
+        &unique_test_nonce(),
     )
     .expect("sign b");
     assert_ne!(ev_b.digest_value(), verified_a.evidence().digest_value());
@@ -571,7 +580,7 @@ fn a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request() {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "nonce-2",
+        &unique_test_nonce(),
     )
     .expect("sign b");
 
@@ -618,7 +627,7 @@ fn two_requests_differing_only_in_a_signed_parameter_have_different_handles() {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "nonce-1",
+        &unique_test_nonce(),
     )
     .expect("sign a");
     let mut req_b = base_request();
@@ -629,7 +638,7 @@ fn two_requests_differing_only_in_a_signed_parameter_have_different_handles() {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "nonce-2",
+        &unique_test_nonce(),
     )
     .expect("sign b");
     assert_ne!(ev_a.digest_value(), ev_b.digest_value());
@@ -655,7 +664,7 @@ fn cryptographic_req_splice_still_fails_at_the_floor() {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "nonce-2",
+        &unique_test_nonce(),
     )
     .expect("sign b");
 
@@ -711,7 +720,7 @@ fn a_target_uri_disagreeing_with_the_audience_tuple_fails() {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "nonce-1",
+        &unique_test_nonce(),
     )
     .expect("full sign at a different target");
 

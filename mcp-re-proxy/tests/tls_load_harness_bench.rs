@@ -942,9 +942,9 @@ fn now_unix() -> i64 {
 /// the real clock and carrying a UNIQUE `nonce` so replay never fires across the
 /// load run. RFC 9421 + RFC 9530 via the audited `mcp-re-client-core` — the
 /// signature rides in the returned request's HTTP headers, not a body object.
-/// Test nonces are padded to the 128-bit emission floor the client core enforces.
-fn signed_request(nonce: &str) -> SignedRequest {
-    let nonce = &format!("{nonce}-padded-to-the-128-bit-floor");
+/// Each request draws a fresh 128-bit nonce, the emission floor the client core enforces.
+fn signed_request() -> SignedRequest {
+    let nonce = &mcp_re_test_paths::unique_test_nonce();
     let now = now_unix();
     let audience = AudienceTuple {
         audience_id: AUDIENCE.to_string(),
@@ -979,8 +979,8 @@ fn signed_request(nonce: &str) -> SignedRequest {
 
 /// The same request, carrying a PDP authorization decision the client binds into the
 /// signature — the SDK path (`with_authorization_decision`), not a hand-built block.
-fn signed_request_with_decision(nonce: &str, decision: &str) -> SignedRequest {
-    let nonce = &format!("{nonce}-padded-to-the-128-bit-floor");
+fn signed_request_with_decision(decision: &str) -> SignedRequest {
+    let nonce = &mcp_re_test_paths::unique_test_nonce();
     let now = now_unix();
     let audience = AudienceTuple {
         audience_id: AUDIENCE.to_string(),
@@ -1155,7 +1155,7 @@ fn run_load(addr: SocketAddr, config: Arc<ClientConfig>, cfg: &LoadConfig) -> Re
                     if i >= total {
                         break;
                     }
-                    let signed = signed_request(&format!("loadgen-nonce-{i}"));
+                    let signed = signed_request();
                     let t0 = Instant::now();
                     let outcome = match mode {
                         Mode::Cold => cold_round_trip(addr, Arc::clone(&config), &signed),
@@ -1350,7 +1350,7 @@ fn load_harness_smoke() {
     //    corresponds to a real RFC 9421-signed response bound to THIS request — i.e.
     //    the harness measures genuine serving, not error responses.
     {
-        let signed = signed_request("smoke-verified");
+        let signed = signed_request();
         let reply = cold_round_trip(proxy.addr, Arc::clone(&config), &signed)
             .expect("valid mTLS round trip");
         assert!(
@@ -1648,7 +1648,7 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     let ok = cold_round_trip(
         addr,
         build_client_config(&material.client_ca, &material.server_root),
-        &signed_request("inproc-ok"),
+        &signed_request(),
     )
     .expect("round trip (short cert)");
     assert!(
@@ -1665,7 +1665,7 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     let rej = cold_round_trip(
         addr,
         client_config_from(&long_leaf, &long_key, &material.server_root),
-        &signed_request("inproc-long"),
+        &signed_request(),
     )
     .expect("round trip (long cert)");
     assert!(
@@ -1685,7 +1685,7 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     let after_reload = cold_round_trip(
         addr,
         build_client_config(&material.client_ca, &material.server_root),
-        &signed_request("inproc-after-reload"),
+        &signed_request(),
     )
     .expect("round trip (after CRL reload)");
     assert!(
@@ -1699,11 +1699,11 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     // the second request reuses it and the helper's reconnect accounting stays at zero.
     let mut kept = None;
     let reconnects = AtomicUsize::new(0);
-    for i in 0..2 {
+    for _ in 0..2 {
         let r = keepalive_round_trip(
             addr,
             build_client_config(&material.client_ca, &material.server_root),
-            &signed_request(&format!("inproc-ka-{i}")),
+            &signed_request(),
             &mut kept,
             &reconnects,
         )
@@ -2003,10 +2003,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
         ACCEPTANCE_PDP_KID,
         now,
     );
-    let ok = serve(
-        "authz-permit",
-        &signed_request_with_decision("authz-permit", &permit),
-    );
+    let ok = serve("authz-permit", &signed_request_with_decision(&permit));
     assert!(
         is_success(&ok.body),
         "a Permit from the enrolled authority must reach the backend: {}",
@@ -2080,8 +2077,8 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
 
     for (nonce, decision) in &refusals {
         let request = match decision {
-            Some(d) => signed_request_with_decision(nonce, d),
-            None => signed_request(nonce),
+            Some(d) => signed_request_with_decision(d),
+            None => signed_request(),
         };
         let response = serve(nonce, &request);
         assert!(

@@ -82,6 +82,7 @@ nt_rust_test(
     edition = "2021",
     deps = [
         "//mcp-re-core:mcp_re_core",
+        "//mcp-re-test-paths:mcp_re_test_paths",
         "@crates_mcp_re//:base64",
         "@crates_mcp_re//:ciborium",
         "@crates_mcp_re//:coset",
@@ -117,6 +118,7 @@ nt_rust_test(
     deps = [
         ":mcp_re_http_profile_pre052",  # keep
         "//mcp-re-core:mcp_re_core",
+        "//mcp-re-test-paths:mcp_re_test_paths",
     ],
 )
 
@@ -129,6 +131,7 @@ nt_rust_test(
     deps = [
         ":mcp_re_http_profile",
         "//mcp-re-core:mcp_re_core",
+        "//mcp-re-test-paths:mcp_re_test_paths",
     ],
 )
 
@@ -142,6 +145,7 @@ nt_rust_test(
     deps = [
         ":mcp_re_http_profile_pre052",  # keep
         "//mcp-re-core:mcp_re_core",
+        "//mcp-re-test-paths:mcp_re_test_paths",
         "@crates_mcp_re//:base64",
     ],
 )
@@ -157,6 +161,7 @@ nt_rust_test(
     deps = [
         ":mcp_re_http_profile_pre052",  # keep
         "//mcp-re-core:mcp_re_core",
+        "//mcp-re-test-paths:mcp_re_test_paths",
         "@crates_mcp_re//:serde_json",
     ],
 )
@@ -171,6 +176,7 @@ nt_rust_test(
     deps = [
         ":mcp_re_http_profile",
         "//mcp-re-core:mcp_re_core",
+        "//mcp-re-test-paths:mcp_re_test_paths",
     ],
 )
 
@@ -184,6 +190,7 @@ nt_rust_test(
     deps = [
         ":mcp_re_http_profile",
         "//mcp-re-core:mcp_re_core",
+        "//mcp-re-test-paths:mcp_re_test_paths",
     ],
 )
 
@@ -216,6 +223,7 @@ nt_rust_test(
     deps = [
         ":mcp_re_http_profile_pre052",  # keep
         "//mcp-re-core:mcp_re_core",
+        "//mcp-re-test-paths:mcp_re_test_paths",
     ],
 )
 
@@ -226,6 +234,7 @@ nt_rust_test(
     deps = [
         ":mcp_re_http_profile",
         "//mcp-re-core:mcp_re_core",
+        "//mcp-re-test-paths:mcp_re_test_paths",
     ],
 )
 
@@ -236,6 +245,7 @@ nt_rust_test(
     deps = [
         ":mcp_re_http_profile_pre052",  # keep
         "//mcp-re-core:mcp_re_core",
+        "//mcp-re-test-paths:mcp_re_test_paths",
     ],
 )
 
@@ -246,6 +256,7 @@ nt_rust_test(
     deps = [
         ":mcp_re_http_profile",
         "//mcp-re-core:mcp_re_core",
+        "//mcp-re-test-paths:mcp_re_test_paths",
     ],
 )
 
@@ -256,6 +267,7 @@ nt_rust_test(
     deps = [
         ":mcp_re_http_profile",
         "//mcp-re-core:mcp_re_core",
+        "//mcp-re-test-paths:mcp_re_test_paths",
         "@crates_mcp_re//:sha2",
     ],
 )
@@ -267,6 +279,7 @@ nt_rust_test(
     deps = [
         ":mcp_re_http_profile",
         "//mcp-re-core:mcp_re_core",
+        "//mcp-re-test-paths:mcp_re_test_paths",
     ],
 )
 

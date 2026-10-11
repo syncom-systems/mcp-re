@@ -206,13 +206,20 @@ mod tests {
 
     const EXPIRES: i64 = 1_000;
 
+    /// One nonce for the whole test process: every `key()` in a test must name the same
+    /// request for a replay to be a replay.
+    fn shared_nonce() -> &'static str {
+        static NONCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        NONCE.get_or_init(mcp_re_test_paths::unique_test_nonce)
+    }
+
     fn key() -> HttpReplayKey {
         HttpReplayKey {
             profile_id: "mcp-re-http-v1".into(),
             signature_label: "mcp-re".into(),
             actor_id: "host:example.com:did%3Aexample%3Ahost:client-key-1".into(),
             audience_hash: "AAAABBBBCCCC".into(),
-            nonce: "nonce-1".into(),
+            nonce: shared_nonce().into(),
         }
     }
 
@@ -241,7 +248,7 @@ mod tests {
                 k.actor_id = "server:example.com:did%3Aexample%3Aserver:server-key-1".into()
             }),
             ("audience_hash", |k| k.audience_hash = "ZZZZ".into()),
-            ("nonce", |k| k.nonce = "nonce-2".into()),
+            ("nonce", |k| k.nonce = mcp_re_test_paths::unique_test_nonce()),
         ];
         for (name, mutate) in variants {
             let cache = InMemoryReplayCache::new(no_skew());
@@ -276,7 +283,7 @@ mod tests {
             "mcp-re-http-v1\u{1f}mcp-re\u{1f}host:example.com:did%3Aexample%3Ahost"
         );
         assert_eq!(core.audience, "AAAABBBBCCCC");
-        assert_eq!(core.nonce, "nonce-1");
+        assert_eq!(core.nonce, k.nonce);
         assert_eq!(core.expires_at_unix, EXPIRES);
     }
 

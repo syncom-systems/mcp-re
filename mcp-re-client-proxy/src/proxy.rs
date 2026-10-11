@@ -966,7 +966,12 @@ mod tests {
     const AUD_SCOPE: &str = "aud-scope-1";
     const EPOCH: &str = "epoch-1";
     const TARGET: &str = "https://mcp.example.com/mcp?route=a";
-    const NONCE: &str = "nonce-1-padded-to-the-128-bit-floor";
+    /// One nonce per test process: `call_params` and `signed_for` must name the same nonce
+    /// for the rebuilt request to be the one `handle` signed; its value is never asserted.
+    fn nonce() -> &'static str {
+        static NONCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        NONCE.get_or_init(mcp_re_test_paths::unique_test_nonce)
+    }
     const NOW: i64 = 1_700_000_100;
     const CREATED: i64 = 1_700_000_000;
     const EXPIRES: i64 = 1_700_000_300;
@@ -1049,7 +1054,7 @@ mod tests {
 
     fn call_params(verification_clock: &dyn Fn() -> i64) -> CallParams<'_> {
         CallParams {
-            nonce: NONCE.into(),
+            nonce: nonce().into(),
             created: CREATED,
             expires: EXPIRES,
             verification_clock,
@@ -1062,7 +1067,7 @@ mod tests {
             CLIENT_KEY_ID.to_string(),
             audience(),
             bindings(),
-            NONCE,
+            nonce(),
             CREATED,
             EXPIRES,
         )

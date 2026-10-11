@@ -86,7 +86,7 @@ mod tests {
             "client-key-1",
             1_700_000_000,
             1_700_000_300,
-            "n-bound",
+            &mcp_re_test_paths::unique_test_nonce(),
         )
         .expect("the fixture request signs");
         (request, evidence)

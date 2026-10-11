@@ -22,6 +22,7 @@ use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
+use mcp_re_test_paths::unique_test_nonce;
 
 const CREATED: i64 = 1_700_000_000;
 const EXPIRES: i64 = 1_700_000_300;
@@ -70,7 +71,7 @@ fn request_with(content_type: &str) -> HttpRequest {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-json",
+        &unique_test_nonce(),
     )
     .expect("signing succeeds");
     r

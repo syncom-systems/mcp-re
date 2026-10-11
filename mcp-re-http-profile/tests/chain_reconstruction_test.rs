@@ -36,6 +36,7 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
+use mcp_re_test_paths::unique_test_nonce;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 /// The ROOT issuer: the credential signer, off the request path. Delegated-required
@@ -325,9 +326,9 @@ const DONE: &str = r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#;
 /// Build a 3-hop chain R0→S0→R1→S1→R2→S2, each hop continuing the last, ending
 /// terminally. This is the multi-hop positive (#416 §13.4 "multi-hop" claim).
 fn three_hop_chain() -> Vec<RetainedHop> {
-    let (h0, r0, s0) = hop("n-0", None, AWAITING);
+    let (h0, r0, s0) = hop(&unique_test_nonce(), None, AWAITING);
     let (h1, r1, s1) = hop(
-        "n-1",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
             r0.to_digest(),
             s0.to_digest(),
@@ -336,7 +337,7 @@ fn three_hop_chain() -> Vec<RetainedHop> {
         AWAITING,
     );
     let (h2, _r2, _s2) = hop(
-        "n-2",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
             r1.to_digest(),
             s1.to_digest(),
@@ -375,7 +376,7 @@ fn multi_hop_chain_reconstructs_complete() {
 
 #[test]
 fn single_terminal_hop_reconstructs_complete() {
-    let (h0, _, _) = hop("n-solo", None, DONE);
+    let (h0, _, _) = hop(&unique_test_nonce(), None, DONE);
     assert_eq!(reconstruct(&[h0]), ChainLabel::Complete);
 }
 
@@ -550,8 +551,8 @@ fn an_opening_hop_without_a_continuation_still_opens_a_complete_record() {
 /// A hop after the first with no continuation at all: nothing links it backwards.
 #[test]
 fn later_hop_without_a_continuation_is_incomplete() {
-    let (h0, _, _) = hop("n-a", None, AWAITING);
-    let (h1, _, _) = hop("n-b", None, DONE);
+    let (h0, _, _) = hop(&unique_test_nonce(), None, AWAITING);
+    let (h1, _, _) = hop(&unique_test_nonce(), None, DONE);
     assert_eq!(
         reconstruct(&[h0, h1]),
         ChainLabel::Incomplete {
@@ -565,10 +566,10 @@ fn later_hop_without_a_continuation_is_incomplete() {
 /// well-formed and the messages verify; they simply do not describe this record.
 #[test]
 fn continuation_from_another_chain_is_incomplete() {
-    let (h0, _r0, _s0) = hop("n-x", None, AWAITING);
-    let (_other, other_r, other_s) = hop("n-other", None, AWAITING);
+    let (h0, _r0, _s0) = hop(&unique_test_nonce(), None, AWAITING);
+    let (_other, other_r, other_s) = hop(&unique_test_nonce(), None, AWAITING);
     let (h1, _, _) = hop(
-        "n-y",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
             other_r.to_digest(),
             other_s.to_digest(),
@@ -588,9 +589,9 @@ fn continuation_from_another_chain_is_incomplete() {
 /// A chain that claims to continue past a turn that already answered terminally.
 #[test]
 fn terminal_before_the_end_is_incomplete() {
-    let (h0, r0, s0) = hop("n-t0", None, DONE);
+    let (h0, r0, s0) = hop(&unique_test_nonce(), None, DONE);
     let (h1, _, _) = hop(
-        "n-t1",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
             r0.to_digest(),
             s0.to_digest(),
@@ -612,9 +613,9 @@ fn terminal_before_the_end_is_incomplete() {
 /// different value in that role, so re-linking rejects it.
 #[test]
 fn handles_swapped_between_roles_do_not_relink() {
-    let (h0, r0, s0) = hop("n-s0", None, AWAITING);
+    let (h0, r0, s0) = hop(&unique_test_nonce(), None, AWAITING);
     let (h1, _, _) = hop(
-        "n-s1",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
             s0.to_digest(), // response handle presented as the previous-request one
             r0.to_digest(), // and vice versa
@@ -692,9 +693,9 @@ fn terminality_is_derived_from_protected_content() {
 
     // Flip ONLY the last response's protected classification (re-signed), and the
     // same three hops become a truncated chain — the label tracks the bytes.
-    let (h0, r0, s0) = hop("n-d0", None, AWAITING);
+    let (h0, r0, s0) = hop(&unique_test_nonce(), None, AWAITING);
     let (h1, _, _) = hop(
-        "n-d1",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
             r0.to_digest(),
             s0.to_digest(),
@@ -725,9 +726,9 @@ fn an_unrecognized_result_type_makes_the_record_incomplete_at_that_hop() {
     const UNRECOGNIZED: &str =
         r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"com.example/deferred"}}"#;
 
-    let (h0, r0, s0) = hop("n-u0", None, AWAITING);
+    let (h0, r0, s0) = hop(&unique_test_nonce(), None, AWAITING);
     let (h1, _, _) = hop(
-        "n-u1",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
             r0.to_digest(),
             s0.to_digest(),
@@ -753,9 +754,9 @@ fn an_unrecognized_result_type_makes_the_record_incomplete_at_that_hop() {
 fn an_unrecognized_result_type_mid_chain_is_named_for_what_it_is() {
     const UNRECOGNIZED: &str = r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"partial"}}"#;
 
-    let (h0, r0, s0) = hop("n-m0", None, UNRECOGNIZED);
+    let (h0, r0, s0) = hop(&unique_test_nonce(), None, UNRECOGNIZED);
     let (h1, _, _) = hop(
-        "n-m1",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
             r0.to_digest(),
             s0.to_digest(),
@@ -790,11 +791,11 @@ fn aged_chain() -> Vec<RetainedHop> {
     // Two hours between turns, so no two hops share a window and none of them
     // contains the audit instant.
     const TURN: i64 = 7_200;
-    let (h0, r0, s0) = hop_at(CREATED, CREATED + 300, "a-0", None, AWAITING);
+    let (h0, r0, s0) = hop_at(CREATED, CREATED + 300, &unique_test_nonce(), None, AWAITING);
     let (h1, r1, s1) = hop_at(
         CREATED + TURN,
         CREATED + TURN + 300,
-        "a-1",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
             r0.to_digest(),
             s0.to_digest(),
@@ -805,7 +806,7 @@ fn aged_chain() -> Vec<RetainedHop> {
     let (h2, _r2, _s2) = hop_at(
         CREATED + 2 * TURN,
         CREATED + 2 * TURN + 300,
-        "a-2",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
             r1.to_digest(),
             s1.to_digest(),
@@ -886,7 +887,7 @@ fn a_hop_created_after_the_audit_instant_is_refused() {
 #[test]
 fn the_audit_ceiling_tolerates_the_configured_skew() {
     let policy = VerifierPolicy::default();
-    let (h0, _, _) = hop_at(CREATED, CREATED + 300, "skew", None, DONE);
+    let (h0, _, _) = hop_at(CREATED, CREATED + 300, &unique_test_nonce(), None, DONE);
 
     let within = CREATED - policy.max_clock_skew();
     assert_eq!(
@@ -932,7 +933,7 @@ fn an_over_wide_window_is_still_refused_in_an_aged_record() {
     let h0 = hop_with_bad_window(
         CREATED,
         CREATED + policy.max_signature_validity() + 1,
-        "wide",
+        &unique_test_nonce(),
     );
     match reconstruct_chain(
         &[h0],
@@ -960,7 +961,7 @@ fn an_over_wide_window_is_still_refused_in_an_aged_record() {
 /// self-satisfying.
 #[test]
 fn a_degenerate_window_is_still_refused_in_an_aged_record() {
-    let h0 = hop_with_bad_window(CREATED, CREATED, "degenerate");
+    let h0 = hop_with_bad_window(CREATED, CREATED, &unique_test_nonce());
     match reconstruct_chain(
         &[h0],
         &Verifier::new(&VerifierPolicy::default(), &resolver()),
@@ -1103,7 +1104,7 @@ fn a_hop_whose_block_names_another_target_is_not_a_verified_hop() {
         target_uri: "https://other.example.com/mcp".into(),
         route: Some("tools/call".into()),
     };
-    let hop = hop_with_block("n-elsewhere", &elsewhere, DONE);
+    let hop = hop_with_block(&unique_test_nonce(), &elsewhere, DONE);
 
     // Precondition: the hop is not broken. It verifies on the minimal path — the
     // one reconstruction used to run — so nothing about the signature catches this.
@@ -1140,7 +1141,7 @@ fn a_hop_with_no_evidence_block_is_not_a_verified_hop() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-blockless",
+        &unique_test_nonce(),
     )
     .expect("request signs");
     let response = answer_outside_the_full_signer(&request, &request_evidence, DONE);
@@ -1164,7 +1165,7 @@ fn a_hop_with_no_evidence_block_is_not_a_verified_hop() {
 #[test]
 fn an_honest_block_still_reconstructs_complete() {
     assert_eq!(
-        reconstruct(&[hop_with_block("n-honest", &block(None), DONE)]),
+        reconstruct(&[hop_with_block(&unique_test_nonce(), &block(None), DONE)]),
         ChainLabel::Complete
     );
 }
@@ -1186,7 +1187,7 @@ fn a_hop_whose_audience_is_not_the_verifiers_own_breaks_the_chain() {
     };
     // The URI still matches, so the old target-URI-only check would have passed it.
     assert_eq!(elsewhere.audience.target_uri, audience().target_uri);
-    match reconstruct(&[hop_with_block("n-aud", &elsewhere, DONE)]) {
+    match reconstruct(&[hop_with_block(&unique_test_nonce(), &elsewhere, DONE)]) {
         ChainLabel::Incomplete {
             hop: 0,
             reason:
@@ -1212,7 +1213,7 @@ fn a_binding_with_no_obtainable_credential_breaks_the_chain() {
         expected_audience: &aud,
         artifact_material: &NOTHING,
     };
-    let hops = [hop_with_block("n-artifact", &block(None), DONE)];
+    let hops = [hop_with_block(&unique_test_nonce(), &block(None), DONE)];
     let out = reconstruct_chain(
         &hops,
         &Verifier::new(&VerifierPolicy::default(), &resolver()),
@@ -1255,8 +1256,8 @@ fn two_records_that_verified_nothing_are_still_distinguishable() {
         target_uri: TARGET.into(),
         route: Some("tools/call".into()),
     };
-    let a = [hop_with_block("n-id-a", &first, DONE)];
-    let b = [hop_with_block("n-id-b", &second, DONE)];
+    let a = [hop_with_block(&unique_test_nonce(), &first, DONE)];
+    let b = [hop_with_block(&unique_test_nonce(), &second, DONE)];
     let run = |hops: &[RetainedHop]| {
         reconstruct_chain(
             hops,
@@ -1299,7 +1300,7 @@ type HopAlteration = (&'static str, fn(&mut RetainedHop));
 /// header.
 #[test]
 fn every_retained_field_of_a_hop_is_part_of_its_identity() {
-    let base = hop_with_block("n-identity", &block(None), r#"{"ok":true}"#);
+    let base = hop_with_block(&unique_test_nonce(), &block(None), r#"{"ok":true}"#);
     let identity = |h: &RetainedHop| {
         reconstruct_chain(
             std::slice::from_ref(h),
@@ -1357,7 +1358,7 @@ fn every_retained_field_of_a_hop_is_part_of_its_identity() {
 /// otherwise it could not be compared by anyone but the process that computed it.
 #[test]
 fn the_submitted_identity_is_a_function_of_the_bytes_alone() {
-    let hops = [hop_with_block("n-stable", &block(None), DONE)];
+    let hops = [hop_with_block(&unique_test_nonce(), &block(None), DONE)];
     let run = || {
         reconstruct_chain(
             &hops,

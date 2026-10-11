@@ -142,7 +142,7 @@ fn run_request_lane(signer: &KmsResponseSigner) {
         REQ_KEY_ID,
         CREATED,
         EXPIRES,
-        "nonce-http-1",
+        &mcp_re_test_paths::unique_test_nonce(),
     )
     .expect("Cloud KMS must sign an RFC 9421 request through the profile seam");
 
@@ -186,7 +186,7 @@ fn run_response_lane(signer: &KmsResponseSigner) {
         REQ_KEY_ID,
         CREATED,
         EXPIRES,
-        "nonce-http-2",
+        &mcp_re_test_paths::unique_test_nonce(),
     )
     .expect("sign bound request");
     let req_resolver = {

@@ -119,7 +119,7 @@ fn round_key(round: usize) -> String {
     format!("did:example:agent\u{1f}did:example:server\u{1f}nonce-{round}")
 }
 
-/// A per-invocation-unique salt (process id + wall-clock nanos, read ONCE by the
+/// A per-invocation-unique salt (process id, start time and a counter, read ONCE by the
 /// caller) so a LIVE race test's keys never collide with another test's or a prior
 /// run's on a SHARED persistent store. Every live lane needs this: the fixed
 /// `round_key`s are stored with a far-future TTL, so a second lane — or a second
@@ -131,13 +131,8 @@ fn round_key(round: usize) -> String {
     feature = "async_serve",
     any(feature = "redis_replay", feature = "cpstore_etcd")
 ))]
-fn unique_salt(tag: &str) -> String {
-    use std::time::SystemTime;
-    let nanos = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("{tag}-{}-{nanos}", std::process::id())
+fn unique_salt() -> String {
+    mcp_re_test_paths::unique_test_nonce()
 }
 
 /// A `round_key` namespaced by a per-test `salt` (see [`unique_salt`]).
@@ -246,11 +241,12 @@ fn window(skew_secs: i64) -> mcp_re_proxy::config_state::FreshnessWindow {
 #[test]
 fn shared_cache_first_is_fresh_then_replay() {
     let cache = SharedReplayCache::new(Box::new(InMemoryAtomicReplayStore::new()), window(30));
+    let nonce = mcp_re_test_paths::unique_test_nonce();
     assert_eq!(
         cache.check_and_insert(
             "did:example:agent",
             "did:example:server",
-            "nonce-1",
+            &nonce,
             FAR_FUTURE_RETAIN_UNTIL
         ),
         Ok(ReplayDecision::Fresh),
@@ -259,7 +255,7 @@ fn shared_cache_first_is_fresh_then_replay() {
         cache.check_and_insert(
             "did:example:agent",
             "did:example:server",
-            "nonce-1",
+            &nonce,
             FAR_FUTURE_RETAIN_UNTIL
         ),
         Ok(ReplayDecision::Replay),
@@ -269,7 +265,7 @@ fn shared_cache_first_is_fresh_then_replay() {
         cache.check_and_insert(
             "did:example:agent",
             "did:example:server",
-            "nonce-2",
+            &mcp_re_test_paths::unique_test_nonce(),
             FAR_FUTURE_RETAIN_UNTIL
         ),
         Ok(ReplayDecision::Fresh),
@@ -286,12 +282,13 @@ fn shared_cache_cross_replica_admit_via_a_is_replay_via_b() {
     let backend = InMemoryAtomicReplayStore::new();
     let replica_a = SharedReplayCache::new(Box::new(backend.clone()), window(30));
     let replica_b = SharedReplayCache::new(Box::new(backend.clone()), window(30));
+    let nonce = mcp_re_test_paths::unique_test_nonce();
 
     assert_eq!(
         replica_a.check_and_insert(
             "did:example:agent",
             "did:example:server",
-            "nonce-x",
+            &nonce,
             FAR_FUTURE_RETAIN_UNTIL
         ),
         Ok(ReplayDecision::Fresh),
@@ -301,7 +298,7 @@ fn shared_cache_cross_replica_admit_via_a_is_replay_via_b() {
         replica_b.check_and_insert(
             "did:example:agent",
             "did:example:server",
-            "nonce-x",
+            &nonce,
             FAR_FUTURE_RETAIN_UNTIL
         ),
         Ok(ReplayDecision::Replay),
@@ -364,7 +361,7 @@ fn cross_core_same_key_admits_exactly_one_fresh_redis_async() {
         // Salt read ONCE so this lane's keys are disjoint from the sync Redis lane's
         // (which shares this live store and runs first) — else every insert here is a
         // Replay of a key the sync lane already left behind (zero Fresh).
-        let salt = unique_salt("redis-async");
+        let salt = unique_salt();
         for round in 0..RACE_ROUNDS {
             let key = salted_round_key(&salt, round);
             let tasks = RACE_WIDTH;
@@ -436,7 +433,7 @@ fn cross_core_same_key_admits_exactly_one_fresh_etcd_async() {
             Arc::new(EtcdAsyncAtomicReplayStore::connect(&endpoint).expect("etcd endpoint"));
         // Salt read ONCE so this lane's keys are disjoint from the sync etcd lane's
         // on this shared live store (see the Redis lane above).
-        let salt = unique_salt("etcd-async");
+        let salt = unique_salt();
         for round in 0..RACE_ROUNDS {
             let key = salted_round_key(&salt, round);
             let tasks = RACE_WIDTH;
@@ -692,12 +689,8 @@ mod http_profile_full_stack {
     /// process's nonces collide with another lane's or a prior run's (the
     /// live stores outlive the test process; a collision would show up as
     /// ZERO 200s, not as a false pass).
-    fn unique_prefix(tag: &str) -> String {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        format!("{tag}-{}-{nanos}", std::process::id())
+    fn unique_prefix() -> String {
+        mcp_re_test_paths::unique_test_nonce()
     }
 
     #[cfg(all(
@@ -756,7 +749,7 @@ mod http_profile_full_stack {
             let now = now();
             let store = Arc::new(InMemoryAsyncAtomicReplayStore::new());
             let proxy = Arc::new(proxy_over(store, 100, now));
-            let prefix = unique_prefix("mem");
+            let prefix = unique_prefix();
             for round in 0..ROUNDS {
                 assert_exactly_one_served(Arc::clone(&proxy), &format!("{prefix}-{round}"), now)
                     .await;
@@ -783,7 +776,7 @@ mod http_profile_full_stack {
                     .expect("connect the async Redis replay store"),
             );
             let proxy = Arc::new(proxy_over(store, 100, now));
-            let prefix = unique_prefix("redis");
+            let prefix = unique_prefix();
             for round in 0..ROUNDS {
                 assert_exactly_one_served(Arc::clone(&proxy), &format!("{prefix}-{round}"), now)
                     .await;
@@ -814,7 +807,7 @@ mod http_profile_full_stack {
             let a = proxy_over(store.clone(), 100, now);
             let b = proxy_over(store, 200, now);
 
-            let prefix = unique_prefix("fleet");
+            let prefix = unique_prefix();
             let req = signed_request(&format!("{prefix}-cross"), now);
             assert_eq!(
                 a.handle(served(&req), now).await.status,
@@ -852,7 +845,7 @@ mod http_profile_full_stack {
             let store =
                 Arc::new(EtcdAsyncAtomicReplayStore::connect(&endpoint).expect("etcd endpoint"));
             let proxy = Arc::new(proxy_over(store, 100, now));
-            let prefix = unique_prefix("etcd");
+            let prefix = unique_prefix();
             for round in 0..ROUNDS {
                 assert_exactly_one_served(Arc::clone(&proxy), &format!("{prefix}-{round}"), now)
                     .await;

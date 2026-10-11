@@ -443,14 +443,20 @@ fn a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound() {
         // below could not tell a working revocation from a replica that was never
         // admitting the call in the first place.
         let served = replica_a
-            .handle(served_of(&signed_call(&claims, "n-base-a")), NOW)
+            .handle(
+                served_of(&signed_call(&claims, &mcp_re_test_paths::unique_test_nonce())),
+                NOW,
+            )
             .await;
         assert_eq!(
             served.status, 200,
             "replica A must admit before the revocation"
         );
         let served = replica_b
-            .handle(served_of(&signed_call(&claims, "n-base-b")), NOW)
+            .handle(
+                served_of(&signed_call(&claims, &mcp_re_test_paths::unique_test_nonce())),
+                NOW,
+            )
             .await;
         assert_eq!(
             served.status, 200,
@@ -521,7 +527,10 @@ fn a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound() {
 
         // And replica A, which served it happily a moment ago, now refuses too.
         let served = replica_a
-            .handle(served_of(&signed_call(&claims, "n-after-a")), NOW)
+            .handle(
+                served_of(&signed_call(&claims, &mcp_re_test_paths::unique_test_nonce())),
+                NOW,
+            )
             .await;
         assert_ne!(
             served.status, 200,

@@ -535,7 +535,8 @@ mod tests {
 
     const SIGNER: &str = "did:example:host";
     const AUD: &str = "did:example:verifier";
-    const NONCE: &str = "nonce-aaaaaaaaaaaaaaaaaaaaaa";
+    static NONCE: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(mcp_re_test_paths::unique_test_nonce);
     const EXPIRES: i64 = 1_779_998_700;
     const SKEW: i64 = 30;
     /// The fixture clock: ten minutes before `EXPIRES`, so every fixture request is live.
@@ -636,11 +637,11 @@ mod tests {
         let store = fixture_store();
         let cache = SharedReplayCache::new(Box::new(store), window());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, &NONCE, EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, &NONCE, EXPIRES),
             Ok(ReplayDecision::Replay)
         );
     }
@@ -657,12 +658,12 @@ mod tests {
         let node_b = SharedReplayCache::new(Box::new(store.clone()), window());
 
         assert_eq!(
-            node_a.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            node_a.check_and_insert(SIGNER, AUD, &NONCE, EXPIRES),
             Ok(ReplayDecision::Fresh),
             "first sight on node A is fresh"
         );
         assert_eq!(
-            node_b.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            node_b.check_and_insert(SIGNER, AUD, &NONCE, EXPIRES),
             Ok(ReplayDecision::Replay),
             "node B must reject a nonce first seen on node A — shared replay state"
         );
@@ -682,36 +683,36 @@ mod tests {
 
         // Would collide under naive concat: signer|audience boundary moved.
         assert_eq!(
-            cache.check_and_insert("ab", "c", NONCE, EXPIRES),
+            cache.check_and_insert("ab", "c", &NONCE, EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         assert_eq!(
-            cache.check_and_insert("a", "bc", NONCE, EXPIRES),
+            cache.check_and_insert("a", "bc", &NONCE, EXPIRES),
             Ok(ReplayDecision::Fresh),
             "moving the signer/audience boundary must NOT alias to a replay"
         );
         // Same nonce, different signer → independent.
         assert_eq!(
-            cache.check_and_insert("other-host", AUD, NONCE, EXPIRES),
+            cache.check_and_insert("other-host", AUD, &NONCE, EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         // Same nonce, different audience → independent.
         assert_eq!(
-            cache.check_and_insert(SIGNER, "other-aud", NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, "other-aud", &NONCE, EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         // Same signer/audience, different nonce → independent.
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, "nonce-bbbbbbbbbbbbbbbbbbbbbb", EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, &mcp_re_test_paths::unique_test_nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         // And each of the above is now a replay on a second sight.
         assert_eq!(
-            cache.check_and_insert("ab", "c", NONCE, EXPIRES),
+            cache.check_and_insert("ab", "c", &NONCE, EXPIRES),
             Ok(ReplayDecision::Replay)
         );
         assert_eq!(
-            cache.check_and_insert("a", "bc", NONCE, EXPIRES),
+            cache.check_and_insert("a", "bc", &NONCE, EXPIRES),
             Ok(ReplayDecision::Replay)
         );
     }
@@ -727,16 +728,16 @@ mod tests {
         let core = mcp_re_core::InMemoryReplayCache::new(window().max_clock_skew());
         let retain_until = EXPIRES + SKEW;
         assert_eq!(
-            shared.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
-            core.check_and_insert(SIGNER, AUD, NONCE, EXPIRES)
+            shared.check_and_insert(SIGNER, AUD, &NONCE, EXPIRES),
+            core.check_and_insert(SIGNER, AUD, &NONCE, EXPIRES)
         );
         // Pruning AT retain_until keeps the entry (retain_until >= now).
         store.prune(retain_until);
         core.prune(retain_until);
-        let at_boundary = shared.check_and_insert(SIGNER, AUD, NONCE, EXPIRES);
+        let at_boundary = shared.check_and_insert(SIGNER, AUD, &NONCE, EXPIRES);
         assert_eq!(
             at_boundary,
-            core.check_and_insert(SIGNER, AUD, NONCE, EXPIRES)
+            core.check_and_insert(SIGNER, AUD, &NONCE, EXPIRES)
         );
         assert_eq!(
             at_boundary,
@@ -746,10 +747,10 @@ mod tests {
         // Pruning strictly past retain_until evicts → fresh again.
         store.prune(retain_until + 1);
         core.prune(retain_until + 1);
-        let past_boundary = shared.check_and_insert(SIGNER, AUD, NONCE, EXPIRES);
+        let past_boundary = shared.check_and_insert(SIGNER, AUD, &NONCE, EXPIRES);
         assert_eq!(
             past_boundary,
-            core.check_and_insert(SIGNER, AUD, NONCE, EXPIRES)
+            core.check_and_insert(SIGNER, AUD, &NONCE, EXPIRES)
         );
         assert_eq!(
             past_boundary,
@@ -803,7 +804,7 @@ mod tests {
     fn store_error_fails_closed_as_unavailable() {
         let cache = SharedReplayCache::new(Box::new(AlwaysUnavailableStore), window());
         let err = cache
-            .check_and_insert(SIGNER, AUD, NONCE, EXPIRES)
+            .check_and_insert(SIGNER, AUD, &NONCE, EXPIRES)
             .expect_err("an unavailable store must surface an error, never allow");
         assert!(matches!(err, ReplayCacheError::Unavailable { .. }));
         assert_eq!(err.to_mcp_re_error(), McpReError::ReplayCacheUnavailable);
@@ -899,7 +900,7 @@ mod tests {
         let cache = SharedReplayCache::new(Box::new(store.clone()), window());
         // retain_until = expires_at + SKEW = FIXTURE_NOW → non-positive window → stale.
         let err = cache
-            .check_and_insert(SIGNER, AUD, NONCE, FIXTURE_NOW - SKEW)
+            .check_and_insert(SIGNER, AUD, &NONCE, FIXTURE_NOW - SKEW)
             .expect_err("a stale request must fail closed, never be admitted as Fresh");
         assert!(matches!(err, ReplayCacheError::Unavailable { .. }));
         assert_eq!(McpReError::from(err), McpReError::ReplayCacheUnavailable);

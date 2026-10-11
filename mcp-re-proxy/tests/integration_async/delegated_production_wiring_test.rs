@@ -334,7 +334,7 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
     );
 
     // --- bound rejection: a replay is rejected with a request-bound receipt --------
-    let (req, _ev, _verified_req) = signed_request("nonce-replay", NOW);
+    let (req, _ev, _verified_req) = signed_request(&mcp_re_test_paths::unique_test_nonce(), NOW);
     assert_eq!(proxy.handle(served_of(&req), NOW).await.status, 200);
     let served = proxy.handle(served_of(&req), NOW).await;
     assert_eq!(served.status, 409, "replay rejected");
@@ -359,7 +359,7 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
         2,
         "one more root op for the successor"
     );
-    let (req, _ev, _verified_req) = signed_request("nonce-after-rotate", rot);
+    let (req, _ev, _verified_req) = signed_request(&mcp_re_test_paths::unique_test_nonce(), rot);
     let served = proxy.handle(served_of(&req), rot).await;
     assert_eq!(
         served.status, 200,
@@ -390,7 +390,7 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
     // fallback. The request itself is fresh at this instant, so this exercises the
     // SIGNING fail-closed path, not a request-freshness rejection.
     let expired = rot + TTL;
-    let (req, _ev, _v) = signed_request("nonce-expired", expired);
+    let (req, _ev, _v) = signed_request(&mcp_re_test_paths::unique_test_nonce(), expired);
     let served = proxy.handle(served_of(&req), expired).await;
     assert_eq!(served.status, 503, "expired delegated key ⇒ fail closed");
     let body: serde_json::Value = serde_json::from_slice(&served.body).expect("json");

@@ -10,7 +10,7 @@
     "theorem_id": "THM-0027",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G7.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 4f9eb062 after the CodeQL remediation (work/security-audit-2026-09-22-r12/CODEQL-REREVIEW.md): test sources only; the accept-any-server TLS test verifier was replaced by verification against the test's server CA, no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G7.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 4f9eb062 after the CodeQL remediation (work/security-audit-2026-09-22-r12/CODEQL-REREVIEW.md): test sources only; the accept-any-server TLS test verifier was replaced by verification against the test's server CA, no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -33,7 +33,7 @@
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:cbc85540b3574ce87098ddc800d2a81e486cc552fdba8a2077b2c11ae6dbbfa9",
         "test_selection": "sha256:f274eb10bd9fb967e8ece843fc5723b7ab2873b438c61303a8b6c65a59d8d670",
-        "test_sources": "sha256:d265094cce6904cfed8737c619a3a8f428d51cf262e08a36b8e751f1aa67f3c1",
+        "test_sources": "sha256:f0e96621eaf282456c4703640473140205f261302db2a277d910d42b37d34d2d",
         "trusted_assumptions": "sha256:ea04bac3e57984e21938ae8d0a31eaac287778229db190bbcc95d11f94b3a5f2",
         "unit_id": "sha256:6804edd3ee08cef30b80b0de4f5b2ebc54332141977634dc7fd4c120b882288c"
       },
@@ -65,7 +65,7 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:642dc3a1032db5078dc57712a73ab49b888e4b1aa179b557f4e5e1346a94bbf4",
+  "review_digest": "sha256:b72f14ce2a1e302b17a6841aba5549f50f9027df7b455e22d7fd26e2a5881463",
   "reviewed_fingerprint": "sha256:faec59e583744094ecf8211cf8d49171e08a0f416cd131d25c4f50a539bd2a50",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0027"

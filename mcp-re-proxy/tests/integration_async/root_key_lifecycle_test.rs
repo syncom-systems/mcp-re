@@ -114,7 +114,7 @@ fn signed_request() -> SignedRequest {
             ArtifactType::OauthDpop,
             b"access-token-xyz",
         )],
-        "nonce-root-lifecycle-padded",
+        mcp_re_test_paths::unique_test_nonce(),
         CREATED,
         EXPIRES,
     );

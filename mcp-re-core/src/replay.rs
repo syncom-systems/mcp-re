@@ -377,9 +377,15 @@ mod tests {
 
     const SIGNER: &str = "did:example:host";
     const AUD: &str = "did:example:verifier";
-    const NONCE: &str = "nonce-aaaaaaaaaaaaaaaaaaaaaa";
     const EXPIRES: i64 = 1_779_998_700; // an arbitrary fixed epoch
     const SKEW: i64 = 30;
+
+    /// One nonce for the whole test process: every test builds its own cache, so sharing
+    /// the value across tests couples nothing, and no test asserts on the value itself.
+    fn nonce() -> &'static str {
+        static NONCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        NONCE.get_or_init(mcp_re_test_paths::unique_test_nonce)
+    }
 
     fn skew() -> MaxClockSkew {
         MaxClockSkew::new(SKEW).expect("30 s is inside the bound")
@@ -412,13 +418,15 @@ mod tests {
         // prune — so the failure mode was a remotely-driven memory leak in the crate
         // that DEFINES the contract.
         let cache = InMemoryReplayCache::new(skew()).with_max_entries(3);
-        for i in 0..3 {
+        let admitted: Vec<String> = (0..3).map(|_| mcp_re_test_paths::unique_test_nonce()).collect();
+        let over = mcp_re_test_paths::unique_test_nonce();
+        for nonce in &admitted {
             assert_eq!(
-                cache.check_and_insert(SIGNER, AUD, &format!("nonce-{i}"), EXPIRES),
+                cache.check_and_insert(SIGNER, AUD, nonce, EXPIRES),
                 Ok(ReplayDecision::Fresh)
             );
         }
-        let refused = cache.check_and_insert(SIGNER, AUD, "nonce-over", EXPIRES);
+        let refused = cache.check_and_insert(SIGNER, AUD, &over, EXPIRES);
         assert!(
             matches!(refused, Err(ReplayCacheError::Unavailable { .. })),
             "past the ceiling the cache must refuse, got {refused:?}"
@@ -433,7 +441,7 @@ mod tests {
         // An already-seen nonce is still reported as a replay at the ceiling: refusing
         // to GROW must not turn a known replay into an unknown one.
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, "nonce-0", EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, &admitted[0], EXPIRES),
             Ok(ReplayDecision::Replay)
         );
 
@@ -441,7 +449,7 @@ mod tests {
         cache.prune(EXPIRES + SKEW + 1);
         assert!(cache.is_empty());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, "nonce-over", EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, &over, EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
     }
@@ -450,7 +458,7 @@ mod tests {
     fn first_insert_is_fresh() {
         let cache = InMemoryReplayCache::new(skew());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
     }
@@ -459,11 +467,11 @@ mod tests {
     fn same_triple_again_is_replay() {
         let cache = InMemoryReplayCache::new(skew());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Replay)
         );
     }
@@ -474,11 +482,11 @@ mod tests {
         // distinct key and must NOT be flagged as a replay.
         let cache = InMemoryReplayCache::new(skew());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         assert_eq!(
-            cache.check_and_insert(SIGNER, "did:example:other-verifier", NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, "did:example:other-verifier", nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
     }
@@ -487,11 +495,11 @@ mod tests {
     fn different_signer_same_nonce_is_fresh() {
         let cache = InMemoryReplayCache::new(skew());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         assert_eq!(
-            cache.check_and_insert("did:example:other-host", AUD, NONCE, EXPIRES),
+            cache.check_and_insert("did:example:other-host", AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
     }
@@ -500,7 +508,7 @@ mod tests {
     fn prune_after_retain_until_readmits_triple() {
         let cache = InMemoryReplayCache::new(skew());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         // retain_until == EXPIRES + SKEW. Pruning strictly past it evicts.
@@ -508,13 +516,13 @@ mod tests {
         // Pruning AT retain_until keeps the entry (retain_until >= now).
         cache.prune(retain_until);
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Replay)
         );
         // Pruning strictly past retain_until evicts -> triple is Fresh again.
         cache.prune(retain_until + 1);
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
     }
@@ -544,7 +552,7 @@ mod tests {
         // `mcp-re.replay_cache_unavailable` verdict this tier owes its pipeline.
         let cache = InMemoryReplayCache::new(skew());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         poison(&cache);
@@ -563,12 +571,12 @@ mod tests {
         }
         // An already-recorded triple is refused too — never admitted off an
         // unreadable seen-set.
-        assert!(cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES).is_err());
+        assert!(cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES).is_err());
         // A poisoned prune evicts nothing.
         cache.prune(EXPIRES + SKEW + 1);
         cache.seen.clear_poison();
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Replay),
             "an evicting prune would have readmitted the triple"
         );
@@ -579,12 +587,12 @@ mod tests {
     fn a_poisoned_clone_cannot_be_reconfigured_into_admitting() {
         let cache = InMemoryReplayCache::new(skew());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         poison(&cache);
         let copy = cache.clone().with_max_entries(1_000);
-        for nonce in [NONCE, "fresh-nonce"] {
+        for nonce in [nonce(), mcp_re_test_paths::unique_test_nonce().as_str()] {
             let refused = copy.check_and_insert(SIGNER, AUD, nonce, EXPIRES);
             assert!(
                 matches!(refused, Err(ReplayCacheError::Unavailable { .. })),
@@ -597,7 +605,7 @@ mod tests {
     fn a_clone_of_a_poisoned_cache_admits_nothing() {
         let cache = InMemoryReplayCache::new(skew());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         poison(&cache);
@@ -606,7 +614,7 @@ mod tests {
         // the copy must refuse admissions rather than start out empty and readmit
         // every nonce the source had recorded.
         let copy = cache.clone();
-        let refused = copy.check_and_insert(SIGNER, AUD, NONCE, EXPIRES);
+        let refused = copy.check_and_insert(SIGNER, AUD, nonce(), EXPIRES);
         assert!(
             matches!(refused, Err(ReplayCacheError::Unavailable { .. })),
             "the copy must refuse, got {refused:?}"
@@ -615,7 +623,7 @@ mod tests {
             refused.unwrap_err().to_mcp_re_error(),
             McpReError::ReplayCacheUnavailable
         );
-        let second = copy.check_and_insert(SIGNER, AUD, "another-nonce", EXPIRES);
+        let second = copy.check_and_insert(SIGNER, AUD, &mcp_re_test_paths::unique_test_nonce(), EXPIRES);
         assert!(
             second.is_err(),
             "the copy must refuse every nonce, got {second:?}"
@@ -656,7 +664,7 @@ mod tests {
     fn operational_failure_maps_to_replay_cache_unavailable() {
         let cache = AlwaysUnavailableReplayCache;
         let err = cache
-            .check_and_insert(SIGNER, AUD, NONCE, EXPIRES)
+            .check_and_insert(SIGNER, AUD, nonce(), EXPIRES)
             .expect_err("always-unavailable cache must fail");
         assert_eq!(err.to_mcp_re_error(), McpReError::ReplayCacheUnavailable);
         // The `From` impl agrees.

@@ -9,7 +9,7 @@
     "theorem_id": "THM-0069",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-R2-REVIEW-4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 4f9eb062 after the CodeQL remediation (work/security-audit-2026-09-22-r12/CODEQL-REREVIEW.md): test sources only; the accept-any-server TLS test verifier was replaced by verification against the test's server CA, no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-R2-REVIEW-4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 4f9eb062 after the CodeQL remediation (work/security-audit-2026-09-22-r12/CODEQL-REREVIEW.md): test sources only; the accept-any-server TLS test verifier was replaced by verification against the test's server CA, no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -33,7 +33,7 @@
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:999d4a676b131beb1b36e1d61f4c1123028c0c5c75b953839e8e48fd3f001433",
         "test_selection": "sha256:d1051b3ecb17aff1ea8ad0ca926710dee27509bed3ed23281d9638ff2ef14072",
-        "test_sources": "sha256:2aeb3cb5bc6abbfd52363cd3de3d9ca7d122341eb849874bd60230c20eaee7b0",
+        "test_sources": "sha256:84c1b2577800e7ea6a2c681e98056a70d891c9ce53df55d17ffba5f2ee3a4006",
         "trusted_assumptions": "sha256:339c857a463348287b4889a8648d26e88fb3c77311789492bb410d5f07d5a0af",
         "unit_id": "sha256:d48eaecfe8adc02d3718fa0564891327889e1d4eceffc1f7c3dc5a2c2ad558cd"
       },
@@ -53,7 +53,7 @@
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:f6576e1577d181e688b99416c3ba43b06bf695097a9f30f52f9c4ae1981607ba",
         "test_selection": "sha256:a9a6a02ec5a8062b218d09964359d8913e420e9f8bb4b855ea9d2c1e3563eccf",
-        "test_sources": "sha256:2aeb3cb5bc6abbfd52363cd3de3d9ca7d122341eb849874bd60230c20eaee7b0",
+        "test_sources": "sha256:84c1b2577800e7ea6a2c681e98056a70d891c9ce53df55d17ffba5f2ee3a4006",
         "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "unit_id": "sha256:bcfc341a13e0edac5d69c0b304ea5b83a4c4a26d3da71007c295e6176528af64"
       },
@@ -84,7 +84,7 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:6afee7ee16e489224674ccac842590b447d025f1f98606898a2b4eb9f50743cb",
+  "review_digest": "sha256:211da3eb7eff4c2e7994ded3e9231b5e2f402e7c48661e67cbdf4f1579d402a3",
   "reviewed_fingerprint": "sha256:0ce3b80720627213892793e307cc1ac56e91f4f0c310bdfc4049785deac38e0a",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0069"

@@ -37,6 +37,7 @@ nt_rust_test(
     crate = ":mcp_re_core",
     edition = "2021",
     deps = [
+        "//mcp-re-test-paths:mcp_re_test_paths",
         "@crates_mcp_re//:hex",
         "@crates_mcp_re//:zeroize",
     ],

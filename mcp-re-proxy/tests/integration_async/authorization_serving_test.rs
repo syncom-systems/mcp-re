@@ -26,6 +26,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use mcp_re_core::SigningKey;
+use mcp_re_test_paths::unique_test_nonce;
 use mcp_re_http_profile::custody::DelegatedKeyWindow;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_request_full;
@@ -353,7 +354,7 @@ async fn a_granting_policy_serves_and_the_backend_runs() {
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = grants_only("read");
     let p = proxy(Some(policy.clone()), Arc::clone(&calls));
-    let (status, _) = serve(&p, signed_call("read", "n-grant")).await;
+    let (status, _) = serve(&p, signed_call("read", &unique_test_nonce())).await;
     assert_eq!(status, 200);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     let seen = policy.only_seen();
@@ -380,7 +381,7 @@ async fn a_denying_policy_refuses_before_the_backend_runs() {
     // that already happened.
     let calls = Arc::new(AtomicUsize::new(0));
     let p = proxy(Some(grants_only("read")), Arc::clone(&calls));
-    let (status, body) = serve(&p, signed_call("delete", "n-deny")).await;
+    let (status, body) = serve(&p, signed_call("delete", &unique_test_nonce())).await;
     assert_eq!(status, 403);
     assert!(
         body.contains("mcp-re.authorization_scope_denied"),
@@ -400,7 +401,7 @@ async fn a_deployment_with_no_policy_serves_and_claims_nothing() {
     // records, and why no evaluator was consulted.
     let calls = Arc::new(AtomicUsize::new(0));
     let p = proxy(None, Arc::clone(&calls));
-    let (status, _) = serve(&p, signed_call("anything-at-all", "n-off")).await;
+    let (status, _) = serve(&p, signed_call("anything-at-all", &unique_test_nonce())).await;
     assert_eq!(status, 200);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
@@ -414,7 +415,7 @@ async fn a_covered_routing_header_naming_another_tool_does_not_reach_the_policy(
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = grants_only("read");
     let p = proxy(Some(policy.clone()), Arc::clone(&calls));
-    let req = signed_call_with_headers("read", "n-a1-grant", &[("Mcp-Name", "delete")]);
+    let req = signed_call_with_headers("read", &unique_test_nonce(), &[("Mcp-Name", "delete")]);
     let (status, body) = serve(&p, req).await;
     assert_eq!(
         status, 403,
@@ -432,7 +433,7 @@ async fn a_covered_routing_header_cannot_carry_a_grant_the_signed_body_does_not_
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = grants_only("read");
     let p = proxy(Some(policy.clone()), Arc::clone(&calls));
-    let req = signed_call_with_headers("delete", "n-a1-deny", &[("Mcp-Name", "read")]);
+    let req = signed_call_with_headers("delete", &unique_test_nonce(), &[("Mcp-Name", "read")]);
     let (status, body) = serve(&p, req).await;
     assert_eq!(status, 403, "{body}");
     assert!(policy.never_consulted());
@@ -448,7 +449,7 @@ async fn an_uncovered_routing_header_never_reaches_the_policy_at_all() {
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = grants_only("read");
     let p = proxy(Some(policy.clone()), Arc::clone(&calls));
-    let mut req = signed_call("read", "n-a1-injected");
+    let mut req = signed_call("read", &unique_test_nonce());
     req.headers.push(("Mcp-Name".into(), "delete".into()));
     let (status, body) = serve(&p, req).await;
     assert_eq!(status, 403, "{body}");
@@ -468,7 +469,7 @@ async fn enforcing_the_transport_contract_does_not_change_which_action_is_author
     let p = proxy(Some(policy.clone()), Arc::clone(&calls));
     let req = signed_call_with_headers(
         "delete",
-        "n-a1-enforced",
+        &unique_test_nonce(),
         &[
             ("Mcp-Method", "tools/call"),
             ("Mcp-Name", "read"),
@@ -492,7 +493,7 @@ async fn an_evaluator_that_cannot_decide_fails_closed_with_its_own_token() {
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = Recording::new(|_| Err(PolicyError::AuthorizationRevocationUnavailable));
     let p = proxy(Some(policy), Arc::clone(&calls));
-    let (status, body) = serve(&p, signed_call("read", "n-outage")).await;
+    let (status, body) = serve(&p, signed_call("read", &unique_test_nonce())).await;
     assert_eq!(status, 403);
     assert!(
         body.contains("mcp-re.authorization_revocation_unavailable"),
@@ -509,7 +510,7 @@ async fn a_request_whose_signature_does_not_verify_never_reaches_the_policy() {
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = grants_only("read");
     let p = proxy(Some(policy.clone()), Arc::clone(&calls));
-    let mut req = signed_call("read", "n-tampered");
+    let mut req = signed_call("read", &unique_test_nonce());
     req.body =
         br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec();
     let (status, _) = serve(&p, req).await;
@@ -535,7 +536,7 @@ async fn a_denied_request_is_answerable_as_nothing_executed() {
         }
     });
     let p = proxy(Some(policy), Arc::clone(&calls));
-    let call = signed_call("read", "n-retry");
+    let call = signed_call("read", &unique_test_nonce());
     let (denied, _) = serve(&p, call.clone()).await;
     assert_eq!(denied, 403);
     // The SAME request, replayed after the policy changed its mind. It is served, which

@@ -899,7 +899,7 @@ mod tests {
             "client-key-1",
             now,
             now + 60,
-            "n-clamp",
+            &mcp_re_test_paths::unique_test_nonce(),
         )
         .expect("request signs");
 
@@ -960,7 +960,7 @@ mod tests {
             "client-key-1",
             now,
             now + 60,
-            "n-window",
+            &mcp_re_test_paths::unique_test_nonce(),
         )
         .expect("request signs");
         let mut response = crate::message::HttpResponse {

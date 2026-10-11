@@ -1592,14 +1592,14 @@ mod tests {
             signature: Vec::new(),
         });
         // Fresh request nonce differs from the echoed one.
-        let fresh_nonce = b"fresh-request-nonce-B".to_vec();
-        assert_ne!(captured_nonce, fresh_nonce);
+        let unique_test_nonce = b"fresh-request-nonce-B".to_vec();
+        assert_ne!(captured_nonce, unique_test_nonce);
         assert!(
             verify_and_map_response(
                 &response,
                 &issuer,
                 &requested_id,
-                &fresh_nonce,
+                &unique_test_nonce,
                 at(2024, 1, 1)
             )
             .is_err(),

@@ -145,7 +145,7 @@ fn cross_node_insert_via_a_is_replay_via_b() {
         "did:example:host#cross_node_insert_via_a_is_replay_via_b-{}",
         run_id()
     );
-    let nonce = "nonce-4028-cross-node-insert-via-a-is-replay-via-b";
+    let nonce = &mcp_re_test_paths::unique_test_nonce();
 
     let rt = runtime();
     let node_a = node(&rt, &url);
@@ -179,7 +179,7 @@ fn single_node_fresh_then_replay() {
         "did:example:host#single_node_fresh_then_replay-{}",
         run_id()
     );
-    let nonce = "nonce-4028-single-node-fresh-then-replay";
+    let nonce = &mcp_re_test_paths::unique_test_nonce();
 
     let rt = runtime();
     let store = node(&rt, &url);
@@ -219,7 +219,7 @@ fn live_pttl_is_bounded_window_not_absolute_epoch() {
         "did:example:host#live_pttl_is_bounded_window_not_absolute_epoch-{}",
         run_id()
     );
-    let nonce = "nonce-4028-live-pttl-bounded-window";
+    let nonce = &mcp_re_test_paths::unique_test_nonce();
 
     // A window of ~600s from the REAL clock: retain_until = now + 600.
     let window_secs: i64 = 600;
@@ -435,7 +435,13 @@ fn wait_quorum_shortfall_and_recovery_against_a_replica() {
 
     // (1) Healthy: WAIT 1 is satisfied by the attached replica → Fresh.
     assert_eq!(
-        insert(&rt, &store, signer, "nonce-41-healthy", expires_at),
+        insert(
+            &rt,
+            &store,
+            signer,
+            &mcp_re_test_paths::unique_test_nonce(),
+            expires_at
+        ),
         Ok(ReplayDecision::Fresh),
         "a replica-acked WAIT-quorum insert must be Fresh"
     );
@@ -451,7 +457,8 @@ fn wait_quorum_shortfall_and_recovery_against_a_replica() {
         primary_connected_slaves(&mut primary) == 0
     });
 
-    let shortfall = insert(&rt, &store, signer, "nonce-41-shortfall", expires_at);
+    let shortfall_nonce = mcp_re_test_paths::unique_test_nonce();
+    let shortfall = insert(&rt, &store, signer, &shortfall_nonce, expires_at);
     assert!(
         matches!(shortfall, Err(ReplayStoreError::Unavailable { .. })),
         "a WAIT-quorum shortfall must fail closed as ReplayStoreError::Unavailable, got {shortfall:?}"
@@ -465,7 +472,7 @@ fn wait_quorum_shortfall_and_recovery_against_a_replica() {
     // (3) Same-nonce retry after the shortfall: the SET NX landed on the primary,
     //     so the nonce is burned — the retry must NOT be Fresh (Replay or another
     //     fail-closed are both acceptable per Amendment 1; Fresh is not).
-    let retry = insert(&rt, &store, signer, "nonce-41-shortfall", expires_at);
+    let retry = insert(&rt, &store, signer, &shortfall_nonce, expires_at);
     assert_ne!(
         retry,
         Ok(ReplayDecision::Fresh),
@@ -485,7 +492,13 @@ fn wait_quorum_shortfall_and_recovery_against_a_replica() {
         primary_connected_slaves(&mut primary) >= 1
     });
     assert_eq!(
-        insert(&rt, &store, signer, "nonce-41-recovered", expires_at),
+        insert(
+            &rt,
+            &store,
+            signer,
+            &mcp_re_test_paths::unique_test_nonce(),
+            expires_at
+        ),
         Ok(ReplayDecision::Fresh),
         "after replica reattach + resync, a fresh nonce must be Fresh again"
     );

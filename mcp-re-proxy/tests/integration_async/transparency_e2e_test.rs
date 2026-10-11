@@ -23,6 +23,7 @@
 //! reconstruction and the statement are about the retained bytes, and that the receipt
 //! verifies offline.
 
+use mcp_re_test_paths::unique_test_nonce;
 use mcp_re_http_profile::Verifier;
 use std::sync::Arc;
 
@@ -434,7 +435,7 @@ fn a_served_notification_is_retained_like_any_other_accepted_exchange() {
     let proxy = build_server(Some(Arc::clone(&retention)));
 
     assert_eq!(
-        serve_one_notification(&proxy, "nonce-transparency-notification-1"),
+        serve_one_notification(&proxy, &unique_test_nonce()),
         202,
         "a one-way notification is acknowledged with a signed bodyless 202"
     );
@@ -473,7 +474,7 @@ fn a_post_dispatch_refusal_leaves_no_dangling_crossing() {
     let dispatches = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let proxy = build_server_refusing(Some(Arc::clone(&retention)), Arc::clone(&dispatches));
 
-    let status = serve_one(&proxy, "nonce-transparency-postdispatch-refusal-1");
+    let status = serve_one(&proxy, &unique_test_nonce());
     assert_ne!(status, 200, "an unrecognised resultType is refused");
     assert_eq!(
         dispatches.load(std::sync::atomic::Ordering::SeqCst),
@@ -514,12 +515,12 @@ fn a_post_dispatch_refusal_is_served_the_same_where_nothing_is_retained() {
         Arc::new(EvidenceRetention::open(with_store.join("evidence")).expect("open retention"));
     let retained_status = serve_one(
         &build_server_refusing(Some(retention), Arc::clone(&dispatches)),
-        "nonce-transparency-postdispatch-mirror-1",
+        &unique_test_nonce(),
     );
 
     let bare_status = serve_one(
         &build_server_refusing(None, Arc::clone(&dispatches)),
-        "nonce-transparency-postdispatch-mirror-2",
+        &unique_test_nonce(),
     );
 
     assert_eq!(
@@ -584,7 +585,7 @@ fn a_served_call_becomes_an_offline_verifiable_receipt() {
         Arc::new(EvidenceRetention::open(scratch.join("evidence")).expect("open retention"));
     let proxy = build_server(Some(Arc::clone(&retention)));
 
-    assert_eq!(serve_one(&proxy, "nonce-transparency-vertical-1"), 200);
+    assert_eq!(serve_one(&proxy, &unique_test_nonce()), 200);
 
     // The auditor reads what the serving path kept. The handle is the store's, so an
     // auditor that has the digest — from the deployment's audit stream — can find it.
@@ -662,7 +663,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
     let retention =
         Arc::new(EvidenceRetention::open(scratch.join("evidence")).expect("open retention"));
     let proxy = build_server(Some(Arc::clone(&retention)));
-    assert_eq!(serve_one(&proxy, "nonce-transparency-retained-1"), 200);
+    assert_eq!(serve_one(&proxy, &unique_test_nonce()), 200);
 
     let name = std::fs::read_dir(scratch.join("evidence"))
         .expect("dir")
@@ -715,7 +716,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
 
     // And the control: a DIFFERENT record does not pass as this one.
     let other = build_server(Some(Arc::clone(&retention)));
-    assert_eq!(serve_one(&other, "nonce-transparency-retained-2"), 200);
+    assert_eq!(serve_one(&other, &unique_test_nonce()), 200);
     let names: Vec<_> = std::fs::read_dir(scratch.join("evidence"))
         .expect("dir")
         .filter_map(Result::ok)
@@ -755,7 +756,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
 fn retention_is_off_by_default_and_nothing_is_kept() {
     let scratch = Scratch::new("off");
     let proxy = build_server(None);
-    assert_eq!(serve_one(&proxy, "nonce-transparency-off-1"), 200);
+    assert_eq!(serve_one(&proxy, &unique_test_nonce()), 200);
     assert!(
         !scratch.join("evidence").exists(),
         "a deployment that did not ask for retention stores nothing"
@@ -783,7 +784,7 @@ fn an_exchange_whose_evidence_cannot_be_retained_is_refused() {
     // returns, and a test that accepted any 503 here would keep passing if retention
     // stopped running altogether and something else refused the call.
     assert_eq!(
-        serve_one_full(&proxy, "nonce-transparency-failclosed-1"),
+        serve_one_full(&proxy, &unique_test_nonce()),
         (
             503,
             Some("mcp-re.evidence_retention_unavailable".to_owned())
@@ -811,7 +812,7 @@ fn a_retention_store_that_cannot_accept_the_call_refuses_before_the_backend_runs
     std::fs::write(&evidence, b"not a directory").expect("occupy the path");
 
     assert_eq!(
-        serve_one_full(&proxy, "nonce-transparency-prereserve-1"),
+        serve_one_full(&proxy, &unique_test_nonce()),
         (
             503,
             Some("mcp-re.evidence_retention_unavailable".to_owned())
@@ -878,7 +879,7 @@ fn a_success_whose_evidence_cannot_be_kept_after_execution_is_refused_on_both_ex
         Arc::new(EvidenceRetention::open(&bodied_evidence).expect("open retention"));
     let bodied = build_server_breaking_store_on_dispatch(bodied_retention, bodied_evidence);
     assert_eq!(
-        serve_one_full(&bodied, "nonce-transparency-indeterminate-bodied-1"),
+        serve_one_full(&bodied, &unique_test_nonce()),
         (
             500,
             Some("mcp-re.evidence_retention_indeterminate".to_owned())
@@ -894,7 +895,7 @@ fn a_success_whose_evidence_cannot_be_kept_after_execution_is_refused_on_both_ex
     assert_eq!(
         serve_one_notification(
             &notification,
-            "nonce-transparency-indeterminate-notification-1"
+            &unique_test_nonce()
         ),
         500,
         "a 202 here would acknowledge a call the deployment cannot account for"
@@ -978,7 +979,7 @@ fn a_chain_with_no_verified_hop_is_still_attested() {
     let retention =
         Arc::new(EvidenceRetention::open(scratch.join("evidence")).expect("open retention"));
     let proxy = build_server(Some(Arc::clone(&retention)));
-    assert_eq!(serve_one(&proxy, "nonce-transparency-unverified-1"), 200);
+    assert_eq!(serve_one(&proxy, &unique_test_nonce()), 200);
 
     let name = std::fs::read_dir(scratch.join("evidence"))
         .expect("dir")
@@ -1253,7 +1254,7 @@ fn served_archive(name: &str, nonce: &str) -> (Scratch, Arc<EvidenceRetention>, 
 #[test]
 fn the_auditor_binary_turns_a_served_call_into_a_verifiable_attestation() {
     let (scratch, retention, token) =
-        served_archive("auditor-vertical", "nonce-transparency-auditor-vertical-1");
+        served_archive("auditor-vertical", &unique_test_nonce());
     // The retention handle owns a writer thread; the child process opens the same
     // directory, so drop ours first and audit what is on disk.
     drop(retention);
@@ -1333,7 +1334,7 @@ fn the_auditor_binary_audits_an_archive_it_cannot_write_to() {
     use std::os::unix::fs::PermissionsExt;
     let (scratch, retention, token) = served_archive(
         "auditor-read-only",
-        "nonce-transparency-auditor-read-only-1",
+        &unique_test_nonce(),
     );
     drop(retention);
     let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
@@ -1391,7 +1392,7 @@ fn the_serving_constructor_still_proves_the_archive_writable() {
 fn a_hop_the_archive_does_not_hold_is_refused_and_writes_nothing() {
     let (scratch, retention, token) = served_archive(
         "auditor-missing-hop",
-        "nonce-transparency-auditor-missing-hop-2",
+        &unique_test_nonce(),
     );
     drop(retention);
     let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
@@ -1416,7 +1417,7 @@ fn a_hop_the_archive_does_not_hold_is_refused_and_writes_nothing() {
 #[test]
 fn an_illegal_service_pin_refuses_the_audit() {
     let (scratch, retention, token) =
-        served_archive("auditor-bad-pin", "nonce-transparency-auditor-bad-pin-3");
+        served_archive("auditor-bad-pin", &unique_test_nonce());
     drop(retention);
 
     // An EdDSA pin carrying an EC2 `y` coordinate is a mislabelled key, and never becomes
@@ -1442,7 +1443,7 @@ fn an_illegal_service_pin_refuses_the_audit() {
 fn an_audit_posture_the_call_was_not_served_under_attests_an_incomplete_record() {
     let (scratch, retention, token) = served_archive(
         "auditor-wrong-posture",
-        "nonce-transparency-auditor-posture-4",
+        &unique_test_nonce(),
     );
     drop(retention);
 
@@ -1495,7 +1496,7 @@ fn an_audit_posture_the_call_was_not_served_under_attests_an_incomplete_record()
 #[test]
 fn a_tampered_archive_object_is_refused() {
     let (scratch, retention, token) =
-        served_archive("auditor-tampered", "nonce-transparency-auditor-tampered-5");
+        served_archive("auditor-tampered", &unique_test_nonce());
     drop(retention);
     let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
 
@@ -1766,7 +1767,7 @@ fn audit_and_register(
 fn a_receipt_under_a_revoked_service_key_is_not_recorded() {
     let (scratch, retention, token) = served_archive(
         "auditor-register-revoked-key",
-        "nonce-transparency-auditor-revoked-key-1",
+        &unique_test_nonce(),
     );
     drop(retention);
     let mut profile = audit_profile_json();
@@ -1812,7 +1813,7 @@ fn a_receipt_under_a_revoked_service_key_is_not_recorded() {
 fn the_auditor_binary_registers_a_statement_and_keeps_a_verified_receipt() {
     let artifact = audit_and_register(
         "auditor-register",
-        "nonce-transparency-auditor-register-1",
+        &unique_test_nonce(),
         ServiceMode::Synchronous,
     );
     assert_receipt_verifies_offline(&artifact);
@@ -1831,7 +1832,7 @@ fn the_auditor_binary_registers_a_statement_and_keeps_a_verified_receipt() {
 fn the_auditor_binary_registers_over_the_second_mechanism_and_records_which_one() {
     let artifact = audit_and_register(
         "auditor-register-capsule",
-        "nonce-transparency-auditor-register-capsule-1",
+        &unique_test_nonce(),
         ServiceMode::CapsuleAnchor,
     );
     assert_receipt_verifies_offline(&artifact);
@@ -1848,7 +1849,7 @@ fn the_auditor_binary_registers_over_the_second_mechanism_and_records_which_one(
 fn a_scrapi_registration_records_the_draft_revision_it_spoke() {
     let artifact = audit_and_register(
         "auditor-register-names-scrapi",
-        "nonce-transparency-auditor-register-names-scrapi-1",
+        &unique_test_nonce(),
         ServiceMode::Synchronous,
     );
     assert_eq!(
@@ -1911,7 +1912,7 @@ fn the_auditor_binary_registers_with_a_live_external_service() {
         .unwrap_or_else(|_| "capsule-anchor".to_owned());
 
     let (scratch, retention, token) =
-        served_archive("auditor-live", "nonce-transparency-auditor-live-1");
+        served_archive("auditor-live", &unique_test_nonce());
     drop(retention);
     let live_pin: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&pin_path).expect("the live pin is readable"))
@@ -1990,7 +1991,7 @@ fn the_auditor_binary_registers_with_a_live_external_service() {
 fn the_auditor_binary_polls_an_asynchronous_registration_to_its_receipt() {
     let artifact = audit_and_register(
         "auditor-register-async",
-        "nonce-transparency-auditor-register-async-2",
+        &unique_test_nonce(),
         ServiceMode::Asynchronous { pending: 2 },
     );
     assert_receipt_verifies_offline(&artifact);
@@ -2038,7 +2039,7 @@ fn assert_receipt_verifies_offline(
 #[test]
 fn a_failed_registration_leaves_the_attestation_behind() {
     let (scratch, retention, token) =
-        served_archive("auditor-register-down", "nonce-transparency-auditor-down-3");
+        served_archive("auditor-register-down", &unique_test_nonce());
     drop(retention);
     let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
 

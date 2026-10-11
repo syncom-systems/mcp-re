@@ -48,4 +48,5 @@ verify = true
 [dev-dependencies]
 hex = { workspace = true }
 zeroize = { workspace = true }
+mcp-re-test-paths = { path = "../mcp-re-test-paths" }
 

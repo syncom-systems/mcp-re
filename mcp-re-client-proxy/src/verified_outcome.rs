@@ -250,7 +250,7 @@ mod tests {
                 ArtifactType::OauthDpop,
                 b"access-token-under-test",
             )],
-            "nonce-1-padded-to-the-128-bit-floor",
+            mcp_re_test_paths::unique_test_nonce(),
             CREATED,
             EXPIRES,
         );

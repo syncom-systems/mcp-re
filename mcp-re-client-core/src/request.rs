@@ -340,6 +340,7 @@ mod evidence_precondition_tests {
     use mcp_re_http_profile::ArtifactBinding;
     use mcp_re_http_profile::ArtifactType;
     use mcp_re_http_profile::AudienceTuple;
+    use mcp_re_test_paths::unique_test_nonce;
 
     const TARGET: &str = "https://mcp.example.com/mcp?route=a";
 
@@ -356,7 +357,7 @@ mod evidence_precondition_tests {
             "client-key-1",
             audience(),
             bindings,
-            "nonce-1-padded-to-the-128-bit-floor",
+            unique_test_nonce(),
             1_000,
             1_300,
         )
@@ -485,21 +486,19 @@ mod evidence_precondition_tests {
         )
     }
 
-    const PADDED_NONCE: &str = "nonce-1-padded-to-the-128-bit-floor";
-
     #[test]
     fn a_target_uri_the_audience_does_not_name_is_refused_locally() {
         assert_eq!(
             sign_triple(
                 "https://mcp.example.com/mcp?route=b",
-                PADDED_NONCE,
+                &unique_test_nonce(),
                 1_000,
                 1_300
             )
             .err(),
             Some(HttpProfileError::AudienceMismatch)
         );
-        assert!(sign_triple(TARGET, PADDED_NONCE, 1_000, 1_300).is_ok());
+        assert!(sign_triple(TARGET, &unique_test_nonce(), 1_000, 1_300).is_ok());
     }
 
     #[test]
@@ -508,11 +507,11 @@ mod evidence_precondition_tests {
             "signature window expires at or before created",
         ));
         assert_eq!(
-            sign_triple(TARGET, PADDED_NONCE, 1_000, 1_000).err(),
+            sign_triple(TARGET, &unique_test_nonce(), 1_000, 1_000).err(),
             refused
         );
-        assert_eq!(sign_triple(TARGET, PADDED_NONCE, 1_000, 999).err(), refused);
-        assert!(sign_triple(TARGET, PADDED_NONCE, 1_000, 1_001).is_ok());
+        assert_eq!(sign_triple(TARGET, &unique_test_nonce(), 1_000, 999).err(), refused);
+        assert!(sign_triple(TARGET, &unique_test_nonce(), 1_000, 1_001).is_ok());
     }
 
     #[test]
@@ -552,8 +551,16 @@ mod notification_tests {
     use mcp_re_http_profile::AudienceTuple;
     use mcp_re_http_profile::HttpContinuation;
     use mcp_re_http_profile::RequestEvidenceDigest;
+    use mcp_re_test_paths::unique_test_nonce;
 
     const TARGET: &str = "https://mcp.example.com/mcp?route=a";
+
+    /// One nonce per test process: the byte-equality controls sign twice and compare, so
+    /// both signatures must name the same nonce; its value is never asserted.
+    fn nonce() -> &'static str {
+        static NONCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        NONCE.get_or_init(unique_test_nonce)
+    }
 
     fn inputs() -> RequestSigningInputs {
         RequestSigningInputs::new(
@@ -567,7 +574,7 @@ mod notification_tests {
                 ArtifactType::OauthDpop,
                 b"access-token",
             )],
-            "nonce-notification-1-padded-to-floor",
+            nonce(),
             1_000,
             1_300,
         )

@@ -195,7 +195,7 @@ fn signed_request() -> (HttpRequest, RequestRoleEvidence, VerifiedMcpRequest) {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "nonce-1",
+        &mcp_re_test_paths::unique_test_nonce(),
     )
     .expect("sign request");
     let verified = Verifier::new(&VerifierPolicy::default(), &resolver_client_only())

@@ -132,13 +132,9 @@ mod tests {
     use mcp_re_client_core::ArtifactType;
     use mcp_re_client_core::AudienceTuple;
     use mcp_re_core::SigningKey;
+    use mcp_re_test_paths::unique_test_nonce;
     use serde_json::json;
     use serde_json::Map;
-
-    /// 16 bytes base64url-no-pad: the carrier enforces the 128-bit entropy floor, so a
-    /// short label is refused rather than signed.
-    const NONCE: &str = "AAECAwQFBgcICQoLDA0ODw";
-    const OTHER_NONCE: &str = "EBESExQVFhcYGRobHB0eHw";
 
     fn host() -> HostSigner {
         HostSigner::new(
@@ -208,7 +204,7 @@ mod tests {
                 "https://example.test/mcp",
                 audience(),
                 bindings(),
-                NONCE,
+                &unique_test_nonce(),
                 1_700_000_000,
                 1_700_000_060,
             )
@@ -234,7 +230,7 @@ mod tests {
                 "https://example.test/mcp",
                 audience(),
                 bindings(),
-                OTHER_NONCE,
+                &unique_test_nonce(),
                 1_700_000_000,
                 1_700_000_060,
             )

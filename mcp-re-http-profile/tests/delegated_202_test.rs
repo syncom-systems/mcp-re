@@ -39,6 +39,7 @@ use mcp_re_http_profile::KEY_USE_RESPONSE_SIGNING;
 use mcp_re_http_profile::MAX_DELEGATION_HEADER_LEN;
 use mcp_re_http_profile::MCP_RE_DELEGATION_HEADER;
 use mcp_re_http_profile::PROFILE_TAG;
+use mcp_re_test_paths::unique_test_nonce;
 
 const CREATED: i64 = 1_700_000_000;
 const EXPIRES: i64 = 1_700_000_300;
@@ -186,7 +187,7 @@ fn sign_ack_with(note: &HttpRequest, credential: &str) -> mcp_re_http_profile::H
 
 #[test]
 fn a_delegated_202_verifies_via_the_credential_chain() {
-    let note = notification("n-ok");
+    let note = notification(&unique_test_nonce());
     let ack = sign_ack(&note);
 
     assert_eq!(ack.status, 202);
@@ -233,7 +234,7 @@ fn a_delegated_202_verifies_via_the_credential_chain() {
 /// server's delegated key acknowledge as this one.
 #[test]
 fn a_credential_scoped_to_a_principal_its_root_is_not_is_refused() {
-    let note = notification("n-other-principal");
+    let note = notification(&unique_test_nonce());
     let other = ActorIdentity {
         subject: "did:example:other-server".into(),
         ..server_signer()
@@ -258,7 +259,7 @@ fn a_credential_scoped_to_a_principal_its_root_is_not_is_refused() {
 /// exists to forbid. This is the load-bearing negative.
 #[test]
 fn a_credential_header_not_covered_is_rejected() {
-    let note = notification("n-uncov");
+    let note = notification(&unique_test_nonce());
     let mut ack = sign_ack(&note);
     for h in ack.headers.iter_mut() {
         if h.0.eq_ignore_ascii_case("signature-input") {
@@ -282,7 +283,7 @@ fn a_credential_header_not_covered_is_rejected() {
 /// The credential header absent entirely: delegation is required.
 #[test]
 fn a_missing_credential_header_is_rejected() {
-    let note = notification("n-miss");
+    let note = notification(&unique_test_nonce());
     let mut ack = sign_ack(&note);
     ack.headers
         .retain(|(k, _)| !k.eq_ignore_ascii_case(MCP_RE_DELEGATION_HEADER));
@@ -304,7 +305,7 @@ fn a_missing_credential_header_is_rejected() {
 /// error, not a pick-one.
 #[test]
 fn a_duplicated_credential_header_is_rejected() {
-    let note = notification("n-dup");
+    let note = notification(&unique_test_nonce());
     let mut ack = sign_ack(&note);
     let cred = ack
         .headers
@@ -332,7 +333,7 @@ fn a_duplicated_credential_header_is_rejected() {
 /// unbounded header is a memory/DoS surface.
 #[test]
 fn an_oversized_credential_header_is_rejected() {
-    let note = notification("n-big");
+    let note = notification(&unique_test_nonce());
     let mut ack = sign_ack(&note);
     for h in ack.headers.iter_mut() {
         if h.0.eq_ignore_ascii_case(MCP_RE_DELEGATION_HEADER) {
@@ -356,7 +357,7 @@ fn an_oversized_credential_header_is_rejected() {
 /// The revocation seam is live: a revoked delegated key is refused.
 #[test]
 fn a_revoked_delegated_key_is_rejected() {
-    let note = notification("n-rev");
+    let note = notification(&unique_test_nonce());
     let ack = sign_ack(&note);
     let revoked = |id: &str| id == DELEGATED_KID;
     assert_eq!(
@@ -383,8 +384,8 @@ fn a_revoked_delegated_key_is_rejected() {
 /// `a_delegated_202_refuses_a_retransmission_of_the_same_notification` below.
 #[test]
 fn a_delegated_202_refuses_a_content_distinct_notification() {
-    let note_a = notification_method("n-a", "notifications/initialized");
-    let note_b = notification_method("n-b", "notifications/cancelled");
+    let note_a = notification_method(&unique_test_nonce(), "notifications/initialized");
+    let note_b = notification_method(&unique_test_nonce(), "notifications/cancelled");
     let ack_a = sign_ack(&note_a);
     verify_delegated_accepted_202(
         &ack_a,
@@ -417,8 +418,8 @@ fn a_delegated_202_refuses_a_content_distinct_notification() {
 /// later transmission the server in fact refused as a replay.
 #[test]
 fn a_delegated_202_refuses_a_retransmission_of_the_same_notification() {
-    let a = notification("n-transmission-a");
-    let a_prime = notification("n-transmission-a-prime");
+    let a = notification(&unique_test_nonce());
+    let a_prime = notification(&unique_test_nonce());
     assert_eq!(
         a.body, a_prime.body,
         "the two transmissions are content-identical"
@@ -456,8 +457,8 @@ fn a_delegated_202_refuses_a_retransmission_of_the_same_notification() {
 #[test]
 fn a_delegated_202_refuses_a_forged_request_evidence_header() {
     const NAME: &str = "mcp-re-request-evidence";
-    let a = notification("n-forge-a");
-    let a_prime = notification("n-forge-a-prime");
+    let a = notification(&unique_test_nonce());
+    let a_prime = notification(&unique_test_nonce());
     let ack_a = sign_ack(&a);
     let ack_a_prime = sign_ack(&a_prime);
     verify_delegated_accepted_202(
@@ -503,7 +504,7 @@ fn a_delegated_202_refuses_a_forged_request_evidence_header() {
 /// A wrong trust epoch is refused (the credential's epoch must be accepted).
 #[test]
 fn a_stale_trust_epoch_is_rejected() {
-    let note = notification("n-epoch");
+    let note = notification(&unique_test_nonce());
     let ack = sign_ack(&note);
     assert_eq!(
         verify_delegated_accepted_202(
@@ -549,7 +550,7 @@ fn no_acknowledgement_is_signed_over_a_notification_carrying_an_invalid_block() 
 /// own signature window is checked before the credential is, through `check_params`.
 #[test]
 fn a_delegated_202_outside_its_signature_window_is_refused() {
-    let note = notification("n-stale");
+    let note = notification(&unique_test_nonce());
     let ack = sign_ack(&note);
     let stale = EXPIRES + VerifierPolicy::default().max_clock_skew() + 1;
     assert_eq!(

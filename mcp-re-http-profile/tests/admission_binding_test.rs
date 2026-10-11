@@ -35,6 +35,7 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
+use mcp_re_test_paths::unique_test_nonce;
 
 const NOW: i64 = 1_700_000_100;
 const CREATED: i64 = 1_700_000_000;
@@ -150,7 +151,7 @@ fn signed_request_with_admission(claims: Option<&AdmissionClaims>) -> HttpReques
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-adm",
+        &unique_test_nonce(),
     )
     .expect("signs");
     req

@@ -502,7 +502,7 @@ mod delegated_tests {
             CLIENT_KEY_ID.to_string(),
             audience(),
             bindings(),
-            "nonce-1-padded-to-the-128-bit-floor",
+            mcp_re_test_paths::unique_test_nonce(),
             CREATED,
             EXPIRES,
         );
@@ -799,7 +799,7 @@ mod delegated_tests {
             CLIENT_KEY_ID.to_string(),
             audience(),
             bindings(),
-            "nonce-2-padded-to-the-128-bit-floor",
+            mcp_re_test_paths::unique_test_nonce(),
             CREATED,
             EXPIRES,
         );
@@ -1156,7 +1156,7 @@ mod delegated_tests {
             CLIENT_KEY_ID.to_string(),
             audience(),
             bindings(),
-            "nonce-2-padded-to-the-128-bit-floor",
+            mcp_re_test_paths::unique_test_nonce(),
             CREATED,
             EXPIRES,
         );
@@ -1396,7 +1396,7 @@ mod delegated_tests {
             CLIENT_KEY_ID.to_string(),
             audience(),
             bindings(),
-            "nonce-skew-padded-to-the-128-bit-floor",
+            mcp_re_test_paths::unique_test_nonce(),
             CREATED,
             NOW + 100_000,
         );
@@ -1535,7 +1535,7 @@ mod delegated_tests {
             CLIENT_KEY_ID.to_string(),
             audience(),
             bindings(),
-            "nonce-202-padded-to-the-128-bit-floor",
+            mcp_re_test_paths::unique_test_nonce(),
             CREATED,
             EXPIRES,
         );
@@ -1623,7 +1623,7 @@ mod delegated_tests {
             CLIENT_KEY_ID.to_string(),
             audience(),
             bindings(),
-            "nonce-rot-padded-to-the-128-bit-floor",
+            mcp_re_test_paths::unique_test_nonce(),
             CREATED,
             NOW + 600,
         );

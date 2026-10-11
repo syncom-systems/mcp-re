@@ -81,7 +81,7 @@ fn verified_as(subject: &str, keyid: &str) -> mcp_re_http_profile::VerifiedMcpRe
         keyid,
         1_700_000_000,
         1_700_000_300,
-        "n",
+        &mcp_re_test_paths::unique_test_nonce(),
     )
     .expect("the e2e request signs");
     let public = key.public_key();

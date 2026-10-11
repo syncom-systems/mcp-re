@@ -254,7 +254,7 @@ fn served(req: &HttpRequest) -> ServedHttpRequest {
 async fn a_duplicate_member_name_is_never_forwarded() {
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
     let p = proxy(Arc::clone(&seen));
-    let req = signed_request_with_members("n-dup", r#""a":1,"a":2"#);
+    let req = signed_request_with_members(&mcp_re_test_paths::unique_test_nonce(), r#""a":1,"a":2"#);
 
     let out = p.handle(served(&req), NOW).await;
 
@@ -276,7 +276,10 @@ async fn a_duplicate_member_name_is_never_forwarded() {
 async fn a_number_the_f64_carrier_rewrites_is_never_forwarded() {
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
     let p = proxy(Arc::clone(&seen));
-    let req = signed_request_with_members("n-num", r#""amount":1234567890123456789.5"#);
+    let req = signed_request_with_members(
+        &mcp_re_test_paths::unique_test_nonce(),
+        r#""amount":1234567890123456789.5"#,
+    );
 
     let out = p.handle(served(&req), NOW).await;
 
@@ -294,7 +297,10 @@ async fn a_number_the_f64_carrier_rewrites_is_never_forwarded() {
 async fn an_ordinary_body_still_forwards_unaltered() {
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
     let p = proxy(Arc::clone(&seen));
-    let req = signed_request_with_members("n-ok", r#""a":1,"nested":{"a":2},"amount":12.5"#);
+    let req = signed_request_with_members(
+        &mcp_re_test_paths::unique_test_nonce(),
+        r#""a":1,"nested":{"a":2},"amount":12.5"#,
+    );
 
     let out = p.handle(served(&req), NOW).await;
 

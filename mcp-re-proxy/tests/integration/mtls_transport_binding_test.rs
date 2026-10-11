@@ -254,7 +254,7 @@ fn signed_request_bound_to_cert(bound_cert_der: &[u8]) -> HttpRequest {
         CLIENT_KEY_ID,
         1_000,
         1_000 + 300,
-        "nonce-mtls-1",
+        &mcp_re_test_paths::unique_test_nonce(),
     )
     .expect("sign request");
     request

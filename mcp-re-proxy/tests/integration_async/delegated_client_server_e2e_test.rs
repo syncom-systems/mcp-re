@@ -486,7 +486,11 @@ fn params(nonce: &str) -> CallParams<'static> {
 fn plain_client_round_trips_through_delegated_required_server() {
     let proxy = client_proxy(build_server());
     let out = proxy
-        .handle("r1", &plain_request(), &params("nonce-e2e-1"))
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect("full delegated round-trip succeeds");
     assert_eq!(out.kind, ResponseKind::Success);
     // The local client gets PLAIN MCP back — an ordinary result, no MCP-RE field.
@@ -501,7 +505,7 @@ fn replayed_request_yields_a_verified_delegated_rejection() {
     // One server instance shared across both calls (its replay cache sees the repeat).
     let proxy = client_proxy(build_server());
     // Same nonce twice ⇒ the second is a byte-identical replay.
-    let p = params("nonce-e2e-replay");
+    let p = params(&mcp_re_test_paths::unique_test_nonce());
     let first = proxy.handle("r1", &plain_request(), &p).expect("first ok");
     assert_eq!(first.kind, ResponseKind::Success);
 
@@ -604,7 +608,7 @@ fn a_pin_on_the_root_issuer_kid_verifies() {
         .build()
         .expect("rt");
     let server = build_server();
-    let (signed, response) = one_exchange(&server, &rt, "nonce-pin-ok", NOW);
+    let (signed, response) = one_exchange(&server, &rt, &mcp_re_test_paths::unique_test_nonce(), NOW);
     let verified = verify_delegated_response(
         &response,
         &client_trust(),
@@ -629,7 +633,7 @@ fn a_pin_on_the_wrong_issuer_kid_fails_closed() {
         .build()
         .expect("rt");
     let server = build_server();
-    let (signed, response) = one_exchange(&server, &rt, "nonce-pin-wrong", NOW);
+    let (signed, response) = one_exchange(&server, &rt, &mcp_re_test_paths::unique_test_nonce(), NOW);
     let err = verify_delegated_response(
         &response,
         &client_trust(),
@@ -684,7 +688,7 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
         Arc::clone(&wiring.signer),
     );
 
-    let (signed_a, response_a) = one_exchange(&server, &rt, "nonce-pin-rot-1", NOW);
+    let (signed_a, response_a) = one_exchange(&server, &rt, &mcp_re_test_paths::unique_test_nonce(), NOW);
     verify_delegated_response(
         &response_a,
         &client_trust(),
@@ -709,7 +713,8 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
         "the delegated kid must actually rotate"
     );
 
-    let (signed_b, response_b) = one_exchange(&server, &rt, "nonce-pin-rot-2", ROTATED_AT);
+    let (signed_b, response_b) =
+        one_exchange(&server, &rt, &mcp_re_test_paths::unique_test_nonce(), ROTATED_AT);
     let verified = verify_delegated_response(
         &response_b,
         &client_trust(),
@@ -736,7 +741,11 @@ fn an_accepted_request_emits_accepted_then_signed_with_the_resolved_actor() {
     let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
     let proxy = client_proxy(build_server().with_audit_sink(sink.clone()));
     let out = proxy
-        .handle("r1", &plain_request(), &params("nonce-audit-1"))
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect("round trip succeeds");
     assert_eq!(out.kind, ResponseKind::Success);
 
@@ -772,7 +781,11 @@ fn an_unconfigured_deployments_records_say_so_rather_than_claiming_an_authorizat
     let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
     let proxy = client_proxy(build_server().with_audit_sink(sink.clone()));
     proxy
-        .handle("r1", &plain_request(), &params("nonce-audit-facet-1"))
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect("round trip succeeds");
 
     let records = sink.records();
@@ -808,7 +821,7 @@ fn an_unconfigured_deployments_records_say_so_rather_than_claiming_an_authorizat
 fn a_replay_emits_exactly_one_rejection_carrying_the_frozen_wire_code() {
     let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
     let proxy = client_proxy(build_server().with_audit_sink(sink.clone()));
-    let p = params("nonce-audit-replay");
+    let p = params(&mcp_re_test_paths::unique_test_nonce());
     proxy.handle("r1", &plain_request(), &p).expect("first ok");
     let before = sink.records().len();
 
@@ -853,7 +866,11 @@ fn a_replay_emits_exactly_one_rejection_carrying_the_frozen_wire_code() {
 fn serving_without_an_audit_sink_still_round_trips() {
     let proxy = client_proxy(build_server());
     let out = proxy
-        .handle("r1", &plain_request(), &params("nonce-audit-none"))
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect("round trip succeeds with no sink installed");
     assert_eq!(out.kind, ResponseKind::Success);
 }
@@ -872,7 +889,11 @@ fn revoked_server_delegated_key_is_refused_by_client() {
     let revoked = StaticRevocationList::new().revoke(issued_kid);
     let proxy = client_proxy_with_revocation(server, Box::new(revoked));
     let err = proxy
-        .handle("r1", &plain_request(), &params("nonce-e2e-revoked"))
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect_err("delegated-required client refuses a revoked delegated key");
     // Still `delegation_revoked`, and the contrast with the ROOT-revocation rows is the
     // point. A revoked DELEGATED KEY is caught by the revocation seam AFTER the issuer
@@ -895,7 +916,11 @@ fn non_revoked_client_still_round_trips() {
         .revoke("unrelated-root");
     let proxy = client_proxy_with_revocation(build_server(), Box::new(revoked));
     let out = proxy
-        .handle("r1", &plain_request(), &params("nonce-e2e-allow"))
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect("a non-matching denylist does not block a valid delegated response");
     assert_eq!(out.kind, ResponseKind::Success);
     assert_eq!(out.plain_response["result"]["ok"], json!(true));
@@ -917,7 +942,11 @@ fn a_manifest_published_root_verifies_a_real_round_trip() {
     let issuers = issuers_from_signed_manifest(&floor.0, 1, false);
     let proxy = client_proxy_anchored(build_server(), issuers);
     let out = proxy
-        .handle("r1", &plain_request(), &params("nonce-manifest-ok"))
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect("a manifest-published root verifies the delegated response");
     assert_eq!(out.kind, ResponseKind::Success);
     assert_eq!(out.plain_response["result"]["ok"], json!(true));
@@ -939,7 +968,11 @@ fn a_manifest_revoked_root_fails_the_round_trip_closed() {
     let issuers = issuers_from_signed_manifest(&floor.0, 1, true);
     let proxy = client_proxy_anchored(build_server(), issuers);
     let err = proxy
-        .handle("r1", &plain_request(), &params("nonce-manifest-revoked"))
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect_err("a manifest-revoked root must fail closed");
     assert_eq!(
         err.wire_code(),
@@ -958,7 +991,11 @@ fn an_anchored_route_verifies_the_signed_202_that_acknowledges_a_notification() 
     let issuers = issuers_from_signed_manifest(&floor.0, 1, false);
     let proxy = client_proxy_anchored(build_server(), issuers);
     let out = proxy
-        .handle("r1", &plain_notification(), &params("nonce-anchored-202"))
+        .handle(
+            "r1",
+            &plain_notification(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect("the signed 202 verifies against the manifest-published root");
     assert_eq!(out.kind, ResponseKind::AcceptedNotification);
     assert_eq!(
@@ -981,7 +1018,7 @@ fn a_manifest_revoked_root_refuses_the_notification_acknowledgement_too() {
         .handle(
             "r1",
             &plain_notification(),
-            &params("nonce-anchored-202-rev"),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
         )
         .expect_err("a revoked root must not acknowledge a notification");
     assert_eq!(err.wire_code(), Some("mcp-re.delegation_issuer_untrusted"));
@@ -1001,7 +1038,11 @@ fn a_replayed_older_manifest_cannot_un_revoke_a_root() {
     let proxy = client_proxy_anchored(build_server(), revoked_issuers);
     assert_eq!(
         proxy
-            .handle("r1", &plain_request(), &params("nonce-rollback-1"))
+            .handle(
+                "r1",
+                &plain_request(),
+                &params(&mcp_re_test_paths::unique_test_nonce())
+            )
             .expect_err("v2 revoked the root")
             .wire_code(),
         Some("mcp-re.delegation_issuer_untrusted"),

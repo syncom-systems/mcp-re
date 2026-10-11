@@ -414,7 +414,7 @@ mod tests {
             "client-key-1",
             1_700_000_000,
             1_700_000_300,
-            "nonce-1",
+            &mcp_re_test_paths::unique_test_nonce(),
         )
         .expect("request signs");
         sign_delegated_response_full_with_owned_key(
@@ -467,7 +467,7 @@ mod tests {
             "client-key-1",
             1_700_000_000,
             1_700_000_300,
-            "nonce-1",
+            &mcp_re_test_paths::unique_test_nonce(),
         )
         .expect("request signs");
         signer.keyid = "another-kid".to_owned();
@@ -525,7 +525,7 @@ mod tests {
             "client-key-1",
             1_700_000_000,
             1_700_000_300,
-            "nonce-1",
+            &mcp_re_test_paths::unique_test_nonce(),
         )
         .expect_err("refused");
         assert_eq!(
@@ -554,7 +554,7 @@ mod tests {
                 "client-key-1",
                 1_700_000_000,
                 1_700_000_300,
-                "nonce-1",
+                &mcp_re_test_paths::unique_test_nonce(),
             )
             .expect_err("refused");
             assert_eq!(

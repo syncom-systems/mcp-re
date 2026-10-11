@@ -29,6 +29,7 @@ use std::sync::Arc;
 use mcp_re_core::b64url_decode;
 use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
+use mcp_re_test_paths::unique_test_nonce;
 use mcp_re_http_profile::authoritative_admission::record::issue_admission_state_record;
 use mcp_re_http_profile::authoritative_admission::record::AdmissionStateClaims;
 use mcp_re_http_profile::authoritative_admission::record::AdmissionStateCurrentness;
@@ -498,7 +499,7 @@ fn an_admitted_workload_is_still_refused_by_a_denying_policy() {
     )
     .with_authorization(Arc::new(RefusesEverything));
     let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
-    let req = signed_call(Some((&claims, &authority_key())), "n-admitted-unauthorized");
+    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
 
     let served = block_on(proxy.handle(served_of(&req), NOW));
     assert_eq!(served.status, 403);
@@ -526,7 +527,7 @@ fn a_current_admitted_workload_is_served() {
         Arc::clone(&calls),
     );
     let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
-    let req = signed_call(Some((&claims, &authority_key())), "n-ok");
+    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
 
     let served = block_on(proxy.handle(served_of(&req), NOW));
     assert_eq!(
@@ -559,7 +560,7 @@ fn an_assertion_issued_to_another_actor_does_not_admit_this_caller() {
     );
     let mut claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
     claims.mcp_re_admitted_actor = "client:example.com:did:example:host-b:client-key-2".into();
-    let req = signed_call(Some((&claims, &authority_key())), "n-borrowed");
+    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
 
     let served = block_on(proxy.handle(served_of(&req), NOW));
     assert_eq!(
@@ -588,7 +589,7 @@ fn a_superseded_generation_is_refused_before_the_backend_runs() {
         Arc::clone(&calls),
     );
     let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
-    let req = signed_call(Some((&claims, &authority_key())), "n-stale");
+    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
 
     let served = block_on(proxy.handle(served_of(&req), NOW));
     assert_eq!(served.status, 403);
@@ -615,7 +616,7 @@ fn an_admission_refusal_is_recorded_as_the_gates_refusal() {
     )
     .with_audit_sink(sink.clone());
     let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
-    let req = signed_call(Some((&claims, &authority_key())), "n-refused-facet");
+    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
 
     let served = block_on(proxy.handle(served_of(&req), NOW));
     assert_eq!(served.status, 403);
@@ -674,14 +675,14 @@ fn a_refused_admission_names_which_fact_refused_it_in_the_record() {
     let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
 
     // Nothing published: the authority has nothing to say about this workload.
-    let absent = refusal_classes_for(Arc::new(admission_store()), Some(&claims), "n-absent");
+    let absent = refusal_classes_for(Arc::new(admission_store()), Some(&claims), &unique_test_nonce());
     assert_eq!(absent, vec![Some(Class::NoRecord)]);
 
     // Something published that the authority did not sign.
     let forged = Arc::new(admission_store());
     forged.publish(WORKLOAD, "not-a-record".to_owned());
     assert_eq!(
-        refusal_classes_for(forged, Some(&claims), "n-forged"),
+        refusal_classes_for(forged, Some(&claims), &unique_test_nonce()),
         vec![Some(Class::RecordRefused(Bad::Malformed))]
     );
 
@@ -689,13 +690,13 @@ fn a_refused_admission_names_which_fact_refused_it_in_the_record() {
     let moved_on = Arc::new(admission_store());
     publish_admitted(&moved_on, 6);
     assert_eq!(
-        refusal_classes_for(moved_on, Some(&claims), "n-superseded"),
+        refusal_classes_for(moved_on, Some(&claims), &unique_test_nonce()),
         vec![Some(Class::NotCurrent)]
     );
 
     // The deployment requires admission and the call presented none.
     assert_eq!(
-        refusal_classes_for(Arc::new(admission_store()), None, "n-none"),
+        refusal_classes_for(Arc::new(admission_store()), None, &unique_test_nonce()),
         vec![Some(Class::NoEvidence)]
     );
 }
@@ -713,7 +714,7 @@ fn a_revoked_workload_is_refused_though_its_assertion_is_still_valid() {
         Arc::clone(&calls),
     );
     let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
-    let req = signed_call(Some((&claims, &authority_key())), "n-revoked");
+    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
 
     let served = block_on(proxy.handle(served_of(&req), NOW));
     assert_eq!(served.status, 403);
@@ -741,7 +742,7 @@ fn an_unknown_workload_is_refused_not_routed_into_degraded_mode() {
         Arc::clone(&calls),
     );
     let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
-    let req = signed_call(Some((&claims, &authority_key())), "n-unknown");
+    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
 
     let served = block_on(proxy.handle(served_of(&req), NOW));
     assert_eq!(served.status, 403);
@@ -762,7 +763,7 @@ fn an_unreachable_authority_fails_closed_by_default() {
         Arc::clone(&calls),
     );
     let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
-    let req = signed_call(Some((&claims, &authority_key())), "n-outage");
+    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
 
     let served = block_on(proxy.handle(served_of(&req), NOW));
     assert_eq!(served.status, 403);
@@ -811,7 +812,7 @@ fn a_degraded_serve_and_a_live_confirmed_one_are_different_records() {
         block_on(proxy.handle(
             served_of(&signed_call(
                 Some((&confirmed, &authority_key())),
-                "n-facet-live",
+                &unique_test_nonce(),
             )),
             NOW,
         ))
@@ -825,7 +826,7 @@ fn a_degraded_serve_and_a_live_confirmed_one_are_different_records() {
         block_on(proxy.handle(
             served_of(&signed_call(
                 Some((&fresh, &authority_key())),
-                "n-facet-degraded",
+                &unique_test_nonce(),
             )),
             NOW + 60,
         ))
@@ -880,7 +881,7 @@ fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
     let served = block_on(proxy.handle(
         served_of(&signed_call(
             Some((&confirmed, &authority_key())),
-            "n-degraded-confirm",
+            &unique_test_nonce(),
         )),
         NOW,
     ));
@@ -893,7 +894,7 @@ fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
     let served = block_on(proxy.handle(
         served_of(&signed_call(
             Some((&fresh, &authority_key())),
-            "n-degraded-in",
+            &unique_test_nonce(),
         )),
         NOW + 60,
     ));
@@ -913,7 +914,7 @@ fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
     let served = block_on(proxy.handle(
         served_of(&signed_call(
             Some((&just_issued, &authority_key())),
-            "n-degraded-out",
+            &unique_test_nonce(),
         )),
         NOW + 160,
     ));
@@ -951,7 +952,7 @@ fn a_replica_that_never_reached_the_authority_does_not_enter_degraded_mode() {
     let served = block_on(proxy.handle(
         served_of(&signed_call(
             Some((&fresh, &authority_key())),
-            "n-never-read",
+            &unique_test_nonce(),
         )),
         NOW,
     ));
@@ -967,7 +968,7 @@ fn a_replica_that_never_reached_the_authority_does_not_enter_degraded_mode() {
 
 #[test]
 fn a_call_without_admission_evidence_is_refused_when_required_and_served_when_optional() {
-    let claims_free = signed_call(None, "n-none");
+    let claims_free = signed_call(None, &unique_test_nonce());
 
     let calls = Arc::new(AtomicUsize::new(0));
     let strict = replica(
@@ -1013,7 +1014,7 @@ fn an_assertion_from_an_untrusted_authority_is_refused() {
     );
     let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
     // Signed by the RESPONSE-signing root, which is trusted — for responses.
-    let req = signed_call(Some((&claims, &root_key())), "n-foreign");
+    let req = signed_call(Some((&claims, &root_key())), &unique_test_nonce());
 
     let served = block_on(proxy.handle(served_of(&req), NOW));
     assert_eq!(served.status, 403);
@@ -1048,7 +1049,7 @@ fn a_revocation_on_the_shared_source_is_honoured_by_a_replica_that_never_saw_the
 
     // A serves the workload happily.
     let served = block_on(replica_a.handle(
-        served_of(&signed_call(Some((&claims, &authority_key())), "n-a-1")),
+        served_of(&signed_call(Some((&claims, &authority_key())), &unique_test_nonce())),
         NOW,
     ));
     assert_eq!(served.status, 200);
@@ -1057,7 +1058,7 @@ fn a_revocation_on_the_shared_source_is_honoured_by_a_replica_that_never_saw_the
     revoke(&source, 5);
 
     let served = block_on(replica_b.handle(
-        served_of(&signed_call(Some((&claims, &authority_key())), "n-b-1")),
+        served_of(&signed_call(Some((&claims, &authority_key())), &unique_test_nonce())),
         NOW,
     ));
     assert_eq!(served.status, 403);
@@ -1066,7 +1067,7 @@ fn a_revocation_on_the_shared_source_is_honoured_by_a_replica_that_never_saw_the
 
     // And A, which had already served it, refuses the next one too.
     let served = block_on(replica_a.handle(
-        served_of(&signed_call(Some((&claims, &authority_key())), "n-a-2")),
+        served_of(&signed_call(Some((&claims, &authority_key())), &unique_test_nonce())),
         NOW,
     ));
     assert_eq!(served.status, 403);
@@ -1092,7 +1093,7 @@ fn a_generation_ahead_of_the_authority_is_refused() {
         Arc::clone(&calls),
     );
     let claims = admission_claims(9, AdmissionStatus::Admitted, CREATED);
-    let req = signed_call(Some((&claims, &authority_key())), "n-ahead");
+    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
 
     let served = block_on(proxy.handle(served_of(&req), NOW));
     assert_eq!(served.status, 403);
@@ -1176,7 +1177,7 @@ fn source_revoked_workload_call(proxy: &HttpProfileProxy, calls: &Arc<AtomicUsiz
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-borrow",
+        &unique_test_nonce(),
     )
     .expect("signs");
 
@@ -1223,7 +1224,7 @@ fn degraded_replica_with_an_open_window(
     let served = block_on(proxy.handle(
         served_of(&signed_call(
             Some((&confirmed, &authority_key())),
-            "n-window-open",
+            &unique_test_nonce(),
         )),
         NOW,
     ));
@@ -1305,7 +1306,7 @@ fn a_record_minted_by_a_store_writer_is_refused_and_never_degraded() {
 
     let fresh = admission_claims(u64::MAX, AdmissionStatus::Admitted, NOW + 5);
     let served = block_on(proxy.handle(
-        served_of(&signed_call(Some((&fresh, &authority_key())), "n-minted")),
+        served_of(&signed_call(Some((&fresh, &authority_key())), &unique_test_nonce())),
         NOW + 10,
     ));
     assert_eq!(served.status, 403);
@@ -1353,7 +1354,7 @@ fn an_expired_authentic_record_on_a_reachable_store_is_refused_and_never_degrade
 
     let fresh = admission_claims(5, AdmissionStatus::Admitted, NOW + 5);
     let served = block_on(proxy.handle(
-        served_of(&signed_call(Some((&fresh, &authority_key())), "n-expired")),
+        served_of(&signed_call(Some((&fresh, &authority_key())), &unique_test_nonce())),
         NOW + 10,
     ));
     assert_eq!(served.status, 403);
@@ -1408,7 +1409,7 @@ fn restoring_a_revoked_workloads_old_admitted_record_does_not_restore_service() 
 
     let claims = admission_claims(5, AdmissionStatus::Admitted, NOW - 30);
     let served = block_on(proxy.handle(
-        served_of(&signed_call(Some((&claims, &authority_key())), "n-t0")),
+        served_of(&signed_call(Some((&claims, &authority_key())), &unique_test_nonce())),
         NOW,
     ));
     assert_eq!(served.status, 200, "t0: the workload is admitted");
@@ -1416,7 +1417,7 @@ fn restoring_a_revoked_workloads_old_admitted_record_does_not_restore_service() 
     // t1 — revocation, same generation, next publication.
     revoke(&source, 5);
     let served = block_on(proxy.handle(
-        served_of(&signed_call(Some((&claims, &authority_key())), "n-t1")),
+        served_of(&signed_call(Some((&claims, &authority_key())), &unique_test_nonce())),
         NOW + 1,
     ));
     assert_eq!(served.status, 403, "t1: the revocation is honoured");
@@ -1424,7 +1425,7 @@ fn restoring_a_revoked_workloads_old_admitted_record_does_not_restore_service() 
     // t2 — the old bytes restored verbatim. Genuine signature, genuine authority.
     source.publish(WORKLOAD, admitted);
     let served = block_on(proxy.handle(
-        served_of(&signed_call(Some((&claims, &authority_key())), "n-t2")),
+        served_of(&signed_call(Some((&claims, &authority_key())), &unique_test_nonce())),
         NOW + 2,
     ));
     assert_eq!(

@@ -12,7 +12,7 @@
     "theorem_id": "THM-0015",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G2.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G2.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -35,7 +35,7 @@
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:54ee88627c29f120fa7745e5b56cab2dc7be20b07a989eba81945142900f8956",
         "test_selection": "sha256:1ca55bdd420c03522c1554f62e6d59615e178668f002a7861300f3d3f890cb01",
-        "test_sources": "sha256:f0fc4638ed0d7ffe7017c88a7a696e4fd0b1eb38437e7b3393893f892fbab964",
+        "test_sources": "sha256:5af7813316f36ea290b2933f356da04588894eb2ac99dc3b42f685af40fe698d",
         "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "unit_id": "sha256:7dfee444926fc0f059e1db8a76975e23425c1b55035a31753bcd0f1ad45b0be1"
       },
@@ -91,11 +91,11 @@
         "mutation_probes": "sha256:a064664edf1a5fda7f1e9629ffe54312092c976bc14377363f180ccb2b8f278a",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:0dd061c4d35d4588d3b766bce9382e2d63aed324866c359349d5429385d8988b",
+        "source_inputs": "sha256:94e5f371371fd9cdfc5ac63dc1291732b34ac8fb149fc1e48184240cb79da92d",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:fbb16db7b49a006835d1cf536284e28ecbbb585dc03296e1b5937f6ada85f81e",
         "test_selection": "sha256:41fc5014d07dc15094b7245acbbd53ebbe036d5d3de94ceb67c7cfc5156581e3",
-        "test_sources": "sha256:043bb0c2e6145c7fea0b31b611d3e3599dbc126a96e093b30a7a095f305c44b1",
+        "test_sources": "sha256:f3d06c9966b49ef92ca8bc2f88d76404e1ab16ae774344b77ff6319b6bf27a06",
         "trusted_assumptions": "sha256:fcbc1e89a37acdf20f19ba064b306b6de39401dd1191f4f1111b5eb41eeedfa8",
         "unit_id": "sha256:975d49843af0c1c0a6b6c5fa209224f4c132ac57fbf39e6ca23a3620d3bebde4"
       }
@@ -109,7 +109,7 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:e7fddd9359971175b89e3aec55c759138b58dc386cd6d4825314be579f1f8c45",
+  "review_digest": "sha256:ac2deadb3290d86a6502976e02d2a312a52f42f3e4c1c47676215d9fc207db89",
   "reviewed_fingerprint": "sha256:8c665bf6363d6f554657b520e0e7d123829c12c4b00f12ecf03f881110bbfd62",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0015"

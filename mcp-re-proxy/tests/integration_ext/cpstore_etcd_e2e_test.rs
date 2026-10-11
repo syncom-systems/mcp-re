@@ -126,7 +126,7 @@ fn cross_node_insert_via_a_is_replay_via_b() {
         .as_secs() as i64;
     let expires_at = now + 600;
     let signer = "did:example:host#cpstore_cross_node_insert_via_a_is_replay_via_b";
-    let nonce = "nonce-69-cpstore-cross-node-insert-via-a-is-replay-via-b";
+    let nonce = &mcp_re_test_paths::unique_test_nonce();
 
     let rt = runtime();
     let node_a = node(&url);
@@ -162,7 +162,7 @@ fn single_node_fresh_then_replay() {
         .as_secs() as i64;
     let expires_at = now + 600;
     let signer = "did:example:host#cpstore_single_node_fresh_then_replay";
-    let nonce = "nonce-69-cpstore-single-node-fresh-then-replay";
+    let nonce = &mcp_re_test_paths::unique_test_nonce();
 
     let rt = runtime();
     let store = node(&url);
@@ -205,7 +205,7 @@ fn live_lease_ttl_is_bounded_window_not_absolute_epoch() {
     let window_secs: i64 = 600;
     let expires_at = now + window_secs;
     let signer = "did:example:host#cpstore_live_lease_ttl_bounded_window";
-    let nonce = "nonce-69-cpstore-live-lease-ttl-bounded-window";
+    let nonce = &mcp_re_test_paths::unique_test_nonce();
 
     let rt = runtime();
     let store = node(&url);

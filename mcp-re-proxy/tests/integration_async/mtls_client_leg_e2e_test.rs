@@ -495,7 +495,11 @@ fn signed_request_and_bound_response_survive_a_real_mtls_hop() {
     let proxy = client_proxy(transport);
 
     let response = proxy
-        .handle("r1", &plain_request(), &call_params("nonce-mtls-1"))
+        .handle(
+            "r1",
+            &plain_request(),
+            &call_params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect("the round trip verifies end to end");
 
     // A VERIFIED success: the client could only reach this by verifying the response
@@ -522,7 +526,7 @@ fn a_replay_returns_a_verified_rejection_receipt_over_the_real_hop() {
     let transport = mtls_transport(&client_ca, server_ca.cert.der().clone(), server.addr);
     let proxy = client_proxy(transport);
 
-    let params = call_params("nonce-mtls-replayed");
+    let params = call_params(&mcp_re_test_paths::unique_test_nonce());
     let first = proxy
         .handle("r1", &plain_request(), &params)
         .expect("first call verifies");
@@ -571,7 +575,11 @@ fn an_untrusted_server_certificate_stops_the_signed_request_at_the_client() {
     let transport = mtls_transport(&client_ca, server_ca.cert.der().clone(), server.addr);
     let proxy = client_proxy(transport);
 
-    let result = proxy.handle("r1", &plain_request(), &call_params("nonce-mtls-rogue"));
+    let result = proxy.handle(
+        "r1",
+        &plain_request(),
+        &call_params(&mcp_re_test_paths::unique_test_nonce()),
+    );
     match result {
         Err(mcp_re_client_proxy::transport::ProxyError::Transport(error)) => {
             assert!(

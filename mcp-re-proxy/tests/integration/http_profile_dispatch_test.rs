@@ -183,7 +183,7 @@ fn durable_cache() -> DurableTestCache {
 
 #[test]
 fn fleet_strict_refuses_redis_async_tier() {
-    let (_req, verified) = signed_and_verified("nonce-async");
+    let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
     let cache = durable_cache(); // durable cache: the core gate would pass...
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
@@ -200,7 +200,7 @@ fn fleet_strict_refuses_redis_async_tier() {
 
 #[test]
 fn fleet_strict_refuses_single_store_fail_closed_tier() {
-    let (_req, verified) = signed_and_verified("nonce-ssfc");
+    let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
     let cache = durable_cache();
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
@@ -217,7 +217,7 @@ fn fleet_strict_refuses_single_store_fail_closed_tier() {
 
 #[test]
 fn fleet_strict_refuses_undeclared_tier() {
-    let (_req, verified) = signed_and_verified("nonce-none");
+    let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
     let cache = durable_cache();
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
@@ -233,7 +233,7 @@ fn fleet_strict_refuses_undeclared_tier() {
 
 #[test]
 fn fleet_strict_admits_redis_wait_quorum_tier() {
-    let (_req, verified) = signed_and_verified("nonce-wq");
+    let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
     let cache = durable_cache();
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
@@ -249,7 +249,7 @@ fn fleet_strict_admits_redis_wait_quorum_tier() {
 
 #[test]
 fn fleet_strict_admits_linearizable_tier() {
-    let (_req, verified) = signed_and_verified("nonce-lin");
+    let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
     let cache = durable_cache();
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
@@ -263,7 +263,7 @@ fn fleet_strict_admits_linearizable_tier() {
 
 #[test]
 fn core_single_process_gate_fires_beneath_an_acceptable_tier() {
-    let (_req, verified) = signed_and_verified("nonce-defense");
+    let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
     // The operator DECLARES an acceptable tier (passes the upper gate)...
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
@@ -284,7 +284,7 @@ fn core_single_process_gate_fires_beneath_an_acceptable_tier() {
 fn non_fleet_strict_skips_the_tier_gate_but_keeps_core_admission() {
     // Without fleet-strict, a sub-minimum tier and a single-process cache are BOTH
     // acceptable (the deployment made no strict claim); the request still admits.
-    let (_req, verified) = signed_and_verified("nonce-lax");
+    let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
     let single_process = InMemoryReplayCache::new(no_skew());
     let cfg = ProxyDispatchConfig {
         fleet_strict: false,
@@ -309,7 +309,7 @@ fn http_profile_request_flows_verify_dispatch_serve_end_to_end() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "nonce-e2e",
+        &mcp_re_test_paths::unique_test_nonce(),
     )
     .expect("sign request");
     let verified_request = Verifier::new(&VerifierPolicy::default(), &resolver())
