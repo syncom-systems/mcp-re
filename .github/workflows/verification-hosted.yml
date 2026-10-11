@@ -18,6 +18,8 @@ on:
     paths:
       - ".github/workflows/verification-hosted.yml"
       - "scripts/install_pinned_verus.py"
+      - "scripts/prepare_python_matrix.sh"
+      - "verification/policy/**"
   workflow_dispatch:
 
 permissions:
