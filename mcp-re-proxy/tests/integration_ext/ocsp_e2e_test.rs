@@ -129,11 +129,12 @@ fn live_responder_reports_good_and_revoked_without_restart() {
 
     // Override the AIA URL with the env-provided responder so the test does not
     // depend on the leaf carrying an AIA entry (though the recipe bakes one in).
-    let checker = OcspChecker::new(Some(url.clone()));
+    // A responder URL may carry userinfo credentials, so no diagnostic below echoes it.
+    let checker = OcspChecker::new(Some(url));
 
     let good = checker
         .check(&good_der, &issuer_der)
-        .unwrap_or_else(|e| panic!("OCSP check of known-good cert against {url}: {e}"));
+        .unwrap_or_else(|e| panic!("OCSP check of known-good cert against the responder named by MCP_RE_TEST_OCSP_RESPONDER_URL: {e}"));
     // `Answered`, not merely `Good`: the live responder was reached, its signature
     // verified, and the answer bound to the CertID we asked about. A `Good` that nothing
     // earned is not constructible, which is what makes this assertion mean anything.
@@ -150,7 +151,7 @@ fn live_responder_reports_good_and_revoked_without_restart() {
     // now come back Revoked from the responder's index.
     let revoked = checker
         .check(&revoked_der, &issuer_der)
-        .unwrap_or_else(|e| panic!("OCSP check of known-revoked cert against {url}: {e}"));
+        .unwrap_or_else(|e| panic!("OCSP check of known-revoked cert against the responder named by MCP_RE_TEST_OCSP_RESPONDER_URL: {e}"));
     let RevocationEvidence::Answered(revoked_answer) = revoked else {
         panic!("the live responder must produce an ANSWER, not an unestablished result");
     };

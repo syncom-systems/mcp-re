@@ -38,22 +38,16 @@ use rcgen::RevokedCertParams;
 use rcgen::SanType;
 use rcgen::SerialNumber;
 
-use rustls::client::danger::HandshakeSignatureValid;
-use rustls::client::danger::ServerCertVerified;
-use rustls::client::danger::ServerCertVerifier;
 use rustls::crypto::ring;
 use rustls::ClientConfig;
 use rustls::ClientConnection;
-use rustls::DigitallySignedStruct;
 use rustls::RootCertStore;
-use rustls::SignatureScheme;
 use rustls::StreamOwned;
 use rustls_pki_types::CertificateDer;
 use rustls_pki_types::CertificateRevocationListDer;
 use rustls_pki_types::PrivateKeyDer;
 use rustls_pki_types::PrivatePkcs8KeyDer;
 use rustls_pki_types::ServerName;
-use rustls_pki_types::UnixTime;
 
 // ---------------------------------------------------------------------------
 // Test certificate authority + leaves (rcgen).
@@ -468,76 +462,24 @@ fn no_san_fails_closed_for_every_san_policy() {
 
 /// A client-side verifier that accepts any server certificate — the test server
 /// is self-presented and the client is only exercising mTLS client-auth.
-#[derive(Debug)]
-struct AcceptAnyServer;
-
-impl ServerCertVerifier for AcceptAnyServer {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp: &[u8],
-        _now: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
-    }
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
-    }
-}
-
 /// A client config that FULLY validates the server: rustls's stock WebPKI server
-/// verifier anchored at `server_ca_root` performs real chain building, validity,
+/// verifier anchored at `server_root` performs real chain building, validity,
 /// hostname (SAN), AND `CertificateVerify` signature verification — nothing is
-/// asserted. The delegated-TLS test uses this so the handshake completes only if
-/// the server cert chains to the test CA, matches `localhost`, AND the delegated
-/// Ed25519 signature over the transcript is cryptographically valid; a bogus
-/// delegated signature (or an untrusted/mismatched cert) FAILS the handshake,
-/// making the test genuinely load-bearing.
-fn client_config_validating(
-    server_ca_root: CertificateDer<'static>,
-    client_auth: (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>),
-) -> ClientConfig {
-    let mut roots = RootCertStore::empty();
-    roots.add(server_ca_root).expect("add server CA root");
-    let provider = Arc::new(ring::default_provider());
-    let (chain, key) = client_auth;
-    ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .expect("client protocol versions")
-        .with_root_certificates(roots)
-        .with_client_auth_cert(chain, key)
-        .expect("client auth cert")
-}
-
+/// asserted. A handshake completes only if the server cert chains to `server_root`,
+/// matches `localhost`, AND the signature over the transcript is cryptographically
+/// valid; the delegated-TLS tests rely on this so a bogus delegated signature (or an
+/// untrusted/mismatched cert) FAILS the handshake.
 fn client_config(
+    server_root: &CertificateDer<'static>,
     client_auth: Option<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)>,
 ) -> ClientConfig {
+    let mut roots = RootCertStore::empty();
+    roots.add(server_root.clone()).expect("add server CA root");
     let provider = Arc::new(ring::default_provider());
     let builder = ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .expect("client protocol versions")
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAnyServer));
+        .with_root_certificates(roots);
     match client_auth {
         Some((chain, key)) => builder
             .with_client_auth_cert(chain, key)
@@ -585,7 +527,9 @@ fn client_round_trip(
     Ok(response[pos..].to_vec())
 }
 
-fn server_config_for(ca: &Ca) -> Arc<rustls::ServerConfig> {
+/// The server configuration plus the DER of the CA that issued its leaf, which
+/// clients anchor their server verification at.
+fn server_config_for(ca: &Ca) -> (Arc<rustls::ServerConfig>, CertificateDer<'static>) {
     // Server presents its own leaf; the CLIENT-CA root is `ca` (the issuer of the
     // client certs we mint below).
     let server_ca = make_ca();
@@ -597,7 +541,7 @@ fn server_config_for(ca: &Ca) -> Arc<rustls::ServerConfig> {
     )
     .build_exported_key_config(vec![server_cert], server_key, Vec::new())
     .expect("server config");
-    Arc::new(config)
+    (Arc::new(config), server_ca.cert.der().clone())
 }
 
 /// As [`server_config_for`], but with offline CRL revocation enabled (#3839):
@@ -606,7 +550,7 @@ fn server_config_for(ca: &Ca) -> Arc<rustls::ServerConfig> {
 fn server_config_with_crls_for(
     ca: &Ca,
     crls: Vec<CertificateRevocationListDer<'static>>,
-) -> Arc<rustls::ServerConfig> {
+) -> (Arc<rustls::ServerConfig>, CertificateDer<'static>) {
     let server_ca = make_ca();
     let (server_cert, server_key) =
         make_leaf(&server_ca, vec![dns("localhost")], Some("localhost"), false);
@@ -616,13 +560,13 @@ fn server_config_with_crls_for(
     )
     .build_exported_key_config(vec![server_cert], server_key, crls)
     .expect("server config with crls");
-    Arc::new(config)
+    (Arc::new(config), server_ca.cert.der().clone())
 }
 
 #[test]
 fn mtls_round_trip_extracts_client_identity_and_serves_request() {
     let client_ca = make_ca();
-    let config = server_config_for(&client_ca);
+    let (config, server_root) = server_config_for(&client_ca);
     let (client_cert, client_key) = make_leaf(
         &client_ca,
         vec![uri("spiffe://example.org/agent-1")],
@@ -649,7 +593,7 @@ fn mtls_round_trip_extracts_client_identity_and_serves_request() {
 
     let response = client_round_trip(
         addr,
-        client_config(Some((vec![client_cert], client_key))),
+        client_config(&server_root, Some((vec![client_cert], client_key))),
         b"{\"jsonrpc\":\"2.0\"}",
     )
     .expect("client round trip");
@@ -797,10 +741,7 @@ fn delegated_ed25519_tls_handshake_round_trip() {
     // correctness end to end.
     let response = client_round_trip(
         addr,
-        client_config_validating(
-            server_ca.cert.der().clone(),
-            (vec![client_cert], client_key),
-        ),
+        client_config(server_ca.cert.der(), Some((vec![client_cert], client_key))),
         b"{\"jsonrpc\":\"2.0\"}",
     )
     .expect("client round trip over a delegated-signed handshake");
@@ -899,10 +840,7 @@ fn validated_delegated_build_round_trip_and_corrupted_sig_fails() {
 
     let response = client_round_trip(
         addr,
-        client_config_validating(
-            server_ca.cert.der().clone(),
-            (vec![client_cert], client_key),
-        ),
+        client_config(server_ca.cert.der(), Some((vec![client_cert], client_key))),
         b"{\"jsonrpc\":\"2.0\"}",
     )
     .expect("client round trip over the validated delegated handshake");
@@ -962,9 +900,9 @@ fn validated_delegated_build_round_trip_and_corrupted_sig_fails() {
     });
     let result = client_round_trip(
         addr2,
-        client_config_validating(
-            server_ca2.cert.der().clone(),
-            (vec![client_cert2], client_key2),
+        client_config(
+            server_ca2.cert.der(),
+            Some((vec![client_cert2], client_key2)),
         ),
         b"{\"jsonrpc\":\"2.0\"}",
     );
@@ -1027,7 +965,7 @@ fn validated_delegated_build_rejects_non_ed25519_leaf() {
 #[test]
 fn missing_client_certificate_is_rejected() {
     let client_ca = make_ca();
-    let config = server_config_for(&client_ca);
+    let (config, server_root) = server_config_for(&client_ca);
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -1042,7 +980,7 @@ fn missing_client_certificate_is_rejected() {
     });
 
     // Client presents NO certificate; the server requires one → fail closed.
-    let _ = client_round_trip(addr, client_config(None), b"{}");
+    let _ = client_round_trip(addr, client_config(&server_root, None), b"{}");
     let result = server.join().expect("join");
     assert!(
         result.is_err(),
@@ -1053,7 +991,7 @@ fn missing_client_certificate_is_rejected() {
 #[test]
 fn untrusted_client_certificate_is_rejected() {
     let client_ca = make_ca();
-    let config = server_config_for(&client_ca);
+    let (config, server_root) = server_config_for(&client_ca);
 
     // A client cert signed by a DIFFERENT CA than the server's client-CA root.
     let rogue_ca = make_ca();
@@ -1074,7 +1012,7 @@ fn untrusted_client_certificate_is_rejected() {
 
     let _ = client_round_trip(
         addr,
-        client_config(Some((vec![rogue_cert], rogue_key))),
+        client_config(&server_root, Some((vec![rogue_cert], rogue_key))),
         b"{}",
     );
     let result = server.join().expect("join");
@@ -1096,7 +1034,7 @@ fn error_body(bytes: &[u8]) -> String {
 #[test]
 fn over_long_client_cert_is_rejected() {
     let client_ca = make_ca();
-    let config = server_config_for(&client_ca);
+    let (config, server_root) = server_config_for(&client_ca);
     // Currently-valid but long-lived (2020..2035 ≈ 15y) cert.
     let (client_cert, client_key) = make_leaf_with_validity(
         &client_ca,
@@ -1116,7 +1054,7 @@ fn over_long_client_cert_is_rejected() {
     });
     let body = client_round_trip(
         addr,
-        client_config(Some((vec![client_cert], client_key))),
+        client_config(&server_root, Some((vec![client_cert], client_key))),
         b"{\"jsonrpc\":\"2.0\",\"id\":1}",
     )
     .expect("handshake succeeds; app-level rejection");
@@ -1131,7 +1069,7 @@ fn over_long_client_cert_is_rejected() {
 #[test]
 fn within_limit_client_cert_is_served() {
     let client_ca = make_ca();
-    let config = server_config_for(&client_ca);
+    let (config, server_root) = server_config_for(&client_ca);
     // A now-relative 1860s cert, well inside the 1h ceiling → served.
     let (client_cert, client_key) = make_leaf(
         &client_ca,
@@ -1150,7 +1088,7 @@ fn within_limit_client_cert_is_served() {
     });
     let body = client_round_trip(
         addr,
-        client_config(Some((vec![client_cert], client_key))),
+        client_config(&server_root, Some((vec![client_cert], client_key))),
         b"{\"jsonrpc\":\"2.0\",\"id\":1}",
     )
     .expect("round trip");
@@ -1177,7 +1115,7 @@ fn non_revoked_client_cert_completes_handshake_with_crl_configured() {
     let client_ca = make_ca();
     // The CRL revokes serial 0xBADBAD; this client uses a DIFFERENT serial.
     let crl = make_crl(&client_ca, &[0x00BA_DBAD]);
-    let config = server_config_with_crls_for(&client_ca, vec![crl]);
+    let (config, server_root) = server_config_with_crls_for(&client_ca, vec![crl]);
     let (client_cert, client_key) =
         make_client_leaf_with_serial(&client_ca, "spiffe://example.org/agent-good", 0x0000_0042);
 
@@ -1198,7 +1136,7 @@ fn non_revoked_client_cert_completes_handshake_with_crl_configured() {
 
     let response = client_round_trip(
         addr,
-        client_config(Some((vec![client_cert], client_key))),
+        client_config(&server_root, Some((vec![client_cert], client_key))),
         b"{\"jsonrpc\":\"2.0\"}",
     )
     .expect("non-revoked client round trip");
@@ -1220,7 +1158,7 @@ fn revoked_client_cert_handshake_is_rejected() {
         revoked_serial,
     );
     let crl = make_crl(&client_ca, &[revoked_serial]);
-    let config = server_config_with_crls_for(&client_ca, vec![crl]);
+    let (config, server_root) = server_config_with_crls_for(&client_ca, vec![crl]);
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -1238,7 +1176,7 @@ fn revoked_client_cert_handshake_is_rejected() {
     // verifier, so serve_once surfaces an error (the inner is never reached).
     let _ = client_round_trip(
         addr,
-        client_config(Some((vec![client_cert], client_key))),
+        client_config(&server_root, Some((vec![client_cert], client_key))),
         b"{\"jsonrpc\":\"2.0\"}",
     );
     let result = server.join().expect("join");
@@ -1262,7 +1200,7 @@ fn stale_crl_fails_client_handshake_closed() {
         make_client_leaf_with_serial(&client_ca, "spiffe://example.org/agent-good", 0x0000_0042);
     // Stale: thisUpdate 2020-01-01, nextUpdate 2020-06-01 — long in the past.
     let stale_crl = make_crl_full(&client_ca, &[0x00BA_DBAD], (2020, 1, 1), (2020, 6, 1));
-    let config = server_config_with_crls_for(&client_ca, vec![stale_crl]);
+    let (config, server_root) = server_config_with_crls_for(&client_ca, vec![stale_crl]);
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -1278,7 +1216,7 @@ fn stale_crl_fails_client_handshake_closed() {
 
     let _ = client_round_trip(
         addr,
-        client_config(Some((vec![client_cert], client_key))),
+        client_config(&server_root, Some((vec![client_cert], client_key))),
         b"{\"jsonrpc\":\"2.0\"}",
     );
     let result = server.join().expect("join");
@@ -1323,6 +1261,7 @@ fn a_client_whose_revocation_status_cannot_be_determined_is_denied() {
     .build_exported_key_config(vec![server_cert], server_key, vec![crl])
     .expect("server config trusting both client CAs");
     let config = Arc::new(config);
+    let server_root = server_ca.cert.der().clone();
 
     // The client is issued by the CA no CRL covers, and is not revoked by anything.
     let (client_cert, client_key) = make_client_leaf_with_serial(
@@ -1344,7 +1283,7 @@ fn a_client_whose_revocation_status_cannot_be_determined_is_denied() {
 
     let _ = client_round_trip(
         addr,
-        client_config(Some((vec![client_cert], client_key))),
+        client_config(&server_root, Some((vec![client_cert], client_key))),
         b"{\"jsonrpc\":\"2.0\"}",
     );
     let result = server.join().expect("join");

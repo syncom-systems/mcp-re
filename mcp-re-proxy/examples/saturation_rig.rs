@@ -146,6 +146,8 @@ struct Material {
     trust: PathBuf,
     client_leaf_der: PathBuf,
     client_key_der: PathBuf,
+    /// DER of the CA that issued the server leaf, which the generator verifies the proxy against.
+    server_ca_der: PathBuf,
 }
 
 /// Resolve a Bazel `data` dependency whose runfiles path the target's `env` names.
@@ -187,6 +189,7 @@ fn write_material() -> Material {
         trust: tmp("trust.json"),
         client_leaf_der: tmp("client_leaf.der"),
         client_key_der: tmp("client_key.der"),
+        server_ca_der: tmp("server_ca.der"),
     };
 
     let signer = SigningKey::from_seed_bytes(&[1u8; 32]);
@@ -197,6 +200,7 @@ fn write_material() -> Material {
     // DER for the generator, so it needs no PEM parser.
     std::fs::write(&m.client_leaf_der, client_leaf.der().as_ref()).expect("client leaf der");
     std::fs::write(&m.client_key_der, client_leaf_key.serialize_der()).expect("client key der");
+    std::fs::write(&m.server_ca_der, server_ca.cert.der().as_ref()).expect("server ca der");
 
     // The proxy refuses to start on a group/world-readable key.
     #[cfg(unix)]
@@ -451,6 +455,8 @@ fn run_generators(
                 &m.client_leaf_der.to_string_lossy(),
                 "--client-key",
                 &m.client_key_der.to_string_lossy(),
+                "--server-ca",
+                &m.server_ca_der.to_string_lossy(),
                 "--id",
                 &format!("g{g}"),
                 "--out",

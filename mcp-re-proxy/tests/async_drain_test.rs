@@ -40,20 +40,15 @@ use rcgen::KeyPair;
 use rcgen::KeyUsagePurpose;
 use rcgen::SanType;
 
-use rustls::client::danger::HandshakeSignatureValid;
-use rustls::client::danger::ServerCertVerified;
-use rustls::client::danger::ServerCertVerifier;
 use rustls::crypto::ring;
 use rustls::ClientConfig;
 use rustls::ClientConnection;
-use rustls::DigitallySignedStruct;
-use rustls::SignatureScheme;
+use rustls::RootCertStore;
 use rustls::StreamOwned;
 use rustls_pki_types::CertificateDer;
 use rustls_pki_types::PrivateKeyDer;
 use rustls_pki_types::PrivatePkcs8KeyDer;
 use rustls_pki_types::ServerName;
-use rustls_pki_types::UnixTime;
 
 const CLIENT_URI_SAN: &str = "spiffe://example.org/agent-1";
 
@@ -124,7 +119,9 @@ fn dns(value: &str) -> SanType {
     SanType::DnsName(value.try_into().expect("ia5 dns"))
 }
 
-fn server_config_for(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
+/// The server configuration plus the DER of the CA that issued its leaf, which
+/// clients anchor their server verification at.
+fn server_config_for(client_ca: &Ca) -> (Arc<rustls::ServerConfig>, CertificateDer<'static>) {
     let server_ca = make_ca();
     let (server_cert, server_key) = make_leaf(&server_ca, vec![dns("localhost")], false);
     let server_der = server_cert.der().clone();
@@ -135,57 +132,22 @@ fn server_config_for(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
     )
     .build_exported_key_config(vec![server_der], server_key_der, Vec::new())
     .expect("server config");
-    Arc::new(config)
+    (Arc::new(config), server_ca.cert.der().clone())
 }
 
 // --- blocking rustls client ---------------------------------------------------
 
-#[derive(Debug)]
-struct AcceptAnyServer;
-impl ServerCertVerifier for AcceptAnyServer {
-    fn verify_server_cert(
-        &self,
-        _e: &CertificateDer<'_>,
-        _i: &[CertificateDer<'_>],
-        _n: &ServerName<'_>,
-        _o: &[u8],
-        _t: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
-    }
-    fn verify_tls12_signature(
-        &self,
-        _m: &[u8],
-        _c: &CertificateDer<'_>,
-        _d: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-    fn verify_tls13_signature(
-        &self,
-        _m: &[u8],
-        _c: &CertificateDer<'_>,
-        _d: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
-    }
-}
-
-fn client_config(ca: &Ca) -> ClientConfig {
+fn client_config(ca: &Ca, server_root: &CertificateDer<'static>) -> ClientConfig {
     let (leaf, key) = make_leaf(ca, vec![uri(CLIENT_URI_SAN)], true);
     let chain = vec![leaf.der().clone()];
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
+    let mut roots = RootCertStore::empty();
+    roots.add(server_root.clone()).expect("add server CA root");
     let provider = Arc::new(ring::default_provider());
     ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .expect("client versions")
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAnyServer))
+        .with_root_certificates(roots)
         .with_client_auth_cert(chain, key_der)
         .expect("client auth")
 }
@@ -415,7 +377,7 @@ fn wait_until(timeout: Duration, mut cond: impl FnMut() -> bool) {
 #[test]
 fn in_flight_request_completes_during_drain_zero_abandoned() {
     let client_ca = make_ca();
-    let config = server_config_for(&client_ca);
+    let (config, server_root) = server_config_for(&client_ca);
     let entered = Arc::new(AtomicUsize::new(0));
     let entered_h = Arc::clone(&entered);
     // Generous grace so the drain waits for the in-flight request rather than cutting
@@ -433,7 +395,7 @@ fn in_flight_request_completes_during_drain_zero_abandoned() {
 
     // Fire one request; it enters the handler and is now in flight (holding).
     let addr = server.addr;
-    let client = client_config(&client_ca);
+    let client = client_config(&client_ca, &server_root);
     let status = std::thread::spawn(move || request_status(addr, &client, b"drain-me"));
     wait_until(Duration::from_secs(30), || {
         entered.load(Ordering::SeqCst) == 1
@@ -459,7 +421,7 @@ fn in_flight_request_completes_during_drain_zero_abandoned() {
 #[test]
 fn idle_drain_returns_promptly() {
     let client_ca = make_ca();
-    let config = server_config_for(&client_ca);
+    let (config, server_root) = server_config_for(&client_ca);
     // A long grace, but no in-flight requests → drain must return well under it.
     let server = spawn_server(
         config,
@@ -467,7 +429,8 @@ fn idle_drain_returns_promptly() {
         move |req, _id, _a| req.to_vec(),
     );
     // One completed request, then quiescent.
-    let status = request_status(server.addr, &client_config(&client_ca), b"hi").expect("request");
+    let status = request_status(server.addr, &client_config(&client_ca, &server_root), b"hi")
+        .expect("request");
     assert_eq!(status, 200);
 
     server.trigger_shutdown();
@@ -481,7 +444,7 @@ fn idle_drain_returns_promptly() {
 #[test]
 fn saturated_drain_completes_all_in_flight_zero_abandoned() {
     let client_ca = make_ca();
-    let config = server_config_for(&client_ca);
+    let (config, server_root) = server_config_for(&client_ca);
     let entered = Arc::new(AtomicUsize::new(0));
     let entered_h = Arc::clone(&entered);
     // Handlers hold their requests in flight for HANDLER_HOLD then return on their own
@@ -499,7 +462,7 @@ fn saturated_drain_completes_all_in_flight_zero_abandoned() {
     // Several concurrent in-flight requests.
     let n = 4;
     let addr = server.addr;
-    let client = client_config(&client_ca);
+    let client = client_config(&client_ca, &server_root);
     let mut clients = Vec::new();
     for i in 0..n {
         let client = client.clone();
@@ -529,7 +492,7 @@ fn saturated_drain_completes_all_in_flight_zero_abandoned() {
 #[test]
 fn stuck_request_cannot_delay_exit_past_grace() {
     let client_ca = make_ca();
-    let config = server_config_for(&client_ca);
+    let (config, server_root) = server_config_for(&client_ca);
     // Short grace; request_deadline LONGER than the grace, so the stalled body read is
     // still pending when the grace expires — proving the grace (not the request
     // deadline) is what bounds exit.
@@ -543,8 +506,13 @@ fn stuck_request_cannot_delay_exit_past_grace() {
     // Open a request that stalls in the async body-read phase (promises 100 bytes,
     // sends 1) and hold it open — an in-flight request that will not finish on its own
     // within the grace.
-    let _stalled =
-        open_stalled_body(server.addr, &client_config(&client_ca), 100, 1).expect("stalled open");
+    let _stalled = open_stalled_body(
+        server.addr,
+        &client_config(&client_ca, &server_root),
+        100,
+        1,
+    )
+    .expect("stalled open");
     // Let the server enter the body-read await for this request.
     std::thread::sleep(Duration::from_millis(150));
 
@@ -595,7 +563,7 @@ fn request_status_with_raw_header(
 #[test]
 fn a_non_utf8_header_value_is_refused_at_the_boundary() {
     let client_ca = make_ca();
-    let config = server_config_for(&client_ca);
+    let (config, server_root) = server_config_for(&client_ca);
     let reached = Arc::new(AtomicUsize::new(0));
     let reached_h = Arc::clone(&reached);
     let server = spawn_server(
@@ -607,7 +575,7 @@ fn a_non_utf8_header_value_is_refused_at_the_boundary() {
         },
     );
 
-    let client = client_config(&client_ca);
+    let client = client_config(&client_ca, &server_root);
     // A lone 0xFF is not valid UTF-8 in any position.
     let mut line = b"X-Covered-Ish: ".to_vec();
     line.push(0xFF);
@@ -628,7 +596,7 @@ fn a_non_utf8_header_value_is_refused_at_the_boundary() {
 #[test]
 fn a_duplicated_non_utf8_header_is_refused_rather_than_silently_deduplicated() {
     let client_ca = make_ca();
-    let config = server_config_for(&client_ca);
+    let (config, server_root) = server_config_for(&client_ca);
     let reached = Arc::new(AtomicUsize::new(0));
     let reached_h = Arc::clone(&reached);
     let server = spawn_server(
@@ -640,7 +608,7 @@ fn a_duplicated_non_utf8_header_is_refused_rather_than_silently_deduplicated() {
         },
     );
 
-    let client = client_config(&client_ca);
+    let client = client_config(&client_ca, &server_root);
     let mut line = b"X-Trusty: legitimate\r\nX-Trusty: ".to_vec();
     line.push(0x80); // a bare continuation byte — never valid on its own
     let status =
@@ -655,7 +623,7 @@ fn a_duplicated_non_utf8_header_is_refused_rather_than_silently_deduplicated() {
 #[test]
 fn ordinary_header_values_still_reach_the_handler() {
     let client_ca = make_ca();
-    let config = server_config_for(&client_ca);
+    let (config, server_root) = server_config_for(&client_ca);
     let reached = Arc::new(AtomicUsize::new(0));
     let reached_h = Arc::clone(&reached);
     let server = spawn_server(
@@ -667,7 +635,7 @@ fn ordinary_header_values_still_reach_the_handler() {
         },
     );
 
-    let client = client_config(&client_ca);
+    let client = client_config(&client_ca, &server_root);
     let status =
         request_status_with_raw_header(server.addr, &client, b"X-Plain: one\r\nX-Plain: two")
             .expect("the server answers");
@@ -702,7 +670,7 @@ fn ordinary_header_values_still_reach_the_handler() {
 #[test]
 fn a_request_abandoned_by_the_grace_never_reaches_the_handler() {
     let client_ca = make_ca();
-    let config = server_config_for(&client_ca);
+    let (config, server_root) = server_config_for(&client_ca);
     let entered = Arc::new(AtomicUsize::new(0));
     let entered_h = Arc::clone(&entered);
 
@@ -716,8 +684,13 @@ fn a_request_abandoned_by_the_grace_never_reaches_the_handler() {
         },
     );
 
-    let stalled =
-        open_stalled_body(server.addr, &client_config(&client_ca), 100, 1).expect("stalled open");
+    let stalled = open_stalled_body(
+        server.addr,
+        &client_config(&client_ca, &server_root),
+        100,
+        1,
+    )
+    .expect("stalled open");
     // Let the server reach the body-read await for this request, so it is genuinely
     // in flight when the grace starts.
     std::thread::sleep(Duration::from_millis(150));
@@ -763,7 +736,7 @@ fn a_request_abandoned_by_the_grace_never_reaches_the_handler() {
 #[test]
 fn the_handler_entry_counter_moves_for_a_request_that_is_not_abandoned() {
     let client_ca = make_ca();
-    let config = server_config_for(&client_ca);
+    let (config, server_root) = server_config_for(&client_ca);
     let entered = Arc::new(AtomicUsize::new(0));
     let entered_h = Arc::clone(&entered);
 
@@ -776,7 +749,8 @@ fn the_handler_entry_counter_moves_for_a_request_that_is_not_abandoned() {
         },
     );
 
-    let status = request_status(server.addr, &client_config(&client_ca), b"{}").expect("request");
+    let status = request_status(server.addr, &client_config(&client_ca, &server_root), b"{}")
+        .expect("request");
     assert_eq!(status, 200, "the ordinary request must be served");
     assert_eq!(
         entered.load(Ordering::SeqCst),
@@ -804,14 +778,14 @@ fn the_handler_entry_counter_moves_for_a_request_that_is_not_abandoned() {
 fn a_response_still_being_written_is_delivered_before_the_drain_ends() {
     const REPLY_BYTES: usize = 24 * 1024 * 1024;
     let client_ca = make_ca();
-    let config = server_config_for(&client_ca);
+    let (config, server_root) = server_config_for(&client_ca);
     let server = spawn_server(
         config,
         options_with_drain(Duration::from_secs(20), Duration::from_secs(20)),
         move |_req, _id, _a| vec![b'r'; REPLY_BYTES],
     );
 
-    let client = client_config(&client_ca);
+    let client = client_config(&client_ca, &server_root);
     let mut stream = tls_connect(server.addr, &client).expect("connect");
     let head =
         "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";

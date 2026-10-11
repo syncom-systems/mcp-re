@@ -54,20 +54,15 @@ use rcgen::KeyPair;
 use rcgen::KeyUsagePurpose;
 use rcgen::SanType;
 
-use rustls::client::danger::HandshakeSignatureValid;
-use rustls::client::danger::ServerCertVerified;
-use rustls::client::danger::ServerCertVerifier;
 use rustls::crypto::ring;
 use rustls::ClientConfig;
 use rustls::ClientConnection;
-use rustls::DigitallySignedStruct;
-use rustls::SignatureScheme;
+use rustls::RootCertStore;
 use rustls::StreamOwned;
 use rustls_pki_types::CertificateDer;
 use rustls_pki_types::PrivateKeyDer;
 use rustls_pki_types::PrivatePkcs8KeyDer;
 use rustls_pki_types::ServerName;
-use rustls_pki_types::UnixTime;
 
 // The harness below mirrors `tls_test.rs` so the faulted scenario is the same
 // scenario the guards run — only the control (and therefore the asserted outcome)
@@ -154,54 +149,20 @@ fn dns(value: &str) -> SanType {
     SanType::DnsName(value.try_into().expect("ia5 dns"))
 }
 
-/// A client-side verifier that accepts any server certificate — the test server
-/// is self-presented and we are only exercising the SERVER's client-auth control.
-#[derive(Debug)]
-struct AcceptAnyServer;
-
-impl ServerCertVerifier for AcceptAnyServer {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp: &[u8],
-        _now: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
-    }
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
-    }
-}
-
+/// A client that verifies the server against `server_root` (chain, validity,
+/// `localhost` SAN, handshake signature); the control under test is the SERVER's
+/// client-auth check.
 fn client_config(
+    server_root: &CertificateDer<'static>,
     client_auth: Option<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)>,
 ) -> ClientConfig {
+    let mut roots = RootCertStore::empty();
+    roots.add(server_root.clone()).expect("add server CA root");
     let provider = Arc::new(ring::default_provider());
     let builder = ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .expect("client protocol versions")
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAnyServer));
+        .with_root_certificates(roots);
     match client_auth {
         Some((chain, key)) => builder
             .with_client_auth_cert(chain, key)
@@ -249,7 +210,8 @@ fn client_round_trip(
 /// Build the proxy server config WITH the fault feature active. The proxy presents
 /// its own server leaf; `client_ca` is still parsed for config construction, but is
 /// ignored for client-auth verification (the faulted verifier accepts any client).
-fn server_config_for(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
+/// Also returns the DER of the CA that issued the server leaf, which clients trust.
+fn server_config_for(client_ca: &Ca) -> (Arc<rustls::ServerConfig>, CertificateDer<'static>) {
     let server_ca = make_ca();
     let (server_cert, server_key) =
         make_leaf(&server_ca, vec![dns("localhost")], Some("localhost"), false);
@@ -259,7 +221,7 @@ fn server_config_for(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
     )
     .build_exported_key_config(vec![server_cert], server_key, Vec::new())
     .expect("server config");
-    Arc::new(config)
+    (Arc::new(config), server_ca.cert.der().clone())
 }
 
 /// Negation of T1 (`missing_client_certificate_is_rejected`). With the
@@ -277,7 +239,7 @@ fn server_config_for(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
 #[test]
 fn fault_accept_any_client_makes_missing_client_cert_accepted() {
     let client_ca = make_ca();
-    let config = server_config_for(&client_ca);
+    let (config, server_root) = server_config_for(&client_ca);
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -293,8 +255,12 @@ fn fault_accept_any_client_makes_missing_client_cert_accepted() {
 
     // Client presents NO certificate. The verifying proxy requires one (T1);
     // the faulted proxy (client_auth_mandatory = false) does not.
-    let body = client_round_trip(addr, client_config(None), b"{\"jsonrpc\":\"2.0\"}")
-        .expect("with the fault, the handshake completes even with no client cert");
+    let body = client_round_trip(
+        addr,
+        client_config(&server_root, None),
+        b"{\"jsonrpc\":\"2.0\"}",
+    )
+    .expect("with the fault, the handshake completes even with no client cert");
     let served = server.join().expect("join");
 
     // THE CATCH DEMONSTRATION: with the control broken, the missing client cert is
@@ -324,7 +290,7 @@ fn fault_accept_any_client_makes_missing_client_cert_accepted() {
 #[test]
 fn fault_accept_any_client_makes_untrusted_client_cert_accepted() {
     let client_ca = make_ca();
-    let config = server_config_for(&client_ca);
+    let (config, server_root) = server_config_for(&client_ca);
 
     // A client cert signed by a DIFFERENT CA than the proxy's client-CA root.
     let rogue_ca = make_ca();
@@ -345,7 +311,7 @@ fn fault_accept_any_client_makes_untrusted_client_cert_accepted() {
 
     let body = client_round_trip(
         addr,
-        client_config(Some((vec![rogue_cert], rogue_key))),
+        client_config(&server_root, Some((vec![rogue_cert], rogue_key))),
         b"{\"jsonrpc\":\"2.0\"}",
     )
     .expect("with the fault, the handshake completes with an untrusted client cert");

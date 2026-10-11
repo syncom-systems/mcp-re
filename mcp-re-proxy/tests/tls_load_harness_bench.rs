@@ -118,20 +118,15 @@ use rcgen::KeyUsagePurpose;
 use rcgen::SanType;
 use rcgen::SerialNumber;
 
-use rustls::client::danger::HandshakeSignatureValid;
-use rustls::client::danger::ServerCertVerified;
-use rustls::client::danger::ServerCertVerifier;
 use rustls::crypto::ring;
 use rustls::ClientConfig;
 use rustls::ClientConnection;
-use rustls::DigitallySignedStruct;
-use rustls::SignatureScheme;
+use rustls::RootCertStore;
 use rustls::StreamOwned;
 use rustls_pki_types::CertificateDer;
 use rustls_pki_types::PrivateKeyDer;
 use rustls_pki_types::PrivatePkcs8KeyDer;
 use rustls_pki_types::ServerName;
-use rustls_pki_types::UnixTime;
 
 use serde_json::json;
 use serde_json::Map;
@@ -283,6 +278,8 @@ struct Material {
     client_ca_path: PathBuf,
     trust_path: PathBuf,
     client_ca: Ca,
+    /// DER of the CA that issued the server leaf; clients verify the server against it.
+    server_root: CertificateDer<'static>,
 }
 
 fn write_material() -> Material {
@@ -290,6 +287,7 @@ fn write_material() -> Material {
     let (server_leaf, server_leaf_key) =
         make_leaf(&server_ca, vec![dns("localhost")], Some("localhost"), false);
     let client_ca = make_ca();
+    let server_root = server_ca.cert.der().clone();
 
     let seed_path = tmp("seed");
     let server_cert_path = tmp("server_cert.pem");
@@ -325,6 +323,7 @@ fn write_material() -> Material {
         client_ca_path,
         trust_path,
         client_ca,
+        server_root,
     }
 }
 
@@ -783,64 +782,32 @@ fn parse_serving_addr(stderr: &str) -> Option<SocketAddr> {
 
 // --- TLS client ---------------------------------------------------------------
 
-#[derive(Debug)]
-struct AcceptAnyServer;
-
-impl ServerCertVerifier for AcceptAnyServer {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp: &[u8],
-        _now: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
-    }
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
-    }
-}
-
 /// Build the client mTLS config ONCE (the trusted URI-SAN leaf carrying the RFC 9421
 /// actor_id) and share it via `Arc` across every connection, so the measured latency
 /// is the handshake + request cost, not repeated config/cert construction.
-fn build_client_config(ca: &Ca) -> Arc<ClientConfig> {
+fn build_client_config(ca: &Ca, server_root: &CertificateDer<'static>) -> Arc<ClientConfig> {
     let (leaf, key) = make_client_leaf(ca, vec![uri(CLIENT_SUBJECT)]);
-    client_config_from(&leaf, &key)
+    client_config_from(&leaf, &key, server_root)
 }
 
 /// A client mTLS config presenting `leaf`+`key` — shared by the short-lived
 /// (accepted) leaf and, in the in-process serve test, a long-lived leaf that the
 /// proxy's cert-lifetime ceiling must reject.
-fn client_config_from(leaf: &rcgen::Certificate, key: &KeyPair) -> Arc<ClientConfig> {
+fn client_config_from(
+    leaf: &rcgen::Certificate,
+    key: &KeyPair,
+    server_root: &CertificateDer<'static>,
+) -> Arc<ClientConfig> {
     let chain = vec![leaf.der().clone()];
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
 
+    let mut roots = RootCertStore::empty();
+    roots.add(server_root.clone()).expect("add server CA root");
     let provider = Arc::new(ring::default_provider());
     let config = ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .expect("client versions")
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAnyServer))
+        .with_root_certificates(roots)
         .with_client_auth_cert(chain, key_der)
         .expect("client auth");
     Arc::new(config)
@@ -1377,7 +1344,7 @@ fn load_harness_smoke() {
     let material = write_material();
     let backend = spawn_http_echo_backend();
     let proxy = spawn_proxy(&material, &format!("http://{backend}/mcp"), 1, &redis.url());
-    let config = build_client_config(&material.client_ca);
+    let config = build_client_config(&material.client_ca, &material.server_root);
 
     // 1. One explicit VERIFIED round-trip proves the success criterion (`no error`)
     //    corresponds to a real RFC 9421-signed response bound to THIS request — i.e.
@@ -1680,7 +1647,7 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     // 1. Short-lived (compliant) client leaf → ACCEPTED end to end.
     let ok = cold_round_trip(
         addr,
-        build_client_config(&material.client_ca),
+        build_client_config(&material.client_ca, &material.server_root),
         &signed_request("inproc-ok"),
     )
     .expect("round trip (short cert)");
@@ -1697,7 +1664,7 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
         make_leaf(&material.client_ca, vec![uri(CLIENT_SUBJECT)], None, true);
     let rej = cold_round_trip(
         addr,
-        client_config_from(&long_leaf, &long_key),
+        client_config_from(&long_leaf, &long_key, &material.server_root),
         &signed_request("inproc-long"),
     )
     .expect("round trip (long cert)");
@@ -1717,7 +1684,7 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     std::thread::sleep(Duration::from_millis(1300));
     let after_reload = cold_round_trip(
         addr,
-        build_client_config(&material.client_ca),
+        build_client_config(&material.client_ca, &material.server_root),
         &signed_request("inproc-after-reload"),
     )
     .expect("round trip (after CRL reload)");
@@ -1735,7 +1702,7 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     for i in 0..2 {
         let r = keepalive_round_trip(
             addr,
-            build_client_config(&material.client_ca),
+            build_client_config(&material.client_ca, &material.server_root),
             &signed_request(&format!("inproc-ka-{i}")),
             &mut kept,
             &reconnects,
@@ -1792,7 +1759,7 @@ fn tls_load_harness_bench() {
         cfg.cores,
         &redis_url,
     );
-    let config = build_client_config(&material.client_ca);
+    let config = build_client_config(&material.client_ca, &material.server_root);
 
     let report = run_load(proxy.addr, config, &cfg);
     print_report(&cfg, &report);
@@ -2019,8 +1986,12 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
 
     let now = now_unix();
     let serve = |nonce: &str, request: &SignedRequest| {
-        cold_round_trip(addr, build_client_config(&material.client_ca), request)
-            .unwrap_or_else(|e| panic!("round trip {nonce}: {e}"))
+        cold_round_trip(
+            addr,
+            build_client_config(&material.client_ca, &material.server_root),
+            request,
+        )
+        .unwrap_or_else(|e| panic!("round trip {nonce}: {e}"))
     };
 
     // Row 1 — a Permit from the enrolled authority, about this actor and this action.
