@@ -144,8 +144,8 @@ fn unique_salt() -> String {
 fn run_unique_token() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .expect("the system clock is after the Unix epoch")
+        .as_nanos();
     format!("{}-{nanos}", mcp_re_test_paths::unique_test_nonce())
 }
 
