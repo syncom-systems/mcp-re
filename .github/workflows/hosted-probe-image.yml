@@ -85,9 +85,10 @@ jobs:
           echo '{"features":{"containerd-snapshotter":true}}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
           df -m / | awk 'NR==2{print "disk_used_before_mb=" $3}'
-      - name: Pull by digest (no registry credentials)
+      - name: Pull by digest (repository token; the package is private until its visibility is changed)
         run: |
           set -euo pipefail
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           start=$(date +%s)
           docker pull "$REPO_IMAGE@$ARTIFACT_DIGEST"
           echo "pull_seconds=$(( $(date +%s) - start ))"
