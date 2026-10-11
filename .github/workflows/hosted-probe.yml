@@ -94,3 +94,16 @@ jobs:
           docker system df
           docker image inspect extraction-probe --format 'image size bytes={{.Size}} id={{.Id}}'
           exit $status
+
+  registration-tests-linux:
+    name: probe proxy registration tests (ubuntu-24.04 x86-64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run the registration tests with full output
+        run: |
+          set -uo pipefail
+          bazel test //mcp-re-proxy:proxy_unit_test --nocache_test_results \
+            --test_output=all --test_arg=transparency::auditor::registration --test_arg=--nocapture 2>&1 | tail -150
+          echo "exit ${PIPESTATUS[0]}"
