@@ -101,9 +101,14 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
-      - name: Run the registration tests with full output
+      - name: List what the proxy unit test binary contains
         run: |
           set -uo pipefail
-          bazel test //mcp-re-proxy:proxy_unit_test --nocache_test_results \
-            --test_output=all --test_arg=transparency::auditor::registration --test_arg=--nocapture 2>&1 | tail -150
-          echo "exit ${PIPESTATUS[0]}"
+          bazel test //mcp-re-proxy:proxy_unit_test --nocache_test_results --test_output=all \
+            --test_arg=--list --test_arg=--format=terse > "$RUNNER_TEMP/list.log" 2>&1
+          echo "bazel exit $?"
+          echo "total tests listed: $(grep -c ': test$' "$RUNNER_TEMP/list.log")"
+          echo "registration tests listed: $(grep -c 'registration::.*: test$' "$RUNNER_TEMP/list.log")"
+          grep 'registration::.*: test$' "$RUNNER_TEMP/list.log" | head -5
+          echo "scitt feature cfg in the compiled crate:"
+          bazel aquery 'mnemonic("Rustc", //mcp-re-proxy:proxy_unit_test)' --output=text 2>/dev/null | grep -o 'feature=\\"[a-z_0-9]*\\"' | sort -u
