@@ -18,6 +18,7 @@ on:
     paths:
       - ".github/workflows/verification-hosted.yml"
       - "scripts/install_pinned_verus.py"
+      - "scripts/hosted_negative_controls.py"
       - "scripts/prepare_python_matrix.sh"
       - "verification/policy/**"
   workflow_dispatch:
@@ -198,6 +199,22 @@ jobs:
           path: ${{ steps.evidence.outputs.dir }}
           if-no-files-found: warn
           retention-days: 14
+
+  negative-controls:
+    name: negative controls (ubuntu-24.04 x86-64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - name: Install the pinned Verus release, digest-checked
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /opt/verification && sudo chown "$USER" /opt/verification
+          python3 scripts/install_pinned_verus.py
+      - name: Refusals propagate from the production lanes
+        run: python3 scripts/hosted_negative_controls.py
 
   aggregate:
     name: compose the repository verdict
