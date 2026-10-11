@@ -151,7 +151,8 @@
    "crate_name": "mcp_re_client_core",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -237,7 +238,8 @@
    "deps": [
     "//mcp-re-client-core:mcp_re_client_core",
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-http-profile:mcp_re_http_profile"
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -489,7 +491,8 @@
    "crate_name": "full_profile_parity_test",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -596,7 +599,8 @@
    "crate_name": "rfc9421_security_properties_test",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -781,7 +785,9 @@
   "//mcp-re-core:mcp_re_core_test": {
    "crate": "//mcp-re-core:mcp_re_core",
    "crate_name": "mcp_re_core",
-   "deps": [],
+   "deps": [
+    "//mcp-re-test-paths:mcp_re_test_paths"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -966,7 +972,8 @@
    "crate_name": "mcp_re_host",
    "deps": [
     "//mcp-re-client-core:mcp_re_client_core",
-    "//mcp-re-core:mcp_re_core"
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [
     "test-fixtures"
@@ -1153,7 +1160,8 @@
    "crate_name": "admission_binding_test",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-http-profile:mcp_re_http_profile"
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -1207,7 +1215,8 @@
    "crate_name": "bodyless_202_test",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -1225,7 +1234,8 @@
    "crate_name": "chain_reconstruction_test",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-http-profile:mcp_re_http_profile"
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -1243,7 +1253,8 @@
    "crate_name": "delegated_202_test",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-http-profile:mcp_re_http_profile"
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -1261,7 +1272,8 @@
    "crate_name": "delegation_e2e_test",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -1279,7 +1291,8 @@
    "crate_name": "dispatch_test",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-http-profile:mcp_re_http_profile"
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -1297,7 +1310,8 @@
    "crate_name": "full_profile_test",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -1315,7 +1329,8 @@
    "crate_name": "json_mode_test",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -1812,7 +1827,8 @@
    "crate": "//mcp-re-http-profile:mcp_re_http_profile",
    "crate_name": "mcp_re_http_profile",
    "deps": [
-    "//mcp-re-core:mcp_re_core"
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -2135,7 +2151,8 @@
    "crate_name": "mcp_transport_headers_test",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-http-profile:mcp_re_http_profile"
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -2153,7 +2170,8 @@
    "crate_name": "proof_path_test",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -2189,7 +2207,8 @@
    "crate_name": "signer_seam_test",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-http-profile:mcp_re_http_profile"
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -2207,7 +2226,8 @@
    "crate_name": "structured_fields_strictness_test",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-http-profile:mcp_re_http_profile"
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -2292,7 +2312,8 @@
    "deps": [
     "//mcp-re-core:mcp_re_core",
     "//mcp-re-http-profile:mcp_re_http_profile_pre052",
-    "//mcp-re-proxy:mcp_re_proxy_ext_pre052"
+    "//mcp-re-proxy:mcp_re_proxy_ext_pre052",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [
     "async_serve",
@@ -2547,7 +2568,8 @@
    "deps": [
     "//mcp-re-core:mcp_re_core",
     "//mcp-re-http-profile:mcp_re_http_profile",
-    "//mcp-re-proxy:mcp_re_proxy_ext"
+    "//mcp-re-proxy:mcp_re_proxy_ext",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [
     "async_serve",
@@ -2632,7 +2654,8 @@
     "//mcp-re-client-core:mcp_re_client_core_pre052",
     "//mcp-re-core:mcp_re_core",
     "//mcp-re-http-profile:mcp_re_http_profile_pre052",
-    "//mcp-re-proxy:mcp_re_proxy_ext_pre052"
+    "//mcp-re-proxy:mcp_re_proxy_ext_pre052",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [
     "async_serve",
@@ -6933,7 +6956,8 @@
    "crate_name": "mcp_re_proxy",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-policy:mcp_re_policy"
+    "//mcp-re-policy:mcp_re_policy",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [
     "scitt_registration"
@@ -7382,7 +7406,8 @@
    "crate_name": "mcp_re_proxy",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-policy:mcp_re_policy"
+    "//mcp-re-policy:mcp_re_policy",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [
     "aws_kms_keysource"
@@ -7833,7 +7858,8 @@
     "//mcp-re-core:mcp_re_core",
     "//mcp-re-http-profile:mcp_re_http_profile",
     "//mcp-re-operator-display:mcp_re_operator_display",
-    "//mcp-re-policy:mcp_re_policy"
+    "//mcp-re-policy:mcp_re_policy",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [
     "aws_kms_keysource",
@@ -8287,7 +8313,8 @@
    "crate_name": "mcp_re_proxy",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-policy:mcp_re_policy"
+    "//mcp-re-policy:mcp_re_policy",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",

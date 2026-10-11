@@ -615,6 +615,24 @@ to a real owner.
 **What would move a control out.** An honest `cpstore_etcd` verification owner plus an independent
 falsifier that can go red in that lane (Ruling 9 option 1). The control then registers there.
 
+## ND-016 — a test-support helper's own self-test
+
+**Covers:** `mcp-re-test-paths` `lib#tests::a_test_nonce_is_22_base64url_characters`,
+`lib#tests::test_nonces_are_distinct_across_threads`.
+**Recorded:** 2026-10-11, CodeQL hard-coded-value cleanup.
+
+Two controls on `mcp_re_test_paths::unique_test_nonce`, the helper tests use where the property
+under test does not depend on a nonce's value: the output is 22 Base64URL characters, and 1,600
+calls from eight threads never repeat.
+
+**Why they are not evidence.** The helper carries no entropy and the tests claim none. It supplies
+a valid, run-distinct value to tests of other propositions; no product theorem rests on its
+properties, and nothing about nonce unpredictability follows from them. A failure would mean a
+test fixture broke, not that a security fact is false.
+
+**What would move a control out.** A claim that the production nonce path shares this
+construction. It does not: the production nonce is `SystemNonceSource` over the OS CSPRNG.
+
 ## NP-001 — the SDK runtime support claim
 
 **Controls:** `scripts/python_runtime_gate.py`, `scripts/node_runtime_gate.py`.

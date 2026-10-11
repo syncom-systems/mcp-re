@@ -15102,3 +15102,18 @@ decision = "new-proposition"
 proposition = "NP-279"
 recorded = "2026-10-08"
 
+[[disposition]]
+id = "CD-20417"
+project = "mcp-re-test-paths"
+control = "src/lib.rs#tests::a_test_nonce_is_22_base64url_characters"
+decision = "not-evidence"
+reason_family = "ND-016"
+recorded = "2026-10-11"
+
+[[disposition]]
+id = "CD-20418"
+project = "mcp-re-test-paths"
+control = "src/lib.rs#tests::test_nonces_are_distinct_across_threads"
+decision = "not-evidence"
+reason_family = "ND-016"
+recorded = "2026-10-11"
