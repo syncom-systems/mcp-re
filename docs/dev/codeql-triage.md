@@ -15,7 +15,7 @@ executable test code (an insecure TLS test client was found this way). Each aler
 triaged by test semantics:
 
 - **Class A — the exact nonce is not part of the property.** The test draws
-  `mcp_re_test_paths::unique_test_nonce()` (process id, start time and a counter as 22 Base64URL characters; no entropy, and no claim of unpredictability) and asserts the
+  `mcp_re_test_paths::unique_test_nonce()` (process id, a per-process address and a counter as 22 Base64URL characters; no entropy, and no claim of unpredictability) and asserts the
   relation under test, never the value. A replay test reuses one nonce; a two-request test
   draws two.
 - **Class B — the exact value is the property** (golden or known-answer vector, signature-base

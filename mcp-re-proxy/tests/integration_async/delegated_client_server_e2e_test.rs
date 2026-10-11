@@ -608,7 +608,8 @@ fn a_pin_on_the_root_issuer_kid_verifies() {
         .build()
         .expect("rt");
     let server = build_server();
-    let (signed, response) = one_exchange(&server, &rt, &mcp_re_test_paths::unique_test_nonce(), NOW);
+    let (signed, response) =
+        one_exchange(&server, &rt, &mcp_re_test_paths::unique_test_nonce(), NOW);
     let verified = verify_delegated_response(
         &response,
         &client_trust(),
@@ -633,7 +634,8 @@ fn a_pin_on_the_wrong_issuer_kid_fails_closed() {
         .build()
         .expect("rt");
     let server = build_server();
-    let (signed, response) = one_exchange(&server, &rt, &mcp_re_test_paths::unique_test_nonce(), NOW);
+    let (signed, response) =
+        one_exchange(&server, &rt, &mcp_re_test_paths::unique_test_nonce(), NOW);
     let err = verify_delegated_response(
         &response,
         &client_trust(),
@@ -688,7 +690,8 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
         Arc::clone(&wiring.signer),
     );
 
-    let (signed_a, response_a) = one_exchange(&server, &rt, &mcp_re_test_paths::unique_test_nonce(), NOW);
+    let (signed_a, response_a) =
+        one_exchange(&server, &rt, &mcp_re_test_paths::unique_test_nonce(), NOW);
     verify_delegated_response(
         &response_a,
         &client_trust(),
@@ -713,8 +716,12 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
         "the delegated kid must actually rotate"
     );
 
-    let (signed_b, response_b) =
-        one_exchange(&server, &rt, &mcp_re_test_paths::unique_test_nonce(), ROTATED_AT);
+    let (signed_b, response_b) = one_exchange(
+        &server,
+        &rt,
+        &mcp_re_test_paths::unique_test_nonce(),
+        ROTATED_AT,
+    );
     let verified = verify_delegated_response(
         &response_b,
         &client_trust(),

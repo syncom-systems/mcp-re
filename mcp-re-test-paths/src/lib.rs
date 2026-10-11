@@ -24,7 +24,6 @@ use base64::Engine;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::OnceLock;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The file or directory the test's Bazel target names under `env_key`.
 ///
@@ -65,23 +64,23 @@ pub fn resolve_runfile(env_key: &str) -> PathBuf {
 /// One request nonce for a test whose property needs a valid, run-distinct nonce and does not
 /// depend on its value.
 ///
-/// Process id, process start time and a process-local counter, 16 bytes in all, Base64URL
-/// without padding: 22 characters, the nonce floor. Successive calls in a process differ, calls
-/// from parallel test threads differ, and separate test processes differ in ordinary execution.
-/// It carries NO entropy and says nothing about nonce unpredictability; a test of the
-/// production nonce source does not use it.
+/// Process id, a per-process address (distinct across runs under address-space randomisation)
+/// and a process-local counter, 16 bytes in all, Base64URL without padding: 22 characters, the
+/// nonce floor. Successive calls in a process differ, calls from parallel test threads differ,
+/// and separate test processes differ in ordinary execution. It carries NO entropy and reads no
+/// clock, and says nothing about nonce unpredictability; a test of the production nonce source
+/// does not use it.
 pub fn unique_test_nonce() -> String {
-    static START_NANOS: OnceLock<u64> = OnceLock::new();
+    static PROCESS_TAG: OnceLock<u64> = OnceLock::new();
     static COUNTER: AtomicU32 = AtomicU32::new(0);
-    let start = *START_NANOS.get_or_init(|| {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos() as u64)
+    let tag = *PROCESS_TAG.get_or_init(|| {
+        let probe = Box::new(0u8);
+        &*probe as *const u8 as usize as u64
     });
     let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
     let mut bytes = [0u8; 16];
     bytes[..4].copy_from_slice(&std::process::id().to_be_bytes());
-    bytes[4..12].copy_from_slice(&start.to_be_bytes());
+    bytes[4..12].copy_from_slice(&tag.to_be_bytes());
     bytes[12..].copy_from_slice(&sequence.to_be_bytes());
     URL_SAFE_NO_PAD.encode(bytes)
 }
@@ -102,7 +101,9 @@ mod tests {
     #[test]
     fn test_nonces_are_distinct_across_threads() {
         let handles: Vec<_> = (0..8)
-            .map(|_| std::thread::spawn(|| (0..200).map(|_| unique_test_nonce()).collect::<Vec<_>>()))
+            .map(|_| {
+                std::thread::spawn(|| (0..200).map(|_| unique_test_nonce()).collect::<Vec<_>>())
+            })
             .collect();
         let mut all = std::collections::HashSet::new();
         for h in handles {

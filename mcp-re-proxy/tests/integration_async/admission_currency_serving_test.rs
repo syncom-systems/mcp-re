@@ -29,7 +29,6 @@ use std::sync::Arc;
 use mcp_re_core::b64url_decode;
 use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
-use mcp_re_test_paths::unique_test_nonce;
 use mcp_re_http_profile::authoritative_admission::record::issue_admission_state_record;
 use mcp_re_http_profile::authoritative_admission::record::AdmissionStateClaims;
 use mcp_re_http_profile::authoritative_admission::record::AdmissionStateCurrentness;
@@ -56,6 +55,7 @@ use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::PROFILE_TAG;
+use mcp_re_test_paths::unique_test_nonce;
 
 use mcp_re_proxy::admission_enforcer::AdmissionEnforcement;
 use mcp_re_proxy::admission_source::AdmissionFuture;
@@ -675,7 +675,11 @@ fn a_refused_admission_names_which_fact_refused_it_in_the_record() {
     let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
 
     // Nothing published: the authority has nothing to say about this workload.
-    let absent = refusal_classes_for(Arc::new(admission_store()), Some(&claims), &unique_test_nonce());
+    let absent = refusal_classes_for(
+        Arc::new(admission_store()),
+        Some(&claims),
+        &unique_test_nonce(),
+    );
     assert_eq!(absent, vec![Some(Class::NoRecord)]);
 
     // Something published that the authority did not sign.
@@ -1049,7 +1053,10 @@ fn a_revocation_on_the_shared_source_is_honoured_by_a_replica_that_never_saw_the
 
     // A serves the workload happily.
     let served = block_on(replica_a.handle(
-        served_of(&signed_call(Some((&claims, &authority_key())), &unique_test_nonce())),
+        served_of(&signed_call(
+            Some((&claims, &authority_key())),
+            &unique_test_nonce(),
+        )),
         NOW,
     ));
     assert_eq!(served.status, 200);
@@ -1058,7 +1065,10 @@ fn a_revocation_on_the_shared_source_is_honoured_by_a_replica_that_never_saw_the
     revoke(&source, 5);
 
     let served = block_on(replica_b.handle(
-        served_of(&signed_call(Some((&claims, &authority_key())), &unique_test_nonce())),
+        served_of(&signed_call(
+            Some((&claims, &authority_key())),
+            &unique_test_nonce(),
+        )),
         NOW,
     ));
     assert_eq!(served.status, 403);
@@ -1067,7 +1077,10 @@ fn a_revocation_on_the_shared_source_is_honoured_by_a_replica_that_never_saw_the
 
     // And A, which had already served it, refuses the next one too.
     let served = block_on(replica_a.handle(
-        served_of(&signed_call(Some((&claims, &authority_key())), &unique_test_nonce())),
+        served_of(&signed_call(
+            Some((&claims, &authority_key())),
+            &unique_test_nonce(),
+        )),
         NOW,
     ));
     assert_eq!(served.status, 403);
@@ -1306,7 +1319,10 @@ fn a_record_minted_by_a_store_writer_is_refused_and_never_degraded() {
 
     let fresh = admission_claims(u64::MAX, AdmissionStatus::Admitted, NOW + 5);
     let served = block_on(proxy.handle(
-        served_of(&signed_call(Some((&fresh, &authority_key())), &unique_test_nonce())),
+        served_of(&signed_call(
+            Some((&fresh, &authority_key())),
+            &unique_test_nonce(),
+        )),
         NOW + 10,
     ));
     assert_eq!(served.status, 403);
@@ -1354,7 +1370,10 @@ fn an_expired_authentic_record_on_a_reachable_store_is_refused_and_never_degrade
 
     let fresh = admission_claims(5, AdmissionStatus::Admitted, NOW + 5);
     let served = block_on(proxy.handle(
-        served_of(&signed_call(Some((&fresh, &authority_key())), &unique_test_nonce())),
+        served_of(&signed_call(
+            Some((&fresh, &authority_key())),
+            &unique_test_nonce(),
+        )),
         NOW + 10,
     ));
     assert_eq!(served.status, 403);
@@ -1409,7 +1428,10 @@ fn restoring_a_revoked_workloads_old_admitted_record_does_not_restore_service() 
 
     let claims = admission_claims(5, AdmissionStatus::Admitted, NOW - 30);
     let served = block_on(proxy.handle(
-        served_of(&signed_call(Some((&claims, &authority_key())), &unique_test_nonce())),
+        served_of(&signed_call(
+            Some((&claims, &authority_key())),
+            &unique_test_nonce(),
+        )),
         NOW,
     ));
     assert_eq!(served.status, 200, "t0: the workload is admitted");
@@ -1417,7 +1439,10 @@ fn restoring_a_revoked_workloads_old_admitted_record_does_not_restore_service() 
     // t1 — revocation, same generation, next publication.
     revoke(&source, 5);
     let served = block_on(proxy.handle(
-        served_of(&signed_call(Some((&claims, &authority_key())), &unique_test_nonce())),
+        served_of(&signed_call(
+            Some((&claims, &authority_key())),
+            &unique_test_nonce(),
+        )),
         NOW + 1,
     ));
     assert_eq!(served.status, 403, "t1: the revocation is honoured");
@@ -1425,7 +1450,10 @@ fn restoring_a_revoked_workloads_old_admitted_record_does_not_restore_service() 
     // t2 — the old bytes restored verbatim. Genuine signature, genuine authority.
     source.publish(WORKLOAD, admitted);
     let served = block_on(proxy.handle(
-        served_of(&signed_call(Some((&claims, &authority_key())), &unique_test_nonce())),
+        served_of(&signed_call(
+            Some((&claims, &authority_key())),
+            &unique_test_nonce(),
+        )),
         NOW + 2,
     ));
     assert_eq!(

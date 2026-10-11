@@ -248,7 +248,9 @@ mod tests {
                 k.actor_id = "server:example.com:did%3Aexample%3Aserver:server-key-1".into()
             }),
             ("audience_hash", |k| k.audience_hash = "ZZZZ".into()),
-            ("nonce", |k| k.nonce = mcp_re_test_paths::unique_test_nonce()),
+            ("nonce", |k| {
+                k.nonce = mcp_re_test_paths::unique_test_nonce()
+            }),
         ];
         for (name, mutate) in variants {
             let cache = InMemoryReplayCache::new(no_skew());

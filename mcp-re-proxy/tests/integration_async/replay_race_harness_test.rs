@@ -119,7 +119,7 @@ fn round_key(round: usize) -> String {
     format!("did:example:agent\u{1f}did:example:server\u{1f}nonce-{round}")
 }
 
-/// A per-invocation-unique salt (process id, start time and a counter, read ONCE by the
+/// A per-invocation-unique salt (process id, process address, counter and wall-clock nanoseconds, read ONCE by the
 /// caller) so a LIVE race test's keys never collide with another test's or a prior
 /// run's on a SHARED persistent store. Every live lane needs this: the fixed
 /// `round_key`s are stored with a far-future TTL, so a second lane — or a second
@@ -132,7 +132,21 @@ fn round_key(round: usize) -> String {
     any(feature = "redis_replay", feature = "cpstore_etcd")
 ))]
 fn unique_salt() -> String {
-    mcp_re_test_paths::unique_test_nonce()
+    run_unique_token()
+}
+
+/// A token distinct per call and per run on a shared persistent store: the test-nonce
+/// (process id, process address, counter) and the wall-clock nanoseconds.
+#[cfg(all(
+    feature = "async_serve",
+    any(feature = "redis_replay", feature = "cpstore_etcd")
+))]
+fn run_unique_token() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{}-{nanos}", mcp_re_test_paths::unique_test_nonce())
 }
 
 /// A `round_key` namespaced by a per-test `salt` (see [`unique_salt`]).
@@ -690,7 +704,11 @@ mod http_profile_full_stack {
     /// live stores outlive the test process; a collision would show up as
     /// ZERO 200s, not as a false pass).
     fn unique_prefix() -> String {
-        mcp_re_test_paths::unique_test_nonce()
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        format!("{}-{nanos}", mcp_re_test_paths::unique_test_nonce())
     }
 
     #[cfg(all(

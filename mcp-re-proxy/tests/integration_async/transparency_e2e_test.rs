@@ -23,8 +23,8 @@
 //! reconstruction and the statement are about the retained bytes, and that the receipt
 //! verifies offline.
 
-use mcp_re_test_paths::unique_test_nonce;
 use mcp_re_http_profile::Verifier;
+use mcp_re_test_paths::unique_test_nonce;
 use std::sync::Arc;
 
 use mcp_re_core::SigningKey;
@@ -893,10 +893,7 @@ fn a_success_whose_evidence_cannot_be_kept_after_execution_is_refused_on_both_ex
     let notification =
         build_server_breaking_store_on_dispatch(notification_retention, notification_evidence);
     assert_eq!(
-        serve_one_notification(
-            &notification,
-            &unique_test_nonce()
-        ),
+        serve_one_notification(&notification, &unique_test_nonce()),
         500,
         "a 202 here would acknowledge a call the deployment cannot account for"
     );
@@ -1253,8 +1250,7 @@ fn served_archive(name: &str, nonce: &str) -> (Scratch, Arc<EvidenceRetention>, 
 /// fail here rather than look like a success.
 #[test]
 fn the_auditor_binary_turns_a_served_call_into_a_verifiable_attestation() {
-    let (scratch, retention, token) =
-        served_archive("auditor-vertical", &unique_test_nonce());
+    let (scratch, retention, token) = served_archive("auditor-vertical", &unique_test_nonce());
     // The retention handle owns a writer thread; the child process opens the same
     // directory, so drop ours first and audit what is on disk.
     drop(retention);
@@ -1332,10 +1328,7 @@ fn the_auditor_binary_turns_a_served_call_into_a_verifiable_attestation() {
 #[cfg(unix)]
 fn the_auditor_binary_audits_an_archive_it_cannot_write_to() {
     use std::os::unix::fs::PermissionsExt;
-    let (scratch, retention, token) = served_archive(
-        "auditor-read-only",
-        &unique_test_nonce(),
-    );
+    let (scratch, retention, token) = served_archive("auditor-read-only", &unique_test_nonce());
     drop(retention);
     let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
     let evidence = scratch.join("evidence");
@@ -1390,10 +1383,7 @@ fn the_serving_constructor_still_proves_the_archive_writable() {
 /// describing an audit that did not happen.
 #[test]
 fn a_hop_the_archive_does_not_hold_is_refused_and_writes_nothing() {
-    let (scratch, retention, token) = served_archive(
-        "auditor-missing-hop",
-        &unique_test_nonce(),
-    );
+    let (scratch, retention, token) = served_archive("auditor-missing-hop", &unique_test_nonce());
     drop(retention);
     let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
 
@@ -1416,8 +1406,7 @@ fn a_hop_the_archive_does_not_hold_is_refused_and_writes_nothing() {
 /// possible future. The pin is loaded first for exactly that reason.
 #[test]
 fn an_illegal_service_pin_refuses_the_audit() {
-    let (scratch, retention, token) =
-        served_archive("auditor-bad-pin", &unique_test_nonce());
+    let (scratch, retention, token) = served_archive("auditor-bad-pin", &unique_test_nonce());
     drop(retention);
 
     // An EdDSA pin carrying an EC2 `y` coordinate is a mislabelled key, and never becomes
@@ -1441,10 +1430,7 @@ fn an_illegal_service_pin_refuses_the_audit() {
 /// labelled it complete would launder it.
 #[test]
 fn an_audit_posture_the_call_was_not_served_under_attests_an_incomplete_record() {
-    let (scratch, retention, token) = served_archive(
-        "auditor-wrong-posture",
-        &unique_test_nonce(),
-    );
+    let (scratch, retention, token) = served_archive("auditor-wrong-posture", &unique_test_nonce());
     drop(retention);
 
     let mut profile = audit_profile_json();
@@ -1495,8 +1481,7 @@ fn an_audit_posture_the_call_was_not_served_under_attests_an_incomplete_record()
 /// the directory it was pointed at.
 #[test]
 fn a_tampered_archive_object_is_refused() {
-    let (scratch, retention, token) =
-        served_archive("auditor-tampered", &unique_test_nonce());
+    let (scratch, retention, token) = served_archive("auditor-tampered", &unique_test_nonce());
     drop(retention);
     let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
 
@@ -1765,10 +1750,8 @@ fn audit_and_register(
 /// was revoked before now, is not recorded.
 #[test]
 fn a_receipt_under_a_revoked_service_key_is_not_recorded() {
-    let (scratch, retention, token) = served_archive(
-        "auditor-register-revoked-key",
-        &unique_test_nonce(),
-    );
+    let (scratch, retention, token) =
+        served_archive("auditor-register-revoked-key", &unique_test_nonce());
     drop(retention);
     let mut profile = audit_profile_json();
     profile["transparency_service_keys"][0]["revoked_at"] = 1_600_000_001.into();
@@ -1911,8 +1894,7 @@ fn the_auditor_binary_registers_with_a_live_external_service() {
     let protocol = std::env::var("MCP_RE_LIVE_TRANSPARENCY_PROTOCOL")
         .unwrap_or_else(|_| "capsule-anchor".to_owned());
 
-    let (scratch, retention, token) =
-        served_archive("auditor-live", &unique_test_nonce());
+    let (scratch, retention, token) = served_archive("auditor-live", &unique_test_nonce());
     drop(retention);
     let live_pin: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&pin_path).expect("the live pin is readable"))
@@ -2038,8 +2020,7 @@ fn assert_receipt_verifies_offline(
 /// honest pair of facts.
 #[test]
 fn a_failed_registration_leaves_the_attestation_behind() {
-    let (scratch, retention, token) =
-        served_archive("auditor-register-down", &unique_test_nonce());
+    let (scratch, retention, token) = served_archive("auditor-register-down", &unique_test_nonce());
     drop(retention);
     let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
 

@@ -26,7 +26,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use mcp_re_core::SigningKey;
-use mcp_re_test_paths::unique_test_nonce;
 use mcp_re_http_profile::custody::DelegatedKeyWindow;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_request_full;
@@ -43,6 +42,7 @@ use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::PROFILE_TAG;
+use mcp_re_test_paths::unique_test_nonce;
 
 use mcp_re_policy::PolicyError;
 use mcp_re_proxy::async_inner::AsyncInnerServer;

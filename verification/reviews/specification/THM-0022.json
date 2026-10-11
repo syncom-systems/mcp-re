@@ -9,7 +9,7 @@
     "theorem_id": "THM-0022",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G2.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G2.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read after CI formatting (rustfmt over the nonce-cleanup test edits) and the clock-free unique_test_nonce (process id, process address, counter; work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): formatting and the test-only helper only; claim, premises, dependencies and entry text unchanged.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -34,9 +34,9 @@
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "mutation_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        "proof_dependencies": "sha256:48d669c9fa0b647bf9f4bdcfb14f96043c6b8bc166ee3f12806dc92600f5b01c",
+        "proof_dependencies": "sha256:a48b7c87ead1ac0d8af4d6a8d44b6deb12593ad1e5aa1894661577d302fb9366",
         "proved_symbols": "sha256:98e5956ea173dcd4367072380496bf6b58081393b12eef4ff63975fdf553e1f1",
-        "source_inputs": "sha256:010497ffb02d8b152fe2b3d0e033d307f4b6475222fbbe7db9ec8ad5366a4d4a",
+        "source_inputs": "sha256:4ee88c867da234839087cb01bab0a91664a2013df0ab3e49dce5c9011501dcb4",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:d4988f9eac4bc5b246791a703f9b280c64e6dc1fd5d27bc3754408d7ce46b1d2",
         "test_selection": "sha256:d251ba0169468be6dba66dc4d3a5724d19708c203f71b1ea522b6d82ab0206c5",
@@ -71,7 +71,7 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:59322edd830bb0f5673faf4c0fe8562d157ed9d28086d14c2a837dde92128eeb",
+  "review_digest": "sha256:04cd41887a7e12015d64a7f0cc974d6e74bb3e46ddeb77a7821099816b84af5c",
   "reviewed_fingerprint": "sha256:26250e9cf23da4a0da6e266bdfa6b156d75b95ce40d161780626cbef8f0813f2",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0022"

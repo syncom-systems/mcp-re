@@ -16,7 +16,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use mcp_re_core::SigningKey;
-use mcp_re_test_paths::unique_test_nonce;
 use mcp_re_http_profile::extract_verified_context;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::ActorIdentity;
@@ -30,6 +29,7 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedContextPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 use mcp_re_http_profile::VERIFIED_CONTEXT_BLOCK_KEY;
+use mcp_re_test_paths::unique_test_nonce;
 
 use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
@@ -354,7 +354,10 @@ async fn unrelated_application_meta_survives_the_guard() {
     ] {
         let seen: Seen = Arc::new(Mutex::new(Vec::new()));
         let p = proxy(policy, Arc::clone(&seen));
-        let req = signed_request(&unique_test_nonce(), Some(serde_json::json!({ "actor_id": "forged" })));
+        let req = signed_request(
+            &unique_test_nonce(),
+            Some(serde_json::json!({ "actor_id": "forged" })),
+        );
         assert_eq!(p.handle(served(&req), NOW).await.status, 200);
 
         let forwarded = seen.lock().unwrap()[0].clone();
@@ -488,7 +491,10 @@ async fn transport_contract_is_enforced_on_the_served_path() {
 
     // A request OMITTING Mcp-Method is rejected before it reaches the inner server.
     let before = seen.lock().unwrap().len();
-    let missing = resign_as_given(signed_request(&unique_test_nonce(), None), &unique_test_nonce());
+    let missing = resign_as_given(
+        signed_request(&unique_test_nonce(), None),
+        &unique_test_nonce(),
+    );
     let out = p.handle(served(&missing), NOW).await;
     assert_eq!(out.status, 403, "a required-header omission is refused");
     assert_eq!(

@@ -418,7 +418,9 @@ mod tests {
         // prune — so the failure mode was a remotely-driven memory leak in the crate
         // that DEFINES the contract.
         let cache = InMemoryReplayCache::new(skew()).with_max_entries(3);
-        let admitted: Vec<String> = (0..3).map(|_| mcp_re_test_paths::unique_test_nonce()).collect();
+        let admitted: Vec<String> = (0..3)
+            .map(|_| mcp_re_test_paths::unique_test_nonce())
+            .collect();
         let over = mcp_re_test_paths::unique_test_nonce();
         for nonce in &admitted {
             assert_eq!(
@@ -571,7 +573,9 @@ mod tests {
         }
         // An already-recorded triple is refused too — never admitted off an
         // unreadable seen-set.
-        assert!(cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES).is_err());
+        assert!(cache
+            .check_and_insert(SIGNER, AUD, nonce(), EXPIRES)
+            .is_err());
         // A poisoned prune evicts nothing.
         cache.prune(EXPIRES + SKEW + 1);
         cache.seen.clear_poison();
@@ -623,7 +627,12 @@ mod tests {
             refused.unwrap_err().to_mcp_re_error(),
             McpReError::ReplayCacheUnavailable
         );
-        let second = copy.check_and_insert(SIGNER, AUD, &mcp_re_test_paths::unique_test_nonce(), EXPIRES);
+        let second = copy.check_and_insert(
+            SIGNER,
+            AUD,
+            &mcp_re_test_paths::unique_test_nonce(),
+            EXPIRES,
+        );
         assert!(
             second.is_err(),
             "the copy must refuse every nonce, got {second:?}"

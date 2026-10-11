@@ -516,7 +516,8 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
         "rotation mints a distinct delegated key"
     );
 
-    let (req2, _ev2, _verified_req2) = signed_request(&mcp_re_test_paths::unique_test_nonce(), after);
+    let (req2, _ev2, _verified_req2) =
+        signed_request(&mcp_re_test_paths::unique_test_nonce(), after);
     let resp2 = http_response(proxy.handle(served_of(&req2), after).await);
     let verified2 = Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
         .verify_delegated_bound_response(&resp2, &req2, &expectations(&[EPOCH]), &|_| false, after)

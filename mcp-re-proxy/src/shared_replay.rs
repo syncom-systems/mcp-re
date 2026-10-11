@@ -703,7 +703,12 @@ mod tests {
         );
         // Same signer/audience, different nonce → independent.
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, &mcp_re_test_paths::unique_test_nonce(), EXPIRES),
+            cache.check_and_insert(
+                SIGNER,
+                AUD,
+                &mcp_re_test_paths::unique_test_nonce(),
+                EXPIRES
+            ),
             Ok(ReplayDecision::Fresh)
         );
         // And each of the above is now a replay on a second sight.

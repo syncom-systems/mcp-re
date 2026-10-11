@@ -22,8 +22,6 @@
 use std::sync::Arc;
 
 use mcp_re_core::SigningKey;
-use mcp_re_test_paths::unique_test_nonce;
-use std::sync::OnceLock;
 use mcp_re_http_profile::custody::DelegatedKeyWindow;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_request_full;
@@ -47,6 +45,8 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
+use mcp_re_test_paths::unique_test_nonce;
+use std::sync::OnceLock;
 
 use mcp_re_proxy::async_inner::AsyncInnerServer;
 use mcp_re_proxy::async_inner::DispatchedOutcome;
@@ -440,8 +440,11 @@ async fn continuation_opened_on_a_is_honoured_on_b() {
     // ANSWER on B — B never saw the open leg. Build the continuation from the handles
     // the client holds (exactly `HttpContinuation::from_handles`).
     let continuation = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
-    let (answer_req, answer_ev) =
-        signed_request(&unique_test_nonce(), &answer_body(&state), Some(continuation));
+    let (answer_req, answer_ev) = signed_request(
+        &unique_test_nonce(),
+        &answer_body(&state),
+        Some(continuation),
+    );
     let _answer_ev = answer_ev;
     let _verified_answer = {
         let no_material = |_b: &ArtifactBinding| None;
@@ -477,8 +480,11 @@ async fn continuation_opened_on_a_is_honoured_on_b() {
     // regardless of the handles.
     let (p2, i2, _s2) = handles_of(STATE);
     let continuation2 = HttpContinuation::from_handles(p2, i2, state.as_bytes());
-    let (replay_req, _e) =
-        signed_request(&unique_test_nonce(), &answer_body(&state), Some(continuation2));
+    let (replay_req, _e) = signed_request(
+        &unique_test_nonce(),
+        &answer_body(&state),
+        Some(continuation2),
+    );
     let served2 = b.handle(served_of(&replay_req), NOW).await;
     assert_eq!(served2.status, 409, "the continuation is one-shot");
     assert_eq!(
@@ -513,7 +519,11 @@ async fn answer_without_a_shared_store_entry_fails_closed() {
 
     let (d_prev, d_irr, state) = handles_of(STATE);
     let continuation = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
-    let (answer_req, _e) = signed_request(&unique_test_nonce(), &answer_body(&state), Some(continuation));
+    let (answer_req, _e) = signed_request(
+        &unique_test_nonce(),
+        &answer_body(&state),
+        Some(continuation),
+    );
     let served = b.handle(served_of(&answer_req), NOW).await;
     assert_eq!(served.status, 409, "no retained bases → fail closed");
     assert_eq!(
@@ -1472,7 +1482,11 @@ async fn an_approval_spent_on_a_request_that_never_ran_is_not_reported_as_retry_
     dir.wedge();
 
     let continuation = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
-    let (answer_req, _e) = signed_request(&unique_test_nonce(), &answer_body(&state), Some(continuation));
+    let (answer_req, _e) = signed_request(
+        &unique_test_nonce(),
+        &answer_body(&state),
+        Some(continuation),
+    );
     let served = b.handle(served_of(&answer_req), NOW).await;
 
     assert_eq!(served.status, 503, "refused before the backend could run");
@@ -1688,7 +1702,8 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
             .to_digest(),
         FIRST.as_bytes(),
     );
-    let (replay_req, _e) = signed_request(&unique_test_nonce(), &answer_body(FIRST), Some(cont1_again));
+    let (replay_req, _e) =
+        signed_request(&unique_test_nonce(), &answer_body(FIRST), Some(cont1_again));
     let served_again = b.handle(served_of(&replay_req), NOW).await;
     assert_eq!(served_again.status, 409, "leg 1 is one-shot and was spent");
     assert_eq!(
@@ -1923,7 +1938,11 @@ async fn a_consumption_followed_by_a_refusal_reports_a_spent_approval_and_an_unr
     dir.wedge();
 
     let continuation = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
-    let (answer, _e) = signed_request(&unique_test_nonce(), &answer_body(&state), Some(continuation));
+    let (answer, _e) = signed_request(
+        &unique_test_nonce(),
+        &answer_body(&state),
+        Some(continuation),
+    );
     let served = answerer.handle(served_of(&answer), NOW).await;
 
     // The action did NOT run...
@@ -2308,7 +2327,11 @@ async fn a_continuation_store_outage_on_the_answer_leg_is_named_as_an_outage() {
 
     let continuation =
         HttpContinuation::from_handles(d_prev.clone(), d_irr.clone(), state.as_bytes());
-    let (answer, _e) = signed_request(&unique_test_nonce(), &answer_body(&state), Some(continuation));
+    let (answer, _e) = signed_request(
+        &unique_test_nonce(),
+        &answer_body(&state),
+        Some(continuation),
+    );
     let served = b.handle(served_of(&answer), NOW).await;
 
     assert_eq!(served.status, 503, "a store outage is not a client fault");
@@ -2374,7 +2397,11 @@ async fn an_indeterminate_continuation_retirement_is_never_reported_as_retry_saf
     .with_continuation_store(store, DEFAULT_CONTINUATION_TTL_SECS);
 
     let continuation = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
-    let (answer, _e) = signed_request(&unique_test_nonce(), &answer_body(&state), Some(continuation));
+    let (answer, _e) = signed_request(
+        &unique_test_nonce(),
+        &answer_body(&state),
+        Some(continuation),
+    );
     let served = b.handle(served_of(&answer), NOW).await;
 
     // The action did not run...

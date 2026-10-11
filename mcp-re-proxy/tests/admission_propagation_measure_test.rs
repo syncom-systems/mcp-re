@@ -444,7 +444,10 @@ fn a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound() {
         // admitting the call in the first place.
         let served = replica_a
             .handle(
-                served_of(&signed_call(&claims, &mcp_re_test_paths::unique_test_nonce())),
+                served_of(&signed_call(
+                    &claims,
+                    &mcp_re_test_paths::unique_test_nonce(),
+                )),
                 NOW,
             )
             .await;
@@ -454,7 +457,10 @@ fn a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound() {
         );
         let served = replica_b
             .handle(
-                served_of(&signed_call(&claims, &mcp_re_test_paths::unique_test_nonce())),
+                served_of(&signed_call(
+                    &claims,
+                    &mcp_re_test_paths::unique_test_nonce(),
+                )),
                 NOW,
             )
             .await;
@@ -528,7 +534,10 @@ fn a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound() {
         // And replica A, which served it happily a moment ago, now refuses too.
         let served = replica_a
             .handle(
-                served_of(&signed_call(&claims, &mcp_re_test_paths::unique_test_nonce())),
+                served_of(&signed_call(
+                    &claims,
+                    &mcp_re_test_paths::unique_test_nonce(),
+                )),
                 NOW,
             )
             .await;

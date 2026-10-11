@@ -254,7 +254,8 @@ fn served(req: &HttpRequest) -> ServedHttpRequest {
 async fn a_duplicate_member_name_is_never_forwarded() {
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
     let p = proxy(Arc::clone(&seen));
-    let req = signed_request_with_members(&mcp_re_test_paths::unique_test_nonce(), r#""a":1,"a":2"#);
+    let req =
+        signed_request_with_members(&mcp_re_test_paths::unique_test_nonce(), r#""a":1,"a":2"#);
 
     let out = p.handle(served(&req), NOW).await;
 

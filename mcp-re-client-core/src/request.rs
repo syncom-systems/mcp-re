@@ -510,7 +510,10 @@ mod evidence_precondition_tests {
             sign_triple(TARGET, &unique_test_nonce(), 1_000, 1_000).err(),
             refused
         );
-        assert_eq!(sign_triple(TARGET, &unique_test_nonce(), 1_000, 999).err(), refused);
+        assert_eq!(
+            sign_triple(TARGET, &unique_test_nonce(), 1_000, 999).err(),
+            refused
+        );
         assert!(sign_triple(TARGET, &unique_test_nonce(), 1_000, 1_001).is_ok());
     }
 
