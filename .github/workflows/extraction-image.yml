@@ -42,21 +42,21 @@ permissions:
 jobs:
   build:
     name: build + smoke-check + report identity (linux/arm64)
-    # BUILT WHERE IT IS CONSUMED. The image is identified by its own content digest and is
-    # never transported, so it has to exist on the machine that runs the lane. That machine
-    # is an Apple Silicon self-hosted runner, which is also why the platform is linux/arm64:
-    # an amd64 build of identical pins is a different instrument.
-    #
-    # Same-repository refs only — this bind-mounts nothing but does run a build on the
-    # release verification host, and a fork ref would be arbitrary code execution there.
-    if: >-
-      github.event_name != 'pull_request'
-      || github.event.pull_request.head.repo.full_name == github.repository
-    environment: privileged-self-hosted
-    runs-on: [self-hosted, macOS, ARM64]
+    # Built on a GitHub-hosted arm64 runner: the platform is linux/arm64, and an amd64 build of
+    # identical pins is a different instrument. The image is not consumed from this runner's
+    # Docker store. It is preserved as an archive (uploaded below) whose digest the lock records,
+    # and every verification run loads that archive and checks the image identity.
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v7
+
+      - name: Containerd image store, so an image id is the manifest digest the lock records
+        run: |
+          set -euo pipefail
+          echo '{"features":{"containerd-snapshotter":true}}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+          echo "MCP_RE_EXTRACTION_ARTIFACT_STORE=$RUNNER_TEMP/extraction-artifacts" >> "$GITHUB_ENV"
 
       - name: The tag this checkout's pins compute to
         id: tag
@@ -123,3 +123,12 @@ jobs:
             sed -n '/^  \[extraction_container\]/,/^  definition = /p' /tmp/identity.out
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: The preserved archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: extraction-archive-${{ github.run_id }}
+          path: ${{ runner.temp }}/extraction-artifacts
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

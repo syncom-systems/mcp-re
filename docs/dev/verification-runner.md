@@ -1,6 +1,8 @@
 # The verification runner (dev1)
 
-The ADR-MCPRE-059 verification lanes do not run on GitHub-hosted runners. Verus is
+> The ADR-MCPRE-059 verification lanes now run on GitHub-hosted Linux (`.github/workflows/verification.yml`; measurements and design in `hosted-runner-findings.md`). dev1 remains for the manual SLO qualification and release assurance only, and the text below describes what those two still need from it.
+
+Historically the ADR-MCPRE-059 verification lanes did not run on GitHub-hosted runners. Verus is
 pinned to an install root under `/opt/verification`, and the extraction pipeline runs a
 Linux container loaded from a preserved artifact under the same tree. Both live on a
 persistent self-hosted Mac mini, `dev1`.
