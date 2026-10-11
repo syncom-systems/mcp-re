@@ -47,6 +47,7 @@ permissions:
 jobs:
   release-assurance:
     name: release assurance (binding closure)
+    environment: privileged-self-hosted
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 30
     env:
