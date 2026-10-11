@@ -13709,3 +13709,19 @@ control = "gate#scripts/extraction_image_gate.py"
 decision = "not-evidence"
 reason_family = "ND-004"
 recorded = "2026-09-29"
+
+[[disposition]]
+id = "CD-20134"
+project = ""
+control = "gate#scripts/install_pinned_verus.py"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-10-11"
+
+[[disposition]]
+id = "CD-20135"
+project = ""
+control = "gate#scripts/hosted_negative_controls.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-10-11"
