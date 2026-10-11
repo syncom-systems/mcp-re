@@ -502,6 +502,26 @@ _LIBTEST_RESULT = re.compile(
     + r")$"
 )
 
+
+_LIBTEST_FAILURE_NAME = re.compile(r"^    (?P<name>[A-Za-z_][\w:]*)$")
+
+
+def _libtest_failure_summary(stdout: str) -> list[str]:
+    """The test names libtest lists under a `failures:` header, in run order."""
+    names: list[str] = []
+    listing = False
+    for line in stdout.splitlines():
+        if line.strip() == "failures:":
+            listing = True
+            continue
+        if listing:
+            match = _LIBTEST_FAILURE_NAME.match(line)
+            if match:
+                names.append(match.group("name"))
+            elif line.strip():
+                listing = False
+    return names
+
 #: SGR/CSI escape sequences a runner emits when it decides to colour its output. Stripped
 #: before any line is matched: the lane reads a WORD at a known position, and an escape
 #: sequence in front of that word makes the line unmatchable while leaving it perfectly
@@ -564,6 +584,14 @@ def parse_results(eco: Ecosystem, stdout: str) -> dict[str, str]:
             match = _LIBTEST_RESULT.match(line.strip())
             if match:
                 out[match.group("name")] = match.group("status")
+        # libtest's own failure summary names every failed test, whatever was interleaved
+        # with its result line. A newline inside the interleave leaves `FAILED` off the
+        # `test <name> ... ` line, which read as `never ran` and made a RED control look
+        # unmeasured: the mutation lane then reported a probe whose weakening had broken its
+        # control as a MEASUREMENT FAILURE, on a fraction of runs. The summary only ever adds
+        # `FAILED`, so no test it names can read as passing.
+        for name in _libtest_failure_summary(stdout):
+            out.setdefault(name, "FAILED")
         return out
     if eco is PYTHON:
         for line in stdout.splitlines():

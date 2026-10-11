@@ -546,3 +546,23 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def test_a_failed_rust_test_whose_result_line_was_split_is_still_failed():
+    """The failure summary names it even when interleaved output left `FAILED` off its
+    `test <name> ... ` line, so a red control is never read as one that did not run."""
+    out = (
+        "running 2 tests\n"
+        "test a::passes ... ok\n"
+        "test a::breaks ... a log line from another thread\n"
+        "continued on its own line\n"
+        "\nfailures:\n\n---- a::breaks stdout ----\npanicked\n\n"
+        "failures:\n    a::breaks\n\n"
+        "test result: FAILED. 1 passed; 1 failed;\n"
+    )
+    assert parse_results(RUST, out) == {"a::passes": "ok", "a::breaks": "FAILED"}
+
+
+def test_the_failure_summary_never_turns_a_test_green():
+    assert parse_results(RUST, "test a::b ... FAILED\n\nfailures:\n    a::b\n") == {"a::b": "FAILED"}
+    assert parse_results(RUST, "test a::b ... ok\n") == {"a::b": "ok"}
