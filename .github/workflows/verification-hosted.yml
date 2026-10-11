@@ -58,6 +58,9 @@ jobs:
           python3 scripts/install_pinned_verus.py
           cat /opt/verification/verus/*/version.json
 
+      - name: Install uv at a pinned version
+        run: pipx install uv==0.12.3 && uv --version
+
       - name: Runner environment preflight
         run: ./scripts/verification_runner_preflight.sh
 
