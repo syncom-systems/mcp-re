@@ -200,6 +200,7 @@ def fingerprint_inputs(manifest: Path) -> list[str]:
         if any(str(e).startswith("mutation://") for e in unit.get("evidence", [])):
             required.append("verification/policy/mutation-probes.toml")
             required.extend(MUTATION_LANE_INPUTS)
+        required.extend(str(path) for path in unit.get("gate_controls", []))
     # Encoding v6: `governing_boundaries`. A unit's fingerprint reads
     # `trust-boundaries.toml`, and it is the one input the derivation above cannot see —
     # the component holds digests of boundary ENTRIES rather than file paths, so nothing in

@@ -38,6 +38,13 @@ on:
       - "verification/**"
       - "tools/verification/**"
       - ".github/workflows/verification.yml"
+      # ADR-MCPRE-068 Phase 1 gate controls. A unit declaring `gate_controls` digests
+      # those scripts as its own fingerprint component, so they re-trigger the lane like
+      # any other source the unit's evidence rests on.
+      - "scripts/serving_identity_provenance_gate.py"
+      - "scripts/authorization_provenance_gate.py"
+      - "scripts/refusal_provenance_gate.py"
+      - "scripts/serving_product_provenance_gate.py"
       - "scripts/install_pinned_verus.py"
       - "scripts/hosted_negative_controls.py"
       - "mcp-re-core/src/**"
@@ -446,6 +453,13 @@ on:
       - "verification/**"
       - "tools/verification/**"
       - ".github/workflows/verification.yml"
+      # ADR-MCPRE-068 Phase 1 gate controls. A unit declaring `gate_controls` digests
+      # those scripts as its own fingerprint component, so they re-trigger the lane like
+      # any other source the unit's evidence rests on.
+      - "scripts/serving_identity_provenance_gate.py"
+      - "scripts/authorization_provenance_gate.py"
+      - "scripts/refusal_provenance_gate.py"
+      - "scripts/serving_product_provenance_gate.py"
       - "mcp-re-core/src/**"
       - "mcp-re-http-profile/src/**"
       # Encoding v4 digests the INTEGRATION-TEST SOURCES a unit's selectors run, not only
