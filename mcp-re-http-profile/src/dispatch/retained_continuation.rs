@@ -10,13 +10,16 @@
 //! committed to, and only the deployment's correlation store holds them.
 //!
 //! It does NOT own the binding to the request being dispatched. The store is keyed by the
-//! actor the verifier resolved and by the request's own `requestState`
-//! (`mcp-re-proxy::http_profile_serve::continuation`), so the lookup is what ties a record
-//! to a correlation — and the lookup lives in the caller. A value of this type says "a
-//! correlation record was read", never "THIS request's record was read". That gap is real
-//! and is recorded as an owner question rather than papered over here, because closing it
-//! means deciding where correlation lookup lives, which is a design question about the
-//! store and not about this type.
+//! actor the verifier resolved and by the request's own `requestState`, so the lookup is
+//! what ties a record to a correlation. A value of this type says "a correlation record
+//! was read", never "THIS request's record was read".
+//!
+//! The lookup has one owner: `mcp-re-proxy`'s continuation plane
+//! (`http_profile_serve::continuation::ContinuationPlane`). It derives the key from the
+//! verified request, reads under it, and builds this value from what it read and the same
+//! request's `requestState`. Every caller in that crate, the serving path and the
+//! HTTP-profile proof front, gets its binding from the plane, so the
+//! "THIS request's record" half is the plane's and is not restated here.
 //!
 //! ## What the seal buys anyway
 //!

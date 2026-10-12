@@ -15,27 +15,23 @@
 //! * the spend has FOUR outcomes rather than two, because the store's `Err` is not its
 //!   `Ok(false)`.
 
-use mcp_re_core::McpReError;
 use mcp_re_http_profile::RetainedContinuation;
+use mcp_re_http_profile::VerifiedMcpRequest;
 
 use crate::continuation_store::ContinuationKey;
 use crate::continuation_store::ContinuationStoreError;
 use crate::continuation_store::RetainedHandles;
-use crate::exchange_state::Established;
-use crate::exchange_state::ExchangeEvent;
-use crate::http_profile_serve::request_admission::ValidatedRequestEnvelope;
 use crate::http_profile_serve::retention::fault_report::{self, Fault};
-use crate::http_profile_serve::Exchange;
-use crate::refusal::Refusal;
 
 use super::ContinuationPlane;
+use super::ContinuationRefusal;
 
 impl ContinuationPlane {
     /// CONTINUATION-PREPARED — recover the retained open-leg handles for an ANSWER leg.
     ///
     /// ```text
     /// ensures   Ok  => the continuation machine is NotInvolved or Peeked — never Consumed
-    ///           Err => 503, bound: the shared tier did not answer
+    ///           Err => Unavailable: the shared tier did not answer, or there is none
     /// forbids   consuming anything
     /// refusal   free — `peek` has no side effect, so nothing is spent
     /// ```
@@ -56,21 +52,24 @@ impl ContinuationPlane {
     /// Flattening the first two into the third reports a forged continuation every time
     /// the shared tier blips or a deployment runs without the capability, and hides a
     /// genuine splice attempt inside both.
-    pub(in crate::http_profile_serve) async fn prepare(
+    ///
+    /// `body` is the request body the verifier accepted; its `requestState` is read only
+    /// when the verified evidence block declares a continuation.
+    pub async fn read_answer(
         &self,
-        ex: &Exchange<'_>,
-        envelope: &ValidatedRequestEnvelope<'_>,
+        verified: &VerifiedMcpRequest,
+        body: &[u8],
         audience_id: &str,
-    ) -> Result<Established<ContinuationPrep>, Refusal> {
-        let has_continuation = ex.verified.request_block().continuation.is_some();
+    ) -> Result<ContinuationPrep, ContinuationRefusal> {
+        let has_continuation = verified.request_block().continuation.is_some();
         let answer_state = if has_continuation {
-            crate::http_profile_serve::extract_request_state(envelope.body())
+            crate::http_profile_serve::extract_request_state(body)
         } else {
             None
         };
         let answer_key = answer_state
             .as_ref()
-            .map(|state| ContinuationKey::for_request(audience_id, ex.verified, state.as_bytes()));
+            .map(|state| ContinuationKey::for_request(audience_id, verified, state.as_bytes()));
         let retained = match (&self.store, &answer_key) {
             (Some(store), Some(key)) => peeked_or_refusal(store.peek(key).await)?,
             // A key exists, so this leg NEEDS correlation, and this deployment holds no
@@ -80,14 +79,11 @@ impl ContinuationPlane {
             (None, Some(_)) => return Err(capability_absent()),
             _ => None,
         };
-        Ok(Established::new(
-            ContinuationPrep {
-                answer_state,
-                answer_key,
-                retained,
-            },
-            ExchangeEvent::ContinuationPrepared,
-        ))
+        Ok(ContinuationPrep {
+            answer_state,
+            answer_key,
+            retained,
+        })
     }
 }
 
@@ -105,14 +101,14 @@ impl ContinuationPlane {
 /// Neither outcome proceeds unbound, which is the property this exists to make checkable.
 fn peeked_or_refusal(
     peeked: Result<Option<RetainedHandles>, ContinuationStoreError>,
-) -> Result<Option<RetainedHandles>, Refusal> {
+) -> Result<Option<RetainedHandles>, ContinuationRefusal> {
     peeked.map_err(|e| {
         fault_report::report(
             Fault::ContinuationPeek,
             "read the approval this answer leg names",
             &e,
         );
-        Refusal::new(McpReError::ReplayCacheUnavailable, 503)
+        ContinuationRefusal::Unavailable
     })
 }
 
@@ -128,8 +124,8 @@ fn peeked_or_refusal(
 /// already expresses the one that matters.
 ///
 /// Free, like every refusal above the retirement: nothing was peeked and nothing spent.
-fn capability_absent() -> Refusal {
-    Refusal::new(McpReError::ReplayCacheUnavailable, 503)
+fn capability_absent() -> ContinuationRefusal {
+    ContinuationRefusal::Unavailable
 }
 
 /// What CONTINUATION-PREPARED recovered.
@@ -140,7 +136,7 @@ fn capability_absent() -> Refusal {
 ///
 /// Private fields: the assembly reads named projections, so it cannot form its own opinion
 /// about what an absent handle means.
-pub(in crate::http_profile_serve) struct ContinuationPrep {
+pub struct ContinuationPrep {
     answer_state: Option<String>,
     answer_key: Option<ContinuationKey>,
     retained: Option<RetainedHandles>,
@@ -155,9 +151,9 @@ impl ContinuationPrep {
     /// cannot be bound is never admitted.
     ///
     /// The deployment-side absences do not reach here at all: an outage and a missing
-    /// capability are refused in [`ContinuationPlane::prepare`], so this `None` no longer
+    /// capability are refused in [`ContinuationPlane::read_answer`], so this `None` no longer
     /// stands for two kinds of fact at once.
-    pub(in crate::http_profile_serve) fn binding(&self) -> Option<RetainedContinuation<'_>> {
+    pub fn binding(&self) -> Option<RetainedContinuation<'_>> {
         match (&self.retained, &self.answer_state) {
             (Some(handles), Some(state)) => Some(RetainedContinuation::from_correlation(
                 &handles.previous_request_evidence,
@@ -174,7 +170,7 @@ impl ContinuationPrep {
     /// Named rather than left as `retained.is_some()` at the call site: the assembly would
     /// then be deciding what an absent handle means, which is the one reading this owner
     /// keeps for itself.
-    pub(in crate::http_profile_serve) fn was_peeked(&self) -> bool {
+    pub fn was_peeked(&self) -> bool {
         self.retained.is_some()
     }
 
@@ -189,6 +185,8 @@ pub(in crate::http_profile_serve) mod tests {
     use super::*;
     use crate::continuation_store::AsyncContinuationStore;
     use crate::http_profile_serve::request_admission::tests::validated;
+    use crate::http_profile_serve::Exchange;
+    use mcp_re_core::McpReError;
     use std::sync::Arc;
 
     /// D1b′ / SLICE B: a deployment holding NO correlation capability refuses an answer
@@ -525,14 +523,98 @@ pub(in crate::http_profile_serve) mod tests {
             details: "the shared tier did not answer".into(),
         }))
         .expect_err("an outage must refuse rather than proceed unbound");
-        assert_eq!(outage.status, 503);
-        assert_eq!(
-            outage.cause,
-            crate::refusal::RefusalCause::from(McpReError::ReplayCacheUnavailable)
-        );
+        assert_eq!(outage, ContinuationRefusal::Unavailable);
 
         let hit = peeked_or_refusal(Ok(Some(RetainedHandles::over(b"req", b"resp"))))
             .expect("a live entry is not a refusal");
         assert!(hit.is_some(), "the positive control: a hit binds");
+    }
+
+    /// A tier that answers nothing it is asked: every operation reports an outage.
+    struct UnreachableStore;
+
+    impl AsyncContinuationStore for UnreachableStore {
+        fn create<'a>(
+            &'a self,
+            _key: &'a ContinuationKey,
+            _bases: &'a RetainedHandles,
+            _ttl_secs: i64,
+        ) -> crate::continuation_store::ContinuationFuture<'a, crate::continuation_store::Creation>
+        {
+            Box::pin(async { Err(unreachable_tier()) })
+        }
+
+        fn peek<'a>(
+            &'a self,
+            _key: &'a ContinuationKey,
+        ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedHandles>> {
+            Box::pin(async { Err(unreachable_tier()) })
+        }
+
+        fn consume<'a>(
+            &'a self,
+            _key: &'a ContinuationKey,
+        ) -> crate::continuation_store::ContinuationFuture<'a, crate::continuation_store::Consumption>
+        {
+            Box::pin(async { Err(unreachable_tier()) })
+        }
+    }
+
+    fn unreachable_tier() -> ContinuationStoreError {
+        ContinuationStoreError::Unavailable {
+            details: "the shared tier did not answer".into(),
+        }
+    }
+
+    /// The outage reaches EVERY caller of the plane as the deployment's refusal, through
+    /// the public operation the proof front and the serving assembly both call.
+    ///
+    /// The proof front once read a peek error as a miss, so its answer leg was refused as a
+    /// forged continuation (`continuation_binding_failed`, 409) whenever the tier blipped.
+    /// Asserted on the store's answer to a real lookup rather than on the classifier, so
+    /// a caller-side copy of the sequence is not what is being measured.
+    #[tokio::test]
+    async fn an_answer_leg_reaching_an_unreachable_tier_is_refused_as_unavailable() {
+        let plane = ContinuationPlane::wired(
+            Arc::new(UnreachableStore),
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+        );
+        let verified = verified_as("did:example:host-a", "key-1");
+        let body =
+            br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"requestState":"s-1"}}"#;
+
+        let refusal = plane
+            .read_answer(&verified, body, "aud")
+            .await
+            .err()
+            .expect("an outage must refuse rather than proceed with no binding");
+        assert_eq!(refusal, ContinuationRefusal::Unavailable);
+        assert_eq!(refusal.error(), McpReError::ReplayCacheUnavailable);
+        assert_eq!(refusal.status(), 503);
+        assert_ne!(
+            refusal.error(),
+            McpReError::ContinuationBindingFailed,
+            "an outage is never the caller's forged continuation"
+        );
+    }
+
+    /// The negative half: the same lookup against a tier that ANSWERS with no live entry is
+    /// not a refusal here. It yields no binding, so admission fails closed on the caller.
+    #[tokio::test]
+    async fn an_answer_leg_whose_approval_is_missing_proceeds_unbound_to_admission() {
+        let plane = ContinuationPlane::wired(
+            Arc::new(crate::continuation_store::InMemoryContinuationStore::new()),
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+        );
+        let verified = verified_as("did:example:host-a", "key-1");
+        let body =
+            br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"requestState":"s-1"}}"#;
+
+        let prep = plane
+            .read_answer(&verified, body, "aud")
+            .await
+            .expect("a store that answered is not a deployment refusal");
+        assert!(prep.binding().is_none());
+        assert!(!prep.was_peeked());
     }
 }

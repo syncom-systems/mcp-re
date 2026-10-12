@@ -49,9 +49,9 @@ pub(crate) mod receipt;
 mod authority_verdicts;
 mod body_boundary;
 
-/// The ADR-MCPS-047 continuation plane: a human's approval opened, read without being
-/// spent, spent exactly once, and recorded so any replica can answer it.
-mod continuation;
+/// The ADR-MCPS-047 continuation plane. Public because the HTTP-profile proof front, a
+/// separate target, must run this one correlation sequence rather than re-derive it.
+pub mod continuation;
 
 /// What the backend's reply IS: read once, here, so no later authority re-reads it.
 mod reply;

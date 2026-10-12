@@ -428,6 +428,7 @@ _PROXY_LIB_SRCS = [
     # The retirement authority, split out of `answer_leg.rs` on 2026-09-03: the read
     # decides what a leg may proceed on, this decides what may be said about an approval.
     "src/http_profile_serve/continuation/retirement.rs",
+    "src/http_profile_serve/continuation/refusal.rs",
     "src/http_profile_serve/inner_plane.rs",
     "src/http_profile_serve/reply.rs",
     "src/http_profile_serve/resolvers.rs",

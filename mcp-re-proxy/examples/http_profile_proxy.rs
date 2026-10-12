@@ -60,21 +60,18 @@ use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 
 use mcp_re_http_profile::result_class::input_required_state;
-use mcp_re_http_profile::RetainedContinuation;
 
 use mcp_re_proxy::async_inner::AsyncInnerServer;
 use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::config_state::FreshnessWindow;
-use mcp_re_proxy::continuation_store::AsyncContinuationStore;
-use mcp_re_proxy::continuation_store::ContinuationKey;
-use mcp_re_proxy::continuation_store::Creation;
 use mcp_re_proxy::continuation_store::InMemoryContinuationStore;
-use mcp_re_proxy::continuation_store::RetainedHandles;
 use mcp_re_proxy::http_inner::HttpInnerPool;
 use mcp_re_proxy::http_profile_dispatch::dispatch_request_with_async_tier;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
-use mcp_re_proxy::http_profile_serve::extract_request_state;
+use mcp_re_proxy::http_profile_serve::continuation::ContinuationPlane;
+use mcp_re_proxy::http_profile_serve::continuation::ContinuationRefusal;
+use mcp_re_proxy::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS;
 use mcp_re_proxy::replay_tier::ReplayDurabilityTier;
 #[cfg(feature = "redis_replay")]
 use mcp_re_proxy::RedisAsyncAtomicReplayStore;
@@ -92,19 +89,12 @@ struct ProxyState {
     inner: HttpInnerPool,
     replay: AsyncReplayTier,
     dispatch_cfg: ProxyDispatchConfig,
-    /// The ADR-MCPS-047 continuation correlation store. In-memory, because this front is
-    /// one process: it carries a multi-round-trip call across its two legs, and makes no
-    /// cross-replica claim. A fleet wires the shared Redis store instead — that is what
-    /// the `serve_fleet` path does, and the difference is the store, not the protocol.
-    continuations: InMemoryContinuationStore,
+    /// The ADR-MCPS-047 continuation plane the serving path runs, over an in-memory
+    /// store because this front is one process: it carries a multi-round-trip call across
+    /// its two legs, and makes no cross-replica claim. A fleet wires the shared Redis store
+    /// instead — the difference is the store, not the protocol.
+    continuations: ContinuationPlane,
 }
-
-/// Lifetime of a recorded continuation in this proof front, in seconds.
-///
-/// An open leg is waiting on a human, so it outlives a request's freshness window; it is
-/// bounded anyway because an elicitation nobody ever answers must not be answerable
-/// forever.
-const CONTINUATION_TTL_SECS: i64 = 300;
 
 #[tokio::main]
 async fn main() {
@@ -173,7 +163,10 @@ async fn main() {
             .expect("build inner pool"),
         replay,
         dispatch_cfg,
-        continuations: InMemoryContinuationStore::new(),
+        continuations: ContinuationPlane::wired(
+            Arc::new(InMemoryContinuationStore::new()),
+            DEFAULT_CONTINUATION_TTL_SECS,
+        ),
     });
 
     let listener = TcpListener::bind(&bind).await.expect("bind HPP_BIND");
@@ -265,35 +258,21 @@ async fn handle(
     };
 
     // Step 3a — MRTR continuation prep (ADR-MCPS-047). A verified request carrying a
-    // continuation is an ANSWER leg: recover the open leg's retained evidence handles from
-    // the correlation store, keyed by the opaque `requestState` the client re-presents,
-    // so the dispatcher can bind this answer to the exact prior exchange. `peek` has no
-    // side effect — a request that fails the binding must not destroy a live
-    // continuation on its way out.
-    //
-    // The key is derived from the actor the VERIFIER resolved, never from anything the
-    // request asserts, so one peer cannot name another's continuation at all.
-    let answer_state = verified
-        .request_block()
-        .continuation
-        .as_ref()
-        .and_then(|_| extract_request_state(&http_req.body));
-    let answer_key = answer_state.as_ref().map(|state| {
-        ContinuationKey::for_request(&expected_audience.audience_id, &verified, state.as_bytes())
-    });
-    let retained = match &answer_key {
-        Some(key) => state.continuations.peek(key).await.ok().flatten(),
-        None => None,
-    };
-    let continuation_ctx = match (&retained, &answer_state) {
-        (Some(handles), Some(request_state)) => Some(RetainedContinuation::from_correlation(
-            &handles.previous_request_evidence,
-            &handles.input_required_response_evidence,
-            request_state.as_bytes(),
-        )),
-        // A continuation was signed but nothing was retained for it: pass None so the
-        // dispatcher fails closed rather than admit an unbindable answer leg.
-        _ => None,
+    // continuation is an ANSWER leg: the plane reads the open leg's retained evidence
+    // without spending it, keyed by the actor the VERIFIER resolved and the `requestState`
+    // the client re-presents. A store that did not answer is refused as this deployment's
+    // fault, never as the caller's forged continuation.
+    let prep = match state
+        .continuations
+        .read_answer(&verified, &http_req.body, &expected_audience.audience_id)
+        .await
+    {
+        Ok(prep) => prep,
+        Err(refusal) => {
+            return Ok(to_hyper(continuation_rejection(
+                &http_req, &verified, refusal,
+            )))
+        }
     };
 
     // Step 3 — replay admission (fail-closed) through the configured tier, on the entry
@@ -305,7 +284,7 @@ async fn handle(
     if let Err(e) = dispatch_request_with_async_tier(
         &verified,
         &state.replay,
-        continuation_ctx,
+        prep.binding(),
         &state.dispatch_cfg,
         now,
     )
@@ -321,24 +300,13 @@ async fn handle(
     }
 
     // Step 3b — the answer leg is admitted, so retire its continuation NOW, before the
-    // backend runs. This is where one-shot is enforced: `consume` reports whether this
-    // call removed the live entry, so of two concurrent answer legs that both bound
-    // successfully, exactly one proceeds. Refusing before the backend runs means the
-    // loser's call never takes effect. A store that did not answer is refused too: it
-    // is not a spend this leg may proceed on.
-    if let Some(key) = &answer_key {
-        let consumed = state.continuations.consume(key).await;
-        if !matches!(
-            consumed,
-            Ok(mcp_re_proxy::continuation_store::Consumption::Consumed)
-        ) {
-            return Ok(to_hyper(rejection(
-                Some(&http_req),
-                Some(verified.evidence()),
-                McpReError::ContinuationBindingFailed.wire_code(),
-                409,
-            )));
-        }
+    // backend runs. Of two concurrent answer legs that both bound successfully, exactly one
+    // retires the approval; the other, and a tier that did not answer the spend, are
+    // refused with the classification the plane states for each.
+    if let Some(refusal) = state.continuations.retire(prep).await.refusal() {
+        return Ok(to_hyper(continuation_rejection(
+            &http_req, &verified, refusal,
+        )));
     }
 
     // Step 4 — strip the proxy-owned top-level `_meta` (the request evidence
@@ -426,28 +394,18 @@ async fn handle(
                 }
             };
             if let Some(request_state) = open_leg_state {
-                let handles =
-                    RetainedHandles::over(verified.request_signature_base(), &response_base);
-                let key = ContinuationKey::for_request(
-                    &expected_audience.audience_id,
-                    &verified,
-                    request_state.as_bytes(),
-                );
-                // Anything but a fresh entry fails the leg closed: an outage could not
-                // record it, and a collision means a live continuation for this actor and
-                // `requestState` is already outstanding and must not be displaced.
-                if !matches!(
-                    state
-                        .continuations
-                        .create(&key, &handles, CONTINUATION_TTL_SECS)
-                        .await,
-                    Ok(Creation::Stored)
-                ) {
-                    return Ok(to_hyper(rejection(
-                        Some(&http_req),
-                        Some(verified.evidence()),
-                        McpReError::ReplayCacheUnavailable.wire_code(),
-                        503,
+                if let Err(refusal) = state
+                    .continuations
+                    .record_open(
+                        &verified,
+                        &expected_audience.audience_id,
+                        &request_state,
+                        response_base,
+                    )
+                    .await
+                {
+                    return Ok(to_hyper(continuation_rejection(
+                        &http_req, &verified, refusal,
                     )));
                 }
             }
@@ -507,6 +465,21 @@ fn rejection(
         ),
     }
     .expect("rejection signs")
+}
+
+/// The bound receipt for a continuation refusal, carrying the classification the plane
+/// stated.
+fn continuation_rejection(
+    request: &HttpRequest,
+    verified: &mcp_re_http_profile::VerifiedMcpRequest,
+    refusal: ContinuationRefusal,
+) -> HttpResponse {
+    rejection(
+        Some(request),
+        Some(verified.evidence()),
+        refusal.error().wire_code(),
+        refusal.status(),
+    )
 }
 
 /// Remove the top-level `_meta` object (carrying the proxy-owned request evidence
