@@ -36,18 +36,17 @@ That sentence contains an "and", and the "and" is §4 Q1.
 ## 3. Position in the system
 
 ```text
-argv ──▶ parse_args ──▶ DeploymentRequest ──▶ ValidatedDeployment::try_from ──▶ into_inner()
-                                                                                     │
-                                                              DeploymentRequest ◀────┘
-                                                                     │
-main.rs ─────────────────────────────────────────────────▶ app::run(config)
-                                                                     │
-                                              ValidatedDeployment::try_from  ← again
-                                                                     │
-                                                  run_validated ──▶ build_key_source(...)
+argv ──▶ parse_args ──▶ DeploymentRequest ──▶ ValidatedDeployment::try_from
+                                                          │
+main.rs ──────────────────────────────────▶ app::run(ValidatedDeployment)
+                                                          │
+                                       run_validated ──▶ build_key_source(...)
+
+embedder ──▶ app::run_request(DeploymentRequest) ──▶ ValidatedDeployment::try_from ──▶ run
 ```
 
-The right-hand `try_from` is not a typo in the diagram. See §4 Q7.
+The argv path validates once and hands the proof to `app::run` unopened. A request built in
+code met no parser, so `app::run_request` validates it. See §4 Q7.
 
 ## 4. The twelve questions (ADR-061 §8)
 
@@ -243,7 +242,7 @@ Question 2 answered three, and the split is unusually clean: **A and C never cal
 | capability materialization in the CLI module | **discharged** — Phase 8 moved C to `capability_materialization::*` and B to the policy that owns it |
 | the module doc claims the Layer-A boundary lives here | **discharged** — the doc was corrected in Phase 9 |
 | `parse_args` at 722 lines | **spent** — it is 22 lines; the ADR-058 exception has no function left to cover, and EX-007 records it as spent rather than revoked |
-| the validation proof is created, discarded and recreated | **open**, recorded not ruled — unchanged |
+| the validation proof is created, discarded and recreated | **discharged** — MCPRE-183 (#1097): `parse_args` returns the `ValidatedDeployment`, `app::run` takes it, and embedders enter through `app::run_request` |
 | ~~requiredness is a parser-only rule over public `String` fields~~ | **CLOSED 2026-08-29** — see below |
 | 23 legality tests test a neighbour's owner from inside this file | **open** — test placement, not a production authority |
 | 6 materialization tests for 297 lines of key custody | **moved with C**; it is `capability_materialization`'s coverage question now |

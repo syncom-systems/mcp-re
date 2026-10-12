@@ -489,9 +489,9 @@ fn server_identity(
     .iter()
     .map(|s| s.to_string())
     .collect();
-    let config = mcp_re_proxy::cli::parse_args(&args).expect("a legal deployment");
-    mcp_re_proxy::config_state::validation::validate_configuration(&config)
+    mcp_re_proxy::cli::parse_args(&args)
         .expect("a legal deployment")
+        .state()
         .server_identity()
         .clone()
 }

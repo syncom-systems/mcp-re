@@ -390,6 +390,7 @@ pub(crate) mod test_support {
         let owned: Vec<String> = argv.into_iter().map(str::to_string).collect();
         crate::cli::parse_args(&owned)
             .unwrap_or_else(|e| panic!("{source:?} config must parse: {e}"))
+            .into_inner()
     }
 
     /// The two custody states the disk projection is a function of.
@@ -699,7 +700,9 @@ pub(crate) mod test_support {
         .iter()
         .map(|s| (*s).to_string())
         .collect();
-        cli::parse_args(&argv).expect("the baseline parses")
+        cli::parse_args(&argv)
+            .expect("the baseline parses")
+            .into_inner()
     }
 }
 

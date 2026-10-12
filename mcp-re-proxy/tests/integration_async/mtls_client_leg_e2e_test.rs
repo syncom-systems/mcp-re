@@ -235,7 +235,9 @@ fn server_config_args() -> mcp_re_proxy::deployment_request::DeploymentRequest {
     .iter()
     .map(|s| s.to_string())
     .collect();
-    mcp_re_proxy::cli::parse_args(&args).expect("parse server config")
+    mcp_re_proxy::cli::parse_args(&args)
+        .expect("parse server config")
+        .into_inner()
 }
 
 fn server_resolver() -> ActorResolver {

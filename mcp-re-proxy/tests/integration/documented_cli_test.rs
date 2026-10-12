@@ -90,10 +90,9 @@ fn invocations_in_block(block: &str, launch: &str) -> Vec<Vec<String>> {
 
 /// The guide's worked example must parse AND pass the unsafe-configuration boundary.
 ///
-/// Both halves matter and they fail differently. `parse_args` rejects a flag that no
-/// longer exists or a value outside its enum; `ValidatedDeployment::try_from` is what refuses
-/// an admissible-looking value the deployment may not use. The guide's example carried
-/// defects of both kinds.
+/// `parse_args` returns the validated deployment, so one call covers both: a flag that no
+/// longer exists or a value outside its enum, and an admissible-looking value the deployment
+/// may not use. The guide's example carried defects of both kinds.
 #[test]
 fn the_sidecar_guides_worked_example_is_a_configuration_the_proxy_will_start_with() {
     let markdown = guide();
@@ -108,20 +107,13 @@ fn the_sidecar_guides_worked_example_is_a_configuration_the_proxy_will_start_wit
 
     for argv in invocations {
         let rendered = argv.join(" ");
-        let config = cli::parse_args(&argv).unwrap_or_else(|e| {
+        cli::parse_args(&argv).unwrap_or_else(|e| {
             panic!(
-                "the sidecar guide documents a command line the parser rejects:\n  \
-                 {rendered}\n\nparse_args said: {e}\n\nFix the guide, not this test."
+                "the sidecar guide documents a command line that is refused before \
+                 serving:\n  {rendered}\n\nparse_args said: {e}\n\nFix the guide, not \
+                 this test."
             )
         });
-        mcp_re_proxy::config_state::validation::ValidatedDeployment::try_from(config)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "the sidecar guide documents a command line that PARSES but is refused \
-                 before serving:\n  {rendered}\n\nvalidation said: {e}\n\nFix the guide, \
-                 not this test."
-                )
-            });
     }
 }
 
