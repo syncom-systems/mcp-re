@@ -403,6 +403,121 @@ def _perturbed(path: str, unit_ids):
     )
 
 
+def _read_sets() -> dict[str, frozenset[str]]:
+    from _fingerprint import fingerprint_read_set
+
+    return {
+        unit_id: fingerprint_read_set(unit, DOC, TOOLCHAINS, ASSUMPTIONS)
+        for unit_id, unit in UNITS.items()
+    }
+
+
+def test_the_read_set_holds_every_file_the_fingerprint_opens():
+    """The trigger gate requires a workflow filter for every path in the read set, so a
+    file the fingerprint reads and the read set omits is a change that moves the evidence
+    and re-runs nothing. Measured at the I/O boundary rather than by asking each component
+    what it reads: every open of a repository file during the fingerprint is observed, and
+    each one must be in that unit's read set.
+
+    Caches are cleared first, or a file read before the window would go unobserved. A file
+    the fingerprint never opens cannot move it by its bytes; what it can do by EXISTING —
+    appearing under a declared glob — reaches the read set as a tracked file on the very
+    change that adds it."""
+    import builtins
+    import io
+
+    import _fingerprint
+    import _rust_targets
+    from _manifest import REPO_ROOT as ROOT
+
+    opened: dict[str, set[str]] = {}
+    current: list[str] = []
+
+    def note(path) -> None:
+        try:
+            rel = Path(path).resolve().relative_to(ROOT).as_posix()
+        except (TypeError, ValueError):
+            return
+        opened.setdefault(current[0], set()).add(rel)
+
+    real_open, real_io_open = builtins.open, io.open
+    real_bytes, real_text = Path.read_bytes, Path.read_text
+
+    def spy_open(file, *args, **kwargs):
+        note(file)
+        return real_open(file, *args, **kwargs)
+
+    def spy_bytes(self):
+        note(self)
+        return real_bytes(self)
+
+    def spy_text(self, *args, **kwargs):
+        note(self)
+        return real_text(self, *args, **kwargs)
+
+    read_sets: dict[str, frozenset[str]] = {}
+    builtins.open, io.open = spy_open, spy_open
+    Path.read_bytes, Path.read_text = spy_bytes, spy_text
+    try:
+        for unit_id, unit in UNITS.items():
+            _rust_targets.table.cache_clear()
+            _fingerprint._boundary_files.cache_clear()
+            current[:] = [unit_id]
+            read_sets[unit_id] = _fingerprint.fingerprint_read_set(
+                unit, DOC, TOOLCHAINS, ASSUMPTIONS
+            )
+    finally:
+        builtins.open, io.open = real_open, real_io_open
+        Path.read_bytes, Path.read_text = real_bytes, real_text
+
+    assert opened, "nothing was observed opening a file — the spy measured nothing"
+    missing = {
+        unit_id: sorted(paths - read_sets[unit_id])
+        for unit_id, paths in opened.items()
+        if paths - read_sets[unit_id]
+    }
+    assert not missing, f"opened by the fingerprint but absent from its read set: {missing}"
+
+
+def test_a_gate_control_is_in_its_units_read_set_and_moves_its_fingerprint():
+    """The case the read set was built for: four gate-control scripts were digested into
+    their units' fingerprints and absent from the trigger set, so editing one moved the
+    evidence and re-ran nothing. Both halves, on every declared gate control: it moves the
+    fingerprint, and the read set names it."""
+    declaring = {
+        unit_id: [str(path) for path in unit["gate_controls"]]
+        for unit_id, unit in UNITS.items()
+        if unit.get("gate_controls")
+    }
+    assert declaring, "no unit declares gate_controls — the population this test is about"
+    read_sets = _read_sets()
+    for unit_id, scripts in declaring.items():
+        for script in scripts:
+            assert script in read_sets[unit_id], f"{script} missing from {unit_id}'s read set"
+            before = fingerprint_unit(UNITS[unit_id], DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
+            after = _perturbed(script, [unit_id])[unit_id]
+            assert after != before, f"perturbing {script} did not move {unit_id}"
+
+
+def test_an_untracked_project_input_alternative_is_not_a_required_input():
+    """A project-input list names alternatives a project may not use — `poetry.lock` beside
+    `uv.lock`. Requiring a trigger for one absent from the tree would demand a filter naming
+    nothing, which the trigger gate's liveness clause refuses: two rules contradicting each
+    other. Every such name in the read set must be one git tracks."""
+    from _ecosystems import ECOSYSTEMS
+    from _fingerprint import _tracked_files
+
+    names = {name for eco in ECOSYSTEMS for name in eco.project_inputs}
+    tracked = _tracked_files()
+    seen = 0
+    for unit_id, paths in _read_sets().items():
+        for path in paths:
+            if path.rsplit("/", 1)[-1] in names:
+                seen += 1
+                assert path in tracked, f"{unit_id} requires untracked alternative {path}"
+    assert seen, "no project input reached any read set — the population this test is about"
+
+
 def test_editing_a_lean_instrument_moves_the_lean_unit_and_nothing_else():
     """Both directions, which is the whole point: before this component existed, editing
     `_lean_model.py` moved ZERO fingerprints while editing `verify-tests` moved one on this

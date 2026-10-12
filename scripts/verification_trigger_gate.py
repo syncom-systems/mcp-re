@@ -2,14 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """Verification-trigger gate — the lane runs on everything its fingerprint reads.
 
-WHAT THIS PROVES, exactly: two things about the trigger set.
+WHAT THIS PROVES, exactly: three things about the trigger set.
 
   1. COVERAGE — every file that participates in an ADR-MCPRE-059 `ReviewFingerprint`,
      and every SITE a registered ADR-MCPRE-068 structural probe reads, is matched by
      `.github/workflows/verification.yml`'s `paths:` filters, on both the
-     `pull_request` and `push` triggers.
+     `pull_request` and `push` triggers. The fingerprint inputs are the read set
+     `_fingerprint.fingerprint_read_set` records, never a list kept here.
   2. LIVENESS — no wildcard-free filter names a file that is neither in the tree nor a
      required fingerprint input.
+  3. SYMMETRY — the `pull_request` and `push` filters are the same set. A path on one
+     and not the other means a change the pull request measured and `main` did not, or
+     the reverse, and a lane input that is not a fingerprint input (the prover
+     installer, the negative controls) has no other clause to catch it.
 
 The second clause of (2) is not slack: a fingerprint input may be absent from the tree
 TODAY — a lockfile alternative, a declared path a split is about to create — and a filter
@@ -56,20 +61,16 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO / ".github" / "workflows" / "verification.yml"
-MANIFEST = REPO / "verification" / "policy" / "verification.toml"
 
 sys.path.insert(0, str(REPO / "tools" / "verification"))
-from _ecosystems import build_configuration_patterns  # noqa: E402
-from _fingerprint import _tracked_files  # noqa: E402
-from _fingerprint import (  # noqa: E402
-    MUTATION_LANE_INPUTS,
-    TEST_LANE_INPUTS,
-    WORKSPACE_BUILD_INPUTS,
-    test_source_patterns,
+from _fingerprint import fingerprint_read_set  # noqa: E402
+from _manifest import (  # noqa: E402
+    ManifestError,
+    load_assumptions,
+    load_toolchains,
+    load_trust_boundaries,
+    load_verification,
 )
-
-#: The boundary catalogue, read by `_fingerprint._governing_boundaries`.
-TRUST_BOUNDARIES = "verification/policy/trust-boundaries.toml"
 
 #: The ADR-MCPRE-068 structural probes, whose injection sites the lane reads.
 STRUCTURAL_PROBES = REPO / "verification" / "policy" / "structural-probes.toml"
@@ -155,59 +156,21 @@ def trigger_paths(text: str) -> dict[str, list[str]]:
     return found
 
 
-def fingerprint_inputs(manifest: Path) -> list[str]:
-    """Every repo-relative file a unit fingerprint reads, from the manifest itself.
+def fingerprint_inputs() -> list[str]:
+    """Every repo path a unit fingerprint reads, as the fingerprint itself reports it.
 
-    Derived, never restated: a unit whose paths move must move this set with them,
-    or the gate is checking a list that no longer describes the evidence.
+    Not reconstructed here. `_fingerprint.fingerprint_read_set` records what each unit's
+    fingerprint actually digested, so a component added to the encoding is in this set the
+    moment it reads a file, with nothing in this script to remember.
     """
-    required = list(WORKSPACE_BUILD_INPUTS)
-    if not manifest.is_file():
-        return required
-    doc = tomllib.load(manifest.open("rb"))
+    doc = load_verification()
+    toolchains = load_toolchains()
+    assumptions = load_assumptions()
+    boundaries = load_trust_boundaries()
+    required: set[str] = set()
     for unit in doc.get("unit", []):
-        for path in unit.get("paths", []):
-            required.append(str(path))
-        # The dependency and configuration inputs, from the ONE function the fingerprint
-        # uses. A restatement here would be the "one dependency set stated twice" shape this
-        # gate exists to prevent: a Python unit's inputs are its `pyproject.toml` and
-        # lockfile, a Rust unit's its package's BUILD file, and a project can live at
-        # `sdk/python` rather than at a top-level directory.
-        # Only the ones the fingerprint actually digests, which is the TRACKED ones — the
-        # same rule, from the same function. A lockfile alternative a project does not use
-        # contributes nothing, and neither does one that exists on a developer's disk and
-        # not in the tree; demanding a trigger for either is the mirror of the defect this
-        # gate exists for, and the workflow refuses a wildcard-free filter that names
-        # nothing, so the two rules would contradict each other.
-        tracked = _tracked_files()
-        required.extend(
-            pattern
-            for pattern in build_configuration_patterns(unit)
-            if pattern in tracked
-        )
-        # Encoding v4: the integration-test SOURCES a unit's selectors run, and the lane
-        # code that decides what a selector means, are both fingerprint inputs. A trigger
-        # set blind to them would leave a rewritten control, or a changed selector
-        # mechanism, un-re-measured.
-        for pattern in test_source_patterns(unit):
-            required.append(pattern.replace("/**/*.rs", "/x.rs"))
-        required.extend(TEST_LANE_INPUTS)
-        # Encoding v5: a unit declaring `mutation://` fingerprints the probe entries and
-        # the lane that applies them. Both are already inside `verification/**` and
-        # `tools/verification/**`, and both are listed here anyway — the gate's job is to
-        # DERIVE the requirement from the fingerprint, not to be right by coincidence about
-        # a filter someone could narrow later.
-        if any(str(e).startswith("mutation://") for e in unit.get("evidence", [])):
-            required.append("verification/policy/mutation-probes.toml")
-            required.extend(MUTATION_LANE_INPUTS)
-    # Encoding v6: `governing_boundaries`. A unit's fingerprint reads
-    # `trust-boundaries.toml`, and it is the one input the derivation above cannot see —
-    # the component holds digests of boundary ENTRIES rather than file paths, so nothing in
-    # a unit's `paths` names it. Listed explicitly for that reason, with the reason: a
-    # fingerprint input the trigger set is blind to is a lane that stops asking rather than
-    # going red, which is the failure this whole gate exists for.
-    required.append(TRUST_BOUNDARIES)
-    return sorted(set(required))
+        required |= fingerprint_read_set(unit, doc, toolchains, assumptions, boundaries)
+    return sorted(required)
 
 
 # A filter entry with no wildcard names exactly one path, so whether that path exists is
@@ -253,6 +216,25 @@ def check(workflow_text: str, required: list[str]) -> list[str]:
                     "the ReviewFingerprint or is read by a registered probe — a change to "
                     "it leaves units the lane would then not re-measure"
                 )
+    pull_request, push = triggers.get("pull_request"), triggers.get("push")
+    if pull_request is None or push is None:
+        return failures
+    if bool(pull_request) != bool(push):
+        filtered = "pull_request" if pull_request else "push"
+        unfiltered = "push" if pull_request else "pull_request"
+        failures.append(
+            f"`{filtered}` has a path filter and `{unfiltered}` has none — the two "
+            "triggers must re-run the lane on the same changes, or main and its pull "
+            "requests measure different things"
+        )
+    elif set(pull_request) != set(push):
+        for path in sorted(set(pull_request) ^ set(push)):
+            only = "pull_request" if path in pull_request else "push"
+            failures.append(
+                f"path filter {path!r} is on `{only}` only — the two triggers must re-run "
+                "the lane on the same changes, or main and its pull requests measure "
+                "different things"
+            )
     return failures
 
 
@@ -265,6 +247,9 @@ def selftest() -> int:
         ("covered on pull_request but not on push", "on:\n  pull_request:\n    paths:\n      - \"Cargo.lock\"\n      - \"mcp-re-core/src/**\"\n  push:\n    paths:\n      - \"mcp-re-core/src/**\"\n", "push: no path filter matches 'Cargo.lock'"),
         ("no paths filter means everything triggers", "on:\n  pull_request:\n  push:\n", ""),
         ("a single star must not cross a separator", "on:\n  pull_request:\n    paths:\n      - \"mcp-re-core/*\"\n      - \"Cargo.lock\"\n  push:\n    paths:\n      - \"mcp-re-core/*\"\n      - \"Cargo.lock\"\n", "mcp-re-core/src/time.rs"),
+        ("a filter on pull_request only is asymmetric", "on:\n  pull_request:\n    paths:\n      - \"Cargo.lock\"\n      - \"mcp-re-core/src/**\"\n      - \"scripts/install.py\"\n  push:\n    paths:\n      - \"Cargo.lock\"\n      - \"mcp-re-core/src/**\"\n", "'scripts/install.py' is on `pull_request` only"),
+        ("a filtered trigger beside an unfiltered one is asymmetric", "on:\n  pull_request:\n    paths:\n      - \"Cargo.lock\"\n      - \"mcp-re-core/src/**\"\n  push:\n", "`pull_request` has a path filter and `push` has none"),
+        ("an unfiltered trigger beside a filtered one is asymmetric", "on:\n  pull_request:\n  push:\n    paths:\n      - \"Cargo.lock\"\n      - \"mcp-re-core/src/**\"\n", "`push` has a path filter and `pull_request` has none"),
         # The parser's own false positive: a comment between two entries used to
         # end the list, so the gate reported a gap the workflow did not have.
         ("a comment inside the list does not truncate it", "on:\n  pull_request:\n    paths:\n      - \"mcp-re-core/src/**\"\n      # why the next one is here\n      - \"Cargo.lock\"\n  push:\n    paths:\n      - \"mcp-re-core/src/**\"\n\n      - \"Cargo.lock\"\n", ""),
@@ -353,7 +338,15 @@ def main(argv: list[str]) -> int:
     if "--selftest" in argv:
         return selftest()
 
-    required = sorted(set(fingerprint_inputs(MANIFEST)) | set(structural_probe_sites(STRUCTURAL_PROBES)))
+    try:
+        inputs = fingerprint_inputs()
+    except ManifestError as exc:
+        print(f"verification-trigger gate: FAILED — the manifest does not load: {exc}")
+        return 1
+    if not inputs:
+        print("verification-trigger gate: FAILED — the fingerprint read set is empty")
+        return 1
+    required = sorted(set(inputs) | set(structural_probe_sites(STRUCTURAL_PROBES)))
     text = WORKFLOW.read_text(encoding="utf-8")
     failures = check(text, required)
     failures += [
@@ -370,8 +363,9 @@ def main(argv: list[str]) -> int:
     # empty required-set would otherwise report OK for having checked nothing.
     print(
         f"verification-trigger gate: OK — {len(required)} fingerprint input(s) and "
-        f"structural-probe site(s) all matched by the pull_request and push filters, and "
-        f"every wildcard-free filter names something the tree holds or a lane reads"
+        f"structural-probe site(s) all matched by the pull_request and push filters, the "
+        f"two filter sets are identical, and every wildcard-free filter names something "
+        f"the tree holds or a lane reads"
     )
     return 0
 
