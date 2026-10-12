@@ -217,7 +217,7 @@ def test_a_deleted_toolchain_table_is_not_a_satisfied_requirement():
     environment supplied — while every message it printed said the toolchain was pinned.
     """
     gone = _lock_without("verus.z3", "rust")
-    assert unpinned_identities(gone, LANE.REQUIRED) == {
+    assert unpinned_identities(gone, LANE.required_pins("verus")) == {
         "rust": "absent",
         "verus.z3": "absent",
     }
@@ -230,7 +230,7 @@ def test_absent_and_unresolved_are_both_disqualifying_and_stay_distinguishable()
     doc = _lock_without()
     doc["verus"]["z3"]["state"] = "unresolved"
     del doc["rust"]
-    reasons = unpinned_identities(doc, LANE.REQUIRED)
+    reasons = unpinned_identities(doc, LANE.required_pins("verus"))
     assert set(reasons) == {"verus.z3", "rust"}
     assert reasons["verus.z3"] == "unresolved"
     assert reasons["rust"] == "absent"
@@ -244,7 +244,7 @@ def test_the_lock_identifies_the_prover_binaries_and_the_solver_by_digest():
     pinned Verus release archive", which is a claim about provenance that can be compared
     with nothing. A solver answering `unsat` to everything discharges every proof in the
     repository."""
-    pinned = LANE._pinned_files(load_toolchains())
+    pinned = LANE._pinned_files(load_toolchains()["verus"])
     assert {"libvstd.rlib", "z3", "verus", "rust_verify"} <= set(pinned)
     # The lane runs `verus` and `rust_verify` as a Bazel action; Cargo's front end is no
     # part of the trusted prover, so it is not pinned as one.
@@ -259,7 +259,7 @@ def test_a_prose_identity_is_refused_rather_than_skipped(tmp_path=None):
     while the lock read as fully pinned."""
     doc = _lock_without()
     doc["verus"]["z3"]["identity"] = "bundled in the pinned Verus release archive"
-    detail = LANE._pinned_file_mismatch(doc, Path("/nonexistent"))
+    detail = LANE._pinned_file_mismatch(doc["verus"], Path("/nonexistent"))
     assert detail is not None and "not a digest" in detail
 
 
@@ -272,7 +272,7 @@ def test_a_substituted_prover_binary_is_a_mismatch():
     root = Path(load_toolchains()["verus"]["install_root"])
     if not (root / "rust_verify").is_file():
         return  # the prover is not installed on this host; nothing to compare against
-    detail = LANE._pinned_file_mismatch(doc, root)
+    detail = LANE._pinned_file_mismatch(doc["verus"], root)
     assert detail is not None and "rust_verify identity mismatch" in detail
 
 
@@ -283,7 +283,7 @@ def test_the_installed_prover_matches_every_digest_the_lock_records():
     root = Path(toolchains["verus"]["install_root"])
     if not (root / "vstd.vir").is_file():
         return  # the prover is not installed on this host
-    assert LANE._pinned_file_mismatch(toolchains, root) is None
+    assert LANE._pinned_file_mismatch(toolchains["verus"], root) is None
 
 
 def test_the_lane_names_its_solver_instead_of_inheriting_it():
@@ -386,3 +386,53 @@ if __name__ == "__main__":
                 print(f"FAIL {name}: {exc}")
     print(f"\n{failures} failure(s)")
     raise SystemExit(1 if failures else 0)
+
+
+def test_every_pinned_host_has_a_pin_of_the_same_shape_for_the_same_release():
+    """A platform's prover is its own table with the same keys, so one code path reads
+    either, and the two tables describe ONE release: a Linux pin on another commit would be
+    a different prover attested under the same unit fingerprints."""
+    toolchains = load_toolchains()
+    mac = toolchains["verus"]
+    for host, name in LANE.HOST_PINS.items():
+        pin = toolchains[name]
+        assert pin["release"] == mac["release"] and pin["commit"] == mac["commit"], host
+        assert set(LANE._pinned_files(pin)) == set(LANE._pinned_files(mac)), host
+        assert LANE.unpinned_identities(toolchains, LANE.required_pins(name)) == {}, host
+        for file, digest in LANE._pinned_files(pin).items():
+            assert digest.startswith("sha256:") and len(digest) == 71, (host, file)
+
+
+def test_the_linux_prover_is_not_the_macos_prover():
+    """The positive control for the table split: identical digests would mean one table was
+    copied, and a lane on one platform would then verify the other's bytes."""
+    toolchains = load_toolchains()
+    mac = LANE._pinned_files(toolchains["verus"])
+    linux = LANE._pinned_files(toolchains["verus_linux_x86_64"])
+    assert not set(mac.values()) & set(linux.values())
+    assert toolchains["verus_linux_x86_64"]["rust_toolchain"].startswith(
+        toolchains["rust"]["channel"] + "-"
+    )
+
+
+def test_a_host_with_no_pinned_build_has_no_pin():
+    assert LANE.HOST_PINS.get(("Linux", "aarch64")) is None
+    assert LANE.HOST_PINS.get(("Windows", "AMD64")) is None
+
+
+def test_a_substituted_linux_prover_binary_is_a_mismatch():
+    doc = _lock_without()
+    doc["verus_linux_x86_64"]["binaries"]["rust_verify"] = "sha256:" + "0" * 64
+    root = Path(load_toolchains()["verus_linux_x86_64"]["install_root"])
+    if LANE.host_pin_name() != "verus_linux_x86_64" or not (root / "rust_verify").is_file():
+        return  # the Linux prover is not installed on this host
+    detail = LANE._pinned_file_mismatch(doc["verus_linux_x86_64"], root)
+    assert detail is not None and "rust_verify identity mismatch" in detail
+
+
+def test_the_installed_linux_prover_matches_every_digest_the_lock_records():
+    toolchains = load_toolchains()
+    root = Path(toolchains["verus_linux_x86_64"]["install_root"])
+    if LANE.host_pin_name() != "verus_linux_x86_64" or not (root / "vstd.vir").is_file():
+        return  # the Linux prover is not installed on this host
+    assert LANE.installed_identity(toolchains["verus_linux_x86_64"], root) is None

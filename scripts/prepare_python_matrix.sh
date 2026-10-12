@@ -65,7 +65,7 @@ uv lock --check
 # One resolution for every environment, exported from that lock. `--no-emit-project`
 # because the project itself arrives as the built wheel below — installing it from source
 # as well would put the tree on `sys.path` beside the artifact and measure the wrong one.
-REQS="$(mktemp -t mcp-re-python-matrix)"
+REQS="$(mktemp "${TMPDIR:-/tmp}/mcp-re-python-matrix.XXXXXX")"
 trap 'rm -f "$REQS"' EXIT
 uv export --quiet --extra dev --no-emit-project --no-hashes -o "$REQS"
 

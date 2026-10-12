@@ -15117,3 +15117,19 @@ control = "src/lib.rs#tests::test_nonces_are_distinct_across_threads"
 decision = "not-evidence"
 reason_family = "ND-016"
 recorded = "2026-10-11"
+
+[[disposition]]
+id = "CD-20419"
+project = ""
+control = "gate#scripts/install_pinned_verus.py"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-10-11"
+
+[[disposition]]
+id = "CD-20420"
+project = ""
+control = "gate#scripts/hosted_negative_controls.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-10-11"

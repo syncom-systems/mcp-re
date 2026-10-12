@@ -56,9 +56,6 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO / ".github" / "workflows" / "verification.yml"
-#: Pull requests are verified by a separate, GitHub-hosted workflow (pull-request code never runs on
-#: the privileged host), so the `pull_request` filter lives here and the `push` filter in WORKFLOW.
-PR_WORKFLOW = REPO / ".github" / "workflows" / "verification-pr.yml"
 MANIFEST = REPO / "verification" / "policy" / "verification.toml"
 
 sys.path.insert(0, str(REPO / "tools" / "verification"))
@@ -357,9 +354,7 @@ def main(argv: list[str]) -> int:
         return selftest()
 
     required = sorted(set(fingerprint_inputs(MANIFEST)) | set(structural_probe_sites(STRUCTURAL_PROBES)))
-    # pull_request is read from PR_WORKFLOW, push from WORKFLOW. Both must still exist and both must
-    # still cover every fingerprint input: `check` fails on a missing trigger in the joined text.
-    text = PR_WORKFLOW.read_text(encoding="utf-8") + "\n" + WORKFLOW.read_text(encoding="utf-8")
+    text = WORKFLOW.read_text(encoding="utf-8")
     failures = check(text, required)
     failures += [
         f"path filter {p!r} names nothing in the tree — a filter that matches nothing is "
@@ -375,7 +370,7 @@ def main(argv: list[str]) -> int:
     # empty required-set would otherwise report OK for having checked nothing.
     print(
         f"verification-trigger gate: OK — {len(required)} fingerprint input(s) and "
-        f"structural-probe site(s) all matched by the pull_request (verification-pr.yml) and push (verification.yml) filters, and "
+        f"structural-probe site(s) all matched by the pull_request and push filters, and "
         f"every wildcard-free filter names something the tree holds or a lane reads"
     )
     return 0

@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import platform
 import subprocess
 import sys
 from pathlib import Path
@@ -78,7 +79,24 @@ import _verus_nonvacuity  # noqa: E402
 from _ecosystems import unit_projects  # noqa: E402
 import _rust_targets  # noqa: E402
 
-REQUIRED = {"verus", "verus.binaries", "verus.vstd", "verus.z3", "rust"}
+#: The lock's Verus pin for each host the lane can run on, keyed by (system, machine). A
+#: release ships a build per platform, so each platform's digests are its own table with the
+#: same shape; the lane reads exactly the table of the host it runs on and never another
+#: platform's, so a Linux run cannot be attested against macOS bytes or the reverse.
+HOST_PINS = {
+    ("Darwin", "arm64"): "verus",
+    ("Linux", "x86_64"): "verus_linux_x86_64",
+}
+
+
+def host_pin_name() -> str | None:
+    """The lock table pinning the prover for THIS host, or None when no build is pinned."""
+    return HOST_PINS.get((platform.system(), platform.machine()))
+
+
+def required_pins(pin_name: str) -> set[str]:
+    """Every lock identity the lane needs for the pin it selected."""
+    return {pin_name, f"{pin_name}.binaries", f"{pin_name}.vstd", f"{pin_name}.z3", "rust"}
 
 #: Where this lane deposits what it measured. The record is written for a FAILED unit too:
 #: a failure at a known fingerprint is evidence, and suppressing it would leave the last
@@ -157,7 +175,7 @@ def nonvacuity_probe() -> int:
     return 0
 
 
-def _pinned_files(toolchains: dict) -> dict[str, str]:
+def _pinned_files(verus: dict) -> dict[str, str]:
     """Every file under the install root the lock names by digest, path -> `sha256:…`.
 
     Assembled from the lock rather than listed here, so pinning one more artefact is an
@@ -165,7 +183,6 @@ def _pinned_files(toolchains: dict) -> dict[str, str]:
     place that decides what the prover IS, and the two would diverge the first time only
     one was updated.
     """
-    verus = toolchains["verus"]
     pinned = {
         name: str(digest)
         for name, digest in verus.get("binaries", {}).items()
@@ -181,7 +198,7 @@ def _pinned_files(toolchains: dict) -> dict[str, str]:
     return pinned
 
 
-def _pinned_file_mismatch(toolchains: dict, install_root: Path) -> str | None:
+def _pinned_file_mismatch(verus: dict, install_root: Path) -> str | None:
     """Why the files under `install_root` are not the pinned ones, or None.
 
     R9-C070 / R9-C083. `vstd.vir` and the declared commit established that the pinned
@@ -195,7 +212,7 @@ def _pinned_file_mismatch(toolchains: dict, install_root: Path) -> str | None:
     which is why the `libvstd.rlib` digest sitting unread in a `note` field counted as a
     finding rather than as documentation.
     """
-    pinned_files = _pinned_files(toolchains)
+    pinned_files = _pinned_files(verus)
     # EVERY identity's SHAPE first, before any file is looked at. A lock recording prose
     # where a digest belongs is a defect in the lock, and it is one whether or not the
     # prover is installed — so it must not be reachable only after every file above it
@@ -232,14 +249,14 @@ def _unpinned_detail(unpinned: dict[str, str]) -> str:
     return ", ".join(f"{name} ({reason})" for name, reason in sorted(unpinned.items()))
 
 
-def installed_identity(toolchains: dict, install_root: Path) -> str | None:
+def installed_identity(verus: dict, install_root: Path) -> str | None:
     """Why the installation at `install_root` is NOT the pinned prover, or None.
 
     Content, not location. The lock records `verus.vstd.identity` and `verus.commit`; until
     something compares them against the files on disk, both are decoration and the lane's
     only real claim is that some executable exists at an agreed path.
     """
-    pinned_vstd = str(toolchains["verus"].get("vstd", {}).get("identity", ""))
+    pinned_vstd = str(verus.get("vstd", {}).get("identity", ""))
     if not pinned_vstd.startswith("sha256:"):
         return (
             "the lock records no `verus.vstd.identity` digest, so the prover's "
@@ -255,11 +272,11 @@ def installed_identity(toolchains: dict, install_root: Path) -> str | None:
             f"{pinned_vstd[:23]}. The installation is not the pinned release."
         )
 
-    mismatch = _pinned_file_mismatch(toolchains, install_root)
+    mismatch = _pinned_file_mismatch(verus, install_root)
     if mismatch is not None:
         return mismatch
 
-    pinned_commit = str(toolchains["verus"].get("commit", ""))
+    pinned_commit = str(verus.get("commit", ""))
     version_file = install_root / "version.json"
     if not version_file.is_file():
         return f"the pinned prover declares no identity: {version_file} is missing"
@@ -293,7 +310,21 @@ def main() -> int:
     # `[verus.z3]` or `[rust]` left this set empty and the lane ran against whatever the
     # environment supplied. The reasons are kept apart in the message because the remedies
     # are opposite, and never in the decision.
-    unpinned = unpinned_identities(toolchains, REQUIRED)
+    pin_name = host_pin_name()
+    if pin_name is None:
+        # Not a FAIL and not a PASS: no prover build is pinned for this host, so nothing can
+        # be proved here. Reported before the unit selection so the cause is named.
+        print(
+            f"UNAVAILABLE: the lock pins no Verus build for {platform.system()} "
+            f"{platform.machine()} (pinned hosts: "
+            + ", ".join(f"{a}/{b}" for a, b in sorted(HOST_PINS))
+            + ").",
+            file=sys.stderr,
+        )
+        print("VERDICT: UNAVAILABLE")
+        return 1
+    verus = toolchains.get(pin_name, {})
+    unpinned = unpinned_identities(toolchains, required_pins(pin_name))
     missing = sorted(unpinned)
     verus_units = [unit for unit in doc.get("unit", []) if unit["class"] in {"V1", "V3"}]
     total = len(verus_units)
@@ -332,8 +363,8 @@ def main() -> int:
         )
         return 1
 
-    pinned_commit = str(toolchains["verus"].get("commit", ""))
-    install_root = Path(toolchains["verus"]["install_root"])
+    pinned_commit = str(verus.get("commit", ""))
+    install_root = Path(verus["install_root"])
     driver = install_root / "verus"
     if not driver.is_file():
         print(
@@ -348,7 +379,7 @@ def main() -> int:
     # A wrong installation is a FAIL, not UNAVAILABLE: something IS installed at the pinned
     # path and it is not what the lock describes, which is a stronger statement than "the
     # measurement is missing" and must not be recoverable by installing anything.
-    wrong = installed_identity(toolchains, install_root)
+    wrong = installed_identity(verus, install_root)
     if wrong is not None:
         print(f"FAIL: {wrong}", file=sys.stderr)
         print(
@@ -441,6 +472,8 @@ def main() -> int:
         prover = {"commit": pinned_commit}
         if reports:
             prover = {"commit": reports[0].commit, "version": reports[0].version}
+        prover["pin"] = pin_name
+        prover["host"] = f"{platform.system()}/{platform.machine()}"
         if not ok or status != 0:
             print(f"  FAIL: {detail} (exit {status})", file=sys.stderr)
             print((log.strip() or output.strip())[-4000:], file=sys.stderr)

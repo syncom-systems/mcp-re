@@ -134,6 +134,42 @@ named while the lock read as fully pinned.
 # and the container is where that nightly and the pinned Aeneas/Charon release binaries live.
 # Neither tool is built anywhere in this repository.
 
+[verus_linux_x86_64]
+state = "resolved"
+release = "0.2026.08.09.92f466f"
+commit = "92f466f247f45128c630d1c843fd6e27d2115587"
+source_url = "https://github.com/verus-lang/verus/releases/download/release/0.2026.08.09.92f466f/verus-0.2026.08.09.92f466f-x86-linux.zip"
+sha256 = "2f5a41c553f424aacdd732339e9d125563716a0b003c27730f75d6f81a282cef"
+platform = "linux_x86_64"
+install_root = "/opt/verification/verus/0.2026.08.09.92f466f"
+rust_toolchain = "1.97.1-x86_64-unknown-linux-gnu"
+note = """
+The same release as `[verus]`, for the Linux x86-64 host (GitHub-hosted `ubuntu-24.04`).
+Verus publishes no arm64-linux build of this release. `verify-verus` selects `[verus]` on
+macOS arm64 and this table on Linux x86-64, and reports UNAVAILABLE on any other host. The
+shape mirrors `[verus]` exactly, so the lane reads one pin through one code path.
+
+Every digest below was measured on a hosted runner (`hosted-probe` run 38144113537) after
+the release zip itself matched `sha256` above, which is the digest GitHub publishes for the
+release asset.
+"""
+
+[verus_linux_x86_64.binaries]
+state = "resolved"
+verus = "sha256:d97501a883931d1d173b1bf4b6cf4d973f16d105dbcb468e177b52b2331612d2"
+rust_verify = "sha256:433399ab278ec9dddb6499ec7cb670077819c828d07431528b5faf6f2ba56c62"
+
+[verus_linux_x86_64.vstd]
+state = "resolved"
+identity = "sha256:214c4167cb3ddea717aa640872e847c8b4f583f69267c031102a0ebb9345ad68"
+rlib_identity = "sha256:47eb820579f4d1aa41af1e00c91a7f87d803ff16f32926d53751d82c74fc7a26"
+
+[verus_linux_x86_64.z3]
+state = "resolved"
+version = "4.16.0"
+path = "z3"
+identity = "sha256:e583c4186a45e72411fa2cb2048401eed03f0f8e5f24694676a8f6271a50b765"
+
 [extraction_container]
 # RESOLVED 2026-09-29, from a build of the definition this tree declares: the pinned
 # Aeneas/Charon release binaries, installed and digest-checked, and neither tool built. Its

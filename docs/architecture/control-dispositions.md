@@ -174,6 +174,8 @@ changes is what the repository can honestly say. That is the definition of an in
 source — as the four `*provenance*` gates do — is a carrier and belongs with them, registered
 against the unit whose proposition it establishes.
 
+**Added 2026-10-11:** `scripts/hosted_negative_controls.py` — applies one hostile edit per control to a disposable CI checkout (a tampered prover digest, a falsified proof, an aggregate over no records) and requires the production lane to refuse. It protects the machinery that reports verdicts, not a property of the shipped proxy.
+
 ## ND-004 — build-system, toolchain and runner wiring
 
 **Covers:** `bazel_gazelle_gate.py`, `bazel_srcs_gate.py`, `test_target_gate.py`,
@@ -209,6 +211,8 @@ the property.
 **Added 2026-09-29:** `scripts/stage_image_binaries.sh` — builds the deploy images' binaries with Bazel and stages them for the Dockerfiles. It decides nothing about admissibility; it is the image build's wiring.
 
 **Added 2026-09-29:** `scripts/no_cargo_execution_gate.py` — refuses a workflow, script, tool, hook, lane, container, registry argv or maintained command that invokes Cargo, so every Rust build and test runs where the platform measures it: in Bazel. Its failure mode is a lane measuring a build other than the one shipped.
+
+**Added 2026-10-11:** `scripts/install_pinned_verus.py` — downloads the Verus release the lock pins for the host and refuses any archive whose digest differs, so a runner with nothing installed reaches the state `verify-verus` then re-checks file by file. It makes the lane executable; it decides nothing about a proof.
 
 ## ND-005 — mirrored and documented values
 

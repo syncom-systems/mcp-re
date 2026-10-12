@@ -1,0 +1,669 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Which build system governs a unit's source — ADR-MCPRE-059 §2, issue #745.
+
+A `[[unit]]` is *the smallest semantic authority whose source, assumptions, evidence and
+review can be fingerprinted*. That concept belongs to no one build system: a unit may own
+Rust that Bazel builds, `sdk/python/python/mcp_re_sdk/` or `sdk/typescript/src/`, and the
+abstraction above this module — owned source closure, dependency and configuration inputs,
+typed evidence providers, registered assumptions, review fingerprint — is the same for each.
+Each ecosystem is ONE adapter beneath it rather than the shape of it.
+
+# The ecosystem is DERIVED, never declared
+
+There is no `kind = "python"` field, and adding one is the move this exists to avoid: a
+language name in the unit schema turns an architectural concept into a list of exceptions,
+and the next ecosystem is then a schema change rather than an entry here.
+
+It is derived from the source itself, in two steps that are each a fact rather than a
+convention:
+
+  1. the FILE decides the ecosystem, by suffix — `.rs` is Rust, `.py` is Python, `.ts` is
+     TypeScript. This is what makes `sdk/python` answerable at all: the directory holds a
+     `BUILD.bazel` AND a `pyproject.toml`, because the wheel carries a Rust extension
+     module, so no directory-level rule can decide which project `.../transport.py`
+     belongs to.
+  2. the PROJECT is the nearest ancestor directory holding that ecosystem's manifest, which
+     is where every one of these tools already looks for dependency and lockfile inputs.
+
+# Fail closed on a mixed closure
+
+A unit whose declared paths span two ecosystems has no single answer to "which lane
+measures this", and answering with either would name a project that does not cover its
+source. `unit_ecosystem` returns `None` there, and every caller treats that the way it
+already treats a path outside every project: no test project, so no battery, so no
+evidence — never a battery run in the wrong place.
+
+# What an adapter must supply
+
+Only what the platform genuinely varies over, and each entry is a measurement input rather
+than a preference:
+
+  * `source_suffixes` — how a path names this ecosystem.
+  * `project_manifests` — how a project's root is recognised.
+  * `workspace_inputs` — repo-root files that decide what any project in this ecosystem IS.
+  * `project_inputs` — per-project manifests and lockfiles. A dependency swap or a lockfile
+    bump alters what a claim is about without touching a declared source line, which is why
+    they are fingerprint inputs and not merely build detail.
+  * `test_argv` — the command that runs a selected battery, and
+  * `parse_results` — how that command's output reports which selected test did what.
+
+The last two are supplied here so that "where do these tests live" and "how are they run"
+have ONE answer per ecosystem rather than one per tool.
+
+# Rust is Bazel's
+
+Bazel is the Rust build and test authority, so a Rust project is a Bazel PACKAGE — the
+nearest directory holding a `BUILD.bazel` — and a Rust selector names the Bazel test target
+that runs it: `//mcp-re-proxy:proxy_unit_test#cli::tests::x`. The label is the whole build
+configuration: which crate root, which sources, which crate features. Nothing beside it
+restates any of that, so a selector cannot name a test under a configuration its target does
+not build. `_rust_targets` holds the build graph's answer to what each label is.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from dataclasses import dataclass
+from dataclasses import field
+import json
+import os
+from pathlib import Path
+import re
+import tempfile
+
+import _rust_targets
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+class ReportUnreadable(Exception):
+    """A runner ran, and the lane could not read what it said.
+
+    Distinct from "the declared test did not pass", and deliberately so: a report the lane
+    cannot parse says NOTHING about the property, while presenting every declared control as
+    `never ran` says something false about all of them at once. The runner's own output
+    travels with the exception so the reason is in the failure rather than in a later
+    reproduction attempt.
+    """
+
+
+@dataclass(frozen=True)
+class Ecosystem:
+    """One build system, as the assurance platform needs to see it."""
+
+    name: str
+    source_suffixes: frozenset[str]
+    project_manifests: tuple[str, ...]
+    workspace_inputs: tuple[str, ...]
+    project_inputs: tuple[str, ...]
+    #: Whether a whole-project source digest is available for formal (V1/V3) units. Only
+    #: Rust has a prover lane, and a class the ecosystem cannot carry is refused rather
+    #: than silently measured as if it could.
+    formal_source_glob: str | None = None
+    #: Selector targets this ecosystem understands, as they appear before the `#` in a
+    #: `tested_symbols` entry. `None` means the ecosystem decides per target (a Rust
+    #: selector's target is a Bazel label, checked against the build graph).
+    selector_targets: frozenset[str] | None = field(default=None)
+    #: What this ecosystem's RUNTIME is called, for the evidence record and the lane's
+    #: output. `None` where the ecosystem has no runtime dimension. Named rather than
+    #: derived from `name`, because "python" is the ecosystem and "cpython" is the thing a
+    #: version number identifies — and a record saying `cpython-26.8.1` about a Node battery
+    #: describes a runtime that does not exist.
+    runtime_label: str | None = field(default=None)
+
+
+#: A Rust project is the Bazel package owning the file. Its build configuration is the
+#: module and its lock (the toolchain pin and every external crate), the workspace's build
+#: settings and house macros, and the package's own BUILD file (its targets, their sources
+#: and features).
+RUST = Ecosystem(
+    name="rust",
+    source_suffixes=frozenset({".rs"}),
+    project_manifests=("BUILD.bazel", "BUILD"),
+    workspace_inputs=(
+        "MODULE.bazel",
+        "MODULE.bazel.lock",
+        "bazel/crates.lock",
+        ".bazelrc",
+        ".bazelversion",
+        "bazel/BUILD.bazel",
+        "bazel/defs.bzl",
+        "bazel/version.bzl",
+    ),
+    project_inputs=("BUILD.bazel", "BUILD"),
+    formal_source_glob="src/**/*.rs",
+)
+
+PYTHON = Ecosystem(
+    name="python",
+    source_suffixes=frozenset({".py"}),
+    project_manifests=("pyproject.toml",),
+    # No repo-root Python manifest governs these projects: each SDK is self-contained, and
+    # naming a root file that does not exist would put an empty digest in every fingerprint
+    # and read as "measured, and nothing there".
+    workspace_inputs=(),
+    project_inputs=("pyproject.toml", "uv.lock", "poetry.lock", "requirements.txt"),
+    selector_targets=frozenset({"pytest"}),
+    runtime_label="cpython",
+)
+
+TYPESCRIPT = Ecosystem(
+    name="typescript",
+    source_suffixes=frozenset({".ts", ".tsx", ".mts", ".cts"}),
+    project_manifests=("package.json",),
+    workspace_inputs=(),
+    project_inputs=(
+        "package.json",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "tsconfig.json",
+    ),
+    selector_targets=frozenset({"vitest"}),
+    runtime_label="node",
+)
+
+#: Ordered, and the order is not significant — the suffix sets are disjoint, which is what
+#: makes the derivation a fact rather than a precedence rule.
+ECOSYSTEMS: tuple[Ecosystem, ...] = (RUST, PYTHON, TYPESCRIPT)
+
+
+def ecosystem_for_path(path: str) -> Ecosystem | None:
+    """The ecosystem a declared path belongs to, by its suffix.
+
+    `None` for a path no ecosystem claims — a `.toml`, a generated `.lean`, a fixture —
+    which is not an error: such a path is source the unit measures without naming a lane.
+    """
+    suffix = Path(path).suffix
+    for eco in ECOSYSTEMS:
+        if suffix in eco.source_suffixes:
+            return eco
+    return None
+
+
+def project_of(path: str, eco: Ecosystem) -> str | None:
+    """The nearest ancestor directory of `path` holding one of `eco`'s manifests.
+
+    Walking UP rather than reading the first segment is what lets a project live anywhere in
+    the tree: `sdk/python` and `mcp-re-proxy` are both projects, and only one of them is a
+    top-level directory.
+    """
+    current = (REPO_ROOT / path).parent
+    while True:
+        try:
+            rel = current.relative_to(REPO_ROOT)
+        except ValueError:
+            return None
+        if any((current / manifest).is_file() for manifest in eco.project_manifests):
+            return rel.as_posix()
+        if current == REPO_ROOT:
+            return None
+        current = current.parent
+
+
+def unit_ecosystem(unit: dict) -> Ecosystem | None:
+    """The one ecosystem this unit's source belongs to, or `None`.
+
+    `None` means one of three things, and all three are the same answer to the caller —
+    there is no lane that measures this unit's battery:
+
+      * no declared path names any ecosystem;
+      * the paths span two, so no single lane covers the source;
+      * a path names an ecosystem but sits outside every project of it, so there is no
+        project whose dependency inputs could be measured.
+    """
+    seen: set[str] = set()
+    chosen: Ecosystem | None = None
+    for path in unit["paths"]:
+        eco = ecosystem_for_path(path)
+        if eco is None:
+            continue
+        if project_of(path, eco) is None:
+            return None
+        seen.add(eco.name)
+        chosen = eco
+    if len(seen) != 1:
+        return None
+    return chosen
+
+
+def unit_projects(unit: dict) -> list[str]:
+    """The projects this unit's declared paths live in, sorted.
+
+    Empty when the unit has no single ecosystem, for the reason above: a project list drawn
+    from a mixed closure would name projects that do not cover the source.
+    """
+    eco = unit_ecosystem(unit)
+    if eco is None:
+        return []
+    projects = {
+        project
+        for path in unit["paths"]
+        if ecosystem_for_path(path) is eco
+        for project in [project_of(path, eco)]
+        if project is not None
+    }
+    return sorted(projects)
+
+
+def test_project_for(unit: dict) -> str | None:
+    """The single project this unit's battery runs in, or `None` if there is none.
+
+    One answer, shared by the lane (which runs the battery) and the fingerprint (which
+    records what was measured). Two implementations of "where do these tests live" would let
+    the recorded project and the executed project disagree.
+
+    Fail-closed on a path inside the ecosystem but outside every project of it, and on a
+    closure spanning several projects with no `test_package` naming one of them.
+    """
+    eco = unit_ecosystem(unit)
+    if eco is None:
+        return None
+    for path in unit["paths"]:
+        if ecosystem_for_path(path) is eco and project_of(path, eco) is None:
+            return None
+    projects = unit_projects(unit)
+    if len(projects) == 1:
+        return projects[0]
+    declared = unit.get("test_package")
+    return declared if declared in projects else None
+
+
+def build_configuration_patterns(unit: dict) -> list[str]:
+    """The dependency and configuration inputs that decide what this unit's source IS.
+
+    The ecosystem's repo-root inputs plus each project's own manifests and lockfiles. A
+    lockfile that is not present contributes nothing rather than an error: `uv.lock` and
+    `poetry.lock` are alternatives, and naming both is how the platform stays neutral about
+    which one a project uses without asking the unit to say.
+    """
+    eco = unit_ecosystem(unit)
+    if eco is None:
+        return []
+    patterns = list(eco.workspace_inputs)
+    for project in unit_projects(unit):
+        patterns.extend(f"{project}/{name}" for name in eco.project_inputs)
+    return patterns
+
+
+def formal_source_patterns(unit: dict) -> list[str]:
+    """Whole-project sources, for a unit whose evidence comes from a prover run.
+
+    `[]` where the ecosystem has no prover lane, which is what makes a V1/V3 declaration
+    over Python or TypeScript source refuse rather than derive a fingerprint that pretends
+    a whole-project measurement happened.
+    """
+    eco = unit_ecosystem(unit)
+    if eco is None or eco.formal_source_glob is None:
+        return []
+    return [f"{project}/{eco.formal_source_glob}" for project in unit_projects(unit)]
+
+
+# ---------------------------------------------------------------------------
+# Running a selected battery
+# ---------------------------------------------------------------------------
+#
+# `verify-tests` selects EXACTLY the declared symbols and compares what reported success
+# against what was declared, in both directions. That contract is the lane's; what varies
+# per ecosystem is the command that performs the selection and the syntax of the report.
+
+
+
+def valid_target(eco: Ecosystem, target: str) -> bool:
+    """Whether `target` is a runnable target NAME in this ecosystem.
+
+    The target is the half of a `tested_symbols` entry before the `#`, and what it may say
+    is the ecosystem's business: a Rust selector names a Bazel test target — a `rust_test`
+    or `rust_doc_test` in the build graph — while a pytest or vitest battery is selected by
+    file-and-name and needs only the one target that says which runner reads the selector.
+    """
+    if eco is RUST:
+        return _rust_targets.is_test(target)
+    return eco.selector_targets is not None and target in eco.selector_targets
+
+
+#: Where a prepared per-runtime environment lives, relative to its own project. One
+#: directory per pinned runtime, named for what it holds, because a battery measured on 3.10
+#: and one measured on 3.14 are two measurements and must not share a place to be measured
+#: in. The same rule for Node: the shape differs because the projects differ, not because
+#: the property does.
+PYTHON_RUNTIME_VENV = ".venv-cp{major}{minor}"
+NODE_RUNTIME_DIR = ".node-v{major}"
+
+
+def python_runtime_venv(runtime: str) -> str:
+    """The environment directory a pinned interpreter version is prepared into."""
+    major, minor = runtime.split(".")[:2]
+    return PYTHON_RUNTIME_VENV.format(major=major, minor=minor)
+
+
+def node_runtime_dir(runtime: str) -> str:
+    """The directory a pinned Node version is installed into.
+
+    By MAJOR, because Node's support lines are majors: `engines.node` admits `^20 || ^22`,
+    never a minor range, so two pins inside one major would be two answers to one question.
+    `scripts/node_runtime_gate.py` refuses that, and this naming would collide if it did
+    not — which is the intended relationship between the two.
+    """
+    return NODE_RUNTIME_DIR.format(major=runtime.split(".")[0])
+
+
+def vitest_report_path(runtime: str, target: str) -> Path:
+    """The file the vitest lane tells the runner to write its machine-readable report to.
+
+    Named rather than found, and the reason is a measured CI failure. vitest 4's json
+    reporter wrote the report to stdout, so the lane SCANNED stdout for it. vitest 5's does
+    not: given no `outputFile` it writes `.vitest/json/output.json` under the project root
+    and logs only the path, so the same suite that passed on 4 came back from 5 as `vitest
+    wrote no JSON report` — the lane unable to read a runner, which it correctly refused to
+    present as a battery of controls that never ran. A report whose location the lane states
+    does not depend on which version of the runner is installed; both honour the flag.
+
+    Outside the repository, because a report is an artefact OF the measurement and does not
+    belong in the tree being measured — a run would otherwise leave an untracked directory
+    in `sdk/typescript` that the fingerprint would then have to be taught to ignore.
+
+    Per process and per (runtime, target), because the lane re-runs unread names one at a
+    time in the same process, and across the pinned Node versions in turn. A single path
+    would let a name be answered by the run before it: `ok` read from a report that measured
+    a different runtime is not evidence about this one.
+    """
+    slug = re.sub(r"[^A-Za-z0-9_.-]", "_", f"{runtime}-{target}")
+    return Path(tempfile.gettempdir()) / f"mcp-re-vitest-{os.getpid()}" / f"{slug}.json"
+
+
+#: How each ecosystem's prepared runtime is reached and asked its own version. One table
+#: rather than a chain of `if eco is …`: adding an ecosystem's runtime dimension should be
+#: a row, and a lane that cannot ask a runtime its version cannot enforce a pin.
+RUNTIME_PROBES = {
+    "python": (
+        lambda runtime: f"{python_runtime_venv(runtime)}/bin/python",
+        ["-c", "import sys;print('%d.%d.%d' % sys.version_info[:3])"],
+    ),
+    "typescript": (
+        lambda runtime: f"{node_runtime_dir(runtime)}/node_modules/node/bin/node",
+        ["-p", "process.versions.node"],
+    ),
+}
+
+
+def test_argv(
+    eco: Ecosystem,
+    project: str | None,
+    target: str,
+    selectors: list[str],
+    runtime: str | None = None,
+    libtest_log: Path | None = None,
+) -> list[str]:
+    """The command that runs exactly `selectors` of `target` in `project`.
+
+    Exact selection is the property, not a convenience: a runner that matched by substring
+    would let a battery grow silently, and one that ran the whole suite would report a pass
+    for symbols nobody declared.
+
+    A Rust target is a Bazel test label, run from the workspace root. `--nocache_test_results`
+    because a cached result is a statement about an earlier run; `--test_output=streamed`
+    because the lane reads libtest's own result lines, which Bazel then passes through as
+    the test wrote them. A doctest target is run whole: a doctest's reported name embeds the
+    LINE it starts on, so the lane matches the declared ITEMS against what ran instead of
+    selecting by a name that breaks on any edit above it.
+    """
+    if eco is RUST:
+        argv = ["bazel", "test", target, "--nocache_test_results", "--test_output=streamed"]
+        row = _rust_targets.target(target)
+        if row is not None and row["kind"] == "rust_doc_test":
+            return argv
+        argv += ["--test_arg=--exact", *(f"--test_arg={s}" for s in selectors)]
+        if libtest_log is not None:
+            # libtest's own record of each result, written by the harness to a file the
+            # test's stdout and stderr never reach. Bazel merges those two streams into one
+            # log, so a result line read from it can carry another thread's unterminated
+            # stderr text; this file cannot. Bazel's sandbox lets the test write only to
+            # its own directories, so the file's directory is named writable.
+            argv += [
+                f"--test_arg=--logfile={libtest_log}",
+                f"--sandbox_writable_path={libtest_log.parent}",
+            ]
+        return argv
+    if eco is PYTHON:
+        # A PREPARED environment, named by the pinned interpreter, and never `uv run`.
+        # `uv run` resolves and syncs, so the lane would be building the thing it measures
+        # — and it would pick whatever interpreter the machine offered, which is exactly the
+        # gap the `[python]` runtime pin closes: the battery ran on one unpinned CPython and
+        # the result was recorded as if it described the supported set. The environments are
+        # prepared by `scripts/prepare_python_matrix.sh`; this runs in them.
+        #
+        # `-p no:randomly` because a battery whose order varies is not reproducible from the
+        # record that measured it. Selection is by exact node id, which pytest supports
+        # natively.
+        if runtime is None:
+            raise ValueError("a Python battery names the interpreter it is measured on")
+        return [
+            f"{python_runtime_venv(runtime)}/bin/python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:randomly",
+            "--no-header",
+            # `--color=no` because pytest honours FORCE_COLOR even when its stdout is a
+            # PIPE, and a coloured status wraps the word this lane reads in escape bytes.
+            # Without it, an environment variable set by whatever invoked the lane decides
+            # whether the report is readable — and an unreadable report presented as forty
+            # controls that "never ran" is a statement about the tests, which is false.
+            # The runner is told what to emit rather than the lane guessing what it meant.
+            "--color=no",
+            "-v",
+            *selectors,
+        ]
+    if eco is TYPESCRIPT:
+        # The PINNED Node, and never a bare `npx`. `npx vitest` runs under whatever node is
+        # on PATH, so the battery's result described an unnamed runtime — the same gap the
+        # Python side had, and the reason `[typescript].interpreters` exists. The binary
+        # comes from `scripts/prepare_node_matrix.sh`; vitest is invoked through its own
+        # entry point rather than through `npx`, which would resolve a node of its own.
+        #
+        # vitest selects by FILE; `-t` matches a name by substring, which is not selection.
+        # So the files are selected here and the exact names are compared by the lane, which
+        # is where the both-directions rule already lives: a declared name that did not
+        # report success fails, and a name nobody declared is not evidence for anything.
+        #
+        # `--reporter=json`, and the reason is a measured CI failure: the verbose reporter
+        # writes marks meant for a terminal, and on the runner every one of 26 declared
+        # controls came back `never ran` from a suite that had actually passed. A lane must
+        # not read a human-facing rendering — the machine-readable report is the same run
+        # said in a form that does not depend on what the process is attached to.
+        if runtime is None:
+            raise ValueError("a TypeScript battery names the runtime it is measured on")
+        files = sorted({selector.split(" > ", 1)[0] for selector in selectors})
+        return [
+            f"{node_runtime_dir(runtime)}/node_modules/node/bin/node",
+            "node_modules/vitest/vitest.mjs",
+            "run",
+            "--reporter=json",
+            # WHERE the report goes is the lane's to say — see `vitest_report_path`.
+            f"--outputFile={vitest_report_path(runtime, target)}",
+            *files,
+        ]
+    raise ValueError(f"no test command for ecosystem {eco.name!r}")
+
+
+#: The statuses libtest reports. Closed, because everything else on a result line is
+#: somebody ELSE's output — see below.
+_LIBTEST_STATUSES = ("ok", "FAILED", "ignored")
+
+#: libtest's per-test result line: `test block::tests::round_trips ... ok`.
+#:
+#: The status is taken from the END of the line rather than from the first word after the
+#: ellipsis, and the reason is a measured false RED. libtest writes `test <name> ... ` and
+#: the status from the harness thread, but a test that spawns a child process — or any code
+#: writing to the real fd 2 rather than to the capture buffer — lands its bytes BETWEEN
+#: them. On 2026-08-31 that produced
+#:
+#:     test audit_sink::tests::the_collector_preserves_emission_order ... mcp-re-proxy: ...ok
+#:
+#: and the old pattern read the status as `mcp`, reporting a deterministic two-assert test
+#: as not having passed. Anchoring to the end of the line is safe in the direction that
+#: matters: libtest writes the status LAST, so interleaved text containing the word `ok`
+#: cannot outrank a real `FAILED` — and if the interleave carries a newline the line does
+#: not match at all, which reads as `never ran` and fails loudly rather than quietly green.
+#:
+#: A `#[should_panic]` test is reported as `test <name> - should panic ... ok`: the suffix is
+#: libtest's annotation, not part of the name a selector names.
+_LIBTEST_RESULT = re.compile(
+    r"^test (?P<name>\S+)(?: - should panic)? \.\.\. .*?(?P<status>"
+    + "|".join(_LIBTEST_STATUSES)
+    + r")$"
+)
+
+#: libtest's `--logfile` grammar (`write_log_result`): one record per test, `<result> <name>`,
+#: where `<result>` is `ok`, `failed`, `ignored`, `failed (time limit exceeded)`, or a
+#: result that carries the harness's own message: `failed: <message>` / `ignored: <message>`.
+#: The harness writes the file itself, so no test output can reach it. A name never contains
+#: a space; a MESSAGE may contain spaces and, for a multi-line panic message, newlines.
+_LIBTEST_LOGFILE_PLAIN = re.compile(
+    r"^(?P<status>ok|failed|ignored|failed \(time limit exceeded\)) (?P<name>\S+)$"
+)
+_LIBTEST_LOGFILE_OPENS_MESSAGE = re.compile(r"^(?P<status>failed|ignored): ")
+_LIBTEST_LOGFILE_STATUS = {
+    "ok": "ok",
+    "failed": "FAILED",
+    "ignored": "ignored",
+    "failed (time limit exceeded)": "FAILED",
+}
+
+
+def parse_libtest_logfile(text: str, selected: Iterable[str] = ()) -> dict[str, str]:
+    """The lane's one vocabulary, read from libtest's `--logfile` record.
+
+    A plain record is a whole `<result> <name>` line. A message-bearing record
+    (`failed: <message> <name>`) has no delimiter between message and name, so its name is
+    resolved against the EXACT names this run selected: the record closes at the first line
+    that ends with ` <selected name>`, and any other tail is not a record. With nothing
+    selected, a message-bearing record resolves to nothing rather than to its last token.
+    A plain record always starts a fresh record, so an unterminated message cannot swallow
+    the results after it.
+    """
+    names = tuple(sorted(set(selected), key=len, reverse=True))
+    out: dict[str, str] = {}
+    open_status: str | None = None
+    open_text = ""
+    for line in text.splitlines():
+        plain = _LIBTEST_LOGFILE_PLAIN.match(line)
+        if plain:
+            out[plain.group("name")] = _LIBTEST_LOGFILE_STATUS[plain.group("status")]
+            open_status = None
+            continue
+        if open_status is None:
+            opened = _LIBTEST_LOGFILE_OPENS_MESSAGE.match(line)
+            if not opened:
+                continue
+            open_status, open_text = opened.group("status"), line
+        else:
+            open_text += "\n" + line
+        for name in names:
+            if open_text.endswith(" " + name):
+                out[name] = _LIBTEST_LOGFILE_STATUS[open_status]
+                open_status = None
+                break
+    return out
+
+
+#: SGR/CSI escape sequences a runner emits when it decides to colour its output. Stripped
+#: before any line is matched: the lane reads a WORD at a known position, and an escape
+#: sequence in front of that word makes the line unmatchable while leaving it perfectly
+#: legible to a human reading the log. That difference is the whole defect — the report was
+#: there and the lane said the tests never ran.
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+#: pytest's verbose line: `tests/test_x.py::test_name PASSED`.
+_PYTEST_RESULT = re.compile(
+    r"^(?P<name>\S+::\S+)\s+(?P<status>PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b"
+)
+
+#: pytest's collection line: `collected 39 items`. The lane's own cross-check that a run
+#: which produced no readable result produced no RESULT, rather than none it could read.
+_PYTEST_COLLECTED = re.compile(r"^collect(?:ed|ing \.\.\. collected) (?P<count>\d+) item")
+
+#: vitest's JSON reporter states each case's status in words. Translated into the lane's one
+#: vocabulary here, like every other runner's.
+_VITEST_STATUS = {"passed": "ok", "failed": "FAILED", "skipped": "ignored", "todo": "ignored"}
+
+
+def _vitest_report(stdout: str) -> dict:
+    """The JSON report vitest wrote, found inside whatever else reached stdout.
+
+    Scanned for rather than decoded whole, because the runner, npm and the native build all
+    write to the same stream. Every `{` is tried in turn and the first object carrying
+    `testResults` is the report; a run whose report is not there at all raises rather than
+    returning nothing, since an empty result set is indistinguishable from a suite in which
+    no declared control ran.
+    """
+    decoder = json.JSONDecoder()
+    index = stdout.find("{")
+    while index >= 0:
+        try:
+            candidate, _ = decoder.raw_decode(stdout[index:])
+        except json.JSONDecodeError:
+            candidate = None
+        if isinstance(candidate, dict) and "testResults" in candidate:
+            return candidate
+        index = stdout.find("{", index + 1)
+    raise ReportUnreadable(
+        "vitest wrote no JSON report; the run said: " + (stdout.strip()[-2000:] or "(nothing)")
+    )
+
+
+def parse_results(eco: Ecosystem, stdout: str) -> dict[str, str]:
+    """Selected test name → one of `ok`, `FAILED`, `ignored`.
+
+    Normalised to one vocabulary because the LANE's rule is one rule: a declared symbol that
+    did not run is a failure, and a symbol that ran but was skipped establishes nothing a
+    test which did not exist would not also establish. Both must be expressible for every
+    ecosystem, so an ecosystem's own words are translated here rather than special-cased
+    where the rule is applied.
+    """
+    out: dict[str, str] = {}
+    # Before anything is matched, and for every runner: see `_ANSI`.
+    stdout = _ANSI.sub("", stdout)
+    if eco is RUST:
+        for line in stdout.splitlines():
+            match = _LIBTEST_RESULT.match(line.strip())
+            if match:
+                out[match.group("name")] = match.group("status")
+        return out
+    if eco is PYTHON:
+        for line in stdout.splitlines():
+            match = _PYTEST_RESULT.match(line.strip())
+            if match:
+                status = match.group("status")
+                out[match.group("name")] = (
+                    "ok" if status == "PASSED" else "ignored" if status == "SKIPPED" else "FAILED"
+                )
+        # The runner SAID it collected cases and this reader understood none of them. That
+        # is the lane failing to read a report, not a battery of controls that never ran,
+        # and the two call for opposite next actions: one is fixed here, the other in the
+        # tests. Reported as its own failure so it cannot masquerade as the second.
+        collected = _PYTEST_COLLECTED.search(stdout)
+        if not out and collected and int(collected.group("count")) > 0:
+            raise ReportUnreadable(
+                f"pytest collected {collected.group('count')} case(s) and this lane read a "
+                f"status line for none of them; the run said: "
+                + (stdout.strip()[-2000:] or "(nothing)")
+            )
+        return out
+    if eco is TYPESCRIPT:
+        # The JSON blob is the last thing on stdout, after whatever the build or the runner
+        # printed before it. Scanning back from the first `{` that parses keeps a warning
+        # line from making the whole report unreadable — which would present as every
+        # declared control having "never ran", the exact false RED this reporter replaced.
+        report = _vitest_report(stdout)
+        for file_result in report.get("testResults", []):
+            name = str(file_result.get("name", ""))
+            relative = name.split("/test/", 1)
+            prefix = f"test/{relative[1]}" if len(relative) == 2 else name
+            for case in file_result.get("assertionResults", []):
+                titles = [*case.get("ancestorTitles", []), case.get("title", "")]
+                full = " > ".join([prefix, *[t for t in titles if t]])
+                out[full] = _VITEST_STATUS.get(str(case.get("status")), "FAILED")
+        return out
+    raise ValueError(f"no result parser for ecosystem {eco.name!r}")
