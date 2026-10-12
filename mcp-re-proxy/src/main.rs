@@ -67,7 +67,7 @@ fn main() -> ExitCode {
         };
     }
     let result = mcp_re_proxy::cli::parse_args(&args)
-        .and_then(|config| mcp_re_proxy::app::run(config, shutdown));
+        .and_then(|deployment| mcp_re_proxy::app::run(deployment, shutdown));
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

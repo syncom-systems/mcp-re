@@ -26,6 +26,12 @@ impl AuditIncarnation {
         getrandom::fill(&mut bytes).ok()?;
         Some(AuditIncarnation(bytes))
     }
+
+    /// A fixed incarnation, for tests of lines that name a run.
+    #[cfg(test)]
+    pub(super) const fn fixed(bytes: [u8; 16]) -> Self {
+        AuditIncarnation(bytes)
+    }
 }
 
 impl std::fmt::Display for AuditIncarnation {
@@ -117,12 +123,17 @@ fn open_drawing(
     Some((stream, won))
 }
 
+/// The run of this process's stream, or `None` when no stream was opened — in which case
+/// nothing was ever recorded on it and there is nothing to speak of.
+pub(super) fn opened_run() -> Option<AuditIncarnation> {
+    STREAM.get().map(AuditPositions::run)
+}
+
 /// ` run=<hex>` for a stream-level line, or nothing when no stream was opened in this
-/// process — in which case it has no record to speak of.
+/// process.
 pub(super) fn run_suffix() -> String {
-    STREAM
-        .get()
-        .map(|stream| format!(" run={}", stream.run))
+    opened_run()
+        .map(|run| format!(" run={run}"))
         .unwrap_or_default()
 }
 
@@ -198,6 +209,7 @@ mod tests {
         let (again, drew) = open(&STREAM).expect("an opened stream is returned");
         assert!(std::ptr::eq(first, again));
         assert!(!drew, "a second call must not draw a second run");
+        assert_eq!(opened_run(), Some(first.run));
         assert_eq!(run_suffix(), format!(" run={}", first.run));
         assert_eq!(
             start_line(&first.run),

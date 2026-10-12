@@ -62,7 +62,9 @@ fn base() -> DeploymentRequest {
     .iter()
     .map(|s| (*s).to_string())
     .collect();
-    cli::parse_args(&argv).expect("baseline parses")
+    cli::parse_args(&argv)
+        .expect("baseline parses")
+        .into_inner()
 }
 
 #[test]
@@ -280,7 +282,7 @@ fn refused_at_the_boundary() {
 #[test]
 fn the_recommended_replay_backend_cannot_start() {
     let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let refusal = mcp_re_proxy::app::run(base(), shutdown)
+    let refusal = mcp_re_proxy::app::run_request(base(), shutdown)
         .expect_err("a config naming absent key material cannot serve");
     // The startup order reaches key material before replay planning, so this is what an
     // operator meets first. Recorded so that a reordering shows up here rather than

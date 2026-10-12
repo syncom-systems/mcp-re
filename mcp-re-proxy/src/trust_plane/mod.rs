@@ -932,11 +932,13 @@ mod handle_lifetime_tests {
 
         let config = crate::cli::parse_args(&argv).expect("args parse");
         assert!(
-            config.request_signer_currency.reload_secs().is_none(),
+            config
+                .config()
+                .request_signer_currency
+                .reload_secs()
+                .is_none(),
             "the shape under test is the one with NO reload cadence"
         );
-        let config = crate::config_state::validation::ValidatedDeployment::try_from(config)
-            .expect("config validates");
         let plan = crate::startup_plan::TrustPlan::from_validated(
             &config,
             "response-kid".to_string(),

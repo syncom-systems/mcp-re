@@ -1881,6 +1881,12 @@ consequence. The census deliberately does **not** rule on whether `parse_args` s
 a `ValidatedDeployment`: there is a real counter-argument (`app::run` must stay callable by
 an embedder that never met a parser), and that is a design decision, not a census finding.
 
+**Ruled and discharged 2026-10-12, MCPRE-183 (#1097).** The argv path carries the proof:
+`parse_args` returns the `ValidatedDeployment` and `app::run` takes it, so one validation runs
+per process. The embedder's case is a distinct entry point, `app::run_request`, which
+validates a request built in code. The audit drain decides from its own stream whether there
+is anything to report, so the root no longer reads the raw `audit_sink` field.
+
 ### §8 question 11 — requiredness is a parser-only rule over public fields
 
 The `require` closure enforces eleven required flags; those fields are public `String`s on

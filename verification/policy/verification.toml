@@ -9273,6 +9273,14 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#audit_sink::drain::tests::a_full_queue_the_writer_drains_inside_the_bound_is_drained",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::drain::tests::a_queue_that_stays_full_returns_bounded_and_unknown",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::drain::tests::an_unknown_drain_states_the_drop_count_the_writer_never_reported",
+  # A process that opened no stream states no drain. Reachable with `--audit-sink stderr` and a
+  # startup refused before the sink opens: the flush reports `Drained` over zero records, and a
+  # line saying every record reached stderr would be vacuously true of a stream that never
+  # existed. Whether there is a stream to report on is the drain's own fact, not the caller's.
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::drain::tests::a_process_that_opened_no_stream_states_no_drain",
+  # The drain line names the run it drained, the same incarnation every record of that stream
+  # carries.
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::drain::tests::the_drain_line_names_the_run_it_drained",
 ]
 
 # ---------------------------------------------------------------------------------------

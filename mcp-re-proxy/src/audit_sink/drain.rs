@@ -17,6 +17,7 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::time::{Duration, Instant};
 
+use super::stream::AuditIncarnation;
 use super::writer::{writes_have_failed, STDERR_AUDIT_DROPPED};
 use super::AuditMessage;
 use super::STDERR_AUDIT_WRITER;
@@ -42,23 +43,25 @@ pub(crate) enum AuditDrain {
     OutcomeUnknown,
 }
 
-/// Discharge the teardown obligation, and report the outcome when this deployment writes
-/// its audit stream to stderr.
+/// Discharge the teardown obligation, and report the outcome when this process opened an
+/// audit stream.
 ///
-/// `report` decides only whether the outcome is spoken: the drain itself is unconditional,
-/// because a sink installed past the composition seam would still have left records in the
-/// same global queue.
+/// Whether there is anything to report is this module's own fact, not the caller's: a
+/// stream is opened once, by the stderr sink, and a process that never opened one has no
+/// record to speak of. A deployment that asked for stderr audit and was refused before its
+/// sink opened is such a process, and a "drained" line there would be vacuously true of a
+/// stream that never existed. The drain itself is unconditional.
 ///
 /// A timeout is deliberately NOT turned into a non-zero result. The serving outcome is what
 /// the caller asked about, and reporting a clean shutdown as failed because a log collector
 /// was slow would make an observability fault look like a serving fault — the inversion the
 /// sink's own "audit must never fail a request" rule rejects on the hot path.
-pub(crate) fn at_shutdown(report: bool) {
+pub(crate) fn at_shutdown() {
     let outcome = flush(AUDIT_FLUSH_TIMEOUT);
     // `load`, not `swap`: a concurrent writer report may state the same drops again, which
     // over-states them — the direction `report_drops` already treats as safe.
     let unreported = STDERR_AUDIT_DROPPED.load(Ordering::Relaxed);
-    if let Some(line) = drain_line(outcome, report, unreported) {
+    if let Some(line) = drain_line(outcome, super::stream::opened_run(), unreported) {
         eprintln!("{line}");
     }
 }
@@ -139,15 +142,17 @@ fn enqueue_flush(
     }
 }
 
-/// What shutdown says about the drain, or `None` when this deployment does not write its
-/// audit stream to stderr and so has nothing to say about it.
+/// What shutdown says about the drain of the stream `run`, or `None` when no stream was
+/// opened and so there is nothing to say.
 ///
 /// Separated from the wait so the one property that matters — that the two outcomes never
 /// read as the same fact — is assertable without stalling a log collector.
-fn drain_line(outcome: AuditDrain, report: bool, unreported_drops: u64) -> Option<String> {
-    if !report {
-        return None;
-    }
+fn drain_line(
+    outcome: AuditDrain,
+    stream: Option<AuditIncarnation>,
+    unreported_drops: u64,
+) -> Option<String> {
+    let run = stream?;
     Some(match outcome {
         // BEFORE this drain, and the qualification is load-bearing: `Drained` means every
         // record queued ahead of the Flush reached stderr, and at shutdown in-flight
@@ -155,18 +160,16 @@ fn drain_line(outcome: AuditDrain, report: bool, unreported_drops: u64) -> Optio
         // outside the claim, so a line that said "every record" would be claiming an
         // ordering nothing establishes.
         AuditDrain::Drained => format!(
-            "mcp-re-proxy: audit stream drained at shutdown{}: every record handed to the \
-             audit writer before this drain reached stderr",
-            super::stream::run_suffix()
+            "mcp-re-proxy: audit stream drained at shutdown run={run}: every record handed \
+             to the audit writer before this drain reached stderr"
         ),
         AuditDrain::OutcomeUnknown => format!(
-            "mcp-re-proxy: WARNING: the audit stream{} did not complete a clean drain — it either \
+            "mcp-re-proxy: WARNING: the audit stream run={run} did not complete a clean drain — it either \
              failed to acknowledge within {}s or reported a failed write. This is NOT a report \
              that records were lost and NOT a clean shutdown of the audit stream: whether the \
              decisions recorded last reached stderr is UNKNOWN. Their seq numbers are the gap \
              to look for, and the writer's backing channel (a stalled log collector, a full \
              volume, a closed stderr) is what to check.{}",
-            super::stream::run_suffix(),
             AUDIT_FLUSH_TIMEOUT.as_secs(),
             unreported_drops_sentence(unreported_drops)
         ),
@@ -195,6 +198,9 @@ pub(super) fn flush_for_test(timeout: Duration) -> AuditDrain {
 mod tests {
     use super::*;
 
+    /// A stream this process opened.
+    const OPENED: Option<AuditIncarnation> = Some(AuditIncarnation::fixed([0xab; 16]));
+
     /// R8-C123, second half: a drain that TIMED OUT must never read as a drain that
     /// completed.
     ///
@@ -209,8 +215,8 @@ mod tests {
     #[test]
     fn a_timed_out_audit_drain_never_reads_as_a_completed_one() {
         let drained =
-            drain_line(AuditDrain::Drained, true, 0).expect("stderr audit states its drain");
-        let timed_out = drain_line(AuditDrain::OutcomeUnknown, true, 0)
+            drain_line(AuditDrain::Drained, OPENED, 0).expect("stderr audit states its drain");
+        let timed_out = drain_line(AuditDrain::OutcomeUnknown, OPENED, 0)
             .expect("a timeout is stated, not swallowed");
 
         assert_ne!(drained, timed_out);
@@ -227,11 +233,31 @@ mod tests {
             !timed_out.contains("drained at shutdown"),
             "the timeout line must not carry the completed line's claim: {timed_out}"
         );
-        // A deployment whose audit goes nowhere says nothing about a stream it does not
-        // write; without this control the two assertions above would also hold for a
-        // function that always spoke.
-        assert!(drain_line(AuditDrain::Drained, false, 0).is_none());
-        assert!(drain_line(AuditDrain::OutcomeUnknown, false, 0).is_none());
+    }
+
+    /// A process that never opened a stream says nothing about draining one.
+    ///
+    /// The case is reachable with `--audit-sink stderr`: a startup refused before the sink
+    /// opens leaves no writer, so the flush reports `Drained` over zero records. A line
+    /// saying every record reached stderr would be vacuously true of a stream that never
+    /// existed. Without this control the assertions above would also hold for a function
+    /// that always spoke.
+    #[test]
+    fn a_process_that_opened_no_stream_states_no_drain() {
+        assert!(drain_line(AuditDrain::Drained, None, 0).is_none());
+        assert!(drain_line(AuditDrain::OutcomeUnknown, None, 0).is_none());
+        assert!(drain_line(AuditDrain::OutcomeUnknown, None, 7).is_none());
+    }
+
+    /// The drain line names the run it drained, the same run every record of that stream
+    /// carries, so a collector can tell which run ended cleanly.
+    #[test]
+    fn the_drain_line_names_the_run_it_drained() {
+        let run = OPENED.expect("the fixture names a run");
+        for outcome in [AuditDrain::Drained, AuditDrain::OutcomeUnknown] {
+            let line = drain_line(outcome, OPENED, 0).expect("an opened stream is stated");
+            assert!(line.contains(&format!(" run={run}")), "{line}");
+        }
     }
 
     /// **R11-167 / R11-169.** A queue that cannot accept the Flush is `OutcomeUnknown`.
@@ -317,15 +343,14 @@ mod tests {
     /// An unknown drain carries the drop count the writer never got to report.
     #[test]
     fn an_unknown_drain_states_the_drop_count_the_writer_never_reported() {
-        let with_drops = drain_line(AuditDrain::OutcomeUnknown, true, 7).expect("stated");
+        let with_drops = drain_line(AuditDrain::OutcomeUnknown, OPENED, 7).expect("stated");
         assert!(with_drops.contains("dropped=7"), "{with_drops}");
-        let without = drain_line(AuditDrain::OutcomeUnknown, true, 0).expect("stated");
+        let without = drain_line(AuditDrain::OutcomeUnknown, OPENED, 0).expect("stated");
         assert!(!without.contains("dropped="), "{without}");
         assert_eq!(
-            drain_line(AuditDrain::Drained, true, 7),
-            drain_line(AuditDrain::Drained, true, 0)
+            drain_line(AuditDrain::Drained, OPENED, 7),
+            drain_line(AuditDrain::Drained, OPENED, 0)
         );
-        assert!(drain_line(AuditDrain::OutcomeUnknown, false, 7).is_none());
     }
 
     /// An acknowledged drain over which a write had already failed is `OutcomeUnknown`.

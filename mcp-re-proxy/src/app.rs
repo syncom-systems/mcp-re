@@ -7,14 +7,16 @@
 //! flips `shutdown`. It decides as little as possible: what it branches on is either a
 //! named rule in [`crate::startup_plan`] or a plane's own answer.
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::async_serve::ServedHttpRequest;
 use crate::clock::now_unix;
 use crate::config_snapshot;
+use crate::config_state::validation::ValidatedDeployment;
 use crate::config_state::ChannelBindingState;
+use crate::deployment_request::DeploymentRequest;
 use crate::http_inner::HttpInnerPool;
 use crate::startup_posture::PostureLog;
 use crate::startup_posture::Seam;
@@ -123,33 +125,27 @@ fn faulted_clock_refusal(
     ))
 }
 
-/// Build every component from `config` and serve on the per-core async fleet until
-/// `shutdown` is flipped (SIGTERM/SIGINT in the binary; a test flag in tests). The
-/// binary's `main` is a thin shim over this; keeping it in the library makes the
-/// whole deployed serving path in-process-testable.
-///
-/// The signature still takes a raw [`crate::deployment_request::DeploymentRequest`], and validation happens HERE
-/// rather than being the caller's job. `DeploymentRequest` has 76 public fields, so a caller that
-/// builds one in code — an embedder, a harness, a test — used to reach the serving path
-/// having run none of the parse-time safety guards. Validating at the boundary closes
-/// that without breaking any existing caller: every guard now runs whichever way the
-/// config was produced, and nothing past this point sees an unchecked `DeploymentRequest`.
-pub fn run(
-    config: crate::deployment_request::DeploymentRequest,
-    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
-) -> Result<(), String> {
-    // Whether the audit stream is this process's stderr has to be read BEFORE the config
-    // is consumed, and it decides only whether the drain is REPORTED — the drain itself is
-    // unconditional, because a sink installed by an embedder past this seam would still
-    // have left records in the same global queue.
-    let audits_to_stderr = config.audit_sink == crate::deployment_request::AuditSinkKind::Stderr;
-    // The drain is placed around the WHOLE of the run rather than after `serve` returns, so
-    // that every route out of this function passes through it: a clean drain, a serve that
-    // failed, and a startup refused at the boundary. A teardown obligation discharged on
-    // one of three exits is the shape the rest of this round keeps finding.
-    let outcome = crate::config_state::validation::ValidatedDeployment::try_from(config)
-        .and_then(|validated| run_validated(&validated, shutdown));
-    crate::audit_sink::drain::at_shutdown(audits_to_stderr);
+/// Serve a validated deployment on the per-core async fleet until `shutdown` is flipped
+/// (SIGTERM/SIGINT in the binary; a test flag in tests). The argv path arrives with the proof
+/// [`crate::cli::parse_args`] produced, so it validates once.
+pub fn run(deployment: ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Result<(), String> {
+    drained(run_validated(&deployment, shutdown))
+}
+
+/// [`run`] for a request built in code, which met no parser and so no guard: it is
+/// validated here, and nothing past this point sees an unchecked request.
+pub fn run_request(config: DeploymentRequest, shutdown: Arc<AtomicBool>) -> Result<(), String> {
+    match ValidatedDeployment::try_from(config) {
+        Ok(deployment) => run(deployment, shutdown),
+        Err(refusal) => drained(Err(refusal)),
+    }
+}
+
+/// `outcome`, once the audit writer's teardown obligation is discharged. Every exit passes
+/// here — a clean drain, a failed serve, a refused startup — because a sink installed past
+/// this seam still leaves records in the same global queue.
+fn drained(outcome: Result<(), String>) -> Result<(), String> {
+    crate::audit_sink::drain::at_shutdown();
     outcome
 }
 
@@ -220,10 +216,7 @@ fn channel_binding_effects(state: ChannelBindingState) -> ChannelBindingEffects 
 // The allowance is on this function alone rather than on the module, so anything else here
 // that grows past the threshold is still reported.
 #[allow(clippy::too_many_lines)]
-fn run_validated(
-    config: &crate::config_state::validation::ValidatedDeployment,
-    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
-) -> Result<(), String> {
+fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Result<(), String> {
     let values = config.config();
     // Clock-fault diagnosis (audit #94 F5). `now_unix()` deliberately maps a
     // pre-epoch SystemTime error to 0 (fail CLOSED — every request then fails its
@@ -741,7 +734,7 @@ fn run_validated(
 /// The admission limit arrives as the RESOLVED basis rather than as request fields: the
 /// fleet needs the fleet-wide half of it, and which half exists is the boundary's answer.
 fn fleet_config(
-    values: &crate::deployment_request::DeploymentRequest,
+    values: &DeploymentRequest,
     shard_topology: crate::config_state::ShardTopologyRequest,
     in_flight_limit: crate::config_state::InFlightLimitBasis,
 ) -> Result<crate::async_fleet::FleetConfig, String> {
@@ -793,7 +786,7 @@ pub(crate) fn serve_fleet(
     config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
     serve_options: Arc<crate::ServerOptions>,
     authorized: crate::materialized_runtime::fleet_serve_authorized::FleetServeAuthorized,
-    shutdown: Arc<std::sync::atomic::AtomicBool>,
+    shutdown: Arc<AtomicBool>,
 ) -> Result<(), String> {
     // MCPRE-116: hand the fleet the SNAPSHOT, not a one-shot `load()`. The accept
     // loop re-reads it per connection, so the CRL hot-reload task's atomic swap is
@@ -905,7 +898,7 @@ mod tests {
                     at_unix: i as i64,
                 });
             }
-            let _ = super::run(
+            let _ = super::run_request(
                 config,
                 std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             );

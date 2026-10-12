@@ -1,4 +1,4 @@
-//! The production `mcp-re-proxy` command line: argv to a [`DeploymentRequest`].
+//! The production `mcp-re-proxy` command line: argv to a validated deployment.
 //!
 //! One authority lives here — reading an argument list — and it is three collaborating
 //! parts, in pipeline order:
@@ -7,8 +7,8 @@
 //!   family that owns its meaning. The families are the `cli::*_flags` children.
 //! - [`argv`], the reader: which token is a value, and the answer for a flag no family
 //!   owns.
-//! - [`parse_args`], which composes the families' products into a request and hands it to
-//!   the layer-A boundary.
+//! - [`parse_args`], which composes the families' products into a request and returns the
+//!   layer-A boundary's validated deployment.
 //!
 //! Nothing here decides deployment legality. Whether the deployment a coherent command line
 //! describes may RUN is
@@ -36,6 +36,7 @@ mod serving_flags;
 mod signing_source_flags;
 mod storage_flags;
 
+use crate::config_state::validation::ValidatedDeployment;
 use crate::deployment_request::DeploymentRequest;
 
 /// Every flag family this parser knows, accumulating across one argument list.
@@ -199,26 +200,25 @@ fn require(value: Option<String>, flag: &str) -> Result<String, String> {
     value.ok_or_else(|| format!("missing required {flag}"))
 }
 
-/// Parse CLI arguments (excluding argv[0]) into a [`DeploymentRequest`]. Returns a
-/// human-readable error string on any missing/invalid argument.
+/// Parse CLI arguments (excluding argv[0]) into the [`ValidatedDeployment`] they describe.
+/// Returns a human-readable error string on any missing/invalid argument or unsafe
+/// configuration.
 ///
 /// Orchestration: read the argument list into the flag families, then ask them for the
 /// request they describe. Both halves are one line each, because every flag's grammar lives
 /// with the family that owns its meaning (ADR-MCPRE-067 §16, Phase 7).
-pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
-    let flags = argv::read(args)?;
-    // Whether the deployment this argument list describes is one that may run is not the
-    // parser's question, and the answer is the same however the request was built. Every
-    // violation is reported, not the first — a command line missing four things is worth
-    // one pass, not four.
-    crate::config_state::validation::ValidatedDeployment::try_from(flags.finish()?)
-        .map(crate::config_state::validation::ValidatedDeployment::into_inner)
+///
+/// The proof is the result, and the argv path hands it to [`crate::app::run`] unopened.
+/// Whether the deployment may run is not the parser's question, and the answer is the same
+/// however the request was built. Every violation is reported, not the first.
+pub fn parse_args(args: &[String]) -> Result<ValidatedDeployment, String> {
+    ValidatedDeployment::try_from(argv::read(args)?.finish()?)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_args;
     use super::DeploymentRequest;
+    use super::ValidatedDeployment;
     use crate::config_state::validation::unsafe_config_violations;
     use crate::deployment_request::AuditSinkKind;
     use crate::deployment_request::AuthzKind;
@@ -227,6 +227,11 @@ mod tests {
         SigningSourceRequest,
     };
     use crate::transport::IdentityPolicy;
+
+    /// The request `parse_args` validated, for asserting what the parser put in each field.
+    fn parse_request(args: &[String]) -> Result<DeploymentRequest, String> {
+        super::parse_args(args).map(ValidatedDeployment::into_inner)
+    }
 
     /// The full, valid set of Mode-C flags (attestor key + ingress identity +
     /// audience + pinned-mTLS ack). Prepend `--strict`/etc. as needed.
@@ -329,7 +334,7 @@ mod tests {
         ]));
         a.push(flag.to_string());
         a.push(endpoint.to_string());
-        parse_args(&a)
+        parse_request(&a)
     }
 
     #[test]
@@ -591,7 +596,7 @@ mod tests {
                 "lb-1:1i8Bah79Hk_feT60LNhEceG6nwzwTRKHtcxx9hYofLg",
             ]),
         );
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         for expected in [
             "--replay-durability-tier",
             "--pkcs11-tls-key-label",
@@ -635,7 +640,7 @@ mod tests {
         a.splice(0..0, admission_args("required"));
         a.push("--admission-allow-degraded".into());
         a.push("true".into());
-        let refusal = parse_args(&a).expect_err("a zero-width degraded window is refused");
+        let refusal = parse_request(&a).expect_err("a zero-width degraded window is refused");
         assert!(
             refusal.contains("--max-clock-skew"),
             "the operator has to be told the skew term widens the window, got: {refusal}"
@@ -647,7 +652,7 @@ mod tests {
     /// left a programmatic config reaching materialization with an unusable issuer.
     #[test]
     fn a_programmatic_config_cannot_carry_an_undecodable_admission_authority_key() {
-        let mut config = parse_args(&minimal_durable()).expect("the base config parses");
+        let mut config = parse_request(&minimal_durable()).expect("the base config parses");
         config.admission = crate::deployment_request::AdmissionRequest::Required(
             crate::deployment_request::AdmissionGateRequest {
                 authority_kid: "admission-root-1".to_string(),
@@ -674,7 +679,7 @@ mod tests {
     fn a_complete_admission_configuration_raises_no_violation() {
         let mut a = minimal_durable();
         a.splice(0..0, admission_args("required"));
-        let config = parse_args(&a).expect("a complete admission config parses");
+        let config = parse_request(&a).expect("a complete admission config parses");
         assert!(
             unsafe_config_violations(&config).is_empty(),
             "a complete admission configuration must be admissible: {:?}",
@@ -686,7 +691,7 @@ mod tests {
     fn admission_is_off_by_default() {
         // A deployment that has not asked for admission must not get a gate it did
         // not configure — and, more importantly, must not believe it has one.
-        let config = parse_args(&minimal_durable()).expect("parses");
+        let config = parse_request(&minimal_durable()).expect("parses");
         assert_eq!(
             config.admission,
             crate::deployment_request::AdmissionRequest::NotEnforced
@@ -699,7 +704,7 @@ mod tests {
             let mut a = minimal_durable();
             a.splice(0..0, admission_args(mode));
             let config =
-                parse_args(&a).unwrap_or_else(|e| panic!("--admission {mode} must parse: {e}"));
+                parse_request(&a).unwrap_or_else(|e| panic!("--admission {mode} must parse: {e}"));
             assert!(config.admission.is_enforced());
             assert!(config
                 .admission
@@ -722,7 +727,7 @@ mod tests {
                 "redis://127.0.0.1:6379",
             ]),
         );
-        let err = parse_args(&a).expect_err("an authority is required");
+        let err = parse_request(&a).expect_err("an authority is required");
         assert!(err.contains("--admission-authority-kid"), "got: {err}");
     }
 
@@ -743,7 +748,7 @@ mod tests {
                 "1i8Bah79Hk_feT60LNhEceG6nwzwTRKHtcxx9hYofLg",
             ]),
         );
-        let err = parse_args(&a).expect_err("a source is required");
+        let err = parse_request(&a).expect_err("a source is required");
         assert!(err.contains("--admission-redis-url"), "got: {err}");
     }
 
@@ -756,7 +761,7 @@ mod tests {
             0..0,
             args(&["--admission-redis-url", "redis://127.0.0.1:6379"]),
         );
-        let err = parse_args(&a).expect_err("a dangling admission setting is refused");
+        let err = parse_request(&a).expect_err("a dangling admission setting is refused");
         assert!(err.contains("--admission is off"), "got: {err}");
     }
 
@@ -768,7 +773,7 @@ mod tests {
         a.splice(0..0, admission_args("required"));
         a.push("--admission-allow-degraded".into());
         a.push("true".into());
-        let err = parse_args(&a).expect_err("P must be positive");
+        let err = parse_request(&a).expect_err("P must be positive");
         assert!(
             err.contains("--admission-degraded-bound-secs"),
             "got: {err}"
@@ -776,7 +781,7 @@ mod tests {
 
         a.push("--admission-degraded-bound-secs".into());
         a.push("120".into());
-        let config = parse_args(&a).expect("a bounded degraded window parses");
+        let config = parse_request(&a).expect("a bounded degraded window parses");
         assert_eq!(
             config
                 .admission
@@ -790,7 +795,7 @@ mod tests {
     fn an_unknown_admission_mode_is_refused() {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--admission", "sometimes"]));
-        let err = parse_args(&a).expect_err("the mode set is closed");
+        let err = parse_request(&a).expect_err("the mode set is closed");
         assert!(err.contains("off|optional|required"), "got: {err}");
     }
 
@@ -808,7 +813,8 @@ mod tests {
             let mut a = minimal_durable();
             a.push("--max-clock-skew".into());
             a.push(skew.to_string());
-            let config = parse_args(&a).unwrap_or_else(|e| panic!("skew {skew} must parse: {e}"));
+            let config =
+                parse_request(&a).unwrap_or_else(|e| panic!("skew {skew} must parse: {e}"));
             assert_eq!(config.max_clock_skew, skew);
         }
     }
@@ -821,7 +827,7 @@ mod tests {
             let mut a = minimal_durable();
             a.push("--max-clock-skew".into());
             a.push(skew.to_string());
-            let err = parse_args(&a)
+            let err = parse_request(&a)
                 .err()
                 .unwrap_or_else(|| panic!("skew {skew} must be refused"));
             assert!(err.contains("--max-clock-skew must be"), "got: {err}");
@@ -833,14 +839,14 @@ mod tests {
     /// can tell a chosen value from a default.
     #[test]
     fn a_declared_replay_clock_divergence_reaches_the_resolved_window() {
-        let silent = parse_args(&minimal_durable()).expect("parses");
+        let silent = parse_request(&minimal_durable()).expect("parses");
         assert_eq!(silent.replay.replica_clock_divergence_secs, None);
         for declared in [0, 5, mcp_re_proxy_divergence_ceiling()] {
             let mut a = minimal_durable();
             a.push("--replay-clock-divergence-secs".into());
             a.push(declared.to_string());
-            let config =
-                parse_args(&a).unwrap_or_else(|e| panic!("divergence {declared} must parse: {e}"));
+            let config = parse_request(&a)
+                .unwrap_or_else(|e| panic!("divergence {declared} must parse: {e}"));
             assert_eq!(config.replay.replica_clock_divergence_secs, Some(declared));
         }
     }
@@ -857,7 +863,7 @@ mod tests {
             let mut a = minimal_durable();
             a.push("--replay-clock-divergence-secs".into());
             a.push(declared.to_string());
-            let err = parse_args(&a)
+            let err = parse_request(&a)
                 .err()
                 .unwrap_or_else(|| panic!("divergence {declared} must be refused"));
             assert!(
@@ -868,7 +874,7 @@ mod tests {
         let mut a = minimal_durable();
         a.push("--replay-clock-divergence-secs".into());
         a.push("soon".into());
-        let err = parse_args(&a).expect_err("not an integer");
+        let err = parse_request(&a).expect_err("not an integer");
         assert!(err.contains("must be an integer"), "got: {err}");
     }
 
@@ -891,14 +897,14 @@ mod tests {
             }
             without.push(a.clone());
         }
-        let err = parse_args(&without).expect_err("--target-uri must be required");
+        let err = parse_request(&without).expect_err("--target-uri must be required");
         assert!(err.contains("--target-uri"), "got: {err}");
 
         for empty in ["", "   "] {
             let mut a = without.clone();
             a.push("--target-uri".into());
             a.push(empty.into());
-            let err = parse_args(&a).expect_err("an empty --target-uri must be refused");
+            let err = parse_request(&a).expect_err("an empty --target-uri must be refused");
             assert!(err.contains("must not be empty"), "got: {err}");
         }
     }
@@ -915,7 +921,7 @@ mod tests {
     fn admission_ceilings_are_configurable_and_bounded_by_default() {
         use crate::config_state::InFlightLimitRequest;
 
-        let config = parse_args(&minimal_durable()).expect("parse");
+        let config = parse_request(&minimal_durable()).expect("parse");
         assert_eq!(
             config.in_flight_limit,
             InFlightLimitRequest::Unspecified,
@@ -932,7 +938,7 @@ mod tests {
 
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--max-in-flight", "32"]));
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         assert_eq!(
             config.in_flight_limit,
             InFlightLimitRequest::PerCore(nz(32))
@@ -941,7 +947,7 @@ mod tests {
 
         let mut b = minimal_durable();
         b.splice(0..0, args(&["--max-in-flight-total", "256"]));
-        let config = parse_args(&b).expect("parse");
+        let config = parse_request(&b).expect("parse");
         assert_eq!(
             config.in_flight_limit,
             InFlightLimitRequest::FleetTotal(nz(256))
@@ -968,8 +974,8 @@ mod tests {
                 &crate::config_state::in_flight_limit::DEFAULT_PER_CORE_IN_FLIGHT.to_string(),
             ]),
         );
-        let stated = parse_args(&a).expect("parse").in_flight_limit;
-        let unstated = parse_args(&minimal_durable())
+        let stated = parse_request(&a).expect("parse").in_flight_limit;
+        let unstated = parse_request(&minimal_durable())
             .expect("parse")
             .in_flight_limit;
 
@@ -1009,7 +1015,7 @@ mod tests {
             let mut a = minimal_durable();
             a.splice(0..0, args(&pair));
             let refusal =
-                parse_args(&a).expect_err("a second admission limit must be refused: {pair:?}");
+                parse_request(&a).expect_err("a second admission limit must be refused: {pair:?}");
             assert!(
                 refusal.contains("already states the admission limit"),
                 "the refusal must say which instruction is being overwritten: {refusal}"
@@ -1028,7 +1034,7 @@ mod tests {
     fn a_fleet_wide_target_survives_without_erasing_the_per_core_default() {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--max-in-flight-total", "256"]));
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         assert_eq!(
             config.in_flight_limit,
             crate::config_state::InFlightLimitRequest::FleetTotal(nz(256))
@@ -1043,7 +1049,7 @@ mod tests {
         );
 
         // Assembled in code, which meets no parser: the same basis, for the same reason.
-        let mut built = parse_args(&minimal_durable()).expect("parse");
+        let mut built = parse_request(&minimal_durable()).expect("parse");
         built.limits = crate::tls::ServerLimits::default();
         built.in_flight_limit = crate::config_state::InFlightLimitRequest::FleetTotal(nz(1000));
         assert_eq!(
@@ -1057,7 +1063,7 @@ mod tests {
     /// expiry or a reloaded CRL; disabling it is an unsafe configuration.
     #[test]
     fn the_connection_age_bound_is_defaulted_and_zero_is_refused() {
-        let config = parse_args(&minimal_durable()).expect("parse");
+        let config = parse_request(&minimal_durable()).expect("parse");
         assert_eq!(
             config.limits.max_connection_age,
             Some(std::time::Duration::from_secs(300))
@@ -1068,7 +1074,7 @@ mod tests {
         // disabling the bound never produces a DeploymentRequest at all.
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--max-connection-age-secs", "0"]));
-        let err = parse_args(&a).expect_err("a disabled connection-age bound is refused");
+        let err = parse_request(&a).expect_err("a disabled connection-age bound is refused");
         assert!(err.contains("--max-connection-age-secs"), "got: {err}");
     }
 
@@ -1079,7 +1085,7 @@ mod tests {
         for flag in ["--max-in-flight", "--max-in-flight-total"] {
             let mut a = minimal_durable();
             a.splice(0..0, args(&[flag, "0"]));
-            let err = parse_args(&a).expect_err("zero must be refused");
+            let err = parse_request(&a).expect_err("zero must be refused");
             assert!(err.contains("must be > 0"), "got: {err}");
         }
     }
@@ -1090,7 +1096,7 @@ mod tests {
         let mut a = minimal_durable();
         a.push("--mcp-protocol-version".into());
         a.push("2025-06-18".into());
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         assert_eq!(
             config.mcp_protocol_versions,
             vec!["2026-07-28", "2025-06-18"]
@@ -1103,7 +1109,7 @@ mod tests {
             .position(|x| x == "--mcp-protocol-version")
             .expect("the fixture declares one");
         bare.drain(at..at + 2);
-        let err = parse_args(&bare).expect_err("no protocol version is not a posture");
+        let err = parse_request(&bare).expect_err("no protocol version is not a posture");
         assert!(err.contains("--mcp-protocol-version"), "got: {err}");
     }
 
@@ -1112,7 +1118,7 @@ mod tests {
     #[test]
     fn delegated_signing_parses_with_defaults() {
         // `minimal()` already supplies the required --delegated-trust-epoch.
-        let config = parse_args(&minimal_durable()).expect("parse delegated-signing");
+        let config = parse_request(&minimal_durable()).expect("parse delegated-signing");
         assert_eq!(
             config.delegated_signing.trust_epoch.as_deref(),
             Some("epoch-min")
@@ -1129,7 +1135,7 @@ mod tests {
         // A config complete but for the required trust epoch fails closed — the epoch is
         // mandatory for every deployment.
         let a = minimal_durable_without("--delegated-trust-epoch");
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--delegated-trust-epoch"), "got: {err}");
     }
 
@@ -1142,7 +1148,7 @@ mod tests {
             "--delegated-overlap-secs",
             "100",
         ]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("0 < overlap < ttl"), "got: {err}");
     }
 
@@ -1151,7 +1157,7 @@ mod tests {
         // The bare in-memory replay default is a strict/production violation (#90),
         // and the proxy always runs strict, so a minimal PARSEABLE config declares a
         // durable replay backend; every other value here is a plain default.
-        let config = parse_args(&minimal_durable()).expect("parse");
+        let config = parse_request(&minimal_durable()).expect("parse");
         assert_eq!(config.bind, "127.0.0.1:8443");
         assert_eq!(config.audience, "did:web:server-1.mcp.example.com");
         // The default skew is the profile's own, so the freshness gate the verifier
@@ -1216,7 +1222,7 @@ mod tests {
                     "30",
                 ]),
             );
-            let got = parse_args(&a).expect("parse").max_client_cert_lifetime;
+            let got = parse_request(&a).expect("parse").max_client_cert_lifetime;
             assert_eq!(
                 got,
                 Some(std::time::Duration::from_secs(expected)),
@@ -1239,7 +1245,7 @@ mod tests {
             0..0,
             args(&["--max-client-cert-lifetime", "5124095576030432h"]),
         );
-        let err = parse_args(&a).expect_err("an overflowing lifetime is not a lifetime");
+        let err = parse_request(&a).expect_err("an overflowing lifetime is not a lifetime");
         assert!(err.contains("--max-client-cert-lifetime"), "{err}");
     }
 
@@ -1247,7 +1253,7 @@ mod tests {
     fn unparseable_client_cert_lifetime_errors() {
         let mut a = minimal();
         a.splice(0..0, args(&["--max-client-cert-lifetime", "soon"]));
-        assert!(parse_args(&a)
+        assert!(parse_request(&a)
             .unwrap_err()
             .contains("max-client-cert-lifetime"));
     }
@@ -1259,7 +1265,7 @@ mod tests {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--transport-identity-source", "uri_san"]));
         assert_eq!(
-            parse_args(&a)
+            parse_request(&a)
                 .expect("parse")
                 .peer_identity
                 .credential_identity()
@@ -1271,7 +1277,7 @@ mod tests {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--transport-identity-source", "dns_san"]));
         assert_eq!(
-            parse_args(&a)
+            parse_request(&a)
                 .expect("parse")
                 .peer_identity
                 .credential_identity()
@@ -1285,7 +1291,7 @@ mod tests {
     fn unknown_identity_source_errors() {
         let mut a = minimal();
         a.splice(0..0, args(&["--transport-identity-source", "email_san"]));
-        assert!(parse_args(&a).unwrap_err().contains("email_san"));
+        assert!(parse_request(&a).unwrap_err().contains("email_san"));
     }
 
     // ---- ADR-MCPS-023 Tier 3 (issue #71): LB-signed request-bound assertion ----
@@ -1308,7 +1314,7 @@ mod tests {
         // fail closed at parse time rather than reject every request.
         let mut a = minimal();
         a.splice(0..0, args(&["--transport-binding", "lb-assertion"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--ingress-lb-key"), "got: {err}");
     }
 
@@ -1321,7 +1327,7 @@ mod tests {
             0..0,
             args(&["--ingress-lb-key", &format!("lb-1:{}", lb_pub_b64())]),
         );
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("has no effect"), "got: {err}");
     }
 
@@ -1338,7 +1344,7 @@ mod tests {
                 "no-colon-here",
             ]),
         );
-        assert!(parse_args(&a).unwrap_err().contains("keyid"));
+        assert!(parse_request(&a).unwrap_err().contains("keyid"));
     }
 
     #[test]
@@ -1355,7 +1361,9 @@ mod tests {
                 "lb-1:not-a-real-key",
             ]),
         );
-        assert!(parse_args(&a).unwrap_err().contains("Ed25519 public key"));
+        assert!(parse_request(&a)
+            .unwrap_err()
+            .contains("Ed25519 public key"));
     }
 
     #[test]
@@ -1372,7 +1380,7 @@ mod tests {
                 &format!("lb-1:{}", lb_pub_b64()),
             ]),
         );
-        assert!(parse_args(&a).unwrap_err().contains("duplicate"));
+        assert!(parse_request(&a).unwrap_err().contains("duplicate"));
     }
 
     #[test]
@@ -1390,7 +1398,7 @@ mod tests {
                 &format!("lb-1:{}", lb_pub_b64()),
             ]),
         );
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(
             err.contains("lb-assertion") && err.contains("end-to-end"),
             "got: {err}"
@@ -1411,7 +1419,7 @@ mod tests {
         // checks broke, this test would start reporting its error instead.
         let mut a = minimal_durable();
         a.splice(0..0, attested_ingress_flags());
-        let err = parse_args(&a).expect_err("Mode C is not a supported deployment mode");
+        let err = parse_request(&a).expect_err("Mode C is not a supported deployment mode");
         assert!(
             err.contains("attested-ingress is not a supported deployment mode"),
             "a complete Mode-C config must be refused for the MODE, not for its shape; \
@@ -1427,7 +1435,7 @@ mod tests {
         // Reached by mutating a parsed config rather than through `parse_args`, because
         // `parse_args` now ends at this same guard: going through it would prove only that
         // SOMETHING refused, not that this guard did.
-        let mut config = parse_args(&minimal_durable()).expect("the base config parses");
+        let mut config = parse_request(&minimal_durable()).expect("the base config parses");
         config.peer_identity = mode_c_form(
             vec!["spiffe://example.org/ingress-1".to_string()],
             "did:web:server-1.mcp.example.com".to_string(),
@@ -1460,7 +1468,7 @@ mod tests {
                 // no --ingress-pinned-mtls
             ]),
         );
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--ingress-pinned-mtls"), "got: {err}");
     }
 
@@ -1475,7 +1483,7 @@ mod tests {
         // Missing attestor key.
         let mut a = minimal();
         a.splice(0..0, base.clone());
-        assert!(parse_args(&a)
+        assert!(parse_request(&a)
             .unwrap_err()
             .contains("--ingress-attestor-key"));
         // Missing ingress identity.
@@ -1486,7 +1494,9 @@ mod tests {
             &format!("attestor-1:{}", attestor_pub_b64()),
         ]));
         a.splice(0..0, f);
-        assert!(parse_args(&a).unwrap_err().contains("--ingress-identity"));
+        assert!(parse_request(&a)
+            .unwrap_err()
+            .contains("--ingress-identity"));
         // Missing audience.
         let mut a = minimal();
         let mut f = base.clone();
@@ -1497,7 +1507,9 @@ mod tests {
             "spiffe://example.org/ingress-1",
         ]));
         a.splice(0..0, f);
-        assert!(parse_args(&a).unwrap_err().contains("--ingress-audience"));
+        assert!(parse_request(&a)
+            .unwrap_err()
+            .contains("--ingress-audience"));
     }
 
     #[test]
@@ -1519,13 +1531,13 @@ mod tests {
         ] {
             let mut a = minimal();
             a.splice(0..0, args(&[flag, &val]));
-            let err = parse_args(&a).unwrap_err();
+            let err = parse_request(&a).unwrap_err();
             assert!(err.contains("has no effect"), "flag {flag} → got: {err}");
         }
         // The pinned-mTLS boolean too.
         let mut a = minimal();
         a.splice(0..0, args(&["--ingress-pinned-mtls"]));
-        assert!(parse_args(&a).unwrap_err().contains("has no effect"));
+        assert!(parse_request(&a).unwrap_err().contains("has no effect"));
     }
 
     #[test]
@@ -1545,7 +1557,9 @@ mod tests {
                 "--ingress-pinned-mtls",
             ]),
         );
-        assert!(parse_args(&a).unwrap_err().contains("Ed25519 public key"));
+        assert!(parse_request(&a)
+            .unwrap_err()
+            .contains("Ed25519 public key"));
     }
 
     /// MCPS-076: the process environment carries no key material, so no `--key-source`
@@ -1555,7 +1569,7 @@ mod tests {
     fn env_is_an_unknown_key_source() {
         let mut a = minimal();
         a.splice(0..0, args(&["--key-source", "env"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("unknown --key-source 'env'"), "got: {err}");
         assert!(
             err.contains("(file|pkcs11|aws-kms|gcp-kms)"),
@@ -1585,7 +1599,7 @@ mod tests {
     fn parses_pkcs11_key_source_flags() {
         let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, pkcs11_flags());
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         let token = token_payload(&config);
         assert_eq!(
             token.module.as_deref(),
@@ -1620,7 +1634,7 @@ mod tests {
             flags.drain(idx..idx + 2);
             let mut a = minimal_durable_without("--signing-key-seed");
             a.splice(0..0, flags);
-            let err = parse_args(&a).unwrap_err();
+            let err = parse_request(&a).unwrap_err();
             assert!(
                 err.contains(missing),
                 "expected error to name {missing}; got: {err}"
@@ -1637,7 +1651,7 @@ mod tests {
         let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, pkcs11_flags());
         a.extend(args(&["--pkcs11-pin", "1234"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--pkcs11-pin is refused"), "got: {err}");
         assert!(
             err.contains("--pkcs11-pin-file"),
@@ -1658,7 +1672,7 @@ mod tests {
     fn unknown_key_source_lists_pkcs11() {
         let mut a = minimal();
         a.splice(0..0, args(&["--key-source", "yubikey"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("file|pkcs11"), "got: {err}");
     }
 
@@ -1672,7 +1686,7 @@ mod tests {
     fn default_build_rejects_pkcs11_key_source() {
         let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, pkcs11_flags());
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         assert!(matches!(
             config.response_signing.source,
             SigningSourceRequest::Pkcs11(_)
@@ -1747,7 +1761,7 @@ mod tests {
                 .expect("the flag is in the fixture");
             a[at + 1] = path.to_string_lossy().into_owned();
         }
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         assert!(matches!(
             config.response_signing.source,
             SigningSourceRequest::File(_)
@@ -1783,7 +1797,7 @@ mod tests {
     fn parses_aws_kms_key_source_flags() {
         let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, aws_kms_flags());
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         let kms = aws_payload(&config);
         assert_eq!(kms.region.as_deref(), Some("us-east-1"));
         assert_eq!(kms.key_id.as_deref(), Some("alias/mcp-re-response-signing"));
@@ -1800,7 +1814,7 @@ mod tests {
             flags.drain(idx..idx + 2);
             let mut a = minimal_durable_without("--signing-key-seed");
             a.splice(0..0, flags);
-            let err = parse_args(&a).unwrap_err();
+            let err = parse_request(&a).unwrap_err();
             assert!(
                 err.contains(missing),
                 "expected error to name {missing}; got: {err}"
@@ -1854,7 +1868,7 @@ mod tests {
         a.push("--inner-http-url".to_string());
         a.push("http://127.0.0.1:8080/mcp".to_string());
         a.extend(durable_replay());
-        let config = parse_args(&a).expect("delegated TLS path parses without --tls-key");
+        let config = parse_request(&a).expect("delegated TLS path parses without --tls-key");
         let response_key_id = aws_payload(&config).key_id.clone();
         let Some(crate::deployment_request::DelegatedChannelKeyRequest::AwsKms(channel)) =
             channel_key(&config)
@@ -1884,13 +1898,13 @@ mod tests {
         let mut a = minimal_without_seed();
         a.splice(0..0, durable.clone());
         a.splice(0..0, aws_kms_flags());
-        assert!(!aws_payload(&parse_args(&a).unwrap()).use_web_identity);
+        assert!(!aws_payload(&parse_request(&a).unwrap()).use_web_identity);
 
         let mut a = minimal_without_seed();
         a.splice(0..0, durable);
         a.splice(0..0, aws_kms_flags());
         a.splice(0..0, args(&["--aws-kms-use-web-identity"]));
-        assert!(aws_payload(&parse_args(&a).unwrap()).use_web_identity);
+        assert!(aws_payload(&parse_request(&a).unwrap()).use_web_identity);
     }
 
     /// A dangling `--aws-kms-use-web-identity` on another key source would silently
@@ -1900,7 +1914,7 @@ mod tests {
     fn aws_kms_use_web_identity_without_aws_kms_fails_closed() {
         let mut a = minimal();
         a.splice(0..0, args(&["--aws-kms-use-web-identity"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--aws-kms-use-web-identity"), "got: {err}");
     }
 
@@ -1915,7 +1929,7 @@ mod tests {
             0..0,
             args(&["--aws-sts-endpoint", "https://sts.eu-north-1.amazonaws.com"]),
         );
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--aws-sts-endpoint"), "got: {err}");
     }
 
@@ -1928,7 +1942,7 @@ mod tests {
         let mut a = minimal_without_seed();
         a.splice(0..0, aws_kms_flags());
         a.splice(0..0, args(&["--aws-kms-tls-key-id", "alias/mcp-re-tls"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(
             err.contains("delegated") || err.contains("--tls-key"),
             "expected an exclusivity error, got: {err}"
@@ -1941,7 +1955,7 @@ mod tests {
     fn aws_kms_tls_key_id_without_aws_kms_fails_closed() {
         let mut a = minimal_delegating_the_channel_key();
         a.splice(0..0, args(&["--aws-kms-tls-key-id", "alias/mcp-re-tls"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(
             err.contains("--aws-kms-tls-key-id has no effect without --key-source aws-kms"),
             "got: {err}"
@@ -1952,7 +1966,7 @@ mod tests {
     fn parses_gcp_kms_key_source_flags() {
         let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, gcp_kms_flags());
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         let kms = gcp_payload(&config);
         assert!(kms
             .key_version
@@ -1966,7 +1980,7 @@ mod tests {
     fn gcp_kms_requires_key_version() {
         let mut a = minimal_without_seed();
         a.splice(0..0, args(&["--key-source", "gcp-kms"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--gcp-kms-key-version"), "got: {err}");
     }
 
@@ -1975,7 +1989,7 @@ mod tests {
         // The metadata flag without --key-source gcp-kms must fail (no silent no-op).
         let mut a = minimal();
         a.splice(0..0, args(&["--gcp-kms-use-metadata"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--gcp-kms-use-metadata"), "got: {err}");
     }
 
@@ -2025,7 +2039,7 @@ mod tests {
         a.push("--inner-http-url".to_string());
         a.push("http://127.0.0.1:8080/mcp".to_string());
         a.extend(durable_replay());
-        let config = parse_args(&a).expect("delegated TLS path parses without --tls-key");
+        let config = parse_request(&a).expect("delegated TLS path parses without --tls-key");
         let response_key_version = gcp_payload(&config).key_version.clone();
         let Some(crate::deployment_request::DelegatedChannelKeyRequest::GcpKms(channel)) =
             channel_key(&config)
@@ -2056,7 +2070,7 @@ mod tests {
                 "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/2",
             ]),
         );
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(
             err.contains("delegated") || err.contains("--tls-key"),
             "expected an exclusivity error, got: {err}"
@@ -2076,7 +2090,7 @@ mod tests {
                 "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/2",
             ]),
         );
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(
             err.contains("--gcp-kms-tls-key-version has no effect without --key-source gcp-kms"),
             "got: {err}"
@@ -2087,7 +2101,7 @@ mod tests {
     fn unknown_key_source_lists_cloud_kms() {
         let mut a = minimal();
         a.splice(0..0, args(&["--key-source", "azure-kv"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(
             err.contains("aws-kms") && err.contains("gcp-kms"),
             "got: {err}"
@@ -2101,7 +2115,7 @@ mod tests {
     fn default_build_rejects_aws_kms_key_source() {
         let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, aws_kms_flags());
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         assert!(matches!(
             config.response_signing.source,
             SigningSourceRequest::AwsKms(_)
@@ -2121,7 +2135,7 @@ mod tests {
     fn default_build_rejects_gcp_kms_key_source() {
         let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, gcp_kms_flags());
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         assert!(matches!(
             config.response_signing.source,
             SigningSourceRequest::GcpKms(_)
@@ -2152,7 +2166,7 @@ mod tests {
                 "12",
             ]),
         );
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         assert_eq!(config.limits.max_body_bytes, 1024);
         assert_eq!(config.limits.max_concurrent_connections, 8);
         assert_eq!(
@@ -2181,7 +2195,7 @@ mod tests {
         ] {
             let mut a = minimal_durable();
             a.splice(0..0, args(&[flag, "0"]));
-            let err = parse_args(&a).expect_err("a disabled timeout must be refused");
+            let err = parse_request(&a).expect_err("a disabled timeout must be refused");
             assert!(
                 err.contains("refuses unsafe configuration") && err.contains(flag),
                 "{flag} 0 must be named in the refusal; got: {err}"
@@ -2226,8 +2240,8 @@ mod tests {
             a.splice(0..0, args(&["--key-source", source]));
             a.splice(0..0, args(&extra));
 
-            let config =
-                parse_args(&a).unwrap_or_else(|e| panic!("{source} must not require a seed: {e}"));
+            let config = parse_request(&a)
+                .unwrap_or_else(|e| panic!("{source} must not require a seed: {e}"));
             // Stronger than "the seed stayed empty": a non-exporting mechanism's payload
             // has no seed field at all, so there is no phantom file to name.
             assert!(
@@ -2249,7 +2263,7 @@ mod tests {
             .position(|s| s == "--signing-key-seed")
             .expect("baseline has it");
         a.drain(i..i + 2);
-        let err = parse_args(&a).expect_err("file custody reads the seed, so it is required");
+        let err = parse_request(&a).expect_err("file custody reads the seed, so it is required");
         assert!(err.contains("--signing-key-seed"), "got: {err}");
     }
 
@@ -2257,7 +2271,7 @@ mod tests {
     fn the_default_timeouts_are_bounded_so_the_refusal_never_fires_by_default() {
         // The guard above is only safe because every default is Some(30s): it must be
         // impossible to trip by omitting the flags.
-        let config = parse_args(&minimal_durable()).expect("the default config parses");
+        let config = parse_request(&minimal_durable()).expect("the default config parses");
         assert!(config.limits.read_timeout.is_some());
         assert!(config.limits.write_timeout.is_some());
         assert!(config.limits.request_deadline.is_some());
@@ -2281,7 +2295,7 @@ mod tests {
                 &cap.to_string(),
             ]),
         );
-        let config = parse_args(&at_cap).expect("the cap value itself is accepted");
+        let config = parse_request(&at_cap).expect("the cap value itself is accepted");
         assert_eq!(
             config.limits.request_deadline,
             Some(std::time::Duration::from_secs(cap)),
@@ -2291,7 +2305,7 @@ mod tests {
         let mut over_cap = minimal();
         let over = cap + 1;
         over_cap.splice(0..0, args(&["--request-deadline-secs", &over.to_string()]));
-        let err = parse_args(&over_cap).expect_err("over-cap value must be rejected");
+        let err = parse_request(&over_cap).expect_err("over-cap value must be rejected");
         assert!(
             err.contains("--request-deadline-secs") && err.contains("<="),
             "rejection names the flag and the bound; got: {err}"
@@ -2303,7 +2317,7 @@ mod tests {
         let mut a = minimal();
         // Drop --bind and its value.
         a.drain(0..2);
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--bind"), "got: {err}");
     }
 
@@ -2322,7 +2336,7 @@ mod tests {
                 "redis-wait-quorum:2:500",
             ]),
         );
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         assert_eq!(
             config
                 .replay
@@ -2353,7 +2367,7 @@ mod tests {
             0..0,
             args(&["--replay-durability-tier", "redis-wait-quorum:1:100"]),
         );
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--replay-redis-url"), "got: {err}");
     }
 
@@ -2365,7 +2379,7 @@ mod tests {
             0..0,
             args(&["--replay-redis-url", "redis://127.0.0.1:6379"]),
         );
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--replay-durability-tier"), "got: {err}");
     }
 
@@ -2381,7 +2395,7 @@ mod tests {
                 "redis-wait-quorum:2:500",
             ]),
         );
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         assert_eq!(
             config.replay.durability,
             Some(
@@ -2401,7 +2415,7 @@ mod tests {
     fn linearizable_tier_without_cpstore_endpoint_fails_closed() {
         let mut a = minimal();
         a.splice(0..0, args(&["--replay-durability-tier", "linearizable"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(
             err.contains("--replay-durability-tier linearizable requires")
                 && err.contains("--cpstore-etcd-endpoint"),
@@ -2423,7 +2437,7 @@ mod tests {
                 "http://127.0.0.1:2379",
             ]),
         );
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         assert_eq!(
             config.replay.durability,
             Some(crate::replay_tier::ReplayDurabilityTier::Linearizable)
@@ -2462,7 +2476,7 @@ mod tests {
                 "http://127.0.0.1:2379",
             ]),
         );
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(
             err.contains("--cpstore-etcd-endpoint names the replay store")
                 && err.contains("--replay-redis-url"),
@@ -2488,7 +2502,7 @@ mod tests {
             0..0,
             args(&["--replay-redis-url", "redis://127.0.0.1:6379"]),
         );
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("both name the replay store"), "got: {err}");
     }
 
@@ -2504,7 +2518,7 @@ mod tests {
                 "cluster",
             ]),
         );
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("unknown replay durability tier"), "got: {err}");
     }
 
@@ -2512,7 +2526,7 @@ mod tests {
     fn revocation_tier_defaults_to_bounded_cache_tier_1() {
         // Absent --revocation-tier preserves the Tier-1 bounded-cache posture with
         // the deployment-default window T (existing behavior unchanged).
-        let config = parse_args(&minimal_durable()).expect("parse");
+        let config = parse_request(&minimal_durable()).expect("parse");
         assert_eq!(
             config.request_signer_currency,
             crate::deployment_request::RequestSignerCurrencyRequest::BoundedCache {
@@ -2552,7 +2566,7 @@ mod tests {
                 0..0,
                 args(&["--revocation-tier", flag, "--trust-reload-secs", "30"]),
             );
-            let config = parse_args(&a).unwrap_or_else(|e| panic!("parse {flag}: {e}"));
+            let config = parse_request(&a).unwrap_or_else(|e| panic!("parse {flag}: {e}"));
             assert_eq!(config.request_signer_currency, expected, "flag {flag}");
         }
     }
@@ -2564,14 +2578,14 @@ mod tests {
         for flag in ["live", "push:30"] {
             let mut a = minimal_durable();
             a.splice(0..0, args(&["--revocation-tier", flag]));
-            let err = parse_args(&a).expect_err("must be refused without a reload cadence");
+            let err = parse_request(&a).expect_err("must be refused without a reload cadence");
             assert!(err.contains("--trust-reload-secs"), "got: {err}");
         }
         // Tier 1 makes no such claim: its window is the cache bound T, which holds
         // whether or not the file is re-read.
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--revocation-tier", "bounded-cache:90"]));
-        parse_args(&a).expect("bounded-cache does not require a reload cadence");
+        parse_request(&a).expect("bounded-cache does not require a reload cadence");
     }
 
     /// PRESENCE is not the guarantee. A cadence longer than the window the tier
@@ -2592,7 +2606,7 @@ mod tests {
                 0..0,
                 args(&["--revocation-tier", tier, "--trust-reload-secs", secs]),
             );
-            let err = parse_args(&a)
+            let err = parse_request(&a)
                 .expect_err("a cadence longer than the declared window must be refused");
             assert!(
                 err.contains("--trust-reload-secs"),
@@ -2612,7 +2626,7 @@ mod tests {
                 0..0,
                 args(&["--revocation-tier", tier, "--trust-reload-secs", secs]),
             );
-            parse_args(&a)
+            parse_request(&a)
                 .unwrap_or_else(|e| panic!("tier {tier} cadence {secs} must be accepted: {e}"));
         }
     }
@@ -2622,13 +2636,13 @@ mod tests {
     /// still write the per-request attribution record.
     #[test]
     fn the_audit_sink_defaults_to_on() {
-        let config = parse_args(&minimal_durable()).expect("minimal durable config parses");
+        let config = parse_request(&minimal_durable()).expect("minimal durable config parses");
         assert_eq!(config.audit_sink, AuditSinkKind::Stderr);
         // Turning it off stays possible, but only by naming it.
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--audit-sink", "none"]));
         assert_eq!(
-            parse_args(&a).expect("explicit none parses").audit_sink,
+            parse_request(&a).expect("explicit none parses").audit_sink,
             AuditSinkKind::None
         );
     }
@@ -2639,7 +2653,7 @@ mod tests {
             let mut a = minimal();
             a.splice(0..0, args(&["--revocation-tier", flag]));
             assert!(
-                parse_args(&a).is_err(),
+                parse_request(&a).is_err(),
                 "revocation tier '{flag}' must be rejected"
             );
         }
@@ -2649,14 +2663,14 @@ mod tests {
     fn unknown_flag_errors() {
         let mut a = minimal();
         a.splice(0..0, args(&["--bogus", "x"]));
-        assert!(parse_args(&a).unwrap_err().contains("--bogus"));
+        assert!(parse_request(&a).unwrap_err().contains("--bogus"));
     }
 
     // --- #3839 offline CRL flags ---------------------------------------------
 
     #[test]
     fn default_has_no_crls_and_fails_closed_on_unknown_status() {
-        let config = parse_args(&minimal_durable()).expect("parse");
+        let config = parse_request(&minimal_durable()).expect("parse");
         assert!(
             config.peer_revocation.lists.paths.is_empty(),
             "no CRLs by default (revocation checking disabled until configured)"
@@ -2669,7 +2683,7 @@ mod tests {
     fn parses_a_single_client_crl_path() {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--client-crl", "/etc/mcp-re/clients.crl"]));
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         assert_eq!(
             config.peer_revocation.lists.paths,
             vec!["/etc/mcp-re/clients.crl".to_string()]
@@ -2680,7 +2694,7 @@ mod tests {
     fn parses_comma_separated_client_crls() {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--client-crl", "/a.crl,/b.crl,/c.crl"]));
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         assert_eq!(
             config.peer_revocation.lists.paths,
             vec![
@@ -2703,7 +2717,7 @@ mod tests {
             "--inner-http-url",
             "http://10.0.0.3:8080/mcp",
         ]));
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         assert_eq!(
             config.inner_http_urls.expose(),
             [
@@ -2721,7 +2735,7 @@ mod tests {
         let mut a = minimal_without_inner_command();
         a.extend(durable_replay());
         a.extend(args(&["--inner-http-url", "http://10.0.0.1:8080/mcp"]));
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         assert_eq!(
             config.cores, 0,
             "unset --cores means auto (0 = one worker per core)"
@@ -2738,7 +2752,7 @@ mod tests {
             "--cores",
             "4",
         ]));
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         assert_eq!(config.cores, 4);
     }
 
@@ -2751,7 +2765,7 @@ mod tests {
             "--cores",
             "many",
         ]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(
             err.contains("--cores"),
             "non-numeric --cores must fail with a --cores message; got: {err}"
@@ -2763,7 +2777,7 @@ mod tests {
         let mut a = minimal();
         a.splice(0..0, args(&["--inner-http-url", "http://a,,http://b"]));
         assert!(
-            parse_args(&a).unwrap_err().contains("--inner-http-url"),
+            parse_request(&a).unwrap_err().contains("--inner-http-url"),
             "an empty URL segment must be a hard parse error"
         );
     }
@@ -2772,7 +2786,7 @@ mod tests {
     fn missing_inner_http_url_fails_closed() {
         // The async serving path requires at least one HTTP inner backend; a config
         // with none must fail closed.
-        let err = parse_args(&minimal_without_inner_command()).unwrap_err();
+        let err = parse_request(&minimal_without_inner_command()).unwrap_err();
         assert!(
             err.contains("--inner-http-url"),
             "missing inner plane must name --inner-http-url; got: {err}"
@@ -2785,7 +2799,7 @@ mod tests {
     fn authz_off_does_not_require_a_revocation_list() {
         // The default (authz off) wires no policy enforcement, so revocation is
         // moot — the guard must not spuriously demand a deny-list.
-        let config = parse_args(&minimal_durable()).expect("parse");
+        let config = parse_request(&minimal_durable()).expect("parse");
         assert_eq!(config.authorization.kind, AuthzKind::Off);
         assert!(config.authorization.revocation_list_paths.is_empty());
     }
@@ -2802,7 +2816,7 @@ mod tests {
     fn a_supplied_revocation_list_is_refused_because_nothing_consults_it() {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--revocation-list", "/a,/b,/c"]));
-        let err = parse_args(&a).expect_err("a deny-list that enforces nothing must be refused");
+        let err = parse_request(&a).expect_err("a deny-list that enforces nothing must be refused");
         assert!(err.contains("--revocation-list"), "got: {err}");
         assert!(err.contains("enforce NOTHING"), "got: {err}");
     }
@@ -2814,7 +2828,7 @@ mod tests {
     fn empty_revocation_list_segment_is_rejected() {
         let mut a = minimal();
         a.splice(0..0, args(&["--revocation-list", "/a,,/b"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--revocation-list"), "got: {err}");
     }
 
@@ -2834,7 +2848,7 @@ mod tests {
                 "/etc/mcp-re/revoked",
             ]),
         );
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(
             err.contains("--authz reference") && err.contains("ADR-MCPS-013"),
             "expected a reference-authz refusal, got: {err}"
@@ -2848,7 +2862,7 @@ mod tests {
             0..0,
             args(&["--client-crl", "/a.crl", "--client-crl", "/b.crl"]),
         );
-        let config = parse_args(&a).expect("parse");
+        let config = parse_request(&a).expect("parse");
         assert_eq!(
             config.peer_revocation.lists.paths,
             vec!["/a.crl".to_string(), "/b.crl".to_string()]
@@ -2862,7 +2876,7 @@ mod tests {
         // owns what the resulting list may contain.
         let mut a = minimal();
         a.splice(0..0, args(&["--client-crl", "/a.crl,"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(
             err.contains("--client-crl contains an empty path"),
             "got: {err}"
@@ -2873,7 +2887,7 @@ mod tests {
 
     #[test]
     fn default_has_online_ocsp_off_and_hard_fail() {
-        let config = parse_args(&minimal_durable()).expect("parse");
+        let config = parse_request(&minimal_durable()).expect("parse");
         assert!(
             !config.peer_revocation.online.is_required(),
             "online revocation evidence is NOT required by default (the offline-list \
@@ -2901,7 +2915,7 @@ mod tests {
         // the feature the OCSP code is absent, and with it the code exists but the
         // async serving fleet never calls it. Announcing enforcement that does not
         // happen is the defect this refusal removes.
-        let err = parse_args(&a).expect_err("--client-ocsp require must fail closed");
+        let err = parse_request(&a).expect_err("--client-ocsp require must fail closed");
         assert!(err.contains("cannot be honored"), "got: {err}");
         assert!(
             err.contains("--client-crl"),
@@ -2913,7 +2927,7 @@ mod tests {
     fn unknown_client_ocsp_value_errors() {
         let mut a = minimal();
         a.splice(0..0, args(&["--client-ocsp", "maybe"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("unknown --client-ocsp"), "got: {err}");
     }
 
@@ -2923,7 +2937,7 @@ mod tests {
         // silently do nothing.
         let mut a = minimal();
         a.splice(0..0, args(&["--ocsp-responder-url", "http://x/r"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(
             err.contains("--ocsp-responder-url has no effect"),
             "got: {err}"
@@ -2937,7 +2951,7 @@ mod tests {
             0..0,
             args(&["--client-ocsp", "require", "--ocsp-responder-url", "   "]),
         );
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--ocsp-responder-url is empty"), "got: {err}");
     }
 
@@ -2948,7 +2962,7 @@ mod tests {
     fn client_ocsp_require_fails_closed_in_every_build() {
         let mut a = minimal();
         a.splice(0..0, args(&["--client-ocsp", "require"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(
             err.contains("cannot be honored") && err.contains("async fleet"),
             "require must fail closed in every build; got: {err}"
@@ -2967,7 +2981,7 @@ mod tests {
         // The bare in-memory replay default is a #90 violation, so a fully-safe
         // config declares a durable replay backend; it must then parse with no
         // unsafe-config violations (the proxy always runs maximal security).
-        let config = parse_args(&minimal_durable()).expect("a fully-safe config must parse");
+        let config = parse_request(&minimal_durable()).expect("a fully-safe config must parse");
         assert!(
             unsafe_config_violations(&config).is_empty(),
             "a safe config must have no strict violations"
@@ -2980,7 +2994,7 @@ mod tests {
     /// reachable by setting the public field, which is what a programmatic caller does.
     #[test]
     fn the_validation_boundary_refuses_a_target_uri_that_binds_nothing() {
-        let mut config = parse_args(&minimal_durable()).expect("the durable fixture parses");
+        let mut config = parse_request(&minimal_durable()).expect("the durable fixture parses");
         assert!(
             !unsafe_config_violations(&config)
                 .iter()
@@ -3011,7 +3025,7 @@ mod tests {
                 "redis-async",
             ]),
         );
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--replay-durability-tier"), "got: {err}");
         assert!(err.contains("strict-production minimum"), "got: {err}");
     }
@@ -3028,7 +3042,7 @@ mod tests {
                 "redis-wait-quorum:2:500",
             ]),
         );
-        let config = parse_args(&a).expect("wait-quorum tier must be strict-acceptable");
+        let config = parse_request(&a).expect("wait-quorum tier must be strict-acceptable");
         assert!(
             unsafe_config_violations(&config)
                 .iter()
@@ -3059,7 +3073,7 @@ mod tests {
                 "redis://127.0.0.1:6379",
             ]),
         );
-        let config = parse_args(&a).expect("--fleet + shared wait-quorum must parse");
+        let config = parse_request(&a).expect("--fleet + shared wait-quorum must parse");
         assert!(config.fleet);
         assert!(
             unsafe_config_violations(&config)
@@ -3074,8 +3088,8 @@ mod tests {
     // verifier. The --fleet rejection must NOT fire here.
     #[test]
     fn single_node_accepts_file_replay_cache() {
-        let config =
-            parse_args(&minimal_durable()).expect("single-node must accept a durable file cache");
+        let config = parse_request(&minimal_durable())
+            .expect("single-node must accept a durable file cache");
         assert!(!config.fleet);
         assert!(
             unsafe_config_violations(&config)
@@ -3095,7 +3109,7 @@ mod tests {
             args(&["--trust-epoch-redis-url", "redis://127.0.0.1:6379"]),
         );
         // Default tier is bounded-cache, not push.
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--trust-epoch-redis-url"), "got: {err}");
         assert!(err.contains("push"), "got: {err}");
     }
@@ -3118,7 +3132,7 @@ mod tests {
                 "60",
             ]),
         );
-        let config = parse_args(&a).expect("push + trust-epoch must parse");
+        let config = parse_request(&a).expect("push + trust-epoch must parse");
         assert_eq!(
             config
                 .request_signer_currency
@@ -3141,7 +3155,7 @@ mod tests {
     // must not become a way to run without it.
     #[test]
     fn omitting_replay_configuration_is_refused() {
-        let err = parse_args(&minimal()).unwrap_err();
+        let err = parse_request(&minimal()).unwrap_err();
         assert!(err.contains("--replay-durability-tier"), "got: {err}");
         // The remedy must name states that can actually start.
         assert!(
@@ -3165,7 +3179,7 @@ mod tests {
                 "redis-wait-quorum:2:500",
             ]),
         );
-        let config = parse_args(&a).expect("durable shared replay must parse");
+        let config = parse_request(&a).expect("durable shared replay must parse");
         assert!(
             unsafe_config_violations(&config)
                 .iter()
@@ -3178,7 +3192,7 @@ mod tests {
     fn strict_rejects_disabled_cert_lifetime_none() {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--max-client-cert-lifetime", "none"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--max-client-cert-lifetime"), "got: {err}");
     }
 
@@ -3187,7 +3201,7 @@ mod tests {
         // `0` parses to the same disabled (None) enforcement as `none`.
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--max-client-cert-lifetime", "0"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--max-client-cert-lifetime"), "got: {err}");
     }
 
@@ -3199,7 +3213,7 @@ mod tests {
     fn strict_rejects_over_ceiling_cert_lifetime() {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--max-client-cert-lifetime", "24h"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("exceeds the ceiling"), "got: {err}");
         assert!(err.contains("86400s"), "got: {err}");
         assert!(err.contains("short_lived_cert"), "got: {err}");
@@ -3211,7 +3225,7 @@ mod tests {
     fn strict_accepts_cert_lifetime_at_ceiling() {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--max-client-cert-lifetime", "3600"]));
-        let config = parse_args(&a).expect("a 1h lifetime must be strict-acceptable");
+        let config = parse_request(&a).expect("a 1h lifetime must be strict-acceptable");
         assert!(
             unsafe_config_violations(&config)
                 .iter()
@@ -3225,7 +3239,7 @@ mod tests {
     fn strict_accepts_cert_lifetime_below_ceiling() {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--max-client-cert-lifetime", "30m"]));
-        let config = parse_args(&a).expect("a 30m lifetime must be strict-acceptable");
+        let config = parse_request(&a).expect("a 30m lifetime must be strict-acceptable");
         assert!(
             unsafe_config_violations(&config)
                 .iter()
@@ -3243,7 +3257,7 @@ mod tests {
     fn strict_rejects_over_ceiling_lifetime_2h() {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--max-client-cert-lifetime", "2h"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("exceeds the ceiling"), "got: {err}");
         assert!(err.contains("7200s"), "got: {err}");
     }
@@ -3252,7 +3266,7 @@ mod tests {
     fn strict_rejects_cn_legacy_identity_source() {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--transport-identity-source", "cn_legacy"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(
             err.contains("unknown --transport-identity-source 'cn_legacy'"),
             "got: {err}"
@@ -3267,7 +3281,7 @@ mod tests {
         // the cert-lifetime one.
         let mut a = minimal(); // declares no replay configuration
         a.splice(0..0, args(&["--max-client-cert-lifetime", "none"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("--replay-durability-tier"), "got: {err}");
         assert!(err.contains("--max-client-cert-lifetime"), "got: {err}");
     }
@@ -3284,7 +3298,7 @@ mod tests {
     fn strict_rejects_transport_binding_none() {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--transport-binding", "none"]));
-        let err = parse_args(&a).unwrap_err();
+        let err = parse_request(&a).unwrap_err();
         assert!(err.contains("unknown --transport-binding"), "got: {err}");
         assert!(err.contains("none"), "got: {err}");
     }
@@ -3343,7 +3357,7 @@ mod tests {
         a.push("--pkcs11-tls-key-label".to_string());
         a.push("mcp-re-tls".to_string());
         a.extend(durable_replay());
-        let config = parse_args(&with_inner_http_url(a))
+        let config = parse_request(&with_inner_http_url(a))
             .expect("delegated TLS path parses without --tls-key");
         let Some(crate::deployment_request::DelegatedChannelKeyRequest::Pkcs11(channel)) =
             channel_key(&config)
@@ -3366,7 +3380,7 @@ mod tests {
         a.push("mcp-re-tls".to_string());
         a.push("--tls-key".to_string());
         a.push("/exported-key".to_string());
-        let err = parse_args(&with_inner_http_url(a))
+        let err = parse_request(&with_inner_http_url(a))
             .expect_err("delegated + exported TLS key must be rejected");
         assert!(
             err.contains("delegated XOR exported"),
@@ -3383,7 +3397,7 @@ mod tests {
         // label says its handshake key lives.
         let mut a = minimal_durable_without("--tls-key");
         a.extend(args(&["--pkcs11-tls-key-label", "mcp-re-tls"]));
-        let err = parse_args(&a).expect_err("dangling TLS label must be rejected");
+        let err = parse_request(&a).expect_err("dangling TLS label must be rejected");
         assert!(
             err.contains("--pkcs11-tls-key-label has no effect without --key-source pkcs11"),
             "got: {err}"
@@ -3395,7 +3409,7 @@ mod tests {
     /// path that was not requested).
     #[test]
     fn pkcs11_without_tls_label_still_requires_tls_key() {
-        let err = parse_args(&with_inner_http_url(pkcs11_lead_no_tls_key()))
+        let err = parse_request(&with_inner_http_url(pkcs11_lead_no_tls_key()))
             .expect_err("non-delegated pkcs11 must still require --tls-key");
         assert!(err.contains("--tls-key"), "got: {err}");
     }
@@ -3412,13 +3426,13 @@ mod tests {
         ] {
             let mut a = minimal_durable();
             a.splice(0..0, args(&[flag, val]));
-            assert!(parse_args(&a).is_err(), "{flag} {val} must be rejected");
+            assert!(parse_request(&a).is_err(), "{flag} {val} must be rejected");
         }
         // `--authz off` is the explicit no-authz selection (the default value).
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--authz", "off"]));
         assert_eq!(
-            parse_args(&a).expect("parse").authorization.kind,
+            parse_request(&a).expect("parse").authorization.kind,
             AuthzKind::Off
         );
         // Dropping any required (flag, value) pair fails closed naming the flag.
@@ -3437,7 +3451,7 @@ mod tests {
                 .position(|x| x == miss)
                 .expect("required flag present");
             a.drain(i..i + 2);
-            let e = parse_args(&a).unwrap_err();
+            let e = parse_request(&a).unwrap_err();
             assert!(e.contains(miss), "missing {miss} must be named; got: {e}");
         }
     }
@@ -3530,7 +3544,7 @@ mod tests {
 
     /// The endpoint refusals a programmatically built request produces for `source`.
     fn hostile_endpoint_refusals(source: SigningSourceRequest) -> Vec<String> {
-        let mut config = parse_args(&minimal_durable()).expect("the base config parses");
+        let mut config = parse_request(&minimal_durable()).expect("the base config parses");
         config.response_signing.source = source;
         crate::config_state::kms_endpoint::kms_endpoint_refusals(&config)
     }

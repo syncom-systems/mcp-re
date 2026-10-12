@@ -61,7 +61,9 @@ fn legal() -> DeploymentRequest {
     .iter()
     .map(|s| (*s).to_string())
     .collect();
-    cli::parse_args(&argv).expect("the baseline parses")
+    cli::parse_args(&argv)
+        .expect("the baseline parses")
+        .into_inner()
 }
 
 /// A distinguishing fragment per clause, in the order the boundary emits them.

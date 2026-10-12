@@ -10645,13 +10645,10 @@ conjunct = "Illegal, unsupported or internally contradictory deployment postures
 # and say nothing about the other two, and this unit's proposition is about all three.
 path = "mcp-re-proxy/src/app.rs"
 anchor = """
-    let outcome = crate::config_state::validation::ValidatedDeployment::try_from(config)
-        .and_then(|validated| run_validated(&validated, shutdown));
+    drained(run_validated(&deployment, shutdown))
 """
 weakening = """
-    let outcome = crate::config_state::validation::ValidatedDeployment::try_from(config)
-        .and_then(|validated| run_validated(&validated, shutdown))
-        .or_else(|_| Ok(()));
+    drained(run_validated(&deployment, shutdown).or_else(|_| Ok(())))
 """
 expect_red = [
   "//mcp-re-proxy:integration_test#app_startup_characterization_test::a_configured_profile_with_no_enrolled_authority_refuses_to_start",
