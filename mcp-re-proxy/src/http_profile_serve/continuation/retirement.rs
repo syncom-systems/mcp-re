@@ -11,18 +11,21 @@
 //! above leaves a live approval intact; `consume` is the spend, and after it there is
 //! nothing to be careful about preserving — only something to report honestly.
 //!
-//! # It reports, and does not decide
+//! # It classifies, and the caller records
 //!
-//! The refusal for a non-proceeding outcome needs the exchange machine's cross-machine
-//! state, which no stage holds. So this states what the tier reported and the assembly —
-//! which holds the continuation machine — decides both the refusal and what the exchange
-//! may claim. A stage that refused here would be stating a retry contract it cannot know.
+//! Each outcome carries its own projections: whether the approval may now be spent, and
+//! which [`ContinuationRefusal`] a non-proceeding outcome earns. Neither depends on
+//! anything outside the outcome, so every caller reads the same answer. What the
+//! EXCHANGE may claim about the approval needs the exchange machine's cross-machine
+//! state, which no stage holds, so the serving assembly records
+//! [`Retirement::may_have_spent`] in that machine before it signs the refusal.
 
 use crate::continuation_store::Consumption;
 use crate::http_profile_serve::retention::fault_report::{report, Fault};
 
 use super::answer_leg::ContinuationPrep;
 use super::ContinuationPlane;
+use super::ContinuationRefusal;
 
 impl ContinuationPlane {
     /// CONTINUATION-RETIRED — spend the approval, exactly once.
@@ -30,14 +33,12 @@ impl ContinuationPlane {
     /// ```text
     /// ensures   what the shared tier reported, as a [`Retirement`]
     /// forbids   running the backend
-    /// refusal   minted by the CALLER — see [`Retirement`]
+    /// refusal   [`Retirement::refusal`]
     /// ```
     ///
     /// The three non-proceeding outcomes are not the same fact, so this reports what
-    /// happened and the caller — which holds the continuation machine — decides both the
-    /// refusal and what the exchange may claim about the approval. A stage cannot do the
-    /// second, and a stage that refused without it would be stating a retry contract it
-    /// cannot know.
+    /// happened, and the [`Retirement`] states the refusal each earns and whether the
+    /// approval may be spent. Recording that in the exchange is the caller's.
     ///
     /// The key is the one [`ContinuationPlane::prepare`] derived from the verifier-resolved
     /// actor, and taking the prep by value makes one retirement per prepared leg: no caller
@@ -46,7 +47,7 @@ impl ContinuationPlane {
     /// A store-less deployment answering nothing is [`Retirement::NotInvolved`]; a
     /// store-less deployment answering SOMETHING never arrives, because `prepare` refused
     /// it.
-    pub(in crate::http_profile_serve) async fn retire(&self, prep: ContinuationPrep) -> Retirement {
+    pub async fn retire(&self, prep: ContinuationPrep) -> Retirement {
         let (Some(store), Some(key)) = (&self.store, prep.answer_key()) else {
             return Retirement::NotInvolved;
         };
@@ -74,7 +75,7 @@ impl ContinuationPlane {
 /// approval: they warrant different wire codes, and — the load-bearing part — different
 /// claims about whether an ordinary retry can still succeed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::http_profile_serve) enum Retirement {
+pub enum Retirement {
     /// No approval was involved in this retirement path: this request answers nothing.
     ///
     /// It does NOT cover a deployment that holds no capability while the request needs one
@@ -90,6 +91,32 @@ pub(in crate::http_profile_serve) enum Retirement {
     /// The store did not answer. The entry may or may not be gone, and nothing downstream
     /// can find out — the answer leg is the only thing that would have consumed it.
     Indeterminate,
+}
+
+impl Retirement {
+    /// Whether the human's approval may now be spent.
+    ///
+    /// True for [`Retirement::Retired`], and for [`Retirement::Indeterminate`] because a
+    /// `DEL` whose reply was lost may have executed. Every refusal after either must say
+    /// that an ordinary retry cannot make the action run.
+    pub fn may_have_spent(self) -> bool {
+        matches!(self, Retirement::Retired | Retirement::Indeterminate)
+    }
+
+    /// The refusal this outcome earns, or `None` when the exchange proceeds.
+    ///
+    /// [`Retirement::AlreadyAnswered`] is a statement about the caller — a replayed or
+    /// spliced continuation. [`Retirement::Indeterminate`] is this deployment's fault, and
+    /// names the shared tier: a new elicitation is the remedy whether or not the entry
+    /// survived, whereas an ordinary retry would pass replay admission on a fresh nonce
+    /// and then fail as already answered.
+    pub fn refusal(self) -> Option<ContinuationRefusal> {
+        match self {
+            Retirement::NotInvolved | Retirement::Retired => None,
+            Retirement::AlreadyAnswered => Some(ContinuationRefusal::AlreadyAnswered),
+            Retirement::Indeterminate => Some(ContinuationRefusal::Unavailable),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -196,6 +223,31 @@ mod tests {
             plane.retire(prepared(&plane, true).await).await,
             Retirement::Indeterminate
         );
+    }
+
+    /// Every caller reads the same verdict off a retirement: which outcomes refuse, with
+    /// what, and which may have spent the approval. The two that may have spent it are
+    /// not the two that proceed, and conflating either pair is the defect each row pins.
+    #[test]
+    fn each_outcome_states_its_refusal_and_whether_the_approval_may_be_spent() {
+        let table = [
+            (Retirement::NotInvolved, None, false),
+            (Retirement::Retired, None, true),
+            (
+                Retirement::AlreadyAnswered,
+                Some(ContinuationRefusal::AlreadyAnswered),
+                false,
+            ),
+            (
+                Retirement::Indeterminate,
+                Some(ContinuationRefusal::Unavailable),
+                true,
+            ),
+        ];
+        for (outcome, refusal, spent) in table {
+            assert_eq!(outcome.refusal(), refusal, "{outcome:?}");
+            assert_eq!(outcome.may_have_spent(), spent, "{outcome:?}");
+        }
     }
 
     /// A tier that does not answer the SPEND. Its own case, and it has to be reachable.

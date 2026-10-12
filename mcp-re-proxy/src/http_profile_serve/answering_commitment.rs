@@ -105,46 +105,22 @@ impl HttpProfileProxy {
 
     /// What the correlation store's answer to the one-shot take MEANS for this exchange.
     ///
-    /// Three of the four outcomes are statements the client needs: nothing was involved, the
-    /// approval is now spent, or the key was already answered. The fourth is this
-    /// deployment's own fault and says so — the `DEL` may have executed with its reply lost,
-    /// so the approval is recorded as spent BEFORE the refusal is signed.
+    /// The [`Retirement`] states the refusal each outcome earns. What it cannot state is
+    /// what the exchange may claim about the approval, so that is recorded here, BEFORE
+    /// the refusal is signed: an approval that is spent, or that a lost `DEL` reply may
+    /// have spent, makes every later refusal say an ordinary retry cannot make it run.
     fn observe_retirement(
         &self,
         ans: &mut Answerable<'_>,
         progress: &mut ExchangeProgress,
         retirement: Retirement,
     ) -> Result<(), ServedHttpResponse> {
-        match retirement {
-            Retirement::NotInvolved => Ok(()),
-            // The human's approval is now spent. Every refusal from here to the dispatch
-            // must say so: the action did not run, but an ordinary retry cannot make it run
-            // either.
-            Retirement::Retired => {
-                progress.observe_continuation(ContinuationState::Consumed);
-                Ok(())
-            }
-            // The store answered: there was nothing live under this key. A replayed or
-            // spliced continuation, and a statement about the caller.
-            Retirement::AlreadyAnswered => Err(self.refuse_answerable(
-                ans,
-                Refusal::new(McpReError::ContinuationBindingFailed, 409),
-                progress,
-            )),
-            // The store did not answer, so the `DEL` may have executed with its reply lost.
-            // A new elicitation is the correct remedy whether or not the entry survived,
-            // whereas the ordinary retry the alternative implies passes replay admission on
-            // a fresh nonce and then fails as already-answered, with nothing left to answer.
-            // The refusal names the shared tier rather than the caller's continuation,
-            // because the fault is this deployment's.
-            Retirement::Indeterminate => {
-                progress.observe_continuation(ContinuationState::Consumed);
-                Err(self.refuse_answerable(
-                    ans,
-                    Refusal::new(McpReError::ReplayCacheUnavailable, 503),
-                    progress,
-                ))
-            }
+        if retirement.may_have_spent() {
+            progress.observe_continuation(ContinuationState::Consumed);
+        }
+        match retirement.refusal() {
+            None => Ok(()),
+            Some(refusal) => Err(self.refuse_answerable(ans, refusal.into(), progress)),
         }
     }
 

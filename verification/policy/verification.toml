@@ -9030,6 +9030,8 @@ paths = [
   # about a person's approval. Both are this unit's, which is why the split moved a file
   # boundary and not an owner.
   "mcp-re-proxy/src/http_profile_serve/continuation/retirement.rs",
+  # The wire classification every caller signs a continuation refusal from.
+  "mcp-re-proxy/src/http_profile_serve/continuation/refusal.rs",
   # The answering leg commits through this file.
   "mcp-re-proxy/src/http_profile_serve/answering_commitment.rs",
 ]

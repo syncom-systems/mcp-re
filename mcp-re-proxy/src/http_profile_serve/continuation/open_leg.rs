@@ -5,21 +5,15 @@
 //! PAST the execution threshold: the backend has produced the elicitation this records, so
 //! no refusal from this file is free and no retry undoes what already happened.
 
-use mcp_re_core::McpReError;
+use mcp_re_http_profile::VerifiedMcpRequest;
 
 use crate::continuation_store::ContinuationKey;
 use crate::continuation_store::Creation;
 use crate::continuation_store::RetainedHandles;
-use crate::exchange_state::Established;
-use crate::exchange_state::ExchangeEvent;
-
-/// The event a recorded open leg establishes, by the short name the match arm needs.
-const OPEN_LEG_RECORDED: ExchangeEvent = ExchangeEvent::OpenLegRecorded;
 use crate::http_profile_serve::retention::fault_report::{report, Fault};
-use crate::http_profile_serve::Exchange;
-use crate::refusal::Refusal;
 
 use super::ContinuationPlane;
+use super::ContinuationRefusal;
 
 /// How many times the CONTINUATION-RECORDED open-leg record is attempted before the leg is
 /// failed.
@@ -38,8 +32,8 @@ impl ContinuationPlane {
     ///
     /// ```text
     /// ensures   Ok  => the retained handles THIS leg produced are in the shared tier
-    ///           Err => 503 (shared tier unavailable or at its live-entry bound) or
-    ///                  409 (the key is taken), bound
+    ///           Err => Unavailable (shared tier unavailable or at its live-entry bound)
+    ///                  or Conflict (the key is taken)
     /// refusal   NOT free
     /// ```
     ///
@@ -63,20 +57,23 @@ impl ContinuationPlane {
     /// one leg later at the binding, where it reads like an attack signal.
     ///
     /// The two refusals are DIFFERENT facts and are reported as such.
-    /// [`McpReError::ReplayCacheUnavailable`] at 503 means the tier could not answer and a
-    /// retry may well work. [`McpReError::ContinuationConflict`] at 409 means it answered,
+    /// [`ContinuationRefusal::Unavailable`] means the tier could not answer and a
+    /// retry may well work. [`ContinuationRefusal::Conflict`] means it answered,
     /// correctly, that the key is taken — so a retry finds the same thing, and 503's
     /// "try again" would be advice that cannot come true. Both are served past the accepted record: the
     /// backend produced the elicitation before either could be reached, so the exchange
     /// machine's `possibly_executed` disposition stands over both and neither token may be
     /// read as "nothing ran".
-    pub(in crate::http_profile_serve) async fn record_open_leg(
+    ///
+    /// `response_base` is the signature base of the signed reply that carries the
+    /// elicitation; `state` is that reply's `requestState`.
+    pub async fn record_open(
         &self,
-        ex: &Exchange<'_>,
+        verified: &VerifiedMcpRequest,
         audience_id: &str,
         state: &str,
         response_base: Vec<u8>,
-    ) -> Result<Established<()>, Refusal> {
+    ) -> Result<(), ContinuationRefusal> {
         // D3. A deployment with no shared store cannot make this leg answerable ON ANY
         // REPLICA, and it has known that since startup. Serving the elicitation anyway
         // hands the client a signed, verified instruction to continue an exchange nothing
@@ -86,13 +83,13 @@ impl ContinuationPlane {
         // The dependent leg does fail closed either way. What it cannot do is fail closed
         // in TIME, which is why the refusal belongs here.
         let Some(store) = &self.store else {
-            return Err(Refusal::new(McpReError::ReplayCacheUnavailable, 503));
+            return Err(ContinuationRefusal::Unavailable);
         };
-        let bases = RetainedHandles::over(ex.verified.request_signature_base(), &response_base);
-        let key = ContinuationKey::for_request(audience_id, ex.verified, state.as_bytes());
+        let bases = RetainedHandles::over(verified.request_signature_base(), &response_base);
+        let key = ContinuationKey::for_request(audience_id, verified, state.as_bytes());
         // Named so the arm below stays an EXPRESSION: a block arm is a nesting level, and
         // this function is inside a loop inside a method already.
-        let conflict = || Refusal::new(McpReError::ContinuationConflict, 409);
+        //
         // A full live set is the store answering, not an outage, so it is not retried: the
         // slots free as entries are answered or expire, not in the microseconds a retry
         // spends. It is reported, since an operator sizing the bound needs to see it.
@@ -102,26 +99,27 @@ impl ContinuationPlane {
                 "record the open leg",
                 &AT_CAPACITY,
             );
-            Refusal::new(McpReError::ReplayCacheUnavailable, 503)
+            ContinuationRefusal::Unavailable
         };
         // Arms as expressions, not blocks: `Err` spends an attempt (the transient case the
         // budget exists for), `Collision` stops immediately (a taken key answers the same
         // way every time), `Stored` is the only way out with an answerable leg.
         for _ in 0..RECORD_ATTEMPTS {
             match store.create(&key, &bases, i64::from(self.ttl.get())).await {
-                Ok(Creation::Stored) => return Ok(Established::new((), OPEN_LEG_RECORDED)),
-                Ok(Creation::Collision) => return Err(conflict()),
+                Ok(Creation::Stored) => return Ok(()),
+                Ok(Creation::Collision) => return Err(ContinuationRefusal::Conflict),
                 Ok(Creation::AtCapacity) => return Err(full()),
                 Err(e) => report(Fault::ContinuationRecord, "record the open leg", &e),
             }
         }
-        Err(Refusal::new(McpReError::ReplayCacheUnavailable, 503))
+        Err(ContinuationRefusal::Unavailable)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::http_profile_serve::Exchange;
 
     /// The open leg's half of the same hop: the entry is RECORDED under the carried
     /// product's actor, so the answer leg's scoping has something to be true about. A leg

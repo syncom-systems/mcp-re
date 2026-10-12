@@ -2996,7 +2996,7 @@ anchor = """
             "read the approval this answer leg names",
             &e,
         );
-        Refusal::new(McpReError::ReplayCacheUnavailable, 503)
+        ContinuationRefusal::Unavailable
     })
 """
 weakening = """
@@ -3018,12 +3018,12 @@ conjunct = "The operand supplied to the continuation key is the actor projection
 # the same way — so this probe is the only thing between that change and a green battery.
 path = "mcp-re-proxy/src/http_profile_serve/continuation/answer_leg.rs"
 anchor = """
-            .map(|state| ContinuationKey::for_request(audience_id, ex.verified, state.as_bytes()));
+            .map(|state| ContinuationKey::for_request(audience_id, verified, state.as_bytes()));
 """
 weakening = """
             .map(|state| {
-                let mut forged = ex.verified.clone();
-                let named = serde_json::from_slice::<serde_json::Value>(&ex.http_req.body)
+                let mut forged = verified.clone();
+                let named = serde_json::from_slice::<serde_json::Value>(body)
                     .ok()
                     .and_then(|v| v.get("params")?.get("actorIdentity").cloned());
                 if let Some(named) = named {
