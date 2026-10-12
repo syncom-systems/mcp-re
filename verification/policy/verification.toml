@@ -9071,6 +9071,19 @@ tested_symbols = [
   # deployment did not observe. Without this control the retirement is measured as
   # three-valued while the claim is four-valued.
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::continuation::retirement::tests::a_tier_that_does_not_answer_the_spend_is_its_own_outcome",
+  # The verdict every caller reads off a retirement: which outcomes refuse, with what, and
+  # which may have spent the approval. The two that may have spent it are not the two that
+  # proceed.
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::continuation::retirement::tests::each_outcome_states_its_refusal_and_whether_the_approval_may_be_spent",
+  # The outage reaches EVERY caller as the deployment's refusal, through the public read the
+  # serving assembly and the HTTP-profile proof front both call, against a store that does
+  # not answer rather than through the classifier alone.
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::continuation::answer_leg::tests::an_answer_leg_reaching_an_unreachable_tier_is_refused_as_unavailable",
+  # Its negative half: a store that ANSWERS with no live entry is not refused at the read,
+  # so the binding is absent and admission fails closed on the caller.
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::continuation::answer_leg::tests::an_answer_leg_whose_approval_is_missing_proceeds_unbound_to_admission",
+  # The wire classification every caller signs a continuation refusal from.
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::continuation::refusal::tests::each_refusal_keeps_its_wire_classification",
 ]
 
 # ---------------------------------------------------------------------------
