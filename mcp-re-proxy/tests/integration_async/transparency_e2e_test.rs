@@ -24,6 +24,7 @@
 //! verifies offline.
 
 use mcp_re_http_profile::Verifier;
+use mcp_re_test_paths::unique_test_nonce;
 use std::sync::Arc;
 
 use mcp_re_core::SigningKey;
@@ -112,6 +113,7 @@ fn server_config() -> mcp_re_proxy::deployment_request::DeploymentRequest {
         "127.0.0.1:8443",
         "--audience",
         AUD,
+        "--allow-example-fixtures",
         "--server-signer",
         "did:example:server",
         "--server-key-id",
@@ -130,6 +132,8 @@ fn server_config() -> mcp_re_proxy::deployment_request::DeploymentRequest {
         "http://127.0.0.1:9",
         "--target-uri",
         TARGET,
+        "--mcp-protocol-version",
+        "2026-07-28",
         "--route",
         "a",
         "--replay-redis-url",
@@ -165,7 +169,7 @@ fn resolver() -> ActorResolver {
             (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
                 identity: ActorIdentity {
                     role: "server".into(),
-                    trust_domain: "example.com".into(),
+                    trust_domain: "mcp.example.com".into(),
                     subject: "did:example:server".into(),
                     keyid: ROOT_KID.into(),
                 },
@@ -188,7 +192,8 @@ fn build_server_counting(
     dispatches: Arc<std::sync::atomic::AtomicUsize>,
 ) -> HttpProfileProxy {
     let config = server_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
+        .expect("the root states its key");
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("first delegated key");
     let expected_audience = AudienceTuple {
@@ -207,10 +212,13 @@ fn build_server_counting(
             fleet_strict: false,
             tier: None,
         },
-        Box::new(move |_forwarded: &[u8]| -> Vec<u8> {
-            dispatches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
-        }),
+        Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+            move |_forwarded: &[u8]| -> Vec<u8> {
+                dispatches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+            },
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+        )),
         300,
         Arc::clone(&wiring.signer),
     );
@@ -222,7 +230,8 @@ fn build_server_counting(
 
 fn build_server(retention: Option<Arc<EvidenceRetention>>) -> HttpProfileProxy {
     let config = server_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
+        .expect("the root states its key");
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("first delegated key");
     let expected_audience = AudienceTuple {
@@ -241,9 +250,12 @@ fn build_server(retention: Option<Arc<EvidenceRetention>>) -> HttpProfileProxy {
             fleet_strict: false,
             tier: None,
         },
-        Box::new(|_forwarded: &[u8]| -> Vec<u8> {
-            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
-        }),
+        Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+            |_forwarded: &[u8]| -> Vec<u8> {
+                br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+            },
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+        )),
         300,
         Arc::clone(&wiring.signer),
     );
@@ -303,7 +315,10 @@ fn serve_one_full(proxy: &HttpProfileProxy, nonce: &str) -> (u16, Option<String>
     let signed = mcp_re_client_core::build_signed_request(
         &serde_json::json!(1),
         "tools/call",
-        serde_json::Map::new(),
+        serde_json::json!({"name": "read"})
+            .as_object()
+            .cloned()
+            .unwrap_or_default(),
         TARGET,
         &inputs,
         &client_key(),
@@ -420,7 +435,7 @@ fn a_served_notification_is_retained_like_any_other_accepted_exchange() {
     let proxy = build_server(Some(Arc::clone(&retention)));
 
     assert_eq!(
-        serve_one_notification(&proxy, "nonce-transparency-notification-1"),
+        serve_one_notification(&proxy, &unique_test_nonce()),
         202,
         "a one-way notification is acknowledged with a signed bodyless 202"
     );
@@ -459,7 +474,7 @@ fn a_post_dispatch_refusal_leaves_no_dangling_crossing() {
     let dispatches = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let proxy = build_server_refusing(Some(Arc::clone(&retention)), Arc::clone(&dispatches));
 
-    let status = serve_one(&proxy, "nonce-transparency-postdispatch-refusal-1");
+    let status = serve_one(&proxy, &unique_test_nonce());
     assert_ne!(status, 200, "an unrecognised resultType is refused");
     assert_eq!(
         dispatches.load(std::sync::atomic::Ordering::SeqCst),
@@ -500,12 +515,12 @@ fn a_post_dispatch_refusal_is_served_the_same_where_nothing_is_retained() {
         Arc::new(EvidenceRetention::open(with_store.join("evidence")).expect("open retention"));
     let retained_status = serve_one(
         &build_server_refusing(Some(retention), Arc::clone(&dispatches)),
-        "nonce-transparency-postdispatch-mirror-1",
+        &unique_test_nonce(),
     );
 
     let bare_status = serve_one(
         &build_server_refusing(None, Arc::clone(&dispatches)),
-        "nonce-transparency-postdispatch-mirror-2",
+        &unique_test_nonce(),
     );
 
     assert_eq!(
@@ -526,7 +541,8 @@ fn build_server_refusing(
     dispatches: Arc<std::sync::atomic::AtomicUsize>,
 ) -> HttpProfileProxy {
     let config = server_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
+        .expect("the root states its key");
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("first delegated key");
     let expected_audience = AudienceTuple {
@@ -545,10 +561,13 @@ fn build_server_refusing(
             fleet_strict: false,
             tier: None,
         },
-        Box::new(move |_forwarded: &[u8]| -> Vec<u8> {
-            dispatches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"something_new"}}"#.to_vec()
-        }),
+        Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+            move |_forwarded: &[u8]| -> Vec<u8> {
+                dispatches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"something_new"}}"#.to_vec()
+            },
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+        )),
         300,
         Arc::clone(&wiring.signer),
     );
@@ -566,7 +585,7 @@ fn a_served_call_becomes_an_offline_verifiable_receipt() {
         Arc::new(EvidenceRetention::open(scratch.join("evidence")).expect("open retention"));
     let proxy = build_server(Some(Arc::clone(&retention)));
 
-    assert_eq!(serve_one(&proxy, "nonce-transparency-vertical-1"), 200);
+    assert_eq!(serve_one(&proxy, &unique_test_nonce()), 200);
 
     // The auditor reads what the serving path kept. The handle is the store's, so an
     // auditor that has the digest — from the deployment's audit stream — can find it.
@@ -644,7 +663,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
     let retention =
         Arc::new(EvidenceRetention::open(scratch.join("evidence")).expect("open retention"));
     let proxy = build_server(Some(Arc::clone(&retention)));
-    assert_eq!(serve_one(&proxy, "nonce-transparency-retained-1"), 200);
+    assert_eq!(serve_one(&proxy, &unique_test_nonce()), 200);
 
     let name = std::fs::read_dir(scratch.join("evidence"))
         .expect("dir")
@@ -697,7 +716,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
 
     // And the control: a DIFFERENT record does not pass as this one.
     let other = build_server(Some(Arc::clone(&retention)));
-    assert_eq!(serve_one(&other, "nonce-transparency-retained-2"), 200);
+    assert_eq!(serve_one(&other, &unique_test_nonce()), 200);
     let names: Vec<_> = std::fs::read_dir(scratch.join("evidence"))
         .expect("dir")
         .filter_map(Result::ok)
@@ -737,7 +756,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
 fn retention_is_off_by_default_and_nothing_is_kept() {
     let scratch = Scratch::new("off");
     let proxy = build_server(None);
-    assert_eq!(serve_one(&proxy, "nonce-transparency-off-1"), 200);
+    assert_eq!(serve_one(&proxy, &unique_test_nonce()), 200);
     assert!(
         !scratch.join("evidence").exists(),
         "a deployment that did not ask for retention stores nothing"
@@ -765,7 +784,7 @@ fn an_exchange_whose_evidence_cannot_be_retained_is_refused() {
     // returns, and a test that accepted any 503 here would keep passing if retention
     // stopped running altogether and something else refused the call.
     assert_eq!(
-        serve_one_full(&proxy, "nonce-transparency-failclosed-1"),
+        serve_one_full(&proxy, &unique_test_nonce()),
         (
             503,
             Some("mcp-re.evidence_retention_unavailable".to_owned())
@@ -793,7 +812,7 @@ fn a_retention_store_that_cannot_accept_the_call_refuses_before_the_backend_runs
     std::fs::write(&evidence, b"not a directory").expect("occupy the path");
 
     assert_eq!(
-        serve_one_full(&proxy, "nonce-transparency-prereserve-1"),
+        serve_one_full(&proxy, &unique_test_nonce()),
         (
             503,
             Some("mcp-re.evidence_retention_unavailable".to_owned())
@@ -805,6 +824,78 @@ fn a_retention_store_that_cannot_accept_the_call_refuses_before_the_backend_runs
         "the backend must not have run: a retryable 503 for a call that DID execute is \
          how a store fault becomes repeated execution, since the retry carries a fresh \
          nonce the replay tier cannot refuse"
+    );
+}
+
+/// `build_server` with retention on, whose backend breaks the evidence store when it runs,
+/// so reserve and commit succeed and completion fails.
+fn build_server_breaking_store_on_dispatch(
+    retention: Arc<EvidenceRetention>,
+    evidence: std::path::PathBuf,
+) -> HttpProfileProxy {
+    let config = server_config();
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
+        .expect("the root states its key");
+    let mut rotor = wiring.rotor;
+    rotor.rotate(NOW).expect("first delegated key");
+    let expected_audience = AudienceTuple {
+        audience_id: config.audience.clone(),
+        target_uri: config.target_uri.clone(),
+        route: config.route.clone(),
+    };
+    HttpProfileProxy::new_delegated(
+        resolver(),
+        expected_audience,
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
+        Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+            move |_forwarded: &[u8]| -> Vec<u8> {
+                let _ = std::fs::remove_dir_all(&evidence);
+                let _ = std::fs::write(&evidence, b"not a directory");
+                br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+            },
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+        )),
+        300,
+        Arc::clone(&wiring.signer),
+    )
+    .with_evidence_retention(retention)
+}
+
+/// Reserve and commit succeed, the backend runs, and completion then fails: neither success
+/// exit (bodied 200, bodyless 202) is served. Both go through `retain_accepted`, which
+/// refuses as indeterminate.
+#[test]
+fn a_success_whose_evidence_cannot_be_kept_after_execution_is_refused_on_both_exits() {
+    let bodied_scratch = Scratch::new("indeterminate-bodied");
+    let bodied_evidence = bodied_scratch.join("evidence");
+    let bodied_retention =
+        Arc::new(EvidenceRetention::open(&bodied_evidence).expect("open retention"));
+    let bodied = build_server_breaking_store_on_dispatch(bodied_retention, bodied_evidence);
+    assert_eq!(
+        serve_one_full(&bodied, &unique_test_nonce()),
+        (
+            500,
+            Some("mcp-re.evidence_retention_indeterminate".to_owned())
+        ),
+    );
+
+    let notification_scratch = Scratch::new("indeterminate-notification");
+    let notification_evidence = notification_scratch.join("evidence");
+    let notification_retention =
+        Arc::new(EvidenceRetention::open(&notification_evidence).expect("open retention"));
+    let notification =
+        build_server_breaking_store_on_dispatch(notification_retention, notification_evidence);
+    assert_eq!(
+        serve_one_notification(&notification, &unique_test_nonce()),
+        500,
+        "a 202 here would acknowledge a call the deployment cannot account for"
     );
 }
 
@@ -825,7 +916,8 @@ async fn a_retention_failure_after_execution_is_indeterminate_and_leaves_its_res
         method: "POST".to_owned(),
         target_uri: TARGET.to_owned(),
         headers: vec![("content-type".to_owned(), "application/json".to_owned())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
     let response = mcp_re_http_profile::HttpResponse {
         status: 200,
@@ -884,7 +976,7 @@ fn a_chain_with_no_verified_hop_is_still_attested() {
     let retention =
         Arc::new(EvidenceRetention::open(scratch.join("evidence")).expect("open retention"));
     let proxy = build_server(Some(Arc::clone(&retention)));
-    assert_eq!(serve_one(&proxy, "nonce-transparency-unverified-1"), 200);
+    assert_eq!(serve_one(&proxy, &unique_test_nonce()), 200);
 
     let name = std::fs::read_dir(scratch.join("evidence"))
         .expect("dir")
@@ -1018,7 +1110,7 @@ struct AuditFixtures {
 fn audit_profile_json() -> serde_json::Value {
     serde_json::json!({
         "schema": "mcp-re-audit-profile/v1",
-        "trust_domain": "example.com",
+        "trust_domain": "mcp.example.com",
         "expected_audience": {
             "audience_id": AUD,
             "target_uri": TARGET,
@@ -1035,7 +1127,14 @@ fn audit_profile_json() -> serde_json::Value {
             "key_id": ROOT_KID,
             "public_key": root_key().public_key().to_b64url(),
         },
+        "transparency_service_keys": [ts_key_lifecycle(TS_KID)],
     })
+}
+
+/// A transparency-service key lifecycle admitting the auditor's real clock: valid since
+/// before this suite was written, with no expiry and no revocation.
+fn ts_key_lifecycle(kid: &str) -> serde_json::Value {
+    serde_json::json!({ "kid": kid, "valid_from": 1_600_000_000 })
 }
 
 /// A legal transparency-service trust pin. Its key is never used in this half — the
@@ -1151,8 +1250,7 @@ fn served_archive(name: &str, nonce: &str) -> (Scratch, Arc<EvidenceRetention>, 
 /// fail here rather than look like a success.
 #[test]
 fn the_auditor_binary_turns_a_served_call_into_a_verifiable_attestation() {
-    let (scratch, retention, token) =
-        served_archive("auditor-vertical", "nonce-transparency-auditor-vertical-1");
+    let (scratch, retention, token) = served_archive("auditor-vertical", &unique_test_nonce());
     // The retention handle owns a writer thread; the child process opens the same
     // directory, so drop ours first and audit what is on disk.
     drop(retention);
@@ -1166,18 +1264,18 @@ fn the_auditor_binary_turns_a_served_call_into_a_verifiable_attestation() {
         String::from_utf8_lossy(&output.stderr),
     );
 
-    let artifact = mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationDocument::parse(
         &std::fs::read(&fixtures.out).expect("the artifact was written"),
     )
     .expect("the artifact parses");
 
     assert!(
-        artifact.chain().is_complete(),
+        artifact.claimed_chain().is_complete(),
         "a single terminal hop, fully verified, is a complete record: {:?}",
-        artifact.chain(),
+        artifact.claimed_chain(),
     );
     assert_eq!(
-        artifact.correspondence(),
+        artifact.claimed_correspondence(),
         mcp_re_proxy::transparency::auditor::CorrespondenceVerdict::BoundToVerifiedCall,
         "the statement is bound to the retained bytes of a verified call",
     );
@@ -1189,10 +1287,9 @@ fn the_auditor_binary_turns_a_served_call_into_a_verifiable_attestation() {
 
     // The statement the artifact carries is the real thing: register it and verify the
     // receipt offline, contacting nobody.
-    let statement = mcp_re_http_profile::scitt::SignedStatement::from_cose(
-        &artifact.signed_statement().expect("the statement decodes"),
-    )
-    .expect("the artifact carries a Signed Statement");
+    let statement =
+        mcp_re_http_profile::scitt::SignedStatement::from_cose(artifact.signed_statement())
+            .expect("the artifact carries a Signed Statement");
     assert!(statement.commitment().is_complete_record());
 
     let mut service = PrototypeTransparencyService::new(TS_KID);
@@ -1231,10 +1328,7 @@ fn the_auditor_binary_turns_a_served_call_into_a_verifiable_attestation() {
 #[cfg(unix)]
 fn the_auditor_binary_audits_an_archive_it_cannot_write_to() {
     use std::os::unix::fs::PermissionsExt;
-    let (scratch, retention, token) = served_archive(
-        "auditor-read-only",
-        "nonce-transparency-auditor-read-only-1",
-    );
+    let (scratch, retention, token) = served_archive("auditor-read-only", &unique_test_nonce());
     drop(retention);
     let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
     let evidence = scratch.join("evidence");
@@ -1249,11 +1343,11 @@ fn the_auditor_binary_audits_an_archive_it_cannot_write_to() {
         "auditing must not require write access to the evidence it attests: {}",
         String::from_utf8_lossy(&output.stderr),
     );
-    let artifact = mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationDocument::parse(
         &std::fs::read(&fixtures.out).expect("the artifact was written"),
     )
     .expect("the artifact parses");
-    assert!(artifact.chain().is_complete());
+    assert!(artifact.claimed_chain().is_complete());
 }
 
 /// And the SERVING constructor still refuses the same directory, at startup.
@@ -1289,10 +1383,7 @@ fn the_serving_constructor_still_proves_the_archive_writable() {
 /// describing an audit that did not happen.
 #[test]
 fn a_hop_the_archive_does_not_hold_is_refused_and_writes_nothing() {
-    let (scratch, retention, token) = served_archive(
-        "auditor-missing-hop",
-        "nonce-transparency-auditor-missing-hop-2",
-    );
+    let (scratch, retention, token) = served_archive("auditor-missing-hop", &unique_test_nonce());
     drop(retention);
     let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
 
@@ -1315,8 +1406,7 @@ fn a_hop_the_archive_does_not_hold_is_refused_and_writes_nothing() {
 /// possible future. The pin is loaded first for exactly that reason.
 #[test]
 fn an_illegal_service_pin_refuses_the_audit() {
-    let (scratch, retention, token) =
-        served_archive("auditor-bad-pin", "nonce-transparency-auditor-bad-pin-3");
+    let (scratch, retention, token) = served_archive("auditor-bad-pin", &unique_test_nonce());
     drop(retention);
 
     // An EdDSA pin carrying an EC2 `y` coordinate is a mislabelled key, and never becomes
@@ -1340,10 +1430,7 @@ fn an_illegal_service_pin_refuses_the_audit() {
 /// labelled it complete would launder it.
 #[test]
 fn an_audit_posture_the_call_was_not_served_under_attests_an_incomplete_record() {
-    let (scratch, retention, token) = served_archive(
-        "auditor-wrong-posture",
-        "nonce-transparency-auditor-posture-4",
-    );
+    let (scratch, retention, token) = served_archive("auditor-wrong-posture", &unique_test_nonce());
     drop(retention);
 
     let mut profile = audit_profile_json();
@@ -1357,13 +1444,13 @@ fn an_audit_posture_the_call_was_not_served_under_attests_an_incomplete_record()
         String::from_utf8_lossy(&output.stderr),
     );
 
-    let artifact = mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationDocument::parse(
         &std::fs::read(&fixtures.out).expect("an artifact was still written"),
     )
     .expect("the artifact parses");
 
     let mcp_re_proxy::transparency::auditor::ChainVerdict::Incomplete { hop, reason, .. } =
-        artifact.chain()
+        artifact.claimed_chain()
     else {
         panic!("a record served under another audience is not complete");
     };
@@ -1373,15 +1460,14 @@ fn an_audit_posture_the_call_was_not_served_under_attests_an_incomplete_record()
         mcp_re_proxy::transparency::auditor::IncompleteAt::RequestUnverifiable,
     );
     assert_eq!(
-        artifact.correspondence(),
+        artifact.claimed_correspondence(),
         mcp_re_proxy::transparency::auditor::CorrespondenceVerdict::BoundToSubmissionOnly,
         "nothing verified, so the statement binds the SUBMISSION and says only that",
     );
 
-    let statement = mcp_re_http_profile::scitt::SignedStatement::from_cose(
-        &artifact.signed_statement().expect("decodes"),
-    )
-    .expect("still a Signed Statement");
+    let statement =
+        mcp_re_http_profile::scitt::SignedStatement::from_cose(artifact.signed_statement())
+            .expect("still a Signed Statement");
     assert!(
         !statement.commitment().is_complete_record(),
         "and the signed record can never read as whole",
@@ -1395,8 +1481,7 @@ fn an_audit_posture_the_call_was_not_served_under_attests_an_incomplete_record()
 /// the directory it was pointed at.
 #[test]
 fn a_tampered_archive_object_is_refused() {
-    let (scratch, retention, token) =
-        served_archive("auditor-tampered", "nonce-transparency-auditor-tampered-5");
+    let (scratch, retention, token) = served_archive("auditor-tampered", &unique_test_nonce());
     drop(retention);
     let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
 
@@ -1614,7 +1699,7 @@ fn audit_and_register(
     name: &str,
     nonce: &str,
     mode: ServiceMode,
-) -> mcp_re_proxy::transparency::auditor::AttestationArtifact {
+) -> mcp_re_proxy::transparency::auditor::AttestationDocument {
     let (scratch, retention, token) = served_archive(name, nonce);
     drop(retention);
     let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
@@ -1628,9 +1713,14 @@ fn audit_and_register(
         mode.protocol().to_owned(),
         "--registration-timeout-secs".to_owned(),
         "20".to_owned(),
-        "--registration-poll-interval-secs".to_owned(),
-        "1".to_owned(),
     ]);
+    // Only a polling contract takes a poll interval; naming one for capsule-anchor is refused.
+    if mode.protocol() == "scrapi-11" {
+        args.extend([
+            "--registration-poll-interval-secs".to_owned(),
+            "1".to_owned(),
+        ]);
+    }
     let output = run_auditor(&args);
     assert!(
         output.status.success(),
@@ -1639,10 +1729,61 @@ fn audit_and_register(
     );
     let _ = service.join();
 
-    mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationDocument::parse(
         &std::fs::read(&fixtures.out).expect("the artifact was written"),
     )
-    .expect("the artifact parses")
+    .expect("the artifact parses");
+    let protocol = artifact
+        .claimed_registration()
+        .map(|r| r.protocol())
+        .expect("a registered artifact claims its registration protocol");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(protocol),
+        "the summary must name the protocol the artifact records ({protocol}): {stdout}",
+    );
+    artifact
+}
+
+/// The binary judges the receipt's service key by the audit profile's stated lifecycle at
+/// the host's clock: a receipt that verifies against the pin, under a key the profile says
+/// was revoked before now, is not recorded.
+#[test]
+fn a_receipt_under_a_revoked_service_key_is_not_recorded() {
+    let (scratch, retention, token) =
+        served_archive("auditor-register-revoked-key", &unique_test_nonce());
+    drop(retention);
+    let mut profile = audit_profile_json();
+    profile["transparency_service_keys"][0]["revoked_at"] = 1_600_000_001.into();
+    let fixtures = AuditFixtures::write(&scratch, profile, service_pin_json());
+    let (base, service) = spawn_transparency_service(ServiceMode::CapsuleAnchor);
+
+    let mut args = fixtures.args(&scratch.join("evidence"), &[token]);
+    args.extend([
+        "--register-to".to_owned(),
+        base,
+        "--registration-protocol".to_owned(),
+        "capsule-anchor".to_owned(),
+        "--registration-timeout-secs".to_owned(),
+        "20".to_owned(),
+    ]);
+    let output = run_auditor(&args);
+    let _ = service.join();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a receipt under a revoked key must not read as success"
+    );
+    assert!(stderr.contains("ts_key_revoked"), "{stderr}");
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationDocument::parse(
+        &std::fs::read(&fixtures.out).expect("the attestation is still written"),
+    )
+    .expect("the artifact parses");
+    assert!(
+        artifact.claimed_registration().is_none(),
+        "the refused receipt must not be recorded",
+    );
 }
 
 /// THE C2 property, synchronously: the shipped binary registers a real attestation with a
@@ -1655,7 +1796,7 @@ fn audit_and_register(
 fn the_auditor_binary_registers_a_statement_and_keeps_a_verified_receipt() {
     let artifact = audit_and_register(
         "auditor-register",
-        "nonce-transparency-auditor-register-1",
+        &unique_test_nonce(),
         ServiceMode::Synchronous,
     );
     assert_receipt_verifies_offline(&artifact);
@@ -1674,12 +1815,12 @@ fn the_auditor_binary_registers_a_statement_and_keeps_a_verified_receipt() {
 fn the_auditor_binary_registers_over_the_second_mechanism_and_records_which_one() {
     let artifact = audit_and_register(
         "auditor-register-capsule",
-        "nonce-transparency-auditor-register-capsule-1",
+        &unique_test_nonce(),
         ServiceMode::CapsuleAnchor,
     );
     assert_receipt_verifies_offline(&artifact);
     assert_eq!(
-        artifact.registration_protocol(),
+        artifact.claimed_registration().map(|r| r.protocol()),
         Some("capsule-anchor /transparency"),
         "the artifact must name the contract that answered, not merely that one did",
     );
@@ -1691,11 +1832,11 @@ fn the_auditor_binary_registers_over_the_second_mechanism_and_records_which_one(
 fn a_scrapi_registration_records_the_draft_revision_it_spoke() {
     let artifact = audit_and_register(
         "auditor-register-names-scrapi",
-        "nonce-transparency-auditor-register-names-scrapi-1",
+        &unique_test_nonce(),
         ServiceMode::Synchronous,
     );
     assert_eq!(
-        artifact.registration_protocol(),
+        artifact.claimed_registration().map(|r| r.protocol()),
         Some("draft-ietf-scitt-scrapi-11"),
     );
 }
@@ -1753,13 +1894,18 @@ fn the_auditor_binary_registers_with_a_live_external_service() {
     let protocol = std::env::var("MCP_RE_LIVE_TRANSPARENCY_PROTOCOL")
         .unwrap_or_else(|_| "capsule-anchor".to_owned());
 
-    let (scratch, retention, token) =
-        served_archive("auditor-live", "nonce-transparency-auditor-live-1");
+    let (scratch, retention, token) = served_archive("auditor-live", &unique_test_nonce());
     drop(retention);
     let live_pin: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&pin_path).expect("the live pin is readable"))
             .expect("the live pin parses");
-    let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), live_pin.clone());
+    let mut profile = audit_profile_json();
+    profile["transparency_service_keys"] = serde_json::json!([ts_key_lifecycle(
+        live_pin["kid"]
+            .as_str()
+            .expect("the live pin names its kid")
+    )]);
+    let fixtures = AuditFixtures::write(&scratch, profile, live_pin.clone());
 
     let mut args = fixtures.args(&scratch.join("evidence"), &[token]);
     args.extend([
@@ -1779,7 +1925,7 @@ fn the_auditor_binary_registers_with_a_live_external_service() {
         String::from_utf8_lossy(&output.stderr),
     );
 
-    let artifact = mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationDocument::parse(
         &std::fs::read(&fixtures.out).expect("the artifact was written"),
     )
     .expect("the artifact parses");
@@ -1788,13 +1934,13 @@ fn the_auditor_binary_registers_with_a_live_external_service() {
     // above; that is the whole meaning of the field. Re-derived here so the lane states the
     // property rather than trusting the process that just ran.
     let receipt = artifact
-        .receipt()
+        .claimed_registration()
         .expect("a live registration must carry a receipt")
-        .expect("the receipt decodes");
-    let statement = mcp_re_http_profile::scitt::SignedStatement::from_cose(
-        &artifact.signed_statement().expect("the statement decodes"),
-    )
-    .expect("a Signed Statement");
+        .receipt()
+        .to_vec();
+    let statement =
+        mcp_re_http_profile::scitt::SignedStatement::from_cose(artifact.signed_statement())
+            .expect("a Signed Statement");
     let pin: mcp_re_http_profile::scitt::ScittServiceTrustPin =
         serde_json::from_value(live_pin).expect("the pin deserializes");
     mcp_re_http_profile::scitt::verify_receipt_offline(
@@ -1807,7 +1953,8 @@ fn the_auditor_binary_registers_with_a_live_external_service() {
 
     // The claim may not exceed the peer, so the artifact has to name it.
     let recorded = artifact
-        .registration_protocol()
+        .claimed_registration()
+        .map(|r| r.protocol())
         .expect("a registered artifact names the contract that answered");
     println!(
         "LIVE EXTERNAL RUN: {base} answered over {recorded}; receipt verified offline \
@@ -1826,7 +1973,7 @@ fn the_auditor_binary_registers_with_a_live_external_service() {
 fn the_auditor_binary_polls_an_asynchronous_registration_to_its_receipt() {
     let artifact = audit_and_register(
         "auditor-register-async",
-        "nonce-transparency-auditor-register-async-2",
+        &unique_test_nonce(),
         ServiceMode::Asynchronous { pending: 2 },
     );
     assert_receipt_verifies_offline(&artifact);
@@ -1835,16 +1982,16 @@ fn the_auditor_binary_polls_an_asynchronous_registration_to_its_receipt() {
 /// The receipt an artifact carries verifies offline against the statement beside it and
 /// the pin the operator captured — contacting nobody.
 fn assert_receipt_verifies_offline(
-    artifact: &mcp_re_proxy::transparency::auditor::AttestationArtifact,
+    artifact: &mcp_re_proxy::transparency::auditor::AttestationDocument,
 ) {
-    let statement = mcp_re_http_profile::scitt::SignedStatement::from_cose(
-        &artifact.signed_statement().expect("the statement decodes"),
-    )
-    .expect("a Signed Statement");
+    let statement =
+        mcp_re_http_profile::scitt::SignedStatement::from_cose(artifact.signed_statement())
+            .expect("a Signed Statement");
     let receipt_bytes = artifact
-        .receipt()
+        .claimed_registration()
         .expect("a registered artifact carries a receipt")
-        .expect("the receipt decodes");
+        .receipt()
+        .to_vec();
     let receipt =
         mcp_re_http_profile::scitt::Receipt::from_cose(&receipt_bytes).expect("a Receipt");
 
@@ -1873,8 +2020,7 @@ fn assert_receipt_verifies_offline(
 /// honest pair of facts.
 #[test]
 fn a_failed_registration_leaves_the_attestation_behind() {
-    let (scratch, retention, token) =
-        served_archive("auditor-register-down", "nonce-transparency-auditor-down-3");
+    let (scratch, retention, token) = served_archive("auditor-register-down", &unique_test_nonce());
     drop(retention);
     let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
 
@@ -1899,16 +2045,16 @@ fn a_failed_registration_leaves_the_attestation_behind() {
         !output.status.success(),
         "a registration that did not happen must not read as success",
     );
-    let artifact = mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationDocument::parse(
         &std::fs::read(&fixtures.out).expect("the attestation survives a failed submission"),
     )
     .expect("the artifact parses");
     assert!(
-        artifact.receipt().is_none(),
+        artifact.claimed_registration().is_none(),
         "no receipt was verified, so the artifact must carry none",
     );
     assert!(
-        artifact.chain().is_complete(),
+        artifact.claimed_chain().is_complete(),
         "and the attestation itself is unaffected",
     );
 
@@ -1917,6 +2063,10 @@ fn a_failed_registration_leaves_the_attestation_behind() {
     assert!(
         stderr.contains("the attestation was written"),
         "an operator must be told the record survived: {stderr}",
+    );
+    assert!(
+        stderr.contains(&fixtures.out.display().to_string()),
+        "the operator must be told where the surviving attestation is: {stderr}",
     );
     assert!(
         stderr.contains("draft-ietf-scitt-scrapi-11"),

@@ -38,17 +38,12 @@ use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::SignedRequest;
 use mcp_re_core::SigningKey;
 
-use rustls::client::danger::HandshakeSignatureValid;
-use rustls::client::danger::ServerCertVerified;
-use rustls::client::danger::ServerCertVerifier;
 use rustls::crypto::ring;
 use rustls::ClientConfig;
-use rustls::DigitallySignedStruct;
-use rustls::SignatureScheme;
+use rustls::RootCertStore;
 use rustls_pki_types::CertificateDer;
 use rustls_pki_types::PrivateKeyDer;
 use rustls_pki_types::ServerName;
-use rustls_pki_types::UnixTime;
 
 use serde_json::json;
 use serde_json::Map;
@@ -63,47 +58,6 @@ const SIGNER_A_KEY_ID: &str = "key-a";
 const TARGET_URI: &str = "https://localhost/";
 const DPOP_TOKEN: &str = "loadgen-dpop-token";
 
-/// The rig drives its own proxy over loopback or a private link, and the server leaf is
-/// minted per run — pinning it would only re-test rcgen. Client AUTH is still real: the
-/// proxy verifies the client chain and the RFC 9421 signature, which is what is being
-/// measured.
-#[derive(Debug)]
-struct AcceptAnyServer;
-
-impl ServerCertVerifier for AcceptAnyServer {
-    fn verify_server_cert(
-        &self,
-        _e: &CertificateDer<'_>,
-        _i: &[CertificateDer<'_>],
-        _s: &ServerName<'_>,
-        _o: &[u8],
-        _n: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
-    }
-    fn verify_tls12_signature(
-        &self,
-        _m: &[u8],
-        _c: &CertificateDer<'_>,
-        _d: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-    fn verify_tls13_signature(
-        &self,
-        _m: &[u8],
-        _c: &CertificateDer<'_>,
-        _d: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
-    }
-}
-
 struct Args {
     target: String,
     connections: usize,
@@ -111,6 +65,7 @@ struct Args {
     mode: String,
     client_cert: String,
     client_key: String,
+    server_ca: String,
     out: Option<String>,
     id: String,
 }
@@ -123,6 +78,7 @@ fn args() -> Args {
         mode: "keepalive".into(),
         client_cert: String::new(),
         client_key: String::new(),
+        server_ca: String::new(),
         out: None,
         id: "gen0".into(),
     };
@@ -136,12 +92,14 @@ fn args() -> Args {
             "--mode" => a.mode = val(),
             "--client-cert" => a.client_cert = val(),
             "--client-key" => a.client_key = val(),
+            "--server-ca" => a.server_ca = val(),
             "--out" => a.out = Some(val()),
             "--id" => a.id = val(),
             other => panic!("unknown flag {other}"),
         }
     }
     assert!(!a.target.is_empty(), "--target is required");
+    assert!(!a.server_ca.is_empty(), "--server-ca is required");
     a
 }
 
@@ -342,12 +300,20 @@ fn main() {
     let key_der = PrivateKeyDer::try_from(std::fs::read(&a.client_key).expect("client key der"))
         .expect("client key is PKCS#8 DER");
 
+    // The server is verified against the CA that issued its leaf (DER, like the client
+    // material): chain, validity, `localhost` SAN and handshake signature are all checked.
+    let mut roots = RootCertStore::empty();
+    roots
+        .add(CertificateDer::from(
+            std::fs::read(&a.server_ca).expect("server ca der"),
+        ))
+        .expect("add server CA root");
+
     let config = Arc::new(
         ClientConfig::builder_with_provider(Arc::new(ring::default_provider()))
             .with_safe_default_protocol_versions()
             .expect("versions")
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(AcceptAnyServer))
+            .with_root_certificates(roots)
             .with_client_auth_cert(chain, key_der)
             .expect("client auth"),
     );

@@ -39,7 +39,7 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
@@ -138,7 +138,7 @@ fn custody_cfg() -> CustodyConfig {
         profile: PROFILE_TAG.into(),
         aud: VERIFIER_AUD.into(),
         audience_hash: AUD_SCOPE.into(),
-        trust_epoch: EPOCH.into(),
+        trust_epoch: EPOCH.parse().expect("epoch base"),
         server_role: "server".into(),
         server_trust_domain: "example.com".into(),
         server_subject: "did:example:server".into(),
@@ -146,11 +146,9 @@ fn custody_cfg() -> CustodyConfig {
     }
 }
 
-/// An in-memory-rooted rotor bound to `signer`. The root issuer is a fixed
+/// An in-memory-rooted rotor over a signer of its own. The root issuer is a fixed
 /// in-memory key (the KMS-as-root swap is proven elsewhere through the same seam).
-fn make_rotor(
-    signer: Arc<DelegatedServerSigner>,
-) -> DelegatedRotor<
+fn make_rotor() -> DelegatedRotor<
     impl FnMut(&DelegationHeader, &DelegationClaims) -> Option<String>,
     impl FnMut() -> SigningKey,
 > {
@@ -163,16 +161,21 @@ fn make_rotor(
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    DelegatedRotor::new(
-        DelegatedSigningCustody::new(custody_cfg(), issue, factory),
-        signer,
-    )
+    DelegatedRotor::new(DelegatedSigningCustody::new(
+        custody_cfg(),
+        root_key().public_key(),
+        issue,
+        factory,
+    ))
 }
 
 fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
-    Box::new(|_forwarded: &[u8]| -> Vec<u8> {
-        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
-    })
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        |_forwarded: &[u8]| -> Vec<u8> {
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 /// The serving proxy (delegated-signing — the only mode) sharing `signer` with a
@@ -201,7 +204,7 @@ fn delegated_proxy(signer: Arc<DelegatedServerSigner>) -> HttpProfileProxy {
 /// there is no such serving mode in production.
 fn sign_legacy_direct_root_response_for_negative_test(
     req: &HttpRequest,
-    request_evidence: &RequestEvidence,
+    request_evidence: &RequestRoleEvidence,
 ) -> HttpResponse {
     let mut resp = HttpResponse {
         status: 200,
@@ -228,7 +231,7 @@ fn sign_legacy_direct_root_response_for_negative_test(
     resp
 }
 
-fn signed_request(nonce: &str) -> (HttpRequest, RequestEvidence, VerifiedMcpRequest) {
+fn signed_request(nonce: &str) -> (HttpRequest, RequestRoleEvidence, VerifiedMcpRequest) {
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
         audience: audience(),
@@ -312,8 +315,8 @@ fn wire_code_of(body: &[u8]) -> String {
 
 #[tokio::test]
 async fn delegated_success_response_verifies_and_root_touched_once() {
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue first delegated key");
 
     let proxy = delegated_proxy(Arc::clone(&signer));
@@ -340,7 +343,8 @@ async fn delegated_success_response_verifies_and_root_touched_once() {
         // Profile-issued kids are RFC 7638 JWK thumbprints (#415 rev 2 §1.5); the
         // property under test is that a DELEGATED key signed, never the root.
         assert_ne!(
-            verified.signature_facts.accepted_signer.identity.keyid, ROOT_KID,
+            verified.signature_facts().accepted_signer.identity.keyid,
+            ROOT_KID,
             "signed by the delegated key, not the root"
         );
     }
@@ -357,12 +361,12 @@ async fn delegated_success_response_verifies_and_root_touched_once() {
 
 #[tokio::test]
 async fn delegated_bound_rejection_verifies() {
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue");
     let proxy = delegated_proxy(Arc::clone(&signer));
 
-    let (req, _ev, _verified_req) = signed_request("nonce-bound-1");
+    let (req, _ev, _verified_req) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     // First is served; the replayed second is rejected — bound to the request.
     assert_eq!(proxy.handle(served_of(&req), NOW).await.status, 200);
     let served = proxy.handle(served_of(&req), NOW).await;
@@ -387,13 +391,13 @@ async fn delegated_bound_rejection_verifies() {
 
 #[tokio::test]
 async fn delegated_preflight_rejection_verifies_unbound() {
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue");
     let proxy = delegated_proxy(Arc::clone(&signer));
 
     // Tamper the body AFTER signing so verify_request_full fails (content-digest).
-    let (mut req, _ev, _v) = signed_request("nonce-preflight-1");
+    let (mut req, _ev, _v) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     let last = req.body.len() - 2;
     req.body[last] ^= 0x01;
 
@@ -417,7 +421,7 @@ async fn delegated_preflight_rejection_verifies_unbound() {
         .verify_delegated_unbound_response(&resp, &expectations(&[EPOCH]), &|_| false, NOW)
         .expect("preflight delegated rejection verifies unbound");
     // And it must NOT verify through the bound path (there is no trusted request).
-    let (fresh, _e, _verified_fresh) = signed_request("nonce-preflight-probe");
+    let (fresh, _e, _verified_fresh) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     let r2 = resolver();
     assert!(
         Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r2(k, s))
@@ -441,7 +445,7 @@ async fn missing_delegated_key_fails_closed() {
     let signer = Arc::new(DelegatedServerSigner::new());
     let proxy = delegated_proxy(Arc::clone(&signer));
 
-    let (req, _ev, _v) = signed_request("nonce-failclosed-1");
+    let (req, _ev, _v) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     let served = proxy.handle(served_of(&req), NOW).await;
     assert_ne!(served.status, 200, "no delegated key ⇒ never a signed 200");
     assert_eq!(served.status, 503, "fail-closed unavailable");
@@ -475,10 +479,13 @@ async fn a_request_that_cannot_be_answered_never_reaches_the_backend() {
     let dispatched = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counter = Arc::clone(&dispatched);
     let counting_inner: Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> =
-        Box::new(move |_forwarded: &[u8]| -> Vec<u8> {
-            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
-        });
+        Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+            move |_forwarded: &[u8]| -> Vec<u8> {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+            },
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+        ));
 
     // Rotor never rotated ⇒ no key published, so no reply can be signed.
     let signer = Arc::new(DelegatedServerSigner::new());
@@ -498,7 +505,7 @@ async fn a_request_that_cannot_be_answered_never_reaches_the_backend() {
         signer,
     );
 
-    let (req, _ev, _v) = signed_request("nonce-no-sideeffect-1");
+    let (req, _ev, _v) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     let served = proxy.handle(served_of(&req), NOW).await;
     assert_eq!(served.status, 503, "fail-closed unavailable");
     assert_eq!(
@@ -576,8 +583,8 @@ fn proxy_over(
 #[tokio::test]
 async fn a_credential_that_cannot_outlive_the_dispatch_refuses_before_the_backend_runs() {
     let dispatched = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW - 280).expect("issue a nearly-closed key");
 
     let proxy = proxy_over(
@@ -588,7 +595,7 @@ async fn a_credential_that_cannot_outlive_the_dispatch_refuses_before_the_backen
         }),
     );
 
-    let (req, _ev, _v) = signed_request("nonce-window-shorter-than-dispatch");
+    let (req, _ev, _v) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     let served = proxy.handle(served_of(&req), NOW).await;
 
     assert_eq!(
@@ -610,8 +617,8 @@ async fn a_credential_that_cannot_outlive_the_dispatch_refuses_before_the_backen
 #[tokio::test]
 async fn a_credential_with_room_for_the_dispatch_still_reaches_the_backend() {
     let dispatched = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue a fresh key");
 
     let proxy = proxy_over(
@@ -622,7 +629,7 @@ async fn a_credential_with_room_for_the_dispatch_still_reaches_the_backend() {
         }),
     );
 
-    let (req, _ev, _v) = signed_request("nonce-window-covers-dispatch");
+    let (req, _ev, _v) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     let served = proxy.handle(served_of(&req), NOW).await;
 
     assert_eq!(served.status, 200, "a covered dispatch is served normally");
@@ -666,8 +673,8 @@ async fn an_inner_plane_that_states_no_completion_bound_is_refused_before_the_ba
     }
 
     let dispatched = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue a fresh key");
 
     let proxy = proxy_over(
@@ -675,7 +682,7 @@ async fn an_inner_plane_that_states_no_completion_bound_is_refused_before_the_ba
         Box::new(UnboundedInner(Arc::clone(&dispatched))),
     );
 
-    let (req, _ev, _v) = signed_request("nonce-unstated-bound");
+    let (req, _ev, _v) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     let served = proxy.handle(served_of(&req), NOW).await;
 
     assert_eq!(served.status, 503, "an unstated bound is refused");
@@ -692,7 +699,7 @@ async fn an_inner_plane_that_states_no_completion_bound_is_refused_before_the_ba
 fn direct_root_response_rejected_in_delegated_required_mode() {
     // A pre-052 server directly root-signs the response (no delegation credential) —
     // built from the test-only fixture, since no direct-root serving mode exists.
-    let (req, ev, _verified_req) = signed_request("nonce-directroot-1");
+    let (req, ev, _verified_req) = signed_request(&mcp_re_test_paths::unique_test_nonce());
     let resp = sign_legacy_direct_root_response_for_negative_test(&req, &ev);
 
     // A delegated-signing verifier rejects it: no inline credential.
@@ -747,12 +754,12 @@ fn signed_notification(nonce: &str) -> HttpRequest {
 async fn a_notification_is_served_a_verifiable_delegated_202() {
     use mcp_re_http_profile::verify_delegated_accepted_202;
 
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue first delegated key");
     let proxy = delegated_proxy(Arc::clone(&signer));
 
-    let note = signed_notification("nonce-note-1");
+    let note = signed_notification(&mcp_re_test_paths::unique_test_nonce());
     let served = proxy.handle(served_of(&note), NOW).await;
     assert_eq!(
         served.status, 202,
@@ -807,12 +814,12 @@ async fn the_client_facing_crate_can_verify_the_202_the_server_emits() {
     use mcp_re_client_core::verify_delegated_accepted_202 as client_verify_202;
     use mcp_re_client_core::DelegationPolicy;
 
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue first delegated key");
     let proxy = delegated_proxy(Arc::clone(&signer));
 
-    let note = signed_notification("nonce-note-client-1");
+    let note = signed_notification(&mcp_re_test_paths::unique_test_nonce());
     let ack = http_response(proxy.handle(served_of(&note), NOW).await);
     assert_eq!(ack.status, 202);
 
@@ -857,8 +864,8 @@ async fn the_client_cores_own_notification_envelope_earns_a_202() {
     use mcp_re_client_core::build_signed_notification;
     use mcp_re_client_core::RequestSigningInputs;
 
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue first delegated key");
     let proxy = delegated_proxy(Arc::clone(&signer));
 
@@ -869,7 +876,7 @@ async fn the_client_cores_own_notification_envelope_earns_a_202() {
             ArtifactType::OauthDpop,
             ACCESS_TOKEN.as_bytes(),
         )],
-        "nonce-sdk-envelope-1-padded-to-floor",
+        mcp_re_test_paths::unique_test_nonce(),
         CREATED,
         EXPIRES,
     )

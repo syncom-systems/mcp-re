@@ -37,6 +37,7 @@ test-fixtures = []
 # build (the feature stays off for downstream production consumers).
 [dev-dependencies]
 mcp-re-host = { path = ".", features = ["test-fixtures"] }
+mcp-re-test-paths = { path = "../mcp-re-test-paths" }
 
 [lib]
 name = "mcp_re_host"

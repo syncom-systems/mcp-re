@@ -21,6 +21,7 @@ serde_json = { workspace = true }
 # MEANS cannot be written without performing one.
 [dev-dependencies]
 mcp-re-http-profile = { path = "../mcp-re-http-profile" }
+mcp-re-test-paths = { path = "../mcp-re-test-paths" }
 
 [lib]
 name = "mcp_re_client_proxy"

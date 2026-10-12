@@ -49,6 +49,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use crate::error::McpReError;
+use crate::time::MaxClockSkew;
 
 /// A [`ReplayCache`]'s self-declared durability posture (ADR-MCPS-020).
 ///
@@ -98,36 +99,6 @@ pub enum ReplayDecision {
     /// The triple was already present (and not pruned): a replay. The pipeline
     /// turns this into [`McpReError::ReplayDetected`].
     Replay,
-}
-
-/// The replay key handed to the authoritative replay tier for the atomic
-/// insert-if-absent: the `(signer, audience, nonce)` logical identity fixed by the
-/// active profile, plus the parsed `expires_at`. Profile-agnostic — the RFC 9421
-/// HTTP profile projects its ratified five-tuple onto these three slots
-/// (`HttpReplayKey::to_core_replay_key`) and the async tier consumes THIS type, so
-/// the stored composite key is identical across the sync and async admission
-/// paths. `expires_at_unix` is the RAW parsed `expires_at`; the tier folds in the
-/// clock skew when it derives the store TTL (`retain_until = expires_at + skew`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReplayKey {
-    /// The verified request signer identity.
-    pub signer: String,
-    /// The verified PRINCIPAL the entry is accounted to, which is not the same string
-    /// as [`ReplayKey::signer`].
-    ///
-    /// `signer` must discriminate every distinct key, so it carries the keyid — two
-    /// keys of one subject must never collapse onto one replay key. An occupancy
-    /// budget wants the opposite: charging per key hands a subject one budget per key
-    /// it holds, which is routine during rotation and in a fleet issuing a client key
-    /// per replica, so a single subject would both multiply its own allowance and
-    /// inflate the divisor every other principal is measured against.
-    pub principal: String,
-    /// The verified request audience.
-    pub audience: String,
-    /// The request nonce.
-    pub nonce: String,
-    /// The parsed `expires_at` (Unix seconds), pre-skew-fold.
-    pub expires_at_unix: i64,
 }
 
 /// An operational failure of a [`ReplayCache`] (distinct from a replay verdict).
@@ -219,7 +190,7 @@ pub trait ReplayCache {
 /// conformance vectors (MCP_RE_SPEC §5).
 ///
 /// Keyed by the `(signer, audience, nonce)` triple. Each recorded entry carries
-/// a `retain_until = expires_at_unix + max_clock_skew_secs` instant; an entry
+/// a `retain_until = expires_at_unix + max_clock_skew` instant; an entry
 /// is considered live until that instant. Pruning is explicit (see
 /// [`prune`](InMemoryReplayCache::prune)) — there is NO background clock, so the
 /// cache stays pure and deterministic.
@@ -244,7 +215,7 @@ pub trait ReplayCache {
 #[derive(Debug)]
 pub struct InMemoryReplayCache {
     /// Symmetric clock skew added to `expires_at_unix` to compute retain-until.
-    max_clock_skew_secs: i64,
+    max_clock_skew: MaxClockSkew,
     /// Fail-closed ceiling on retained entries; see [`MAX_ENTRIES`].
     max_entries: usize,
     /// `(signer, audience, nonce)` -> retain-until Unix seconds.
@@ -270,13 +241,13 @@ impl Clone for InMemoryReplayCache {
     fn clone(&self) -> Self {
         let Ok(seen) = self.seen.lock() else {
             return InMemoryReplayCache {
-                max_clock_skew_secs: self.max_clock_skew_secs,
+                max_clock_skew: self.max_clock_skew,
                 max_entries: 0,
                 seen: Mutex::new(BTreeMap::new()),
             };
         };
         InMemoryReplayCache {
-            max_clock_skew_secs: self.max_clock_skew_secs,
+            max_clock_skew: self.max_clock_skew,
             max_entries: self.max_entries,
             seen: Mutex::new(seen.clone()),
         }
@@ -293,11 +264,12 @@ impl Clone for InMemoryReplayCache {
 pub const MAX_ENTRIES: usize = 1_000_000;
 
 impl InMemoryReplayCache {
-    /// Construct an empty cache with the symmetric `max_clock_skew_secs` used to
-    /// compute each entry's retain-until.
-    pub fn new(max_clock_skew_secs: i64) -> Self {
+    /// Construct an empty cache with the symmetric `max_clock_skew` used to compute
+    /// each entry's retain-until. The tolerance is a [`MaxClockSkew`], so it is bounded
+    /// and never negative: no entry is retained for less than its request's `expires`.
+    pub fn new(max_clock_skew: MaxClockSkew) -> Self {
         InMemoryReplayCache {
-            max_clock_skew_secs,
+            max_clock_skew,
             max_entries: MAX_ENTRIES,
             seen: Mutex::new(BTreeMap::new()),
         }
@@ -377,7 +349,7 @@ impl ReplayCache for InMemoryReplayCache {
                 ),
             });
         }
-        let retain_until = expires_at_unix.saturating_add(self.max_clock_skew_secs);
+        let retain_until = expires_at_unix.saturating_add(self.max_clock_skew.secs());
         seen.insert(key, retain_until);
         Ok(ReplayDecision::Fresh)
     }
@@ -401,12 +373,23 @@ mod tests {
     use super::ReplayDecision;
     use super::ReplayDurabilityClass;
     use crate::error::McpReError;
+    use crate::time::MaxClockSkew;
 
     const SIGNER: &str = "did:example:host";
     const AUD: &str = "did:example:verifier";
-    const NONCE: &str = "nonce-aaaaaaaaaaaaaaaaaaaaaa";
     const EXPIRES: i64 = 1_779_998_700; // an arbitrary fixed epoch
     const SKEW: i64 = 30;
+
+    /// One nonce for the whole test process: every test builds its own cache, so sharing
+    /// the value across tests couples nothing, and no test asserts on the value itself.
+    fn nonce() -> &'static str {
+        static NONCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        NONCE.get_or_init(mcp_re_test_paths::unique_test_nonce)
+    }
+
+    fn skew() -> MaxClockSkew {
+        MaxClockSkew::new(SKEW).expect("30 s is inside the bound")
+    }
 
     /// A test-only cache whose every call is an operational failure, and which
     /// implements only `check_and_insert` — so it exercises both the
@@ -434,14 +417,18 @@ mod tests {
         // request. Without a ceiling the only bound is the embedder remembering to
         // prune — so the failure mode was a remotely-driven memory leak in the crate
         // that DEFINES the contract.
-        let cache = InMemoryReplayCache::new(SKEW).with_max_entries(3);
-        for i in 0..3 {
+        let cache = InMemoryReplayCache::new(skew()).with_max_entries(3);
+        let admitted: Vec<String> = (0..3)
+            .map(|_| mcp_re_test_paths::unique_test_nonce())
+            .collect();
+        let over = mcp_re_test_paths::unique_test_nonce();
+        for nonce in &admitted {
             assert_eq!(
-                cache.check_and_insert(SIGNER, AUD, &format!("nonce-{i}"), EXPIRES),
+                cache.check_and_insert(SIGNER, AUD, nonce, EXPIRES),
                 Ok(ReplayDecision::Fresh)
             );
         }
-        let refused = cache.check_and_insert(SIGNER, AUD, "nonce-over", EXPIRES);
+        let refused = cache.check_and_insert(SIGNER, AUD, &over, EXPIRES);
         assert!(
             matches!(refused, Err(ReplayCacheError::Unavailable { .. })),
             "past the ceiling the cache must refuse, got {refused:?}"
@@ -456,7 +443,7 @@ mod tests {
         // An already-seen nonce is still reported as a replay at the ceiling: refusing
         // to GROW must not turn a known replay into an unknown one.
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, "nonce-0", EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, &admitted[0], EXPIRES),
             Ok(ReplayDecision::Replay)
         );
 
@@ -464,29 +451,29 @@ mod tests {
         cache.prune(EXPIRES + SKEW + 1);
         assert!(cache.is_empty());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, "nonce-over", EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, &over, EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
     }
 
     #[test]
     fn first_insert_is_fresh() {
-        let cache = InMemoryReplayCache::new(SKEW);
+        let cache = InMemoryReplayCache::new(skew());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
     }
 
     #[test]
     fn same_triple_again_is_replay() {
-        let cache = InMemoryReplayCache::new(SKEW);
+        let cache = InMemoryReplayCache::new(skew());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Replay)
         );
     }
@@ -495,35 +482,35 @@ mod tests {
     fn different_audience_same_nonce_is_fresh() {
         // Multi-tenant keying: the same nonce under a different audience is a
         // distinct key and must NOT be flagged as a replay.
-        let cache = InMemoryReplayCache::new(SKEW);
+        let cache = InMemoryReplayCache::new(skew());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         assert_eq!(
-            cache.check_and_insert(SIGNER, "did:example:other-verifier", NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, "did:example:other-verifier", nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
     }
 
     #[test]
     fn different_signer_same_nonce_is_fresh() {
-        let cache = InMemoryReplayCache::new(SKEW);
+        let cache = InMemoryReplayCache::new(skew());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         assert_eq!(
-            cache.check_and_insert("did:example:other-host", AUD, NONCE, EXPIRES),
+            cache.check_and_insert("did:example:other-host", AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
     }
 
     #[test]
     fn prune_after_retain_until_readmits_triple() {
-        let cache = InMemoryReplayCache::new(SKEW);
+        let cache = InMemoryReplayCache::new(skew());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         // retain_until == EXPIRES + SKEW. Pruning strictly past it evicts.
@@ -531,20 +518,20 @@ mod tests {
         // Pruning AT retain_until keeps the entry (retain_until >= now).
         cache.prune(retain_until);
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Replay)
         );
         // Pruning strictly past retain_until evicts -> triple is Fresh again.
         cache.prune(retain_until + 1);
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
     }
 
     #[test]
     fn distinct_inserts_below_the_ceiling_do_not_error() {
-        let cache = InMemoryReplayCache::new(SKEW);
+        let cache = InMemoryReplayCache::new(skew());
         for i in 0..5 {
             let nonce = format!("nonce-{i:022}");
             assert!(cache.check_and_insert(SIGNER, AUD, &nonce, EXPIRES).is_ok());
@@ -565,9 +552,9 @@ mod tests {
         // Poison is sticky: a cache that panics on a poisoned lock panics for every
         // later caller too, terminating serving tasks instead of returning the frozen
         // `mcp-re.replay_cache_unavailable` verdict this tier owes its pipeline.
-        let cache = InMemoryReplayCache::new(SKEW);
+        let cache = InMemoryReplayCache::new(skew());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         poison(&cache);
@@ -586,12 +573,14 @@ mod tests {
         }
         // An already-recorded triple is refused too — never admitted off an
         // unreadable seen-set.
-        assert!(cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES).is_err());
+        assert!(cache
+            .check_and_insert(SIGNER, AUD, nonce(), EXPIRES)
+            .is_err());
         // A poisoned prune evicts nothing.
         cache.prune(EXPIRES + SKEW + 1);
         cache.seen.clear_poison();
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Replay),
             "an evicting prune would have readmitted the triple"
         );
@@ -600,14 +589,14 @@ mod tests {
 
     #[test]
     fn a_poisoned_clone_cannot_be_reconfigured_into_admitting() {
-        let cache = InMemoryReplayCache::new(SKEW);
+        let cache = InMemoryReplayCache::new(skew());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         poison(&cache);
         let copy = cache.clone().with_max_entries(1_000);
-        for nonce in [NONCE, "fresh-nonce"] {
+        for nonce in [nonce(), mcp_re_test_paths::unique_test_nonce().as_str()] {
             let refused = copy.check_and_insert(SIGNER, AUD, nonce, EXPIRES);
             assert!(
                 matches!(refused, Err(ReplayCacheError::Unavailable { .. })),
@@ -618,9 +607,9 @@ mod tests {
 
     #[test]
     fn a_clone_of_a_poisoned_cache_admits_nothing() {
-        let cache = InMemoryReplayCache::new(SKEW);
+        let cache = InMemoryReplayCache::new(skew());
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            cache.check_and_insert(SIGNER, AUD, nonce(), EXPIRES),
             Ok(ReplayDecision::Fresh)
         );
         poison(&cache);
@@ -629,7 +618,7 @@ mod tests {
         // the copy must refuse admissions rather than start out empty and readmit
         // every nonce the source had recorded.
         let copy = cache.clone();
-        let refused = copy.check_and_insert(SIGNER, AUD, NONCE, EXPIRES);
+        let refused = copy.check_and_insert(SIGNER, AUD, nonce(), EXPIRES);
         assert!(
             matches!(refused, Err(ReplayCacheError::Unavailable { .. })),
             "the copy must refuse, got {refused:?}"
@@ -638,7 +627,12 @@ mod tests {
             refused.unwrap_err().to_mcp_re_error(),
             McpReError::ReplayCacheUnavailable
         );
-        let second = copy.check_and_insert(SIGNER, AUD, "another-nonce", EXPIRES);
+        let second = copy.check_and_insert(
+            SIGNER,
+            AUD,
+            &mcp_re_test_paths::unique_test_nonce(),
+            EXPIRES,
+        );
         assert!(
             second.is_err(),
             "the copy must refuse every nonce, got {second:?}"
@@ -653,7 +647,7 @@ mod tests {
         // operator to pick the right backend. A regression here (declaring itself
         // Durable) would silently re-open the cross-node / restart replay window
         // this marker exists to gate.
-        let cache = InMemoryReplayCache::new(SKEW);
+        let cache = InMemoryReplayCache::new(skew());
         assert_eq!(
             cache.durability_class(),
             ReplayDurabilityClass::SingleProcessReference
@@ -679,7 +673,7 @@ mod tests {
     fn operational_failure_maps_to_replay_cache_unavailable() {
         let cache = AlwaysUnavailableReplayCache;
         let err = cache
-            .check_and_insert(SIGNER, AUD, NONCE, EXPIRES)
+            .check_and_insert(SIGNER, AUD, nonce(), EXPIRES)
             .expect_err("always-unavailable cache must fail");
         assert_eq!(err.to_mcp_re_error(), McpReError::ReplayCacheUnavailable);
         // The `From` impl agrees.

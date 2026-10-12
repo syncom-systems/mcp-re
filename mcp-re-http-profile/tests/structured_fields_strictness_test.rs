@@ -35,6 +35,7 @@ use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
+use mcp_re_test_paths::unique_test_nonce;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const NOW: i64 = 1_700_000_100;
@@ -75,7 +76,7 @@ fn signed_request() -> HttpRequest {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "nonce-1",
+        &unique_test_nonce(),
     )
     .expect("signing succeeds");
     req
@@ -275,7 +276,8 @@ fn a_string_parameter_that_rfc_8941_cannot_carry_is_never_signed() {
             method: "POST".into(),
             target_uri: "https://mcp.example.com/mcp".into(),
             headers: vec![("Content-Type".into(), "application/json".into())],
-            body: b"{}".to_vec(),
+            body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+                .to_vec(),
         };
         let err = sign_request(
             &mut req,
@@ -382,7 +384,11 @@ fn a_decoy_signature_member_does_not_merge_into_this_profiles_member() {
 #[test]
 fn a_semicolon_inside_a_quoted_value_does_not_split_parameters() {
     let mut req = signed_request();
-    edit_signature_input(&mut req, |v| v.replace("nonce-1", "a;keyid=evil"));
+    edit_signature_input(&mut req, |v| {
+        let start = v.find("nonce=\"").expect("nonce parameter") + "nonce=\"".len();
+        let end = start + v[start..].find('"').expect("closing quote");
+        format!("{}a;keyid=evil{}", &v[..start], &v[end..])
+    });
     let err = verify_err(&req);
     assert_eq!(
         err,
@@ -398,7 +404,8 @@ fn ordinary_string_parameters_still_sign_and_verify() {
         method: "POST".into(),
         target_uri: "https://mcp.example.com/mcp".into(),
         headers: vec![("Content-Type".into(), "application/json".into())],
-        body: b"{}".to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
     sign_request(
         &mut req,
@@ -406,7 +413,7 @@ fn ordinary_string_parameters_still_sign_and_verify() {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "AbCd-_0123456789xyz",
+        &unique_test_nonce(),
     )
     .expect("a base64url nonce signs");
     Verifier::new(&VerifierPolicy::default(), &resolver())

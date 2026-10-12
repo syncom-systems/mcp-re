@@ -980,6 +980,7 @@ dependencies = [
  "mcp-re-http-profile",
  "mcp-re-proxy",
  "mcp-re-transport",
+ "rcgen",
  "serde",
  "serde_json",
  "tokio",
@@ -992,6 +993,7 @@ version = "0.17.0"
 dependencies = [
  "mcp-re-core",
  "mcp-re-http-profile",
+ "mcp-re-test-paths",
  "serde",
  "serde_json",
 ]
@@ -1003,6 +1005,7 @@ dependencies = [
  "mcp-re-client-core",
  "mcp-re-core",
  "mcp-re-http-profile",
+ "mcp-re-test-paths",
  "serde_json",
 ]
 
@@ -1027,6 +1030,7 @@ dependencies = [
  "base64 0.23.1",
  "ed25519-dalek",
  "hex",
+ "mcp-re-test-paths",
  "serde",
  "serde_json",
  "sha2",
@@ -1034,6 +1038,7 @@ dependencies = [
  "verus_builtin",
  "verus_builtin_macros",
  "vstd",
+ "zeroize",
 ]
 
 [[package]]
@@ -1059,6 +1064,7 @@ dependencies = [
  "mcp-re-client-core",
  "mcp-re-core",
  "mcp-re-host",
+ "mcp-re-test-paths",
  "serde_json",
 ]
 
@@ -1071,6 +1077,7 @@ dependencies = [
  "coset",
  "mcp-re-core",
  "mcp-re-http-profile",
+ "mcp-re-test-paths",
  "p256",
  "serde",
  "serde_json",
@@ -1118,6 +1125,7 @@ dependencies = [
  "rcgen",
  "redis",
  "rustls",
+ "rustls-native-certs",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -1127,6 +1135,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-rustls",
+ "tower-service",
  "ureq",
  "x509-cert",
  "x509-ocsp",
@@ -1137,6 +1146,9 @@ dependencies = [
 [[package]]
 name = "mcp-re-test-paths"
 version = "0.17.0"
+dependencies = [
+ "base64 0.23.1",
+]
 
 [[package]]
 name = "mcp-re-transport"

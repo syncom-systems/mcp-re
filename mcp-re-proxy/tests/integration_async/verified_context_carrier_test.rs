@@ -29,12 +29,12 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedContextPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 use mcp_re_http_profile::VERIFIED_CONTEXT_BLOCK_KEY;
+use mcp_re_test_paths::unique_test_nonce;
 
 use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
 use mcp_re_proxy::delegated_server_signer::DelegatedRotor;
-use mcp_re_proxy::delegated_server_signer::DelegatedServerSigner;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
 use mcp_re_proxy::http_profile_serve::HttpProfileProxy;
 
@@ -104,7 +104,7 @@ fn custody_cfg() -> CustodyConfig {
         profile: PROFILE_TAG.into(),
         aud: AUDIENCE.into(),
         audience_hash: audience().audience_hash(),
-        trust_epoch: "epoch-1".into(),
+        trust_epoch: "epoch-1".parse().expect("epoch base"),
         server_role: "server".into(),
         server_trust_domain: "example.com".into(),
         server_subject: "did:example:server".into(),
@@ -117,14 +117,16 @@ fn custody_cfg() -> CustodyConfig {
 type Seen = Arc<Mutex<Vec<Vec<u8>>>>;
 
 fn recording_inner(seen: Seen) -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
-    Box::new(move |forwarded: &[u8]| -> Vec<u8> {
-        seen.lock().unwrap().push(forwarded.to_vec());
-        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
-    })
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |forwarded: &[u8]| -> Vec<u8> {
+            seen.lock().unwrap().push(forwarded.to_vec());
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 fn proxy(policy: VerifiedContextPolicy, seen: Seen) -> HttpProfileProxy {
-    let signer = Arc::new(DelegatedServerSigner::new());
     let root = root_key();
     let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
         Some(issue_delegation_credential(&root, h, c))
@@ -134,10 +136,13 @@ fn proxy(policy: VerifiedContextPolicy, seen: Seen) -> HttpProfileProxy {
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    let mut rotor = DelegatedRotor::new(
-        DelegatedSigningCustody::new(custody_cfg(), issue, factory),
-        Arc::clone(&signer),
-    );
+    let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+        custody_cfg(),
+        root_key().public_key(),
+        issue,
+        factory,
+    ));
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue a delegated key");
     HttpProfileProxy::new_delegated(
         actor_resolver(),
@@ -230,7 +235,7 @@ fn served(req: &HttpRequest) -> ServedHttpRequest {
 async fn trusted_channel_carries_the_peps_verified_context() {
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
     let p = proxy(VerifiedContextPolicy::Trusted, Arc::clone(&seen));
-    let req = signed_request("n-carry", None);
+    let req = signed_request(&unique_test_nonce(), None);
     let out = p.handle(served(&req), NOW).await;
     assert_eq!(out.status, 200);
 
@@ -272,7 +277,7 @@ async fn trusted_channel_carries_the_peps_verified_context() {
 async fn disabled_by_default_the_inner_server_sees_clean_mcp() {
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
     let p = proxy(VerifiedContextPolicy::Disabled, Arc::clone(&seen));
-    let req = signed_request("n-clean", None);
+    let req = signed_request(&unique_test_nonce(), None);
     assert_eq!(p.handle(served(&req), NOW).await.status, 200);
 
     let forwarded = seen.lock().unwrap()[0].clone();
@@ -306,7 +311,7 @@ async fn a_caller_seeded_verified_context_never_reaches_the_inner_server() {
     ] {
         let seen: Seen = Arc::new(Mutex::new(Vec::new()));
         let p = proxy(policy, Arc::clone(&seen));
-        let req = signed_request("n-forge", Some(forged.clone()));
+        let req = signed_request(&unique_test_nonce(), Some(forged.clone()));
 
         // The request is legitimately signed and verifies: this is not tampering.
         assert_eq!(p.handle(served(&req), NOW).await.status, 200);
@@ -349,7 +354,10 @@ async fn unrelated_application_meta_survives_the_guard() {
     ] {
         let seen: Seen = Arc::new(Mutex::new(Vec::new()));
         let p = proxy(policy, Arc::clone(&seen));
-        let req = signed_request("n-keep", Some(serde_json::json!({ "actor_id": "forged" })));
+        let req = signed_request(
+            &unique_test_nonce(),
+            Some(serde_json::json!({ "actor_id": "forged" })),
+        );
         assert_eq!(p.handle(served(&req), NOW).await.status, 200);
 
         let forwarded = seen.lock().unwrap()[0].clone();
@@ -443,7 +451,7 @@ async fn a_params_meta_seeded_verified_context_never_reaches_the_inner_server() 
     ] {
         let seen: Seen = Arc::new(Mutex::new(Vec::new()));
         let p = proxy(policy, Arc::clone(&seen));
-        let req = signed_request_seeding_params_meta("n-forge-params", forged.clone());
+        let req = signed_request_seeding_params_meta(&unique_test_nonce(), forged.clone());
         assert_eq!(p.handle(served(&req), NOW).await.status, 200);
 
         let forwarded = seen.lock().unwrap()[0].clone();
@@ -474,32 +482,19 @@ async fn a_params_meta_seeded_verified_context_never_reaches_the_inner_server() 
 /// production, not just the profile crate's unit tests.
 #[tokio::test]
 async fn transport_contract_is_enforced_on_the_served_path() {
-    use mcp_re_http_profile::McpTransportPolicy;
-    use mcp_re_http_profile::VerifierPolicy;
-
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
-    let p = proxy(VerifiedContextPolicy::Disabled, Arc::clone(&seen)).with_verifier_policy(
-        VerifierPolicy::default()
-            .with_mcp_transport(McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"])),
-    );
+    let p = proxy(VerifiedContextPolicy::Disabled, Arc::clone(&seen));
 
-    // A conforming request is served.
-    let mut ok = signed_request("n-tx-ok", None);
-    ok.headers.push(("Mcp-Method".into(), "tools/call".into()));
-    ok.headers.push(("Mcp-Name".into(), "read".into()));
-    ok.headers
-        .push(("MCP-Protocol-Version".into(), "2026-07-28".into()));
-    // Re-sign so the new headers are covered (present ⇒ covered).
-    let ok = resign(ok, "n-tx-ok2");
+    // A conforming request is served: the profile's signer derived and covered the headers.
+    let ok = signed_request(&unique_test_nonce(), None);
     assert_eq!(p.handle(served(&ok), NOW).await.status, 200);
 
     // A request OMITTING Mcp-Method is rejected before it reaches the inner server.
     let before = seen.lock().unwrap().len();
-    let mut missing = signed_request("n-tx-miss", None);
-    missing
-        .headers
-        .push(("MCP-Protocol-Version".into(), "2026-07-28".into()));
-    let missing = resign(missing, "n-tx-miss2");
+    let missing = resign_as_given(
+        signed_request(&unique_test_nonce(), None),
+        &unique_test_nonce(),
+    );
     let out = p.handle(served(&missing), NOW).await;
     assert_eq!(out.status, 403, "a required-header omission is refused");
     assert_eq!(
@@ -509,18 +504,17 @@ async fn transport_contract_is_enforced_on_the_served_path() {
     );
 }
 
-/// Re-sign a request whose headers were mutated after the first signing, so the
-/// added transport headers become covered components.
-fn resign(mut req: HttpRequest, nonce: &str) -> HttpRequest {
-    // Drop the prior signature material and the evidence block, then full-sign again.
+/// Re-sign `req` over exactly the headers it carries, deriving none: the way to build a
+/// request that omits a transport header the contract requires.
+fn resign_as_given(mut req: HttpRequest, nonce: &str) -> HttpRequest {
     req.headers.retain(|(k, _)| {
         !k.eq_ignore_ascii_case("signature")
             && !k.eq_ignore_ascii_case("signature-input")
             && !k.eq_ignore_ascii_case("content-digest")
+            && !k.eq_ignore_ascii_case("mcp-method")
+            && !k.eq_ignore_ascii_case("mcp-name")
     });
-    let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
-    // strip the request evidence block the first sign inserted, keep the rest
-    let mut body = body;
+    let mut body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
     if let Some(m) = body.get_mut("_meta").and_then(|m| m.as_object_mut()) {
         m.remove("se.syncom/mcp-re.http.request");
         if m.is_empty() {
@@ -540,15 +534,20 @@ fn resign(mut req: HttpRequest, nonce: &str) -> HttpRequest {
         admission_assertion: None,
         authorization_decision: None,
     };
-    sign_request_full(
-        &mut req,
+    req.body = mcp_re_http_profile::body::insert_meta_block(
+        &req.body,
+        mcp_re_http_profile::ids::REQUEST_EVIDENCE_BLOCK_KEY,
         &block,
+    )
+    .expect("the evidence block composes");
+    mcp_re_http_profile::sign::sign_request_as_given(
+        &mut req,
         &client_key(),
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
         nonce,
     )
-    .expect("re-sign");
+    .expect("re-sign as given");
     req
 }

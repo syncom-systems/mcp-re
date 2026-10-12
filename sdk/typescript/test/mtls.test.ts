@@ -81,6 +81,8 @@ function serve(
       ca: pem("ca.crt"),
       requestCert: true,
       rejectUnauthorized: true,
+      // The floor the client under test states; a fixture server must not be the weaker end.
+      minVersion: "TLSv1.2",
     },
     (req, res) => {
       req.resume();
@@ -149,6 +151,8 @@ function serveTrickle(everyMs: number): Promise<{ server: Server; port: number }
       ca: pem("ca.crt"),
       requestCert: true,
       rejectUnauthorized: true,
+      // The floor the client under test states; a fixture server must not be the weaker end.
+      minVersion: "TLSv1.2",
     },
     (req, res) => {
       req.resume();

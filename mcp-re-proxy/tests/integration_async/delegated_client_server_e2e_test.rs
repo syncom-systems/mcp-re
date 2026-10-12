@@ -100,6 +100,7 @@ fn server_config() -> mcp_re_proxy::deployment_request::DeploymentRequest {
         "127.0.0.1:8443",
         "--audience",
         AUD,
+        "--allow-example-fixtures",
         "--server-signer",
         "did:example:server",
         "--server-key-id",
@@ -118,6 +119,8 @@ fn server_config() -> mcp_re_proxy::deployment_request::DeploymentRequest {
         "http://127.0.0.1:9",
         "--target-uri",
         TARGET,
+        "--mcp-protocol-version",
+        "2026-07-28",
         "--route",
         "a",
         "--replay-redis-url",
@@ -154,7 +157,7 @@ fn server_resolver() -> ActorResolver {
             (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
                 identity: ActorIdentity {
                     role: "server".into(),
-                    trust_domain: "example.com".into(),
+                    trust_domain: "mcp.example.com".into(),
                     subject: "did:example:server".into(),
                     keyid: ROOT_KID.into(),
                 },
@@ -168,9 +171,12 @@ fn server_resolver() -> ActorResolver {
 }
 
 fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
-    Box::new(|_forwarded: &[u8]| -> Vec<u8> {
-        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
-    })
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        |_forwarded: &[u8]| -> Vec<u8> {
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 /// Build the real delegated-required server proxy with an in-memory root, first key
@@ -185,7 +191,8 @@ fn build_server() -> HttpProfileProxy {
 /// than assume a kid it can spell.
 fn build_server_with_kid() -> (HttpProfileProxy, String) {
     let config = server_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
+        .expect("the root states its key");
     let mut rotor = wiring.rotor;
     rotor
         .rotate(NOW)
@@ -281,8 +288,8 @@ fn client_trust() -> CompositeResponseTrust<'static> {
     // `Box::leak` keeps the composed halves alive for the whole test binary. A test
     // fixture, not a pattern for production wiring.
     let resolve: &'static (dyn Fn(&str, SignerSlot, i64) -> ResolverOutcome + Send + Sync) =
-        Box::leak(Box::new(|kid: &str, slot: SignerSlot, _now: i64| {
-            client_resolver()(kid, slot)
+        Box::leak(Box::new(|kid: &str, slot: SignerSlot, now: i64| {
+            client_resolver()(kid, slot, now)
         }));
     let revocation: &'static StaticRevocationList =
         Box::leak(Box::new(StaticRevocationList::new()));
@@ -290,12 +297,12 @@ fn client_trust() -> CompositeResponseTrust<'static> {
 }
 
 fn client_resolver() -> mcp_re_client_proxy::route::RouteActorResolver {
-    Box::new(move |key_id: &str, slot: SignerSlot| {
+    Box::new(move |key_id: &str, slot: SignerSlot, _now: i64| {
         match (key_id, slot) {
             (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
                 identity: ActorIdentity {
                     role: "server".into(),
-                    trust_domain: "example.com".into(),
+                    trust_domain: "mcp.example.com".into(),
                     subject: "did:example:server".into(),
                     keyid: ROOT_KID.into(),
                 },
@@ -392,7 +399,7 @@ fn issuers_from_signed_manifest(
             issuer_kid: ROOT_KID.into(),
             public_key: root_key().public_key().to_b64url(),
             role: "server".into(),
-            trust_domain: "example.com".into(),
+            trust_domain: "mcp.example.com".into(),
             subject: "did:example:server".into(),
         }],
         retiring_issuers: vec![],
@@ -460,12 +467,16 @@ fn plain_request() -> serde_json::Value {
 
 /// Test nonces are padded to the 128-bit emission floor the client core enforces —
 /// the floor is a property under test elsewhere, not something to work around here.
-fn params(nonce: &str) -> CallParams {
+fn fixed_now() -> i64 {
+    NOW
+}
+
+fn params(nonce: &str) -> CallParams<'static> {
     CallParams {
         nonce: format!("{nonce}-padded-to-the-128-bit-floor"),
         created: NOW - 100,
         expires: NOW + 200,
-        now_unix: NOW,
+        verification_clock: &fixed_now,
     }
 }
 
@@ -475,7 +486,11 @@ fn params(nonce: &str) -> CallParams {
 fn plain_client_round_trips_through_delegated_required_server() {
     let proxy = client_proxy(build_server());
     let out = proxy
-        .handle("r1", &plain_request(), &params("nonce-e2e-1"))
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect("full delegated round-trip succeeds");
     assert_eq!(out.kind, ResponseKind::Success);
     // The local client gets PLAIN MCP back — an ordinary result, no MCP-RE field.
@@ -490,7 +505,7 @@ fn replayed_request_yields_a_verified_delegated_rejection() {
     // One server instance shared across both calls (its replay cache sees the repeat).
     let proxy = client_proxy(build_server());
     // Same nonce twice ⇒ the second is a byte-identical replay.
-    let p = params("nonce-e2e-replay");
+    let p = params(&mcp_re_test_paths::unique_test_nonce());
     let first = proxy.handle("r1", &plain_request(), &p).expect("first ok");
     assert_eq!(first.kind, ResponseKind::Success);
 
@@ -593,7 +608,8 @@ fn a_pin_on_the_root_issuer_kid_verifies() {
         .build()
         .expect("rt");
     let server = build_server();
-    let (signed, response) = one_exchange(&server, &rt, "nonce-pin-ok", NOW);
+    let (signed, response) =
+        one_exchange(&server, &rt, &mcp_re_test_paths::unique_test_nonce(), NOW);
     let verified = verify_delegated_response(
         &response,
         &client_trust(),
@@ -602,9 +618,9 @@ fn a_pin_on_the_root_issuer_kid_verifies() {
         NOW,
     )
     .expect("a pin on the issuer kid is the coordinate that verifies");
-    assert!(matches!(verified.outcome, DelegatedOutcome::Success));
+    assert!(matches!(verified.outcome(), DelegatedOutcome::Success));
     assert_eq!(
-        Some(verified.verified.delegation_issuer_kid()),
+        Some(verified.verified().delegation_issuer_kid()),
         Some(ROOT_KID),
         "the verified evidence reports the anchor the credential chained to"
     );
@@ -618,7 +634,8 @@ fn a_pin_on_the_wrong_issuer_kid_fails_closed() {
         .build()
         .expect("rt");
     let server = build_server();
-    let (signed, response) = one_exchange(&server, &rt, "nonce-pin-wrong", NOW);
+    let (signed, response) =
+        one_exchange(&server, &rt, &mcp_re_test_paths::unique_test_nonce(), NOW);
     let err = verify_delegated_response(
         &response,
         &client_trust(),
@@ -643,7 +660,8 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
         .build()
         .expect("rt");
     let config = server_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
+        .expect("the root states its key");
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("first key");
     let first_kid = wiring
@@ -672,7 +690,8 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
         Arc::clone(&wiring.signer),
     );
 
-    let (signed_a, response_a) = one_exchange(&server, &rt, "nonce-pin-rot-1", NOW);
+    let (signed_a, response_a) =
+        one_exchange(&server, &rt, &mcp_re_test_paths::unique_test_nonce(), NOW);
     verify_delegated_response(
         &response_a,
         &client_trust(),
@@ -697,7 +716,12 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
         "the delegated kid must actually rotate"
     );
 
-    let (signed_b, response_b) = one_exchange(&server, &rt, "nonce-pin-rot-2", ROTATED_AT);
+    let (signed_b, response_b) = one_exchange(
+        &server,
+        &rt,
+        &mcp_re_test_paths::unique_test_nonce(),
+        ROTATED_AT,
+    );
     let verified = verify_delegated_response(
         &response_b,
         &client_trust(),
@@ -707,7 +731,7 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
     )
     .expect("the SAME issuer pin still verifies after rotation — this is why it is the coordinate");
     assert_eq!(
-        Some(verified.verified.delegation_issuer_kid()),
+        Some(verified.verified().delegation_issuer_kid()),
         Some(ROOT_KID)
     );
 }
@@ -724,12 +748,16 @@ fn an_accepted_request_emits_accepted_then_signed_with_the_resolved_actor() {
     let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
     let proxy = client_proxy(build_server().with_audit_sink(sink.clone()));
     let out = proxy
-        .handle("r1", &plain_request(), &params("nonce-audit-1"))
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect("round trip succeeds");
     assert_eq!(out.kind, ResponseKind::Success);
 
     let records = sink.records();
-    let types: Vec<&str> = records.iter().map(|r| r.event().event_type).collect();
+    let types: Vec<&str> = records.iter().map(|r| r.event().event_type()).collect();
     assert_eq!(
         types,
         vec!["mcp-re.request.accepted", "mcp-re.response.signed"],
@@ -742,7 +770,7 @@ fn an_accepted_request_emits_accepted_then_signed_with_the_resolved_actor() {
             "an admitted request's records must carry the resolved actor"
         );
         assert_eq!(
-            record.event().reason,
+            record.event().reason(),
             None,
             "a success event carries no rejection reason"
         );
@@ -760,18 +788,22 @@ fn an_unconfigured_deployments_records_say_so_rather_than_claiming_an_authorizat
     let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
     let proxy = client_proxy(build_server().with_audit_sink(sink.clone()));
     proxy
-        .handle("r1", &plain_request(), &params("nonce-audit-facet-1"))
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect("round trip succeeds");
 
     let records = sink.records();
     let accepted = records
         .iter()
-        .find(|r| r.event().event_type == "mcp-re.request.accepted")
+        .find(|r| r.event().event_type() == "mcp-re.request.accepted")
         .expect("the admitted request is recorded");
     assert_eq!(
         accepted.subject,
         mcp_re_proxy::AuditSubject::request_accepted(
-            mcp_re_proxy::authorization::AuthorizationFacet::NotConfigured,
+            &mcp_re_proxy::authorization::AuthorizationPosture::NoPolicyConfigured,
             mcp_re_proxy::admission_enforcer::AdmissionFacet::NotConfigured
         ),
         "no policy is deployed, and the record says exactly that — never `Authorized`"
@@ -781,7 +813,7 @@ fn an_unconfigured_deployments_records_say_so_rather_than_claiming_an_authorizat
     // response does not represent a second authorization decision.
     let signed = records
         .iter()
-        .find(|r| r.event().event_type == "mcp-re.response.signed")
+        .find(|r| r.event().event_type() == "mcp-re.response.signed")
         .expect("the signed response is recorded");
     assert!(
         signed.subject.authorization().is_none(),
@@ -796,7 +828,7 @@ fn an_unconfigured_deployments_records_say_so_rather_than_claiming_an_authorizat
 fn a_replay_emits_exactly_one_rejection_carrying_the_frozen_wire_code() {
     let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
     let proxy = client_proxy(build_server().with_audit_sink(sink.clone()));
-    let p = params("nonce-audit-replay");
+    let p = params(&mcp_re_test_paths::unique_test_nonce());
     proxy.handle("r1", &plain_request(), &p).expect("first ok");
     let before = sink.records().len();
 
@@ -811,9 +843,9 @@ fn a_replay_emits_exactly_one_rejection_carrying_the_frozen_wire_code() {
         "the replayed request records ONE decision, got {replay_records:?}"
     );
     let record = &replay_records[0];
-    assert_eq!(record.event().event_type, "mcp-re.request.rejected");
+    assert_eq!(record.event().event_type(), "mcp-re.request.rejected");
     assert_eq!(
-        record.event().reason,
+        record.event().reason(),
         Some("mcp-re.replay_detected"),
         "the reason is the exact frozen wire code, never a parallel sub-name"
     );
@@ -841,7 +873,11 @@ fn a_replay_emits_exactly_one_rejection_carrying_the_frozen_wire_code() {
 fn serving_without_an_audit_sink_still_round_trips() {
     let proxy = client_proxy(build_server());
     let out = proxy
-        .handle("r1", &plain_request(), &params("nonce-audit-none"))
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect("round trip succeeds with no sink installed");
     assert_eq!(out.kind, ResponseKind::Success);
 }
@@ -860,7 +896,11 @@ fn revoked_server_delegated_key_is_refused_by_client() {
     let revoked = StaticRevocationList::new().revoke(issued_kid);
     let proxy = client_proxy_with_revocation(server, Box::new(revoked));
     let err = proxy
-        .handle("r1", &plain_request(), &params("nonce-e2e-revoked"))
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect_err("delegated-required client refuses a revoked delegated key");
     // Still `delegation_revoked`, and the contrast with the ROOT-revocation rows is the
     // point. A revoked DELEGATED KEY is caught by the revocation seam AFTER the issuer
@@ -883,7 +923,11 @@ fn non_revoked_client_still_round_trips() {
         .revoke("unrelated-root");
     let proxy = client_proxy_with_revocation(build_server(), Box::new(revoked));
     let out = proxy
-        .handle("r1", &plain_request(), &params("nonce-e2e-allow"))
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect("a non-matching denylist does not block a valid delegated response");
     assert_eq!(out.kind, ResponseKind::Success);
     assert_eq!(out.plain_response["result"]["ok"], json!(true));
@@ -905,7 +949,11 @@ fn a_manifest_published_root_verifies_a_real_round_trip() {
     let issuers = issuers_from_signed_manifest(&floor.0, 1, false);
     let proxy = client_proxy_anchored(build_server(), issuers);
     let out = proxy
-        .handle("r1", &plain_request(), &params("nonce-manifest-ok"))
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect("a manifest-published root verifies the delegated response");
     assert_eq!(out.kind, ResponseKind::Success);
     assert_eq!(out.plain_response["result"]["ok"], json!(true));
@@ -927,7 +975,11 @@ fn a_manifest_revoked_root_fails_the_round_trip_closed() {
     let issuers = issuers_from_signed_manifest(&floor.0, 1, true);
     let proxy = client_proxy_anchored(build_server(), issuers);
     let err = proxy
-        .handle("r1", &plain_request(), &params("nonce-manifest-revoked"))
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect_err("a manifest-revoked root must fail closed");
     assert_eq!(
         err.wire_code(),
@@ -946,7 +998,11 @@ fn an_anchored_route_verifies_the_signed_202_that_acknowledges_a_notification() 
     let issuers = issuers_from_signed_manifest(&floor.0, 1, false);
     let proxy = client_proxy_anchored(build_server(), issuers);
     let out = proxy
-        .handle("r1", &plain_notification(), &params("nonce-anchored-202"))
+        .handle(
+            "r1",
+            &plain_notification(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
         .expect("the signed 202 verifies against the manifest-published root");
     assert_eq!(out.kind, ResponseKind::AcceptedNotification);
     assert_eq!(
@@ -969,7 +1025,7 @@ fn a_manifest_revoked_root_refuses_the_notification_acknowledgement_too() {
         .handle(
             "r1",
             &plain_notification(),
-            &params("nonce-anchored-202-rev"),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
         )
         .expect_err("a revoked root must not acknowledge a notification");
     assert_eq!(err.wire_code(), Some("mcp-re.delegation_issuer_untrusted"));
@@ -989,7 +1045,11 @@ fn a_replayed_older_manifest_cannot_un_revoke_a_root() {
     let proxy = client_proxy_anchored(build_server(), revoked_issuers);
     assert_eq!(
         proxy
-            .handle("r1", &plain_request(), &params("nonce-rollback-1"))
+            .handle(
+                "r1",
+                &plain_request(),
+                &params(&mcp_re_test_paths::unique_test_nonce())
+            )
             .expect_err("v2 revoked the root")
             .wire_code(),
         Some("mcp-re.delegation_issuer_untrusted"),
@@ -1005,7 +1065,7 @@ fn a_replayed_older_manifest_cannot_un_revoke_a_root() {
             issuer_kid: ROOT_KID.into(),
             public_key: root_key().public_key().to_b64url(),
             role: "server".into(),
-            trust_domain: "example.com".into(),
+            trust_domain: "mcp.example.com".into(),
             subject: "did:example:server".into(),
         }],
         retiring_issuers: vec![],
