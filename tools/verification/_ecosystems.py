@@ -62,6 +62,7 @@ not build. `_rust_targets` holds the build graph's answer to what each label is.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from dataclasses import field
 import json
@@ -392,6 +393,7 @@ def test_argv(
     target: str,
     selectors: list[str],
     runtime: str | None = None,
+    libtest_log: Path | None = None,
 ) -> list[str]:
     """The command that runs exactly `selectors` of `target` in `project`.
 
@@ -411,7 +413,18 @@ def test_argv(
         row = _rust_targets.target(target)
         if row is not None and row["kind"] == "rust_doc_test":
             return argv
-        return argv + ["--test_arg=--exact", *(f"--test_arg={s}" for s in selectors)]
+        argv += ["--test_arg=--exact", *(f"--test_arg={s}" for s in selectors)]
+        if libtest_log is not None:
+            # libtest's own record of each result, written by the harness to a file the
+            # test's stdout and stderr never reach. Bazel merges those two streams into one
+            # log, so a result line read from it can carry another thread's unterminated
+            # stderr text; this file cannot. Bazel's sandbox lets the test write only to
+            # its own directories, so the file's directory is named writable.
+            argv += [
+                f"--test_arg=--logfile={libtest_log}",
+                f"--sandbox_writable_path={libtest_log.parent}",
+            ]
+        return argv
     if eco is PYTHON:
         # A PREPARED environment, named by the pinned interpreter, and never `uv run`.
         # `uv run` resolves and syncs, so the lane would be building the thing it measures
@@ -501,6 +514,59 @@ _LIBTEST_RESULT = re.compile(
     + "|".join(_LIBTEST_STATUSES)
     + r")$"
 )
+
+#: libtest's `--logfile` grammar (`write_log_result`): one record per test, `<result> <name>`,
+#: where `<result>` is `ok`, `failed`, `ignored`, `failed (time limit exceeded)`, or a
+#: result that carries the harness's own message: `failed: <message>` / `ignored: <message>`.
+#: The harness writes the file itself, so no test output can reach it. A name never contains
+#: a space; a MESSAGE may contain spaces and, for a multi-line panic message, newlines.
+_LIBTEST_LOGFILE_PLAIN = re.compile(
+    r"^(?P<status>ok|failed|ignored|failed \(time limit exceeded\)) (?P<name>\S+)$"
+)
+_LIBTEST_LOGFILE_OPENS_MESSAGE = re.compile(r"^(?P<status>failed|ignored): ")
+_LIBTEST_LOGFILE_STATUS = {
+    "ok": "ok",
+    "failed": "FAILED",
+    "ignored": "ignored",
+    "failed (time limit exceeded)": "FAILED",
+}
+
+
+def parse_libtest_logfile(text: str, selected: Iterable[str] = ()) -> dict[str, str]:
+    """The lane's one vocabulary, read from libtest's `--logfile` record.
+
+    A plain record is a whole `<result> <name>` line. A message-bearing record
+    (`failed: <message> <name>`) has no delimiter between message and name, so its name is
+    resolved against the EXACT names this run selected: the record closes at the first line
+    that ends with ` <selected name>`, and any other tail is not a record. With nothing
+    selected, a message-bearing record resolves to nothing rather than to its last token.
+    A plain record always starts a fresh record, so an unterminated message cannot swallow
+    the results after it.
+    """
+    names = tuple(sorted(set(selected), key=len, reverse=True))
+    out: dict[str, str] = {}
+    open_status: str | None = None
+    open_text = ""
+    for line in text.splitlines():
+        plain = _LIBTEST_LOGFILE_PLAIN.match(line)
+        if plain:
+            out[plain.group("name")] = _LIBTEST_LOGFILE_STATUS[plain.group("status")]
+            open_status = None
+            continue
+        if open_status is None:
+            opened = _LIBTEST_LOGFILE_OPENS_MESSAGE.match(line)
+            if not opened:
+                continue
+            open_status, open_text = opened.group("status"), line
+        else:
+            open_text += "\n" + line
+        for name in names:
+            if open_text.endswith(" " + name):
+                out[name] = _LIBTEST_LOGFILE_STATUS[open_status]
+                open_status = None
+                break
+    return out
+
 
 
 _LIBTEST_FAILURE_NAME = re.compile(r"^    (?P<name>[A-Za-z_][\w:]*)$")

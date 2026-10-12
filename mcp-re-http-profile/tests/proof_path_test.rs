@@ -18,6 +18,7 @@ use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
+use mcp_re_test_paths::unique_test_nonce;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const SERVER_SEED: [u8; 32] = [22u8; 32];
@@ -75,6 +76,10 @@ fn request() -> HttpRequest {
 }
 
 fn signed_request() -> HttpRequest {
+    signed_request_with(&unique_test_nonce())
+}
+
+fn signed_request_with(nonce: &str) -> HttpRequest {
     let mut req = request();
     sign_request(
         &mut req,
@@ -82,7 +87,7 @@ fn signed_request() -> HttpRequest {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "nonce-1",
+        nonce,
     )
     .expect("signing succeeds");
     req
@@ -111,12 +116,13 @@ fn signed_exchange() -> (HttpRequest, HttpResponse) {
 
 #[test]
 fn request_roundtrip_verifies_and_yields_split_form_evidence() {
-    let req = signed_request();
+    let nonce = unique_test_nonce();
+    let req = signed_request_with(&nonce);
     let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request_floor(&req, NOW)
         .expect("verifies");
-    assert_eq!(verified.evidence().digest_alg, "sha256");
-    assert_eq!(verified.nonce(), "nonce-1");
+    assert_eq!(verified.evidence().digest_alg(), "sha256");
+    assert_eq!(verified.nonce(), nonce);
     assert_eq!(verified.key_id(), "client-key-1");
 }
 
@@ -129,7 +135,7 @@ fn signer_and_verifier_derive_the_same_evidence_handle() {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "nonce-1",
+        &unique_test_nonce(),
     )
     .expect("signing succeeds");
     let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -157,7 +163,7 @@ fn authorization_header_is_covered_when_present() {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "n",
+        &unique_test_nonce(),
     )
     .expect("signing succeeds");
     Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -203,7 +209,7 @@ fn response_splice_fails_closed() {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "nonce-2",
+        &unique_test_nonce(),
     )
     .expect("signing succeeds");
     let mut rsp_b = HttpResponse {
@@ -297,7 +303,7 @@ fn degenerate_window_fails_closed_regardless_of_skew() {
         "client-key-1",
         CREATED,
         CREATED,
-        "n-degen",
+        &unique_test_nonce(),
     )
     .expect("signing succeeds");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -329,7 +335,7 @@ fn the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not() {
         "client-key-1",
         CREATED,
         CREATED,
-        "n-zero",
+        &unique_test_nonce(),
     )
     .expect("signs");
     assert_eq!(
@@ -367,7 +373,7 @@ fn the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not() {
         "client-key-1",
         CREATED,
         CREATED + max + 1,
-        "n-wide",
+        &unique_test_nonce(),
     )
     .expect("signs");
     assert_eq!(
@@ -385,7 +391,7 @@ fn the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not() {
         "client-key-1",
         CREATED,
         CREATED + max,
-        "n-bound",
+        &unique_test_nonce(),
     )
     .expect("signs");
     Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -404,7 +410,7 @@ fn wrong_keyid_fails_closed() {
         "rogue-key-9",
         CREATED,
         EXPIRES,
-        "n",
+        &unique_test_nonce(),
     )
     .expect("signing succeeds");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -426,7 +432,7 @@ fn keyid_swap_to_another_trusted_key_fails_the_signature() {
         "client-key-2",
         CREATED,
         EXPIRES,
-        "n",
+        &unique_test_nonce(),
     )
     .expect("signing succeeds");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -484,7 +490,7 @@ fn duplicate_authorization_fails_closed() {
         "client-key-1",
         CREATED,
         EXPIRES,
-        "n",
+        &unique_test_nonce(),
     )
     .unwrap_err();
     assert_eq!(err, HttpProfileError::DuplicateHeader("authorization"));
@@ -525,10 +531,10 @@ fn verified_response_exposes_resolved_server_actor() {
     let v = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_bound_response_floor(&rsp, &req, NOW)
         .expect("verifies");
-    assert_eq!(v.resolved_server_actor.identity.role, "server");
-    assert_eq!(v.resolved_server_actor.slot, SignerSlot::Response);
-    assert!(v.resolved_server_actor.actor_id().starts_with("server:"));
-    assert_eq!(v.response_signature_base_digest.digest_alg, "sha256");
+    assert_eq!(v.resolved_server_actor().identity.role, "server");
+    assert_eq!(v.resolved_server_actor().slot, SignerSlot::Response);
+    assert!(v.resolved_server_actor().actor_id().starts_with("server:"));
+    assert_eq!(v.response_signature_base_digest().digest_alg(), "sha256");
     // "the floor path carries no request binding" is no longer an assertion about a
     // field's absence — the floor product has no such field to inspect.
 }
@@ -544,7 +550,7 @@ fn request_signed_by_response_only_actor_fails_actor_binding() {
         "server-key-1", // only trusted for the Response slot
         CREATED,
         EXPIRES,
-        "n",
+        &unique_test_nonce(),
     )
     .expect("signing succeeds");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -653,8 +659,8 @@ fn unbound_response_floor_verifies_a_receipt_with_no_request() {
     let v = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_unbound_response_floor(&rsp, NOW)
         .expect("an unbound receipt verifies with no request context");
-    assert_eq!(v.resolved_server_actor.slot, SignerSlot::Response);
-    assert_eq!(v.resolved_server_actor.identity.keyid, "server-key-1");
+    assert_eq!(v.resolved_server_actor().slot, SignerSlot::Response);
+    assert_eq!(v.resolved_server_actor().identity.keyid, "server-key-1");
 }
 
 /// THE SLOT CONJUNCT, ON THE UNBOUND ARM. THM-0017 says the presented keyid resolved
@@ -724,4 +730,28 @@ fn the_unbound_floor_content_digest_check_is_load_bearing() {
         .verify_unbound_response_floor(&rsp, NOW)
         .unwrap_err();
     assert_eq!(err, HttpProfileError::ContentDigestMismatch);
+}
+
+/// The freshness conjunct on the BOUND floor. THM-0001 states the window property of every
+/// parameter set the verifier admits, and that holds only while each verify path asks
+/// `check_params`; this is the bound response path's witness that it does.
+#[test]
+fn a_bound_response_outside_its_signature_window_is_refused_on_the_floor() {
+    let (req, rsp) = signed_exchange();
+    let skew = VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW;
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response_floor(&rsp, &req, EXPIRES + skew + 1)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::StaleWindow);
+}
+
+/// The same conjunct on the UNBOUND floor.
+#[test]
+fn an_unbound_receipt_outside_its_signature_window_is_refused_on_the_floor() {
+    let rsp = unbound_signed_response();
+    let skew = VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW;
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_unbound_response_floor(&rsp, EXPIRES + skew + 1)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::StaleWindow);
 }

@@ -38,13 +38,15 @@ use mcp_re_http_profile::HttpContinuation;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::RequestEvidenceDigest;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
+use mcp_re_test_paths::unique_test_nonce;
+use std::sync::OnceLock;
 
 use mcp_re_proxy::async_inner::AsyncInnerServer;
 use mcp_re_proxy::async_inner::DispatchedOutcome;
@@ -55,10 +57,12 @@ use mcp_re_proxy::async_serve::ServedHttpResponse;
 use mcp_re_proxy::continuation_store::AsyncContinuationStore;
 use mcp_re_proxy::continuation_store::InMemoryContinuationStore;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
+use mcp_re_proxy::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS;
 use mcp_re_proxy::ActorResolver;
 use mcp_re_proxy::DelegatedRotor;
 use mcp_re_proxy::DelegatedServerSigner;
 use mcp_re_proxy::HttpProfileProxy;
+use mcp_re_proxy::SigningRetirement;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const CLIENT_SEED_2: [u8; 32] = [12u8; 32];
@@ -139,7 +143,7 @@ fn custody_cfg() -> CustodyConfig {
         profile: PROFILE_TAG.into(),
         aud: VERIFIER_AUD.into(),
         audience_hash: AUD_SCOPE.into(),
-        trust_epoch: EPOCH.into(),
+        trust_epoch: EPOCH.parse().expect("epoch base"),
         server_role: "server".into(),
         server_trust_domain: "example.com".into(),
         server_subject: "did:example:server".into(),
@@ -147,9 +151,7 @@ fn custody_cfg() -> CustodyConfig {
     }
 }
 
-fn make_rotor(
-    signer: Arc<DelegatedServerSigner>,
-) -> DelegatedRotor<
+fn make_rotor() -> DelegatedRotor<
     impl FnMut(&DelegationHeader, &DelegationClaims) -> Option<String>,
     impl FnMut() -> SigningKey,
 > {
@@ -162,10 +164,12 @@ fn make_rotor(
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    DelegatedRotor::new(
-        DelegatedSigningCustody::new(custody_cfg(), issue, factory),
-        signer,
-    )
+    DelegatedRotor::new(DelegatedSigningCustody::new(
+        custody_cfg(),
+        root_key().public_key(),
+        issue,
+        factory,
+    ))
 }
 
 /// The JSON-RPC `id` of the forwarded request, rendered for splicing into a canned reply.
@@ -186,26 +190,29 @@ fn echoed_id(forwarded: &[u8]) -> String {
 /// `InputRequiredResult` carrying an opaque `requestState`; an answer call returns a
 /// terminal result. Mirrors `tools/fastmcp_inner_backend.py`'s `confirm_action`.
 fn eliciting_inner(request_state: &'static str) -> Box<dyn AsyncInnerServer> {
-    Box::new(move |forwarded: &[u8]| -> Vec<u8> {
-        let v: serde_json::Value =
-            serde_json::from_slice(forwarded).unwrap_or(serde_json::Value::Null);
-        let is_answer = v
-            .get("params")
-            .map(|p| p.get("inputResponses").is_some() || p.get("requestState").is_some())
-            .unwrap_or(false);
-        let id = echoed_id(forwarded);
-        if is_answer {
-            format!(
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |forwarded: &[u8]| -> Vec<u8> {
+            let v: serde_json::Value =
+                serde_json::from_slice(forwarded).unwrap_or(serde_json::Value::Null);
+            let is_answer = v
+                .get("params")
+                .map(|p| p.get("inputResponses").is_some() || p.get("requestState").is_some())
+                .unwrap_or(false);
+            let id = echoed_id(forwarded);
+            if is_answer {
+                format!(
                 r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"complete","confirmed":true}}}}"#
             )
             .into_bytes()
-        } else {
-            format!(
+            } else {
+                format!(
                 r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"input_required","requestState":"{request_state}"}}}}"#
             )
             .into_bytes()
-        }
-    })
+            }
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 /// A serving proxy (its own signer + replay tier) sharing `store` — one fleet replica.
@@ -229,16 +236,22 @@ fn replica(
         300,
         signer,
     )
-    .with_continuation_store(store, TTL)
+    .with_continuation_store(store, DEFAULT_CONTINUATION_TTL_SECS)
 }
 
 fn ready_signer() -> Arc<DelegatedServerSigner> {
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    ready_signer_and_retirement().0
+}
+
+/// A ready signer, and the authority its rotor issues to withdraw it for good.
+fn ready_signer_and_retirement() -> (Arc<DelegatedServerSigner>, SigningRetirement) {
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
+    let retirement = rotor.retirement();
     rotor.rotate(NOW).expect("issue first delegated key");
     // Keep the rotor alive for the whole test so the published snapshot stays valid.
     std::mem::forget(rotor);
-    signer
+    (signer, retirement)
 }
 
 fn served_of(req: &HttpRequest) -> ServedHttpRequest {
@@ -257,13 +270,6 @@ fn http_response(served: ServedHttpResponse) -> HttpResponse {
         status: served.status,
         headers: served.headers,
         body: served.body,
-    }
-}
-
-fn as_digest(ev: &RequestEvidence) -> RequestEvidenceDigest {
-    RequestEvidenceDigest {
-        digest_alg: ev.digest_alg.clone(),
-        digest_value: ev.digest_value.clone(),
     }
 }
 
@@ -317,7 +323,7 @@ fn signed_request(
     nonce: &str,
     body: &[u8],
     continuation: Option<HttpContinuation>,
-) -> (HttpRequest, RequestEvidence) {
+) -> (HttpRequest, RequestRoleEvidence) {
     signed_request_as(CLIENT_KEY_ID, &client_key(), nonce, body, continuation)
 }
 
@@ -329,7 +335,7 @@ fn signed_request_as(
     nonce: &str,
     body: &[u8],
     continuation: Option<HttpContinuation>,
-) -> (HttpRequest, RequestEvidence) {
+) -> (HttpRequest, RequestRoleEvidence) {
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
         audience: audience(),
@@ -359,6 +365,13 @@ fn signed_request_as(
 const OPEN_BODY: &[u8] =
     br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"confirm_action","arguments":{}}}"#;
 
+/// The nonce of the one open request `open_on` and `handles_of` both sign, so the digests
+/// `handles_of` recomputes are the ones the open leg produced. Drawn once per process.
+fn open_nonce() -> &'static str {
+    static OPEN_NONCE: OnceLock<String> = OnceLock::new();
+    OPEN_NONCE.get_or_init(unique_test_nonce)
+}
+
 /// Drive the OPEN leg on replica A: sign + serve + verify the `InputRequiredResult`,
 /// and return the continuation handles the answer leg binds to (the requestState, and
 /// the two evidence digests the CLIENT holds — its request handle and the response
@@ -367,7 +380,7 @@ async fn open_on(
     proxy: &HttpProfileProxy,
     request_state: &str,
 ) -> (RequestEvidenceDigest, RequestEvidenceDigest, String) {
-    let (req, open_ev) = signed_request("nonce-open", OPEN_BODY, None);
+    let (req, open_ev) = signed_request(open_nonce(), OPEN_BODY, None);
     // The client keeps its own request for response binding.
     let no_material = |_b: &ArtifactBinding| None;
     let r = resolver();
@@ -394,8 +407,11 @@ async fn open_on(
     assert_eq!(seen_state, request_state);
 
     (
-        as_digest(&open_ev), // D_prev (client request handle)
-        as_digest(&verified.signature_facts.response_signature_base_digest), // D_irr (verified response handle)
+        open_ev.to_digest(), // D_prev (client request handle)
+        verified
+            .signature_facts()
+            .response_signature_base_digest
+            .to_digest(), // D_irr (verified response handle)
         seen_state.to_owned(),
     )
 }
@@ -424,8 +440,11 @@ async fn continuation_opened_on_a_is_honoured_on_b() {
     // ANSWER on B — B never saw the open leg. Build the continuation from the handles
     // the client holds (exactly `HttpContinuation::from_handles`).
     let continuation = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
-    let (answer_req, answer_ev) =
-        signed_request("nonce-answer", &answer_body(&state), Some(continuation));
+    let (answer_req, answer_ev) = signed_request(
+        &unique_test_nonce(),
+        &answer_body(&state),
+        Some(continuation),
+    );
     let _answer_ev = answer_ev;
     let _verified_answer = {
         let no_material = |_b: &ArtifactBinding| None;
@@ -461,8 +480,11 @@ async fn continuation_opened_on_a_is_honoured_on_b() {
     // regardless of the handles.
     let (p2, i2, _s2) = handles_of(STATE);
     let continuation2 = HttpContinuation::from_handles(p2, i2, state.as_bytes());
-    let (replay_req, _e) =
-        signed_request("nonce-answer-2", &answer_body(&state), Some(continuation2));
+    let (replay_req, _e) = signed_request(
+        &unique_test_nonce(),
+        &answer_body(&state),
+        Some(continuation2),
+    );
     let served2 = b.handle(served_of(&replay_req), NOW).await;
     assert_eq!(served2.status, 409, "the continuation is one-shot");
     assert_eq!(
@@ -476,13 +498,13 @@ async fn continuation_opened_on_a_is_honoured_on_b() {
 /// the fixed open request + a fixed requestState.
 fn handles_of(request_state: &str) -> (RequestEvidenceDigest, RequestEvidenceDigest, String) {
     // D_prev is the fixed open request's evidence.
-    let (_req, open_ev) = signed_request("nonce-open", OPEN_BODY, None);
+    let (_req, open_ev) = signed_request(open_nonce(), OPEN_BODY, None);
     // D_irr must equal what the open reply produced; recompute it by signing the same
     // InputRequiredResult body the eliciting inner returns and reading its base digest
     // is unavailable here, so we take it from a throwaway open on a scratch replica.
     // Simpler: the second-answer test only needs a well-formed continuation whose
     // store entry is absent, so any consistent handles suffice — reuse D_prev shape.
-    let d = as_digest(&open_ev);
+    let d = open_ev.to_digest();
     (d.clone(), d, request_state.to_owned())
 }
 
@@ -497,7 +519,11 @@ async fn answer_without_a_shared_store_entry_fails_closed() {
 
     let (d_prev, d_irr, state) = handles_of(STATE);
     let continuation = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
-    let (answer_req, _e) = signed_request("nonce-answer", &answer_body(&state), Some(continuation));
+    let (answer_req, _e) = signed_request(
+        &unique_test_nonce(),
+        &answer_body(&state),
+        Some(continuation),
+    );
     let served = b.handle(served_of(&answer_req), NOW).await;
     assert_eq!(served.status, 409, "no retained bases → fail closed");
     assert_eq!(
@@ -524,7 +550,7 @@ async fn an_answer_that_fails_the_binding_leaves_the_continuation_answerable() {
     // A well-formed answer for the RIGHT state whose continuation digests are wrong —
     // the same shape a client hits after losing track of which response it is answering.
     let wrong = HttpContinuation::from_handles(d_prev.clone(), d_prev.clone(), state.as_bytes());
-    let (bad_req, _e) = signed_request("nonce-bad-answer", &answer_body(&state), Some(wrong));
+    let (bad_req, _e) = signed_request(&unique_test_nonce(), &answer_body(&state), Some(wrong));
     let served_bad = b.handle(served_of(&bad_req), NOW).await;
     assert_eq!(
         served_bad.status, 409,
@@ -538,7 +564,7 @@ async fn an_answer_that_fails_the_binding_leaves_the_continuation_answerable() {
     // The genuine answer still binds: the refusal cost the client one request, not its
     // continuation.
     let good = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
-    let (good_req, _e) = signed_request("nonce-good-answer", &answer_body(&state), Some(good));
+    let (good_req, _e) = signed_request(&unique_test_nonce(), &answer_body(&state), Some(good));
     let served_good = b.handle(served_of(&good_req), NOW).await;
     assert_eq!(
         served_good.status,
@@ -569,7 +595,7 @@ async fn a_second_actor_cannot_touch_the_first_actors_continuation() {
     let (intruder_req, _e) = signed_request_as(
         CLIENT_KEY_ID_2,
         &second_client_key(),
-        "nonce-intruder",
+        &unique_test_nonce(),
         &answer_body(&state),
         Some(intruder),
     );
@@ -585,7 +611,7 @@ async fn a_second_actor_cannot_touch_the_first_actors_continuation() {
 
     // And the first actor's open leg is untouched.
     let good = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
-    let (good_req, _e) = signed_request("nonce-good-answer", &answer_body(&state), Some(good));
+    let (good_req, _e) = signed_request(&unique_test_nonce(), &answer_body(&state), Some(good));
     let served_good = b.handle(served_of(&good_req), NOW).await;
     assert_eq!(
         served_good.status,
@@ -610,7 +636,7 @@ async fn tampered_request_state_breaks_the_binding() {
     // state (no entry) so the binding cannot be recovered.
     let continuation = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
     let (answer_req, _e) = signed_request(
-        "nonce-answer",
+        &unique_test_nonce(),
         &answer_body("state-token-TAMPERED"),
         Some(continuation),
     );
@@ -646,16 +672,19 @@ fn replica_with_inner(
         300,
         signer,
     )
-    .with_continuation_store(store, TTL)
+    .with_continuation_store(store, DEFAULT_CONTINUATION_TTL_SECS)
 }
 
 /// An inner backend that announces a non-terminal turn and then withholds the state
 /// its continuation needs.
 fn malformed_eliciting_inner(result_json: &'static str) -> Box<dyn AsyncInnerServer> {
-    Box::new(move |forwarded: &[u8]| -> Vec<u8> {
-        let id = echoed_id(forwarded);
-        format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{result_json}}}"#).into_bytes()
-    })
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |forwarded: &[u8]| -> Vec<u8> {
+            let id = echoed_id(forwarded);
+            format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{result_json}}}"#).into_bytes()
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 /// THE regression. The proxy's open-leg recorder used to read "declares itself
@@ -683,7 +712,7 @@ async fn an_open_leg_that_withholds_its_request_state_is_refused_not_served_as_t
             malformed_eliciting_inner(malformed),
         );
 
-        let (req, _ev) = signed_request("nonce-malformed", OPEN_BODY, None);
+        let (req, _ev) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
         let served = proxy.handle(served_of(&req), NOW).await;
 
         assert_ne!(
@@ -733,7 +762,7 @@ async fn a_terminal_reply_is_not_caught_by_the_stricter_classification() {
         malformed_eliciting_inner(r#"{"resultType":"complete","confirmed":true}"#),
     );
 
-    let (req, _ev) = signed_request("nonce-terminal", OPEN_BODY, None);
+    let (req, _ev) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     let served = proxy.handle(served_of(&req), NOW).await;
     assert_eq!(served.status, 200, "a terminal reply is served normally");
 }
@@ -767,7 +796,7 @@ async fn an_unrecognized_result_type_is_refused_before_it_is_signed() {
             malformed_eliciting_inner(unrecognized),
         );
 
-        let (req, _ev) = signed_request("nonce-unrecognized", OPEN_BODY, None);
+        let (req, _ev) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
         let served = proxy.handle(served_of(&req), NOW).await;
 
         assert_ne!(
@@ -808,7 +837,7 @@ async fn an_unrecognized_result_type_is_refused_without_a_continuation_store() {
         ready_signer(),
     );
 
-    let (req, _ev) = signed_request("nonce-no-store", OPEN_BODY, None);
+    let (req, _ev) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     let served = proxy.handle(served_of(&req), NOW).await;
 
     assert_eq!(served.status, 502, "no store is not a reason to sign it");
@@ -847,8 +876,8 @@ struct WriteFailingStore(InMemoryContinuationStore);
 impl AsyncContinuationStore for WriteFailingStore {
     fn create<'a>(
         &'a self,
-        _key: &'a str,
-        _bases: &'a mcp_re_proxy::continuation_store::RetainedBases,
+        _key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
+        _bases: &'a mcp_re_proxy::continuation_store::RetainedHandles,
         _ttl_secs: i64,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
@@ -864,17 +893,20 @@ impl AsyncContinuationStore for WriteFailingStore {
     }
     fn peek<'a>(
         &'a self,
-        key: &'a str,
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
-        Option<mcp_re_proxy::continuation_store::RetainedBases>,
+        Option<mcp_re_proxy::continuation_store::RetainedHandles>,
     > {
         self.0.peek(key)
     }
     fn consume<'a>(
         &'a self,
-        key: &'a str,
-    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, bool> {
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
+        'a,
+        mcp_re_proxy::continuation_store::Consumption,
+    > {
         self.0.consume(key)
     }
 }
@@ -896,7 +928,7 @@ impl AsyncContinuationStore for WriteFailingStore {
 async fn an_open_leg_is_refused_when_the_deployment_cannot_make_it_answerable() {
     let proxy = replica_without_store(eliciting_inner("state-token-unstorable"));
 
-    let (req, _ev) = signed_request("nonce-d3", OPEN_BODY, None);
+    let (req, _ev) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     let served = proxy.handle(served_of(&req), NOW).await;
 
     assert_ne!(
@@ -930,7 +962,7 @@ async fn a_continuation_record_failure_after_dispatch_never_reads_as_retry_safe(
         Arc::new(WriteFailingStore(InMemoryContinuationStore::new()));
     let proxy = replica_with_inner(ready_signer(), store, eliciting_inner("state-token-d1"));
 
-    let (req, _ev) = signed_request("nonce-d1", OPEN_BODY, None);
+    let (req, _ev) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     let served = proxy.handle(served_of(&req), NOW).await;
 
     assert_eq!(served.status, 503);
@@ -955,7 +987,7 @@ async fn a_continuation_record_failure_after_dispatch_never_reads_as_retry_safe(
 async fn a_pre_dispatch_refusal_still_reports_that_nothing_executed() {
     let proxy = replica_without_store(eliciting_inner("state-token-nv"));
 
-    let (req, _ev) = signed_request("nonce-nv", OPEN_BODY, None);
+    let (req, _ev) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     // Serve it once so the nonce is spent, then replay it: replay admission refuses BEFORE
     // the dispatch.
     let _ = proxy.handle(served_of(&req), NOW).await;
@@ -992,8 +1024,14 @@ async fn an_unparseable_backend_body_is_refused_even_with_no_continuation_store(
         &b"{\"jsonrpc\":\"2.0\","[..],
         &b"<html>502 Bad Gateway</html>"[..],
     ] {
-        let proxy = replica_without_store(Box::new(move |_: &[u8]| garbage.to_vec()));
-        let (req, _ev) = signed_request("nonce-garbage", OPEN_BODY, None);
+        let proxy =
+            replica_without_store(Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+                move |_: &[u8]| garbage.to_vec(),
+                mcp_re_proxy::async_inner::DispatchCompletionBound::Within(
+                    std::time::Duration::ZERO,
+                ),
+            )));
+        let (req, _ev) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
         let served = proxy.handle(served_of(&req), NOW).await;
 
         assert_ne!(served.status, 200, "{garbage:?} was signed as a response");
@@ -1046,8 +1084,14 @@ async fn an_illegal_json_rpc_envelope_is_refused_before_it_is_signed() {
         ),
     ] {
         let bytes = body.as_bytes().to_vec();
-        let proxy = replica_without_store(Box::new(move |_: &[u8]| bytes.clone()));
-        let (req, _ev) = signed_request("nonce-envelope", OPEN_BODY, None);
+        let proxy =
+            replica_without_store(Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+                move |_: &[u8]| bytes.clone(),
+                mcp_re_proxy::async_inner::DispatchCompletionBound::Within(
+                    std::time::Duration::ZERO,
+                ),
+            )));
+        let (req, _ev) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
         let served = proxy.handle(served_of(&req), NOW).await;
 
         assert_eq!(served.status, 502, "{label} was accepted");
@@ -1082,8 +1126,14 @@ async fn a_legal_envelope_is_still_served_and_a_json_rpc_error_is_one() {
         ),
     ] {
         let bytes = body.as_bytes().to_vec();
-        let proxy = replica_without_store(Box::new(move |_: &[u8]| bytes.clone()));
-        let (req, _ev) = signed_request("nonce-legal", OPEN_BODY, None);
+        let proxy =
+            replica_without_store(Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+                move |_: &[u8]| bytes.clone(),
+                mcp_re_proxy::async_inner::DispatchCompletionBound::Within(
+                    std::time::Duration::ZERO,
+                ),
+            )));
+        let (req, _ev) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
         let served = proxy.handle(served_of(&req), NOW).await;
 
         assert_eq!(served.status, 200, "{label} was refused");
@@ -1143,7 +1193,7 @@ impl AsyncInnerServer for IndeterminateInner {
 async fn a_post_threshold_outcome_does_not_walk_the_consequence_back() {
     let proxy = replica_without_store(Box::new(IndeterminateInner));
 
-    let (req, _ev) = signed_request("nonce-race", OPEN_BODY, None);
+    let (req, _ev) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     let served = proxy.handle(served_of(&req), NOW).await;
 
     assert_eq!(served.status, 504);
@@ -1184,7 +1234,7 @@ impl AsyncInnerServer for SaturatedInner {
 async fn a_saturated_plane_refused_before_the_threshold_is_retry_safe() {
     let proxy = replica_without_store(Box::new(SaturatedInner));
 
-    let (req, _ev) = signed_request("nonce-saturated", OPEN_BODY, None);
+    let (req, _ev) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     let served = proxy.handle(served_of(&req), NOW).await;
 
     assert_eq!(served.status, 503);
@@ -1267,18 +1317,10 @@ fn write_sdk_fixture(nonce: &str, reply_body: &[u8], comment: &str, file_name: &
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: reply_body.to_vec(),
     };
-    sign_delegated_response_full(
-        &mut response,
-        &request,
-        &req_evidence,
-        active.server_signer(),
-        active.credential(),
-        active.key(),
-        active.delegated_kid(),
-        NOW,
-        NOW + TTL,
-    )
-    .expect("the reply signs — signing does not classify");
+    let window = mcp_re_http_profile::custody::SigningWindow::over(active, NOW, TTL)
+        .expect("a live signing window");
+    sign_delegated_response_full(&mut response, &request, &window)
+        .expect("the reply signs — signing does not classify");
 
     // Precondition: this fixture is only meaningful if the response is otherwise
     // GENUINE. If it failed verification the SDKs would refuse it for the wrong
@@ -1327,8 +1369,8 @@ fn write_sdk_fixture(nonce: &str, reply_body: &[u8], comment: &str, file_name: &
             "request_target_uri": request.target_uri,
             "request_headers": request.headers,
             "request_body_b64url": b64url_encode(&request.body),
-            "request_evidence_digest_alg": req_evidence.digest_alg,
-            "request_evidence_digest_value": req_evidence.digest_value,
+            "request_evidence_digest_alg": req_evidence.digest_alg(),
+            "request_evidence_digest_value": req_evidence.digest_value(),
             "status": response.status,
             "headers": response.headers,
             "body_b64url": b64url_encode(&response.body),
@@ -1440,7 +1482,11 @@ async fn an_approval_spent_on_a_request_that_never_ran_is_not_reported_as_retry_
     dir.wedge();
 
     let continuation = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
-    let (answer_req, _e) = signed_request("nonce-answer", &answer_body(&state), Some(continuation));
+    let (answer_req, _e) = signed_request(
+        &unique_test_nonce(),
+        &answer_body(&state),
+        Some(continuation),
+    );
     let served = b.handle(served_of(&answer_req), NOW).await;
 
     assert_eq!(served.status, 503, "refused before the backend could run");
@@ -1485,7 +1531,7 @@ async fn the_same_retention_outage_without_a_spent_approval_stays_an_ordinary_re
     dir.wedge();
 
     // A plain request: no continuation, so nothing is at stake but the call itself.
-    let (req, _e) = signed_request("nonce-plain", OPEN_BODY, None);
+    let (req, _e) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     let served = b.handle(served_of(&req), NOW).await;
 
     assert_eq!(served.status, 503);
@@ -1507,16 +1553,17 @@ async fn the_same_retention_outage_without_a_spent_approval_stays_an_ordinary_re
 /// confirm a parameter of it — and it is the sequence that makes `Consumed -> Recorded`
 /// reachable rather than theoretical.
 fn twice_eliciting_inner(first: &'static str, second: &'static str) -> Box<dyn AsyncInnerServer> {
-    Box::new(move |forwarded: &[u8]| -> Vec<u8> {
-        let v: serde_json::Value =
-            serde_json::from_slice(forwarded).unwrap_or(serde_json::Value::Null);
-        let answered = v
-            .get("params")
-            .and_then(|p| p.get("requestState"))
-            .and_then(|s| s.as_str())
-            .map(|s| s.to_owned());
-        let id = echoed_id(forwarded);
-        match answered.as_deref() {
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |forwarded: &[u8]| -> Vec<u8> {
+            let v: serde_json::Value =
+                serde_json::from_slice(forwarded).unwrap_or(serde_json::Value::Null);
+            let answered = v
+                .get("params")
+                .and_then(|p| p.get("requestState"))
+                .and_then(|s| s.as_str())
+                .map(|s| s.to_owned());
+            let id = echoed_id(forwarded);
+            match answered.as_deref() {
             // The answer to leg 1 opens leg 2.
             Some(state) if state == first => format!(
                 r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"input_required","requestState":"{second}"}}}}"#
@@ -1533,7 +1580,9 @@ fn twice_eliciting_inner(first: &'static str, second: &'static str) -> Box<dyn A
             )
             .into_bytes(),
         }
-    })
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 /// ADR-MCPRE-057 §4 — the coexistence question, end to end.
@@ -1568,13 +1617,13 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
             300,
             ready_signer(),
         )
-        .with_continuation_store(Arc::clone(&store), TTL)
+        .with_continuation_store(Arc::clone(&store), DEFAULT_CONTINUATION_TTL_SECS)
     };
     let a = make();
     let b = make();
 
     // Round 1 — the original call opens leg 1 on A.
-    let (req1, ev1) = signed_request("nonce-r1", OPEN_BODY, None);
+    let (req1, ev1) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     let served1 = a.handle(served_of(&req1), NOW).await;
     assert_eq!(served1.status, 200, "leg 1 opened");
     let resp1 = http_response(served1);
@@ -1590,11 +1639,14 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
     // Round 2 — answering leg 1 CONSUMES it, and the reply opens leg 2. Served on B, which
     // never saw round 1.
     let cont1 = HttpContinuation::from_handles(
-        as_digest(&ev1),
-        as_digest(&verified1.signature_facts.response_signature_base_digest),
+        ev1.to_digest(),
+        verified1
+            .signature_facts()
+            .response_signature_base_digest
+            .to_digest(),
         FIRST.as_bytes(),
     );
-    let (req2, ev2) = signed_request("nonce-r2", &answer_body(FIRST), Some(cont1));
+    let (req2, ev2) = signed_request(&unique_test_nonce(), &answer_body(FIRST), Some(cont1));
     let served2 = b.handle(served_of(&req2), NOW).await;
     assert_eq!(
         served2.status, 200,
@@ -1621,11 +1673,14 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
     // Round 3 — the load-bearing assertion. Leg 2 was recorded by an exchange that had
     // ALREADY consumed leg 1. If the latch had discarded the new leg, this fails closed.
     let cont2 = HttpContinuation::from_handles(
-        as_digest(&ev2),
-        as_digest(&verified2.signature_facts.response_signature_base_digest),
+        ev2.to_digest(),
+        verified2
+            .signature_facts()
+            .response_signature_base_digest
+            .to_digest(),
         SECOND.as_bytes(),
     );
-    let (req3, _ev3) = signed_request("nonce-r3", &answer_body(SECOND), Some(cont2));
+    let (req3, _ev3) = signed_request(&unique_test_nonce(), &answer_body(SECOND), Some(cont2));
     let served3 = a.handle(served_of(&req3), NOW).await;
     assert_eq!(
         served3.status, 200,
@@ -1640,11 +1695,15 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
     // Negative control: leg 1 really was consumed, so re-answering it fails closed. Without
     // this, the test above could pass on a store that never consumes anything.
     let cont1_again = HttpContinuation::from_handles(
-        as_digest(&ev1),
-        as_digest(&verified1.signature_facts.response_signature_base_digest),
+        ev1.to_digest(),
+        verified1
+            .signature_facts()
+            .response_signature_base_digest
+            .to_digest(),
         FIRST.as_bytes(),
     );
-    let (replay_req, _e) = signed_request("nonce-r2-again", &answer_body(FIRST), Some(cont1_again));
+    let (replay_req, _e) =
+        signed_request(&unique_test_nonce(), &answer_body(FIRST), Some(cont1_again));
     let served_again = b.handle(served_of(&replay_req), NOW).await;
     assert_eq!(served_again.status, 409, "leg 1 is one-shot and was spent");
     assert_eq!(
@@ -1699,7 +1758,7 @@ async fn a_request_refused_on_the_continuation_binding_has_not_burned_its_nonce(
     // do with the nonce it is about. The proposition here is the replay slot; the
     // continuation-key uniqueness rule has its own controls.
     const STATE_B: &str = "state-token-G1-b";
-    const NONCE: &str = "nonce-shared-G1";
+    let nonce = unique_test_nonce();
     let store: Arc<dyn AsyncContinuationStore> = Arc::new(InMemoryContinuationStore::new());
     let a = replica(ready_signer(), Arc::clone(&store), STATE);
     let b = replica(ready_signer(), Arc::clone(&store), STATE_B);
@@ -1709,7 +1768,7 @@ async fn a_request_refused_on_the_continuation_binding_has_not_burned_its_nonce(
     // A well-formed answer whose continuation digests are wrong: refused at the binding,
     // which sits BEFORE the atomic admission.
     let wrong = HttpContinuation::from_handles(d_prev.clone(), d_prev.clone(), state.as_bytes());
-    let (bad, _e) = signed_request(NONCE, &answer_body(&state), Some(wrong));
+    let (bad, _e) = signed_request(&nonce, &answer_body(&state), Some(wrong));
     let refused = b.handle(served_of(&bad), NOW).await;
     assert_eq!(refused.status, 409);
     assert_eq!(
@@ -1721,7 +1780,7 @@ async fn a_request_refused_on_the_continuation_binding_has_not_burned_its_nonce(
 
     // The load-bearing assertion: the SAME nonce is still admissible. A different body, so
     // only the shared replay key can make these two collide.
-    let (retry, _e) = signed_request(NONCE, OPEN_BODY, None);
+    let (retry, _e) = signed_request(&nonce, OPEN_BODY, None);
     let served = b.handle(served_of(&retry), NOW).await;
     assert_eq!(
         served.status, 200,
@@ -1731,7 +1790,7 @@ async fn a_request_refused_on_the_continuation_binding_has_not_burned_its_nonce(
     // Negative control for the assertion above: the nonce IS one-shot once genuinely
     // admitted, so a real replay of it is still refused. Without this, the test would pass
     // against a proxy with no replay tier at all.
-    let (again, _e) = signed_request(NONCE, OPEN_BODY, None);
+    let (again, _e) = signed_request(&nonce, OPEN_BODY, None);
     let replayed = b.handle(served_of(&again), NOW).await;
     assert_eq!(replayed.status, 409);
     assert_eq!(wire_code_of(&replayed.body), "mcp-re.replay_detected");
@@ -1739,12 +1798,17 @@ async fn a_request_refused_on_the_continuation_binding_has_not_burned_its_nonce(
 
 /// An inner backend that counts how many times it was actually invoked.
 fn counting_inner(calls: Arc<std::sync::atomic::AtomicUsize>) -> Box<dyn AsyncInnerServer> {
-    Box::new(move |forwarded: &[u8]| -> Vec<u8> {
-        calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let id = echoed_id(forwarded);
-        format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"complete","ok":true}}}}"#)
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |forwarded: &[u8]| -> Vec<u8> {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let id = echoed_id(forwarded);
+            format!(
+                r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"complete","ok":true}}}}"#
+            )
             .into_bytes()
-    })
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 /// **reserve_retention_stage** — the last refusal that is genuinely free.
@@ -1783,11 +1847,11 @@ async fn a_retention_reservation_failure_leaves_the_backend_untouched() {
         300,
         ready_signer(),
     )
-    .with_continuation_store(Arc::clone(&store), TTL)
+    .with_continuation_store(Arc::clone(&store), DEFAULT_CONTINUATION_TTL_SECS)
     .with_evidence_retention(retention);
     dir.wedge();
 
-    let (req, _e) = signed_request("nonce-H1", OPEN_BODY, None);
+    let (req, _e) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     let served = proxy.handle(served_of(&req), NOW).await;
 
     assert_eq!(served.status, 503);
@@ -1826,7 +1890,7 @@ async fn a_retention_reservation_failure_leaves_the_backend_untouched() {
         ready_signer(),
     )
     .with_evidence_retention(retention_ok);
-    let (req_ok, _e) = signed_request("nonce-H2", OPEN_BODY, None);
+    let (req_ok, _e) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     let served_ok = healthy.handle(served_of(&req_ok), NOW).await;
     assert_eq!(served_ok.status, 200);
     assert_eq!(calls_ok.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -1869,12 +1933,16 @@ async fn a_consumption_followed_by_a_refusal_reports_a_spent_approval_and_an_unr
         300,
         ready_signer(),
     )
-    .with_continuation_store(Arc::clone(&store), TTL)
+    .with_continuation_store(Arc::clone(&store), DEFAULT_CONTINUATION_TTL_SECS)
     .with_evidence_retention(retention);
     dir.wedge();
 
     let continuation = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
-    let (answer, _e) = signed_request("nonce-H3", &answer_body(&state), Some(continuation));
+    let (answer, _e) = signed_request(
+        &unique_test_nonce(),
+        &answer_body(&state),
+        Some(continuation),
+    );
     let served = answerer.handle(served_of(&answer), NOW).await;
 
     // The action did NOT run...
@@ -1895,11 +1963,11 @@ async fn a_consumption_followed_by_a_refusal_reports_a_spent_approval_and_an_unr
 
     // And the approval really is gone: re-answering fails closed rather than succeeding.
     let (retry, _e) = signed_request(
-        "nonce-H4",
+        &unique_test_nonce(),
         &answer_body(&state),
         Some(HttpContinuation::from_handles(
-            as_digest(&signed_request("nonce-open", OPEN_BODY, None).1),
-            as_digest(&signed_request("nonce-open", OPEN_BODY, None).1),
+            signed_request(open_nonce(), OPEN_BODY, None).1.to_digest(),
+            signed_request(open_nonce(), OPEN_BODY, None).1.to_digest(),
             state.as_bytes(),
         )),
     );
@@ -1946,7 +2014,8 @@ async fn a_configured_transport_binding_refuses_a_request_that_presents_no_peer_
     .with_exact_match_transport_binding();
 
     // `served_of` presents no `identity` — the plain-HTTP case.
-    let (req, _e) = signed_request("nonce-TB1", OPEN_BODY, None);
+    let tb1 = unique_test_nonce();
+    let (req, _e) = signed_request(&tb1, OPEN_BODY, None);
     let served = proxy.handle(served_of(&req), NOW).await;
 
     assert_eq!(served.status, 403);
@@ -1976,7 +2045,7 @@ async fn a_configured_transport_binding_refuses_a_request_that_presents_no_peer_
         300,
         ready_signer(),
     );
-    let (same_nonce, _e) = signed_request("nonce-TB1", OPEN_BODY, None);
+    let (same_nonce, _e) = signed_request(&tb1, OPEN_BODY, None);
     assert_eq!(
         open.handle(served_of(&same_nonce), NOW).await.status,
         200,
@@ -2000,7 +2069,6 @@ async fn a_configured_transport_binding_refuses_a_request_that_presents_no_peer_
 
 /// A delegated signer whose credential expires in `ttl` seconds rather than [`TTL`].
 fn signer_with_credential_ttl(ttl: i64) -> Arc<DelegatedServerSigner> {
-    let signer = Arc::new(DelegatedServerSigner::new());
     let root = root_key();
     let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
         Some(issue_delegation_credential(&root, h, c))
@@ -2021,10 +2089,13 @@ fn signer_with_credential_ttl(ttl: i64) -> Arc<DelegatedServerSigner> {
         window: DelegatedKeyWindow::of(ttl, ttl / 2).expect("0 < ttl/2 < ttl for ttl > 1"),
         ..custody_cfg()
     };
-    let mut rotor = DelegatedRotor::new(
-        DelegatedSigningCustody::new(cfg, issue, factory),
-        Arc::clone(&signer),
-    );
+    let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+        cfg,
+        root_key().public_key(),
+        issue,
+        factory,
+    ));
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue the short-lived key");
     std::mem::forget(rotor);
     signer
@@ -2088,7 +2159,7 @@ async fn a_signed_reply_never_advertises_validity_past_its_delegated_credential(
         signer_with_credential_ttl(CREDENTIAL_TTL),
     );
 
-    let (req, _e) = signed_request("nonce-AE1", OPEN_BODY, None);
+    let (req, _e) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     let served = proxy.handle(served_of(&req), NOW).await;
     assert_eq!(served.status, 200);
 
@@ -2120,7 +2191,7 @@ async fn a_signed_reply_never_advertises_validity_past_its_delegated_credential(
         CREDENTIAL_TTL,
         signer_with_credential_ttl(RESPONSE_SIG_TTL),
     );
-    let (req2, _e) = signed_request("nonce-AE2", OPEN_BODY, None);
+    let (req2, _e) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     let served2 = long.handle(served_of(&req2), NOW).await;
     assert_eq!(served2.status, 200);
     assert_eq!(advertised_expiry(&served2), NOW + CREDENTIAL_TTL);
@@ -2143,8 +2214,8 @@ struct PeekFailingStore(Arc<dyn AsyncContinuationStore>);
 impl AsyncContinuationStore for PeekFailingStore {
     fn create<'a>(
         &'a self,
-        key: &'a str,
-        bases: &'a mcp_re_proxy::continuation_store::RetainedBases,
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
+        bases: &'a mcp_re_proxy::continuation_store::RetainedHandles,
         ttl_secs: i64,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
@@ -2154,10 +2225,10 @@ impl AsyncContinuationStore for PeekFailingStore {
     }
     fn peek<'a>(
         &'a self,
-        _key: &'a str,
+        _key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
-        Option<mcp_re_proxy::continuation_store::RetainedBases>,
+        Option<mcp_re_proxy::continuation_store::RetainedHandles>,
     > {
         Box::pin(async {
             Err(
@@ -2169,8 +2240,11 @@ impl AsyncContinuationStore for PeekFailingStore {
     }
     fn consume<'a>(
         &'a self,
-        key: &'a str,
-    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, bool> {
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
+        'a,
+        mcp_re_proxy::continuation_store::Consumption,
+    > {
         self.0.consume(key)
     }
 }
@@ -2182,8 +2256,8 @@ struct ConsumeFailingStore(Arc<dyn AsyncContinuationStore>);
 impl AsyncContinuationStore for ConsumeFailingStore {
     fn create<'a>(
         &'a self,
-        key: &'a str,
-        bases: &'a mcp_re_proxy::continuation_store::RetainedBases,
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
+        bases: &'a mcp_re_proxy::continuation_store::RetainedHandles,
         ttl_secs: i64,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
@@ -2193,17 +2267,20 @@ impl AsyncContinuationStore for ConsumeFailingStore {
     }
     fn peek<'a>(
         &'a self,
-        key: &'a str,
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
-        Option<mcp_re_proxy::continuation_store::RetainedBases>,
+        Option<mcp_re_proxy::continuation_store::RetainedHandles>,
     > {
         self.0.peek(key)
     }
     fn consume<'a>(
         &'a self,
-        _key: &'a str,
-    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, bool> {
+        _key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
+        'a,
+        mcp_re_proxy::continuation_store::Consumption,
+    > {
         Box::pin(async {
             Err(
                 mcp_re_proxy::continuation_store::ContinuationStoreError::Unavailable {
@@ -2250,7 +2327,11 @@ async fn a_continuation_store_outage_on_the_answer_leg_is_named_as_an_outage() {
 
     let continuation =
         HttpContinuation::from_handles(d_prev.clone(), d_irr.clone(), state.as_bytes());
-    let (answer, _e) = signed_request("nonce-R8-peek", &answer_body(&state), Some(continuation));
+    let (answer, _e) = signed_request(
+        &unique_test_nonce(),
+        &answer_body(&state),
+        Some(continuation),
+    );
     let served = b.handle(served_of(&answer), NOW).await;
 
     assert_eq!(served.status, 503, "a store outage is not a client fault");
@@ -2266,7 +2347,7 @@ async fn a_continuation_store_outage_on_the_answer_leg_is_named_as_an_outage() {
     // bind" is still exactly that, so the assertion above discriminates.
     let c = replica(ready_signer(), Arc::clone(&healthy), STATE);
     let spliced = HttpContinuation::from_handles(d_prev.clone(), d_prev, state.as_bytes());
-    let (bad, _e) = signed_request("nonce-R8-splice", &answer_body(&state), Some(spliced));
+    let (bad, _e) = signed_request(&unique_test_nonce(), &answer_body(&state), Some(spliced));
     let refused = c.handle(served_of(&bad), NOW).await;
     assert_eq!(refused.status, 409);
     assert_eq!(
@@ -2313,10 +2394,14 @@ async fn an_indeterminate_continuation_retirement_is_never_reported_as_retry_saf
         300,
         ready_signer(),
     )
-    .with_continuation_store(store, TTL);
+    .with_continuation_store(store, DEFAULT_CONTINUATION_TTL_SECS);
 
     let continuation = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
-    let (answer, _e) = signed_request("nonce-R8-consume", &answer_body(&state), Some(continuation));
+    let (answer, _e) = signed_request(
+        &unique_test_nonce(),
+        &answer_body(&state),
+        Some(continuation),
+    );
     let served = b.handle(served_of(&answer), NOW).await;
 
     // The action did not run...
@@ -2398,7 +2483,7 @@ async fn an_inner_plane_refusal_leaves_no_durable_retention_marker() {
     )
     .with_evidence_retention(retention);
 
-    let (req, _e) = signed_request("nonce-R8-plane", OPEN_BODY, None);
+    let (req, _e) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     let served = proxy.handle(served_of(&req), NOW).await;
 
     assert_eq!(served.status, 503);
@@ -2437,7 +2522,7 @@ async fn an_inner_plane_refusal_leaves_no_durable_retention_marker() {
         ready_signer(),
     )
     .with_evidence_retention(retention_ok);
-    let (req_ok, _e) = signed_request("nonce-R8-plane-ok", OPEN_BODY, None);
+    let (req_ok, _e) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     assert_eq!(healthy.handle(served_of(&req_ok), NOW).await.status, 200);
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert!(
@@ -2516,7 +2601,7 @@ fn notification_proxy(outcome: DispatchedOutcome) -> HttpProfileProxy {
 #[tokio::test]
 async fn a_notification_the_inner_plane_never_delivered_is_not_acknowledged() {
     let timed_out = notification_proxy(DispatchedOutcome::Indeterminate("inner request timed out"));
-    let (req2, _e) = signed_request("nonce-R8-note-timeout", NOTIFICATION_BODY, None);
+    let (req2, _e) = signed_request(&unique_test_nonce(), NOTIFICATION_BODY, None);
     let served2 = timed_out.handle(served_of(&req2), NOW).await;
     assert_ne!(served2.status, 202);
     assert_eq!(served2.status, 504);
@@ -2543,7 +2628,7 @@ async fn a_notification_the_inner_plane_never_delivered_is_not_acknowledged() {
 #[tokio::test]
 async fn a_delivered_notification_is_still_acknowledged_with_a_202() {
     let replied = notification_proxy(DispatchedOutcome::Replied(Vec::new()));
-    let (req, _e) = signed_request("nonce-R8-note-ok", NOTIFICATION_BODY, None);
+    let (req, _e) = signed_request(&unique_test_nonce(), NOTIFICATION_BODY, None);
     let served = replied.handle(served_of(&req), NOW).await;
     assert_eq!(served.status, 202, "the backend received the message");
     assert!(served.body.is_empty(), "the 202 is bodyless");
@@ -2551,7 +2636,7 @@ async fn a_delivered_notification_is_still_acknowledged_with_a_202() {
     let bodyless_202 = notification_proxy(DispatchedOutcome::InvalidUpstream(
         "inner backend did not answer application/json",
     ));
-    let (req2, _e) = signed_request("nonce-R8-note-202", NOTIFICATION_BODY, None);
+    let (req2, _e) = signed_request(&unique_test_nonce(), NOTIFICATION_BODY, None);
     let served2 = bodyless_202.handle(served_of(&req2), NOW).await;
     assert_eq!(
         served2.status, 202,
@@ -2560,7 +2645,7 @@ async fn a_delivered_notification_is_still_acknowledged_with_a_202() {
 }
 
 /// An inner plane that retires the delegated signer mid-flight, then fails the dispatch.
-struct SignerRetiringInner(Arc<DelegatedServerSigner>);
+struct SignerRetiringInner(SigningRetirement);
 
 impl AsyncInnerServer for SignerRetiringInner {
     fn prepare<'a>(
@@ -2570,12 +2655,12 @@ impl AsyncInnerServer for SignerRetiringInner {
         mcp_re_proxy::async_inner::PreparedInnerDispatch<'a>,
         mcp_re_proxy::async_inner::NotAdmitted,
     > {
-        let signer = Arc::clone(&self.0);
+        let retirement = self.0.clone();
         Ok(mcp_re_proxy::async_inner::PreparedInnerDispatch::over(
             move || {
                 // At the DISPATCH, not at the preparation: the point of the fixture is a
                 // signer that goes away while the exchange is past its threshold.
-                signer.retire();
+                retirement.retire_permanently();
                 Box::pin(async { DispatchedOutcome::Indeterminate("inner request timed out") })
             },
             // A fixture inner still states a finite bound; the serving path refuses an
@@ -2601,7 +2686,7 @@ impl AsyncInnerServer for SignerRetiringInner {
 /// did-not-run.
 #[tokio::test]
 async fn a_post_dispatch_refusal_is_signed_with_the_key_the_exchange_snapshotted() {
-    let signer = ready_signer();
+    let (signer, retirement) = ready_signer_and_retirement();
     let proxy = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
@@ -2613,12 +2698,12 @@ async fn a_post_dispatch_refusal_is_signed_with_the_key_the_exchange_snapshotted
             fleet_strict: false,
             tier: None,
         },
-        Box::new(SignerRetiringInner(Arc::clone(&signer))),
+        Box::new(SignerRetiringInner(retirement)),
         300,
         Arc::clone(&signer),
     );
 
-    let (req, _e) = signed_request("nonce-R8-retired", OPEN_BODY, None);
+    let (req, _e) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     let served = proxy.handle(served_of(&req), NOW).await;
 
     assert_eq!(served.status, 504);
@@ -2644,7 +2729,7 @@ async fn a_post_dispatch_refusal_is_signed_with_the_key_the_exchange_snapshotted
     // The signer really is retired: a NEW exchange on the same proxy cannot be answered at
     // all, which is what makes the assertions above about the snapshot and not about a
     // signer that happened to still be live.
-    let (req2, _e) = signed_request("nonce-R8-retired-2", OPEN_BODY, None);
+    let (req2, _e) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     let served2 = proxy.handle(served_of(&req2), NOW).await;
     assert_eq!(served2.status, 503);
     assert_eq!(
@@ -2724,10 +2809,19 @@ async fn a_body_that_is_not_a_json_rpc_request_never_reaches_the_backend() {
         );
         assert_ne!(served.status, 202, "{name}: acknowledged as a notification");
         assert_ne!(served.status, 200, "{name}: served as a successful reply");
-        assert_eq!(served.status, 400, "{name}");
-        assert_eq!(
-            wire_code_of(&served.body),
-            "mcp-re.malformed_envelope",
+        // Refused before dispatch either way. A body the mandatory transport contract cannot
+        // be satisfied by (no method, or a target-naming method with no name) is refused by
+        // the verifier (403); the rest are refused as malformed MCP messages (400).
+        assert!(
+            matches!(served.status, 400 | 403),
+            "{name}: {}",
+            served.status
+        );
+        assert!(
+            matches!(
+                wire_code_of(&served.body).as_str(),
+                "mcp-re.malformed_envelope" | "mcp-re.missing_envelope"
+            ),
             "{name}"
         );
         // Refused before admission: nothing ran and nothing was spent.
@@ -2768,11 +2862,11 @@ async fn the_two_legal_request_shapes_still_reach_their_terminals() {
         300,
         ready_signer(),
     );
-    let (req, _e) = signed_request("nonce-R8-env-ok", OPEN_BODY, None);
+    let (req, _e) = signed_request(&unique_test_nonce(), OPEN_BODY, None);
     assert_eq!(bodied.handle(served_of(&req), NOW).await.status, 200);
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 
     let notes = notification_proxy(DispatchedOutcome::Replied(Vec::new()));
-    let (note, _e) = signed_request("nonce-R8-env-note", NOTIFICATION_BODY, None);
+    let (note, _e) = signed_request(&unique_test_nonce(), NOTIFICATION_BODY, None);
     assert_eq!(notes.handle(served_of(&note), NOW).await.status, 202);
 }

@@ -27,6 +27,7 @@ use mcp_re_proxy::async_serve;
 use mcp_re_proxy::client_revocation::ClientRevocationIndex;
 use mcp_re_proxy::client_revocation::SharedClientRevocation;
 use mcp_re_proxy::config_snapshot::ServerConfigSnapshot;
+use mcp_re_proxy::config_state::ClientCredentialWindow;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::ServerLimits;
 use mcp_re_proxy::ServerOptions;
@@ -44,20 +45,14 @@ use rcgen::RevokedCertParams;
 use rcgen::SanType;
 use rcgen::SerialNumber;
 
-use rustls::client::danger::HandshakeSignatureValid;
-use rustls::client::danger::ServerCertVerified;
-use rustls::client::danger::ServerCertVerifier;
 use rustls::crypto::ring;
 use rustls::ClientConfig;
 use rustls::ClientConnection;
-use rustls::DigitallySignedStruct;
-use rustls::SignatureScheme;
+use rustls::RootCertStore;
 use rustls::StreamOwned;
-use rustls_pki_types::CertificateDer;
 use rustls_pki_types::PrivateKeyDer;
 use rustls_pki_types::PrivatePkcs8KeyDer;
 use rustls_pki_types::ServerName;
-use rustls_pki_types::UnixTime;
 
 /// Serials the two client certificates are minted with, so the CRL can name one of
 /// them exactly.
@@ -88,6 +83,19 @@ fn make_ca(cn: &str) -> Ca {
     Ca { cert, key, params }
 }
 
+/// The credential window every served test deployment states.
+fn window() -> ClientCredentialWindow {
+    ClientCredentialWindow::new(Duration::from_secs(3600), Duration::from_secs(300))
+        .expect("a legal credential window")
+}
+
+/// Validity `[now - 60s, now + 1800s]`: inside the window, so a served request finds the
+/// leaf current.
+fn short_lived(params: &mut CertificateParams) {
+    params.not_before = (std::time::SystemTime::now() - Duration::from_secs(60)).into();
+    params.not_after = (std::time::SystemTime::now() + Duration::from_secs(1800)).into();
+}
+
 fn dns(value: &str) -> SanType {
     SanType::DnsName(value.try_into().expect("ia5 dns"))
 }
@@ -97,8 +105,7 @@ fn make_client_leaf(ca: &Ca, serial: u64) -> (rcgen::Certificate, KeyPair) {
     let key = KeyPair::generate().expect("leaf key");
     let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
     params.serial_number = Some(SerialNumber::from(serial));
-    params.not_before = rcgen::date_time_ymd(2020, 1, 1);
-    params.not_after = rcgen::date_time_ymd(2035, 1, 1);
+    short_lived(&mut params);
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
     let cert = params.signed_by(&key, &ca.issuer()).expect("leaf signed");
     (cert, key)
@@ -132,11 +139,13 @@ fn make_crl(ca: &Ca, revoked: &[u64]) -> Vec<u8> {
 }
 
 fn index_revoking(ca: &Ca, revoked: &[u64]) -> ClientRevocationIndex {
-    ClientRevocationIndex::from_crl_ders(&[make_crl(ca, revoked)]).expect("index builds")
+    ClientRevocationIndex::from_crl_ders(&[make_crl(ca, revoked)], &[ca.cert.der().clone()])
+        .expect("index builds")
 }
 
-fn server_config_trusting(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
-    let server_ca = make_ca("mcp-re-revocation-server-ca");
+/// A server config trusting exactly `client_ca` for client authentication, whose
+/// leaf is issued by `server_ca`.
+fn server_config_trusting(client_ca: &Ca, server_ca: &Ca) -> Arc<rustls::ServerConfig> {
     let key = KeyPair::generate().expect("server key");
     let mut params = CertificateParams::new(Vec::new()).expect("server params");
     params.subject_alt_names = vec![dns("localhost")];
@@ -151,57 +160,32 @@ fn server_config_trusting(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
         // NO CRLs on the handshake verifier: the peer is admitted at the handshake, so
         // what the second request observes is the per-request check alone and not a
         // handshake that would have refused it anyway.
-        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-            .build_exported_key_config(vec![server_cert.der().clone()], server_key_der, Vec::new())
-            .expect("server config"),
+        TlsListenerSecurityState::new(
+            vec![client_ca.cert.der().clone()],
+            mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+        )
+        .build_exported_key_config(vec![server_cert.der().clone()], server_key_der, Vec::new())
+        .expect("server config"),
     )
 }
 
-#[derive(Debug)]
-struct AcceptAnyServer;
-impl ServerCertVerifier for AcceptAnyServer {
-    fn verify_server_cert(
-        &self,
-        _e: &CertificateDer<'_>,
-        _i: &[CertificateDer<'_>],
-        _n: &ServerName<'_>,
-        _o: &[u8],
-        _t: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
-    }
-    fn verify_tls12_signature(
-        &self,
-        _m: &[u8],
-        _c: &CertificateDer<'_>,
-        _d: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-    fn verify_tls13_signature(
-        &self,
-        _m: &[u8],
-        _c: &CertificateDer<'_>,
-        _d: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
-    }
+/// A root store holding exactly `server_ca`, the only issuer a client trusts for the server.
+fn trusted_roots(server_ca: &Ca) -> RootCertStore {
+    let mut roots = RootCertStore::empty();
+    roots
+        .add(server_ca.cert.der().clone())
+        .expect("add server CA root");
+    roots
 }
 
-fn client_config(ca: &Ca, serial: u64) -> ClientConfig {
+fn client_config(ca: &Ca, server_ca: &Ca, serial: u64) -> ClientConfig {
     let (leaf, key) = make_client_leaf(ca, serial);
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
     let provider = Arc::new(ring::default_provider());
     ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .expect("client versions")
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAnyServer))
+        .with_root_certificates(trusted_roots(server_ca))
         .with_client_auth_cert(vec![leaf.der().clone()], key_der)
         .expect("client auth")
 }
@@ -328,13 +312,13 @@ fn spawn(snapshot: Arc<ServerConfigSnapshot>, revocation: Arc<SharedClientRevoca
             let options = ServerOptions {
                 limits: ServerLimits::default(),
                 client_revocation: Some(revocation),
-                ..Default::default()
+                ..ServerOptions::new(window())
             };
             // The handshake bound comes from the pool that built this runtime (4 workers),
             // never from a constant that never saw the depth.
             let handshake_bound = mcp_re_proxy::async_fleet::CorePool::for_core(
                 mcp_re_proxy::async_fleet::ShardDepth::stated(4),
-                &options,
+                snapshot.key_exposure(),
             )
             .expect("a stated depth above one is a shape every custody has")
             .handshake_bound();
@@ -366,12 +350,18 @@ fn spawn(snapshot: Arc<ServerConfigSnapshot>, revocation: Arc<SharedClientRevoca
 #[test]
 fn a_reloaded_crl_refuses_the_next_request_on_an_already_open_connection() {
     let ca = make_ca("client-ca-revocation");
-    let revocation = Arc::new(SharedClientRevocation::new(index_revoking(&ca, &[])));
-    let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&ca)));
+    let server_ca = make_ca("mcp-re-revocation-server-ca");
+    let (revocation, publisher) = SharedClientRevocation::establish(index_revoking(&ca, &[]));
+    let revocation = Arc::new(revocation);
+    let snapshot = Arc::new(ServerConfigSnapshot::new(
+        server_config_trusting(&ca, &server_ca),
+        mcp_re_proxy::config_state::PrivateKeyExposure::ProcessReadable,
+    ));
     let server = spawn(Arc::clone(&snapshot), Arc::clone(&revocation));
 
-    let mut warm = WarmConnection::open(server.addr, &client_config(&ca, REVOKED_SERIAL))
-        .expect("handshake succeeds while the peer is in good standing");
+    let mut warm =
+        WarmConnection::open(server.addr, &client_config(&ca, &server_ca, REVOKED_SERIAL))
+            .expect("handshake succeeds while the peer is in good standing");
     assert_eq!(
         warm.request().expect("first request served"),
         200,
@@ -380,7 +370,7 @@ fn a_reloaded_crl_refuses_the_next_request_on_an_already_open_connection() {
 
     // The CRL reload: the peer's certificate is now revoked. The TLS connection is
     // untouched and the peer never reconnects.
-    revocation.store(index_revoking(&ca, &[REVOKED_SERIAL]));
+    publisher.publish(index_revoking(&ca, &[REVOKED_SERIAL]));
 
     assert_eq!(
         warm.request().expect("second request answered"),
@@ -395,15 +385,23 @@ fn a_reloaded_crl_refuses_the_next_request_on_an_already_open_connection() {
 #[test]
 fn a_peer_absent_from_the_crl_keeps_being_served_across_the_reload() {
     let ca = make_ca("client-ca-revocation");
-    let revocation = Arc::new(SharedClientRevocation::new(index_revoking(&ca, &[])));
-    let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&ca)));
+    let server_ca = make_ca("mcp-re-revocation-server-ca");
+    let (revocation, publisher) = SharedClientRevocation::establish(index_revoking(&ca, &[]));
+    let revocation = Arc::new(revocation);
+    let snapshot = Arc::new(ServerConfigSnapshot::new(
+        server_config_trusting(&ca, &server_ca),
+        mcp_re_proxy::config_state::PrivateKeyExposure::ProcessReadable,
+    ));
     let server = spawn(Arc::clone(&snapshot), Arc::clone(&revocation));
 
-    let mut innocent = WarmConnection::open(server.addr, &client_config(&ca, INNOCENT_SERIAL))
-        .expect("handshake succeeds");
+    let mut innocent = WarmConnection::open(
+        server.addr,
+        &client_config(&ca, &server_ca, INNOCENT_SERIAL),
+    )
+    .expect("handshake succeeds");
     assert_eq!(innocent.request().expect("served"), 200);
 
-    revocation.store(index_revoking(&ca, &[REVOKED_SERIAL]));
+    publisher.publish(index_revoking(&ca, &[REVOKED_SERIAL]));
 
     assert_eq!(
         innocent.request().expect("still served"),
@@ -418,16 +416,22 @@ fn a_peer_absent_from_the_crl_keeps_being_served_across_the_reload() {
 #[test]
 fn every_request_on_a_warm_connection_is_checked_not_just_the_first() {
     let ca = make_ca("client-ca-revocation");
-    let revocation = Arc::new(SharedClientRevocation::new(index_revoking(&ca, &[])));
-    let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&ca)));
+    let server_ca = make_ca("mcp-re-revocation-server-ca");
+    let (revocation, publisher) = SharedClientRevocation::establish(index_revoking(&ca, &[]));
+    let revocation = Arc::new(revocation);
+    let snapshot = Arc::new(ServerConfigSnapshot::new(
+        server_config_trusting(&ca, &server_ca),
+        mcp_re_proxy::config_state::PrivateKeyExposure::ProcessReadable,
+    ));
     let server = spawn(Arc::clone(&snapshot), Arc::clone(&revocation));
 
-    let mut warm = WarmConnection::open(server.addr, &client_config(&ca, REVOKED_SERIAL))
-        .expect("handshake succeeds");
+    let mut warm =
+        WarmConnection::open(server.addr, &client_config(&ca, &server_ca, REVOKED_SERIAL))
+            .expect("handshake succeeds");
     for i in 0..8 {
         assert_eq!(warm.request().expect("served"), 200, "request {i}");
     }
-    revocation.store(index_revoking(&ca, &[REVOKED_SERIAL]));
+    publisher.publish(index_revoking(&ca, &[REVOKED_SERIAL]));
     for i in 0..3 {
         assert_eq!(
             warm.request().expect("answered"),
@@ -466,24 +470,28 @@ fn index_for_chain(
     root_revokes: &[u64],
     intermediate_revokes: &[u64],
 ) -> ClientRevocationIndex {
-    ClientRevocationIndex::from_crl_ders(&[
-        make_crl(root, root_revokes),
-        make_crl(intermediate, intermediate_revokes),
-    ])
+    // The intermediate's CRL is authentic only because the intermediate certificate is in the
+    // client CA bundle: the bundle is the one place a CRL signer is named.
+    ClientRevocationIndex::from_crl_ders(
+        &[
+            make_crl(root, root_revokes),
+            make_crl(intermediate, intermediate_revokes),
+        ],
+        &[root.cert.der().clone(), intermediate.cert.der().clone()],
+    )
     .expect("index builds")
 }
 
 /// A client presenting the FULL chain it was issued: leaf first, then the intermediate
 /// that signed it, exactly as a real peer does so the server can build a path.
-fn client_config_with_chain(intermediate: &Ca, serial: u64) -> ClientConfig {
+fn client_config_with_chain(intermediate: &Ca, server_ca: &Ca, serial: u64) -> ClientConfig {
     let (leaf, key) = make_client_leaf(intermediate, serial);
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
     let provider = Arc::new(ring::default_provider());
     ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .expect("client versions")
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAnyServer))
+        .with_root_certificates(trusted_roots(server_ca))
         .with_client_auth_cert(
             vec![leaf.der().clone(), intermediate.cert.der().clone()],
             key_der,
@@ -505,19 +513,20 @@ fn client_config_with_chain(intermediate: &Ca, serial: u64) -> ClientConfig {
 #[test]
 fn revoking_an_intermediate_refuses_the_next_request_on_an_open_connection() {
     let root = make_ca("client-root-ca-revocation");
+    let server_ca = make_ca("mcp-re-revocation-server-ca");
     let intermediate = make_intermediate(&root, "client-intermediate-ca", INTERMEDIATE_SERIAL);
-    let revocation = Arc::new(SharedClientRevocation::new(index_for_chain(
-        &root,
-        &intermediate,
-        &[],
-        &[],
-    )));
-    let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&root)));
+    let (revocation, publisher) =
+        SharedClientRevocation::establish(index_for_chain(&root, &intermediate, &[], &[]));
+    let revocation = Arc::new(revocation);
+    let snapshot = Arc::new(ServerConfigSnapshot::new(
+        server_config_trusting(&root, &server_ca),
+        mcp_re_proxy::config_state::PrivateKeyExposure::ProcessReadable,
+    ));
     let server = spawn(Arc::clone(&snapshot), Arc::clone(&revocation));
 
     let mut warm = WarmConnection::open(
         server.addr,
-        &client_config_with_chain(&intermediate, INNOCENT_SERIAL),
+        &client_config_with_chain(&intermediate, &server_ca, INNOCENT_SERIAL),
     )
     .expect("handshake succeeds while the whole chain is in good standing");
     assert_eq!(
@@ -528,7 +537,7 @@ fn revoking_an_intermediate_refuses_the_next_request_on_an_open_connection() {
 
     // The intermediate is compromised and published on the ROOT's CRL. The leaf is
     // still not named anywhere.
-    revocation.store(index_for_chain(
+    publisher.publish(index_for_chain(
         &root,
         &intermediate,
         &[INTERMEDIATE_SERIAL],
@@ -548,26 +557,27 @@ fn revoking_an_intermediate_refuses_the_next_request_on_an_open_connection() {
 #[test]
 fn an_unrevoked_intermediate_keeps_its_peers_served() {
     let root = make_ca("client-root-ca-revocation");
+    let server_ca = make_ca("mcp-re-revocation-server-ca");
     let intermediate = make_intermediate(&root, "client-intermediate-ca", INTERMEDIATE_SERIAL);
     let other = make_intermediate(&root, "another-intermediate-ca", INTERMEDIATE_SERIAL + 1);
-    let revocation = Arc::new(SharedClientRevocation::new(index_for_chain(
-        &root,
-        &intermediate,
-        &[],
-        &[],
-    )));
-    let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&root)));
+    let (revocation, publisher) =
+        SharedClientRevocation::establish(index_for_chain(&root, &intermediate, &[], &[]));
+    let revocation = Arc::new(revocation);
+    let snapshot = Arc::new(ServerConfigSnapshot::new(
+        server_config_trusting(&root, &server_ca),
+        mcp_re_proxy::config_state::PrivateKeyExposure::ProcessReadable,
+    ));
     let server = spawn(Arc::clone(&snapshot), Arc::clone(&revocation));
 
     let mut warm = WarmConnection::open(
         server.addr,
-        &client_config_with_chain(&intermediate, INNOCENT_SERIAL),
+        &client_config_with_chain(&intermediate, &server_ca, INNOCENT_SERIAL),
     )
     .expect("handshake succeeds");
     assert_eq!(warm.request().expect("served"), 200);
 
     // A DIFFERENT intermediate is revoked.
-    revocation.store(index_for_chain(
+    publisher.publish(index_for_chain(
         &root,
         &intermediate,
         &[INTERMEDIATE_SERIAL + 1],

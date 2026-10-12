@@ -13,13 +13,15 @@ filegroup(
 exports_files(["src/lib.rs"])
 
 # Test-only helper: resolve child-process binaries and data fixtures under Bazel runfiles.
-# Each test target sets the env keys it reads to `$(rlocationpath ...)`. Pure std-only.
+# Each test target sets the env keys it reads to `$(rlocationpath ...)`. Plus `unique_test_nonce` (no entropy).
 nt_rust_library(
     name = "mcp_re_test_paths",
     srcs = glob(["src/**/*.rs"]),
     crate_name = "mcp_re_test_paths",
     edition = "2021",
-    deps = [],
+    deps = [
+        "@crates_mcp_re//:base64",
+    ],
 )
 
 nt_rust_test(

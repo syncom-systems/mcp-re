@@ -61,6 +61,7 @@ nt_rust_test(
         # `VerifiedDelegatedResponse` is only obtainable from a verification that
         # succeeded, so the server half is a TEST dependency and not a library one.
         "//mcp-re-http-profile:mcp_re_http_profile",
+        "//mcp-re-test-paths:mcp_re_test_paths",
         "@crates_mcp_re//:serde_json",
     ],
 )

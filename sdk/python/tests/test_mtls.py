@@ -83,6 +83,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 def _serve(material: Path, cert_stem: str, key_stem: str = None, **handler_attrs):
     """A TLS server on loopback presenting `cert_stem`, requiring a client certificate."""
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    # The floor the client under test states; a fixture server must not be the weaker end.
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(
         str(material / f"{cert_stem}.crt"), str(material / f"{key_stem or cert_stem}.key")
     )
@@ -492,6 +494,8 @@ def test_the_full_mtls_path_bounds_a_trickling_peer(material):
     what is measured is the configuration a caller actually writes.
     """
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    # The floor the client under test states; a fixture server must not be the weaker end.
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(str(material / "server.crt"), str(material / "server.key"))
     context.verify_mode = ssl.CERT_REQUIRED
     context.load_verify_locations(str(material / "ca.crt"))

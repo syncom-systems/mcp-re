@@ -7,4 +7,6 @@ authors.workspace = true
 description = "Test-only helper: resolve child-process binaries and data fixtures under Bazel runfiles."
 
 [dependencies]
+# `unique_test_nonce`: Base64URL encoding only.
+base64 = { workspace = true }
 

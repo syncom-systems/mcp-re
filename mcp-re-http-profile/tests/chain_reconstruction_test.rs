@@ -10,7 +10,7 @@ use mcp_re_core::SigningKey;
 use mcp_re_http_profile::block::AudienceTuple;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::reconstruct_chain;
-use mcp_re_http_profile::sign_delegated_response_full;
+use mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
@@ -28,13 +28,15 @@ use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::IncompleteReason;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::ResponseRoleEvidence;
 use mcp_re_http_profile::RetainedHop;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
+use mcp_re_test_paths::unique_test_nonce;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 /// The ROOT issuer: the credential signer, off the request path. Delegated-required
@@ -203,7 +205,7 @@ fn hop(
     nonce: &str,
     continuation: Option<HttpContinuation>,
     body: &str,
-) -> (RetainedHop, RequestEvidence, RequestEvidence) {
+) -> (RetainedHop, RequestRoleEvidence, ResponseRoleEvidence) {
     hop_at(CREATED, EXPIRES, nonce, continuation, body)
 }
 
@@ -215,9 +217,10 @@ fn hop_with_bad_window(created: i64, expires: i64, nonce: &str) -> RetainedHop {
         method: "POST".into(),
         target_uri: TARGET.into(),
         headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
-    let req_evidence = sign_request_full(
+    sign_request_full(
         &mut request,
         &block(None),
         &client_key(),
@@ -233,10 +236,9 @@ fn hop_with_bad_window(created: i64, expires: i64, nonce: &str) -> RetainedHop {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: DONE.as_bytes().to_vec(),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut response,
         &request,
-        &req_evidence,
         &server_signer(),
         &credential(created, expires),
         &delegated_key(),
@@ -257,12 +259,13 @@ fn hop_at(
     nonce: &str,
     continuation: Option<HttpContinuation>,
     body: &str,
-) -> (RetainedHop, RequestEvidence, RequestEvidence) {
+) -> (RetainedHop, RequestRoleEvidence, ResponseRoleEvidence) {
     let mut request = HttpRequest {
         method: "POST".into(),
         target_uri: TARGET.into(),
         headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
     let req_evidence = sign_request_full(
         &mut request,
@@ -280,10 +283,9 @@ fn hop_at(
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: body.as_bytes().to_vec(),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut response,
         &request,
-        &req_evidence,
         &server_signer(),
         &credential(created, expires),
         &delegated_key(),
@@ -307,7 +309,7 @@ fn hop_at(
         )
         .expect("response verifies");
     let rsp_evidence = verified_rsp
-        .signature_facts
+        .signature_facts()
         .response_signature_base_digest
         .clone();
 
@@ -324,33 +326,26 @@ const DONE: &str = r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#;
 /// Build a 3-hop chain R0→S0→R1→S1→R2→S2, each hop continuing the last, ending
 /// terminally. This is the multi-hop positive (#416 §13.4 "multi-hop" claim).
 fn three_hop_chain() -> Vec<RetainedHop> {
-    let (h0, r0, s0) = hop("n-0", None, AWAITING);
+    let (h0, r0, s0) = hop(&unique_test_nonce(), None, AWAITING);
     let (h1, r1, s1) = hop(
-        "n-1",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
-            to_digest(&r0),
-            to_digest(&s0),
+            r0.to_digest(),
+            s0.to_digest(),
             b"state-0",
         )),
         AWAITING,
     );
     let (h2, _r2, _s2) = hop(
-        "n-2",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
-            to_digest(&r1),
-            to_digest(&s1),
+            r1.to_digest(),
+            s1.to_digest(),
             b"state-1",
         )),
         DONE,
     );
     vec![h0, h1, h2]
-}
-
-fn to_digest(e: &RequestEvidence) -> mcp_re_http_profile::RequestEvidenceDigest {
-    mcp_re_http_profile::RequestEvidenceDigest {
-        digest_alg: e.digest_alg.clone(),
-        digest_value: e.digest_value.clone(),
-    }
 }
 
 fn reconstruct(hops: &[RetainedHop]) -> ChainLabel {
@@ -381,7 +376,7 @@ fn multi_hop_chain_reconstructs_complete() {
 
 #[test]
 fn single_terminal_hop_reconstructs_complete() {
-    let (h0, _, _) = hop("n-solo", None, DONE);
+    let (h0, _, _) = hop(&unique_test_nonce(), None, DONE);
     assert_eq!(reconstruct(&[h0]), ChainLabel::Complete);
 }
 
@@ -406,8 +401,8 @@ fn complete_chain_reports_every_hops_evidence() {
     // hop's two handles collide even though both digest a signature base.
     for h in out.hop_evidence() {
         assert_ne!(
-            h.request_evidence.digest_value,
-            h.response_evidence.digest_value
+            h.request_evidence.digest_value(),
+            h.response_evidence.digest_value()
         );
     }
 }
@@ -556,8 +551,8 @@ fn an_opening_hop_without_a_continuation_still_opens_a_complete_record() {
 /// A hop after the first with no continuation at all: nothing links it backwards.
 #[test]
 fn later_hop_without_a_continuation_is_incomplete() {
-    let (h0, _, _) = hop("n-a", None, AWAITING);
-    let (h1, _, _) = hop("n-b", None, DONE);
+    let (h0, _, _) = hop(&unique_test_nonce(), None, AWAITING);
+    let (h1, _, _) = hop(&unique_test_nonce(), None, DONE);
     assert_eq!(
         reconstruct(&[h0, h1]),
         ChainLabel::Incomplete {
@@ -571,13 +566,13 @@ fn later_hop_without_a_continuation_is_incomplete() {
 /// well-formed and the messages verify; they simply do not describe this record.
 #[test]
 fn continuation_from_another_chain_is_incomplete() {
-    let (h0, _r0, _s0) = hop("n-x", None, AWAITING);
-    let (_other, other_r, other_s) = hop("n-other", None, AWAITING);
+    let (h0, _r0, _s0) = hop(&unique_test_nonce(), None, AWAITING);
+    let (_other, other_r, other_s) = hop(&unique_test_nonce(), None, AWAITING);
     let (h1, _, _) = hop(
-        "n-y",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
-            to_digest(&other_r),
-            to_digest(&other_s),
+            other_r.to_digest(),
+            other_s.to_digest(),
             b"state-x",
         )),
         DONE,
@@ -594,12 +589,12 @@ fn continuation_from_another_chain_is_incomplete() {
 /// A chain that claims to continue past a turn that already answered terminally.
 #[test]
 fn terminal_before_the_end_is_incomplete() {
-    let (h0, r0, s0) = hop("n-t0", None, DONE);
+    let (h0, r0, s0) = hop(&unique_test_nonce(), None, DONE);
     let (h1, _, _) = hop(
-        "n-t1",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
-            to_digest(&r0),
-            to_digest(&s0),
+            r0.to_digest(),
+            s0.to_digest(),
             b"state",
         )),
         DONE,
@@ -618,12 +613,12 @@ fn terminal_before_the_end_is_incomplete() {
 /// different value in that role, so re-linking rejects it.
 #[test]
 fn handles_swapped_between_roles_do_not_relink() {
-    let (h0, r0, s0) = hop("n-s0", None, AWAITING);
+    let (h0, r0, s0) = hop(&unique_test_nonce(), None, AWAITING);
     let (h1, _, _) = hop(
-        "n-s1",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
-            to_digest(&s0), // response handle presented as the previous-request one
-            to_digest(&r0), // and vice versa
+            s0.to_digest(), // response handle presented as the previous-request one
+            r0.to_digest(), // and vice versa
             b"state",
         )),
         DONE,
@@ -698,12 +693,12 @@ fn terminality_is_derived_from_protected_content() {
 
     // Flip ONLY the last response's protected classification (re-signed), and the
     // same three hops become a truncated chain — the label tracks the bytes.
-    let (h0, r0, s0) = hop("n-d0", None, AWAITING);
+    let (h0, r0, s0) = hop(&unique_test_nonce(), None, AWAITING);
     let (h1, _, _) = hop(
-        "n-d1",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
-            to_digest(&r0),
-            to_digest(&s0),
+            r0.to_digest(),
+            s0.to_digest(),
             b"state-d",
         )),
         AWAITING, // the final turn still awaits input
@@ -731,12 +726,12 @@ fn an_unrecognized_result_type_makes_the_record_incomplete_at_that_hop() {
     const UNRECOGNIZED: &str =
         r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"com.example/deferred"}}"#;
 
-    let (h0, r0, s0) = hop("n-u0", None, AWAITING);
+    let (h0, r0, s0) = hop(&unique_test_nonce(), None, AWAITING);
     let (h1, _, _) = hop(
-        "n-u1",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
-            to_digest(&r0),
-            to_digest(&s0),
+            r0.to_digest(),
+            s0.to_digest(),
             b"state-u",
         )),
         UNRECOGNIZED,
@@ -759,12 +754,12 @@ fn an_unrecognized_result_type_makes_the_record_incomplete_at_that_hop() {
 fn an_unrecognized_result_type_mid_chain_is_named_for_what_it_is() {
     const UNRECOGNIZED: &str = r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"partial"}}"#;
 
-    let (h0, r0, s0) = hop("n-m0", None, UNRECOGNIZED);
+    let (h0, r0, s0) = hop(&unique_test_nonce(), None, UNRECOGNIZED);
     let (h1, _, _) = hop(
-        "n-m1",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
-            to_digest(&r0),
-            to_digest(&s0),
+            r0.to_digest(),
+            s0.to_digest(),
             b"state-m",
         )),
         DONE,
@@ -796,14 +791,14 @@ fn aged_chain() -> Vec<RetainedHop> {
     // Two hours between turns, so no two hops share a window and none of them
     // contains the audit instant.
     const TURN: i64 = 7_200;
-    let (h0, r0, s0) = hop_at(CREATED, CREATED + 300, "a-0", None, AWAITING);
+    let (h0, r0, s0) = hop_at(CREATED, CREATED + 300, &unique_test_nonce(), None, AWAITING);
     let (h1, r1, s1) = hop_at(
         CREATED + TURN,
         CREATED + TURN + 300,
-        "a-1",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
-            to_digest(&r0),
-            to_digest(&s0),
+            r0.to_digest(),
+            s0.to_digest(),
             b"state-0",
         )),
         AWAITING,
@@ -811,10 +806,10 @@ fn aged_chain() -> Vec<RetainedHop> {
     let (h2, _r2, _s2) = hop_at(
         CREATED + 2 * TURN,
         CREATED + 2 * TURN + 300,
-        "a-2",
+        &unique_test_nonce(),
         Some(HttpContinuation::from_handles(
-            to_digest(&r1),
-            to_digest(&s1),
+            r1.to_digest(),
+            s1.to_digest(),
             b"state-1",
         )),
         DONE,
@@ -892,7 +887,7 @@ fn a_hop_created_after_the_audit_instant_is_refused() {
 #[test]
 fn the_audit_ceiling_tolerates_the_configured_skew() {
     let policy = VerifierPolicy::default();
-    let (h0, _, _) = hop_at(CREATED, CREATED + 300, "skew", None, DONE);
+    let (h0, _, _) = hop_at(CREATED, CREATED + 300, &unique_test_nonce(), None, DONE);
 
     let within = CREATED - policy.max_clock_skew();
     assert_eq!(
@@ -938,7 +933,7 @@ fn an_over_wide_window_is_still_refused_in_an_aged_record() {
     let h0 = hop_with_bad_window(
         CREATED,
         CREATED + policy.max_signature_validity() + 1,
-        "wide",
+        &unique_test_nonce(),
     );
     match reconstruct_chain(
         &[h0],
@@ -966,7 +961,7 @@ fn an_over_wide_window_is_still_refused_in_an_aged_record() {
 /// self-satisfying.
 #[test]
 fn a_degenerate_window_is_still_refused_in_an_aged_record() {
-    let h0 = hop_with_bad_window(CREATED, CREATED, "degenerate");
+    let h0 = hop_with_bad_window(CREATED, CREATED, &unique_test_nonce());
     match reconstruct_chain(
         &[h0],
         &Verifier::new(&VerifierPolicy::default(), &resolver()),
@@ -997,9 +992,10 @@ fn hop_with_block(nonce: &str, blk: &HttpRequestEvidenceBlock, body: &str) -> Re
         method: "POST".into(),
         target_uri: TARGET.into(),
         headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
-    let req_evidence = sign_request_full(
+    sign_request_full(
         &mut request,
         blk,
         &client_key(),
@@ -1010,26 +1006,21 @@ fn hop_with_block(nonce: &str, blk: &HttpRequestEvidenceBlock, body: &str) -> Re
     )
     .expect("request signs");
     RetainedHop {
-        response: signed_answer(&request, &req_evidence, body),
+        response: signed_answer(&request, body),
         request,
     }
 }
 
 /// The delegated response answering `request`, signed over the same window.
-fn signed_answer(
-    request: &HttpRequest,
-    req_evidence: &RequestEvidence,
-    body: &str,
-) -> HttpResponse {
+fn signed_answer(request: &HttpRequest, body: &str) -> HttpResponse {
     let mut response = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: body.as_bytes().to_vec(),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut response,
         request,
-        req_evidence,
         &server_signer(),
         &credential(CREATED, EXPIRES),
         &delegated_key(),
@@ -1038,6 +1029,61 @@ fn signed_answer(
         EXPIRES,
     )
     .expect("response signs");
+    response
+}
+
+/// A delegated response to `request` assembled outside the full-profile signer, which
+/// refuses to answer a request carrying no valid evidence block. Same block and signature
+/// shape as [`signed_answer`]; a reconstruction meets this from a signer that is not this
+/// crate's.
+fn answer_outside_the_full_signer(
+    request: &HttpRequest,
+    request_evidence: &RequestRoleEvidence,
+    body: &str,
+) -> HttpResponse {
+    let mut response = HttpResponse {
+        status: 200,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: body.as_bytes().to_vec(),
+    };
+    assert!(
+        sign_delegated_response_full_with_owned_key(
+            &mut response.clone(),
+            request,
+            &server_signer(),
+            &credential(CREATED, EXPIRES),
+            &delegated_key(),
+            DELEGATED_KID,
+            CREATED,
+            EXPIRES,
+        )
+        .is_err(),
+        "the full-profile signer refuses to answer this request"
+    );
+    let block = mcp_re_http_profile::HttpResponseEvidenceBlock {
+        profile: PROFILE_TAG.into(),
+        server_signer: server_signer(),
+        server_delegation: Some(credential(CREATED, EXPIRES)),
+        request_evidence: request_evidence.to_digest(),
+    };
+    response.body = mcp_re_http_profile::body::insert_meta_block(
+        &response.body,
+        mcp_re_http_profile::ids::RESPONSE_EVIDENCE_BLOCK_KEY,
+        &block,
+    )
+    .expect("insert");
+    mcp_re_http_profile::sign::sign_response_with_signer(
+        &mut response,
+        request,
+        |base| {
+            mcp_re_core::b64url_decode(&delegated_key().sign(base))
+                .map_err(|_| mcp_re_http_profile::HttpProfileError::InvalidSignature)
+        },
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("the ;req signer binds to a request without a block");
     response
 }
 
@@ -1058,7 +1104,7 @@ fn a_hop_whose_block_names_another_target_is_not_a_verified_hop() {
         target_uri: "https://other.example.com/mcp".into(),
         route: Some("tools/call".into()),
     };
-    let hop = hop_with_block("n-elsewhere", &elsewhere, DONE);
+    let hop = hop_with_block(&unique_test_nonce(), &elsewhere, DONE);
 
     // Precondition: the hop is not broken. It verifies on the minimal path — the
     // one reconstruction used to run — so nothing about the signature catches this.
@@ -1086,18 +1132,19 @@ fn a_hop_with_no_evidence_block_is_not_a_verified_hop() {
         method: "POST".into(),
         target_uri: TARGET.into(),
         headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
-    let req_evidence = mcp_re_http_profile::sign_request(
+    let request_evidence = mcp_re_http_profile::sign_request(
         &mut request,
         &client_key(),
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-blockless",
+        &unique_test_nonce(),
     )
     .expect("request signs");
-    let response = signed_answer(&request, &req_evidence, DONE);
+    let response = answer_outside_the_full_signer(&request, &request_evidence, DONE);
 
     mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request_floor(&request, NOW)
@@ -1118,7 +1165,7 @@ fn a_hop_with_no_evidence_block_is_not_a_verified_hop() {
 #[test]
 fn an_honest_block_still_reconstructs_complete() {
     assert_eq!(
-        reconstruct(&[hop_with_block("n-honest", &block(None), DONE)]),
+        reconstruct(&[hop_with_block(&unique_test_nonce(), &block(None), DONE)]),
         ChainLabel::Complete
     );
 }
@@ -1140,7 +1187,7 @@ fn a_hop_whose_audience_is_not_the_verifiers_own_breaks_the_chain() {
     };
     // The URI still matches, so the old target-URI-only check would have passed it.
     assert_eq!(elsewhere.audience.target_uri, audience().target_uri);
-    match reconstruct(&[hop_with_block("n-aud", &elsewhere, DONE)]) {
+    match reconstruct(&[hop_with_block(&unique_test_nonce(), &elsewhere, DONE)]) {
         ChainLabel::Incomplete {
             hop: 0,
             reason:
@@ -1166,7 +1213,7 @@ fn a_binding_with_no_obtainable_credential_breaks_the_chain() {
         expected_audience: &aud,
         artifact_material: &NOTHING,
     };
-    let hops = [hop_with_block("n-artifact", &block(None), DONE)];
+    let hops = [hop_with_block(&unique_test_nonce(), &block(None), DONE)];
     let out = reconstruct_chain(
         &hops,
         &Verifier::new(&VerifierPolicy::default(), &resolver()),
@@ -1209,8 +1256,8 @@ fn two_records_that_verified_nothing_are_still_distinguishable() {
         target_uri: TARGET.into(),
         route: Some("tools/call".into()),
     };
-    let a = [hop_with_block("n-id-a", &first, DONE)];
-    let b = [hop_with_block("n-id-b", &second, DONE)];
+    let a = [hop_with_block(&unique_test_nonce(), &first, DONE)];
+    let b = [hop_with_block(&unique_test_nonce(), &second, DONE)];
     let run = |hops: &[RetainedHop]| {
         reconstruct_chain(
             hops,
@@ -1253,7 +1300,7 @@ type HopAlteration = (&'static str, fn(&mut RetainedHop));
 /// header.
 #[test]
 fn every_retained_field_of_a_hop_is_part_of_its_identity() {
-    let base = hop_with_block("n-identity", &block(None), r#"{"ok":true}"#);
+    let base = hop_with_block(&unique_test_nonce(), &block(None), r#"{"ok":true}"#);
     let identity = |h: &RetainedHop| {
         reconstruct_chain(
             std::slice::from_ref(h),
@@ -1311,7 +1358,7 @@ fn every_retained_field_of_a_hop_is_part_of_its_identity() {
 /// otherwise it could not be compared by anyone but the process that computed it.
 #[test]
 fn the_submitted_identity_is_a_function_of_the_bytes_alone() {
-    let hops = [hop_with_block("n-stable", &block(None), DONE)];
+    let hops = [hop_with_block(&unique_test_nonce(), &block(None), DONE)];
     let run = || {
         reconstruct_chain(
             &hops,

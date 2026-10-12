@@ -14,6 +14,7 @@ use mcp_re_core::SigningKey;
 use sha2::Digest;
 use sha2::Sha256;
 
+use mcp_re_http_profile::authenticate_admission;
 use mcp_re_http_profile::authoritative_admission::AuthoritativeAdmission;
 use mcp_re_http_profile::check_admission;
 use mcp_re_http_profile::issue_admission_assertion;
@@ -34,6 +35,7 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
+use mcp_re_test_paths::unique_test_nonce;
 
 const NOW: i64 = 1_700_000_100;
 const CREATED: i64 = 1_700_000_000;
@@ -149,7 +151,7 @@ fn signed_request_with_admission(claims: Option<&AdmissionClaims>) -> HttpReques
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-adm",
+        &unique_test_nonce(),
     )
     .expect("signs");
     req
@@ -174,18 +176,17 @@ fn verify_and_check(
         .admission
         .clone()
         .expect("the request carries an admission binding");
-    check_admission(
+    let authenticated = authenticate_admission(
         &binding,
         assertion,
         &verified.resolved_actor().actor_id(),
-        authoritative,
         PROFILE_TAG,
         &[AUD],
         policy,
         NOW,
         issuer_resolver(),
-    )
-    .map(|_| ())
+    )?;
+    check_admission(authenticated, authoritative, policy, NOW).map(|_| ())
 }
 
 #[test]

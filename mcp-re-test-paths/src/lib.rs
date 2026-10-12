@@ -8,13 +8,22 @@
 //! a guard that resolved its input to nothing would walk nothing, find nothing and report a
 //! clean tree.
 //!
+//! [`unique_test_nonce`] serves the tests whose property does not depend on a nonce's value: a test
+//! that asserts on exact nonce bytes (a golden vector, a signature base, a malformed-nonce
+//! control) keeps a literal; every other test draws one here.
+//!
 //! [`rust_source`] is the other half of the same job: the guards that resolve a source
 //! path here then scan its text need one shared, tested definition of which lines are
 //! production.
 
 pub mod rust_source;
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
+
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::OnceLock;
 
 /// The file or directory the test's Bazel target names under `env_key`.
 ///
@@ -52,9 +61,58 @@ pub fn resolve_runfile(env_key: &str) -> PathBuf {
         })
 }
 
+/// One request nonce for a test whose property needs a valid, run-distinct nonce and does not
+/// depend on its value.
+///
+/// Process id, a per-process address (distinct across runs under address-space randomisation)
+/// and a process-local counter, 16 bytes in all, Base64URL without padding: 22 characters, the
+/// nonce floor. Successive calls in a process differ, calls from parallel test threads differ,
+/// and separate test processes differ in ordinary execution. It carries NO entropy and reads no
+/// clock, and says nothing about nonce unpredictability; a test of the production nonce source
+/// does not use it.
+pub fn unique_test_nonce() -> String {
+    static PROCESS_TAG: OnceLock<u64> = OnceLock::new();
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let tag = *PROCESS_TAG.get_or_init(|| {
+        let probe = Box::new(0u8);
+        &*probe as *const u8 as usize as u64
+    });
+    let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut bytes = [0u8; 16];
+    bytes[..4].copy_from_slice(&std::process::id().to_be_bytes());
+    bytes[4..12].copy_from_slice(&tag.to_be_bytes());
+    bytes[12..].copy_from_slice(&sequence.to_be_bytes());
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::resolve_runfile;
+    use super::{resolve_runfile, unique_test_nonce};
+
+    #[test]
+    fn a_test_nonce_is_22_base64url_characters() {
+        let nonce = unique_test_nonce();
+        assert_eq!(nonce.len(), 22);
+        assert!(nonce
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'));
+    }
+
+    #[test]
+    fn test_nonces_are_distinct_across_threads() {
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                std::thread::spawn(|| (0..200).map(|_| unique_test_nonce()).collect::<Vec<_>>())
+            })
+            .collect();
+        let mut all = std::collections::HashSet::new();
+        for h in handles {
+            for nonce in h.join().expect("worker thread") {
+                assert!(all.insert(nonce), "a test nonce repeated");
+            }
+        }
+        assert_eq!(all.len(), 1600);
+    }
 
     /// The resolver's positive half: the target sets this key to its own crate root, and
     /// the key resolves to that file.

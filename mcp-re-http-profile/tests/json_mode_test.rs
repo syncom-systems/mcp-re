@@ -22,6 +22,7 @@ use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
+use mcp_re_test_paths::unique_test_nonce;
 
 const CREATED: i64 = 1_700_000_000;
 const EXPIRES: i64 = 1_700_000_300;
@@ -61,7 +62,8 @@ fn request_with(content_type: &str) -> HttpRequest {
         method: "POST".into(),
         target_uri: "https://mcp.example.com/mcp".into(),
         headers: vec![("Content-Type".into(), content_type.into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
     sign_request(
         &mut r,
@@ -69,7 +71,7 @@ fn request_with(content_type: &str) -> HttpRequest {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-json",
+        &unique_test_nonce(),
     )
     .expect("signing succeeds");
     r

@@ -118,20 +118,15 @@ use rcgen::KeyUsagePurpose;
 use rcgen::SanType;
 use rcgen::SerialNumber;
 
-use rustls::client::danger::HandshakeSignatureValid;
-use rustls::client::danger::ServerCertVerified;
-use rustls::client::danger::ServerCertVerifier;
 use rustls::crypto::ring;
 use rustls::ClientConfig;
 use rustls::ClientConnection;
-use rustls::DigitallySignedStruct;
-use rustls::SignatureScheme;
+use rustls::RootCertStore;
 use rustls::StreamOwned;
 use rustls_pki_types::CertificateDer;
 use rustls_pki_types::PrivateKeyDer;
 use rustls_pki_types::PrivatePkcs8KeyDer;
 use rustls_pki_types::ServerName;
-use rustls_pki_types::UnixTime;
 
 use serde_json::json;
 use serde_json::Map;
@@ -283,6 +278,8 @@ struct Material {
     client_ca_path: PathBuf,
     trust_path: PathBuf,
     client_ca: Ca,
+    /// DER of the CA that issued the server leaf; clients verify the server against it.
+    server_root: CertificateDer<'static>,
 }
 
 fn write_material() -> Material {
@@ -290,6 +287,7 @@ fn write_material() -> Material {
     let (server_leaf, server_leaf_key) =
         make_leaf(&server_ca, vec![dns("localhost")], Some("localhost"), false);
     let client_ca = make_ca();
+    let server_root = server_ca.cert.der().clone();
 
     let seed_path = tmp("seed");
     let server_cert_path = tmp("server_cert.pem");
@@ -325,6 +323,7 @@ fn write_material() -> Material {
         client_ca_path,
         trust_path,
         client_ca,
+        server_root,
     }
 }
 
@@ -661,6 +660,7 @@ fn spawn_proxy(
         .args([
             "--bind",
             "127.0.0.1:0",
+            "--allow-example-fixtures",
             "--audience",
             AUDIENCE,
             "--server-signer",
@@ -687,6 +687,8 @@ fn spawn_proxy(
             // and the trust domain the resolved client/server actor_id is built under.
             "--target-uri",
             TARGET_URI,
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--trust-domain",
             TRUST_DOMAIN,
             "--transport-binding",
@@ -780,64 +782,32 @@ fn parse_serving_addr(stderr: &str) -> Option<SocketAddr> {
 
 // --- TLS client ---------------------------------------------------------------
 
-#[derive(Debug)]
-struct AcceptAnyServer;
-
-impl ServerCertVerifier for AcceptAnyServer {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp: &[u8],
-        _now: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
-    }
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
-    }
-}
-
 /// Build the client mTLS config ONCE (the trusted URI-SAN leaf carrying the RFC 9421
 /// actor_id) and share it via `Arc` across every connection, so the measured latency
 /// is the handshake + request cost, not repeated config/cert construction.
-fn build_client_config(ca: &Ca) -> Arc<ClientConfig> {
+fn build_client_config(ca: &Ca, server_root: &CertificateDer<'static>) -> Arc<ClientConfig> {
     let (leaf, key) = make_client_leaf(ca, vec![uri(CLIENT_SUBJECT)]);
-    client_config_from(&leaf, &key)
+    client_config_from(&leaf, &key, server_root)
 }
 
 /// A client mTLS config presenting `leaf`+`key` — shared by the short-lived
 /// (accepted) leaf and, in the in-process serve test, a long-lived leaf that the
 /// proxy's cert-lifetime ceiling must reject.
-fn client_config_from(leaf: &rcgen::Certificate, key: &KeyPair) -> Arc<ClientConfig> {
+fn client_config_from(
+    leaf: &rcgen::Certificate,
+    key: &KeyPair,
+    server_root: &CertificateDer<'static>,
+) -> Arc<ClientConfig> {
     let chain = vec![leaf.der().clone()];
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
 
+    let mut roots = RootCertStore::empty();
+    roots.add(server_root.clone()).expect("add server CA root");
     let provider = Arc::new(ring::default_provider());
     let config = ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .expect("client versions")
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAnyServer))
+        .with_root_certificates(roots)
         .with_client_auth_cert(chain, key_der)
         .expect("client auth");
     Arc::new(config)
@@ -972,9 +942,9 @@ fn now_unix() -> i64 {
 /// the real clock and carrying a UNIQUE `nonce` so replay never fires across the
 /// load run. RFC 9421 + RFC 9530 via the audited `mcp-re-client-core` — the
 /// signature rides in the returned request's HTTP headers, not a body object.
-/// Test nonces are padded to the 128-bit emission floor the client core enforces.
-fn signed_request(nonce: &str) -> SignedRequest {
-    let nonce = &format!("{nonce}-padded-to-the-128-bit-floor");
+/// Each request draws a fresh 128-bit nonce, the emission floor the client core enforces.
+fn signed_request() -> SignedRequest {
+    let nonce = &mcp_re_test_paths::unique_test_nonce();
     let now = now_unix();
     let audience = AudienceTuple {
         audience_id: AUDIENCE.to_string(),
@@ -1009,8 +979,8 @@ fn signed_request(nonce: &str) -> SignedRequest {
 
 /// The same request, carrying a PDP authorization decision the client binds into the
 /// signature — the SDK path (`with_authorization_decision`), not a hand-built block.
-fn signed_request_with_decision(nonce: &str, decision: &str) -> SignedRequest {
-    let nonce = &format!("{nonce}-padded-to-the-128-bit-floor");
+fn signed_request_with_decision(decision: &str) -> SignedRequest {
+    let nonce = &mcp_re_test_paths::unique_test_nonce();
     let now = now_unix();
     let audience = AudienceTuple {
         audience_id: AUDIENCE.to_string(),
@@ -1032,10 +1002,11 @@ fn signed_request_with_decision(nonce: &str, decision: &str) -> SignedRequest {
     )])
     .with_authorization_decision(decision);
     let mut params = Map::new();
-    params.insert("text".to_string(), Value::String("hello".to_string()));
+    params.insert("name".to_string(), Value::String(DECIDED_TOOL.to_string()));
+    params.insert("arguments".to_string(), json!({ "text": "hello" }));
     build_signed_request(
         &Value::String("req-1".to_string()),
-        "echo",
+        "tools/call",
         params,
         TARGET_URI,
         &inputs,
@@ -1184,7 +1155,7 @@ fn run_load(addr: SocketAddr, config: Arc<ClientConfig>, cfg: &LoadConfig) -> Re
                     if i >= total {
                         break;
                     }
-                    let signed = signed_request(&format!("loadgen-nonce-{i}"));
+                    let signed = signed_request();
                     let t0 = Instant::now();
                     let outcome = match mode {
                         Mode::Cold => cold_round_trip(addr, Arc::clone(&config), &signed),
@@ -1373,13 +1344,13 @@ fn load_harness_smoke() {
     let material = write_material();
     let backend = spawn_http_echo_backend();
     let proxy = spawn_proxy(&material, &format!("http://{backend}/mcp"), 1, &redis.url());
-    let config = build_client_config(&material.client_ca);
+    let config = build_client_config(&material.client_ca, &material.server_root);
 
     // 1. One explicit VERIFIED round-trip proves the success criterion (`no error`)
     //    corresponds to a real RFC 9421-signed response bound to THIS request — i.e.
     //    the harness measures genuine serving, not error responses.
     {
-        let signed = signed_request("smoke-verified");
+        let signed = signed_request();
         let reply = cold_round_trip(proxy.addr, Arc::clone(&config), &signed)
             .expect("valid mTLS round trip");
         assert!(
@@ -1410,11 +1381,11 @@ fn load_harness_smoke() {
         let verified =
             verify_delegated_response(&response, &trust, &expectation, &policy, now_unix())
                 .expect("delegated signed response verifies and binds to the request");
-        assert_eq!(verified.outcome, DelegatedOutcome::Success);
+        assert_eq!(verified.outcome(), &DelegatedOutcome::Success);
         // Profile-issued kids are RFC 7638 JWK thumbprints (MCPRE-432); the property
         // under test is that a DELEGATED key signed, not the root directly.
         assert_ne!(
-            verified.verified.server_signer().keyid,
+            verified.verified().server_signer().keyid,
             SERVER_KEY_ID,
             "signed by the delegated key chaining to the root, not the root directly",
         );
@@ -1468,6 +1439,7 @@ fn app_run_starts_and_drains_across_revocation_tiers() {
         let mut v: Vec<String> = [
             "--bind",
             bind.as_str(),
+            "--allow-example-fixtures",
             "--audience",
             AUDIENCE,
             "--server-signer",
@@ -1491,6 +1463,8 @@ fn app_run_starts_and_drains_across_revocation_tiers() {
             &trust,
             "--target-uri",
             TARGET_URI,
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--trust-domain",
             TRUST_DOMAIN,
             "--max-client-cert-lifetime",
@@ -1519,14 +1493,9 @@ fn app_run_starts_and_drains_across_revocation_tiers() {
     // LIVE and PUSH state their window in terms of consulting the trust store, so
     // both require a reload cadence — without one the store is frozen at startup and
     // neither tier can revoke anything.
-    run_ok(&[
-        "--fleet",
-        "--revocation-tier",
-        "live",
-        "--trust-reload-secs",
-        "60",
-    ]);
-    run_ok(&["--fleet", "--revocation-tier", "bounded-cache:90"]);
+    // Single-node: under --fleet only push with an epoch source starts (X9).
+    run_ok(&["--revocation-tier", "live", "--trust-reload-secs", "60"]);
+    run_ok(&["--revocation-tier", "bounded-cache:90"]);
     run_ok(&["--revocation-tier", "push:60", "--trust-reload-secs", "60"]); // push, single-node, no trust-epoch
 }
 
@@ -1592,6 +1561,7 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     let argv: Vec<String> = [
         "--bind",
         bind.as_str(),
+        "--allow-example-fixtures",
         "--audience",
         AUDIENCE,
         "--server-signer",
@@ -1615,6 +1585,8 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
         &trust,
         "--target-uri",
         TARGET_URI,
+        "--mcp-protocol-version",
+        "2026-07-28",
         "--trust-domain",
         TRUST_DOMAIN,
         "--transport-binding",
@@ -1675,8 +1647,8 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     // 1. Short-lived (compliant) client leaf → ACCEPTED end to end.
     let ok = cold_round_trip(
         addr,
-        build_client_config(&material.client_ca),
-        &signed_request("inproc-ok"),
+        build_client_config(&material.client_ca, &material.server_root),
+        &signed_request(),
     )
     .expect("round trip (short cert)");
     assert!(
@@ -1692,8 +1664,8 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
         make_leaf(&material.client_ca, vec![uri(CLIENT_SUBJECT)], None, true);
     let rej = cold_round_trip(
         addr,
-        client_config_from(&long_leaf, &long_key),
-        &signed_request("inproc-long"),
+        client_config_from(&long_leaf, &long_key, &material.server_root),
+        &signed_request(),
     )
     .expect("round trip (long cert)");
     assert!(
@@ -1712,8 +1684,8 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     std::thread::sleep(Duration::from_millis(1300));
     let after_reload = cold_round_trip(
         addr,
-        build_client_config(&material.client_ca),
-        &signed_request("inproc-after-reload"),
+        build_client_config(&material.client_ca, &material.server_root),
+        &signed_request(),
     )
     .expect("round trip (after CRL reload)");
     assert!(
@@ -1727,11 +1699,11 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     // the second request reuses it and the helper's reconnect accounting stays at zero.
     let mut kept = None;
     let reconnects = AtomicUsize::new(0);
-    for i in 0..2 {
+    for _ in 0..2 {
         let r = keepalive_round_trip(
             addr,
-            build_client_config(&material.client_ca),
-            &signed_request(&format!("inproc-ka-{i}")),
+            build_client_config(&material.client_ca, &material.server_root),
+            &signed_request(),
             &mut kept,
             &reconnects,
         )
@@ -1787,7 +1759,7 @@ fn tls_load_harness_bench() {
         cfg.cores,
         &redis_url,
     );
-    let config = build_client_config(&material.client_ca);
+    let config = build_client_config(&material.client_ca, &material.server_root);
 
     let report = run_load(proxy.addr, config, &cfg);
     print_report(&cfg, &report);
@@ -1858,6 +1830,9 @@ fn acceptance_trust_file(material: &Material, enrol_authority: bool) -> std::pat
     path
 }
 
+/// The tool every decorated request calls, and every decision is about.
+const DECIDED_TOOL: &str = "echo";
+
 /// A decision about this deployment's client, issued by the enrolled authority.
 ///
 /// Every knob a matrix row turns is a parameter: the outcome, the decided operation, the
@@ -1885,11 +1860,11 @@ fn acceptance_decision(
             trust_domain: TRUST_DOMAIN.into(),
             subject: subject.into(),
         },
-        // The harness client signs `{"method":"echo","params":{"text":...}}`, so the
-        // action coordinate the PEP reads from the SIGNED BODY is the operation `echo`
-        // with no target. A decision must be about exactly that.
+        // The decorated request signs `tools/call` naming the tool `DECIDED_TOOL`, so the
+        // action coordinate the PEP reads from the SIGNED BODY is that operation and that
+        // target. A decision must be about exactly that.
         mcp_re_decided_operation: operation.into(),
-        mcp_re_decided_target: None,
+        mcp_re_decided_target: Some(DECIDED_TOOL.into()),
         mcp_re_decision: outcome,
         mcp_re_policy_version: "acceptance-v1".into(),
     };
@@ -1939,6 +1914,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
     let argv: Vec<String> = [
         "--bind",
         bind.as_str(),
+        "--allow-example-fixtures",
         "--audience",
         AUDIENCE,
         "--server-signer",
@@ -1961,6 +1937,8 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
         &trust_arg,
         "--target-uri",
         TARGET_URI,
+        "--mcp-protocol-version",
+        "2026-07-28",
         "--trust-domain",
         TRUST_DOMAIN,
         "--max-client-cert-lifetime",
@@ -2008,23 +1986,24 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
 
     let now = now_unix();
     let serve = |nonce: &str, request: &SignedRequest| {
-        cold_round_trip(addr, build_client_config(&material.client_ca), request)
-            .unwrap_or_else(|e| panic!("round trip {nonce}: {e}"))
+        cold_round_trip(
+            addr,
+            build_client_config(&material.client_ca, &material.server_root),
+            request,
+        )
+        .unwrap_or_else(|e| panic!("round trip {nonce}: {e}"))
     };
 
     // Row 1 — a Permit from the enrolled authority, about this actor and this action.
     let permit = acceptance_decision(
         PdpDecisionOutcome::Permit,
-        "echo",
+        "tools/call",
         SUBJECT_A,
         &acceptance_pdp_key(),
         ACCEPTANCE_PDP_KID,
         now,
     );
-    let ok = serve(
-        "authz-permit",
-        &signed_request_with_decision("authz-permit", &permit),
-    );
+    let ok = serve("authz-permit", &signed_request_with_decision(&permit));
     assert!(
         is_success(&ok.body),
         "a Permit from the enrolled authority must reach the backend: {}",
@@ -2038,7 +2017,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
             "authz-deny",
             Some(acceptance_decision(
                 PdpDecisionOutcome::Deny,
-                "echo",
+                "tools/call",
                 SUBJECT_A,
                 &acceptance_pdp_key(),
                 ACCEPTANCE_PDP_KID,
@@ -2052,7 +2031,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
             "authz-other-action",
             Some(acceptance_decision(
                 PdpDecisionOutcome::Permit,
-                "tools/call",
+                "prompts/get",
                 SUBJECT_A,
                 &acceptance_pdp_key(),
                 ACCEPTANCE_PDP_KID,
@@ -2063,7 +2042,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
             "authz-other-actor",
             Some(acceptance_decision(
                 PdpDecisionOutcome::Permit,
-                "echo",
+                "tools/call",
                 "did:example:someone-else",
                 &acceptance_pdp_key(),
                 ACCEPTANCE_PDP_KID,
@@ -2075,7 +2054,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
             "authz-untrusted-issuer",
             Some(acceptance_decision(
                 PdpDecisionOutcome::Permit,
-                "echo",
+                "tools/call",
                 SUBJECT_A,
                 &SigningKey::from_seed_bytes(&[92u8; 32]),
                 "pdp-not-enrolled",
@@ -2087,7 +2066,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
             "authz-stale",
             Some(acceptance_decision(
                 PdpDecisionOutcome::Permit,
-                "echo",
+                "tools/call",
                 SUBJECT_A,
                 &acceptance_pdp_key(),
                 ACCEPTANCE_PDP_KID,
@@ -2098,8 +2077,8 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
 
     for (nonce, decision) in &refusals {
         let request = match decision {
-            Some(d) => signed_request_with_decision(nonce, d),
-            None => signed_request(nonce),
+            Some(d) => signed_request_with_decision(d),
+            None => signed_request(),
         };
         let response = serve(nonce, &request);
         assert!(

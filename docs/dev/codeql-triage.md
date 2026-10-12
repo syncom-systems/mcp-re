@@ -8,11 +8,22 @@ produced a true positive here; the Actions analysis has produced one, and it was
 This page is the standing verdict so each new batch is triaged in one pass instead of
 re-derived.
 
-## 1. `rust/hard-coded-cryptographic-value` — excluded by query id
+## 1. `rust/hard-coded-cryptographic-value` — ON for production and test code
 
-Fires on the deterministic nonces and seeds that reproducible golden-vector conformance
-*requires*. Excluded at the query level in `codeql-config.yml`, because these live in
-`#[cfg(test)]` modules inside `src/` files that no `paths-ignore` filter can reach.
+The rule is not excluded and no test, example or fixture path is ignored: CodeQL inspects
+executable test code (an insecure TLS test client was found this way). Each alert is
+triaged by test semantics:
+
+- **Class A — the exact nonce is not part of the property.** The test draws
+  `mcp_re_test_paths::unique_test_nonce()` (process id, a per-process address and a counter as 22 Base64URL characters; no entropy, and no claim of unpredictability) and asserts the
+  relation under test, never the value. A replay test reuses one nonce; a two-request test
+  draws two.
+- **Class B — the exact value is the property** (golden or known-answer vector, signature-base
+  serialization, cross-language parity, malformed/short nonce control, deterministic fixture
+  source). The literal stays and the alert is dismissed individually (`used in tests`) with a
+  comment naming the fixture. Being under `tests/` is not a reason.
+
+A new hard-coded cryptographic value raises a new alert and needs one of the two outcomes.
 
 ## 2. `rust/cleartext-logging` — triaged per alert, rule still enabled
 

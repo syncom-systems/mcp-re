@@ -15,8 +15,8 @@
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::Verifier;
 
+use mcp_re_http_profile::bodyless::sign_delegated_accepted_202_with_owned_key;
 use mcp_re_http_profile::issue_delegation_credential;
-use mcp_re_http_profile::sign_delegated_accepted_202;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::verify_delegated_accepted_202;
 use mcp_re_http_profile::ActorIdentity;
@@ -39,6 +39,7 @@ use mcp_re_http_profile::KEY_USE_RESPONSE_SIGNING;
 use mcp_re_http_profile::MAX_DELEGATION_HEADER_LEN;
 use mcp_re_http_profile::MCP_RE_DELEGATION_HEADER;
 use mcp_re_http_profile::PROFILE_TAG;
+use mcp_re_test_paths::unique_test_nonce;
 
 const CREATED: i64 = 1_700_000_000;
 const EXPIRES: i64 = 1_700_000_300;
@@ -103,6 +104,10 @@ fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
 
 /// Mint a root-signed credential attesting `delegated_kid`/`server_signer`.
 fn credential() -> String {
+    credential_for(&server_signer())
+}
+
+fn credential_for(scope: &ActorIdentity) -> String {
     let d = delegated_key();
     let header = DelegationHeader {
         typ: DELEGATION_TYP.into(),
@@ -118,7 +123,7 @@ fn credential() -> String {
         aud: Audience::One(VERIFIER_AUD.into()),
         mcp_re_profile: PROFILE_TAG.into(),
         mcp_re_audience_hash: AUD_SCOPE.into(),
-        mcp_re_server_signer: server_signer().actor_id(),
+        mcp_re_server_signer: scope.actor_id(),
         mcp_re_key_use: KEY_USE_RESPONSE_SIGNING.into(),
         delegated_kid: DELEGATED_KID.into(),
         issuer_kid: ROOT_KID.into(),
@@ -163,9 +168,13 @@ fn no_revocation() -> impl Fn(&str) -> bool {
 }
 
 fn sign_ack(note: &HttpRequest) -> mcp_re_http_profile::HttpResponse {
-    sign_delegated_accepted_202(
+    sign_ack_with(note, &credential())
+}
+
+fn sign_ack_with(note: &HttpRequest, credential: &str) -> mcp_re_http_profile::HttpResponse {
+    sign_delegated_accepted_202_with_owned_key(
         note,
-        &credential(),
+        credential,
         &delegated_key(),
         DELEGATED_KID,
         CREATED,
@@ -178,7 +187,7 @@ fn sign_ack(note: &HttpRequest) -> mcp_re_http_profile::HttpResponse {
 
 #[test]
 fn a_delegated_202_verifies_via_the_credential_chain() {
-    let note = notification("n-ok");
+    let note = notification(&unique_test_nonce());
     let ack = sign_ack(&note);
 
     assert_eq!(ack.status, 202);
@@ -212,16 +221,45 @@ fn a_delegated_202_verifies_via_the_credential_chain() {
     )
     .expect("the client verifies the delegated acknowledgement");
     assert_eq!(actor.actor().identity.keyid, DELEGATED_KID);
+    assert_eq!(
+        actor.actor().identity,
+        server_signer(),
+        "the bodyless actor is the credential's root-entitled scope"
+    );
 }
 
 // --- negatives the ruling requires -------------------------------------------
+
+/// A credential its root issued for another server's principal must not let that
+/// server's delegated key acknowledge as this one.
+#[test]
+fn a_credential_scoped_to_a_principal_its_root_is_not_is_refused() {
+    let note = notification(&unique_test_nonce());
+    let other = ActorIdentity {
+        subject: "did:example:other-server".into(),
+        ..server_signer()
+    };
+    let ack = sign_ack_with(&note, &credential_for(&other));
+    assert_eq!(
+        verify_delegated_accepted_202(
+            &ack,
+            &note,
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
+            &expectations(&[EPOCH]),
+            &no_revocation(),
+            NOW
+        )
+        .unwrap_err(),
+        HttpProfileError::DelegationIssuerUntrusted,
+    );
+}
 
 /// The credential header stripped from the COVERED set (still on the wire). An
 /// uncovered credential is unprotected — exactly what the coverage requirement
 /// exists to forbid. This is the load-bearing negative.
 #[test]
 fn a_credential_header_not_covered_is_rejected() {
-    let note = notification("n-uncov");
+    let note = notification(&unique_test_nonce());
     let mut ack = sign_ack(&note);
     for h in ack.headers.iter_mut() {
         if h.0.eq_ignore_ascii_case("signature-input") {
@@ -245,7 +283,7 @@ fn a_credential_header_not_covered_is_rejected() {
 /// The credential header absent entirely: delegation is required.
 #[test]
 fn a_missing_credential_header_is_rejected() {
-    let note = notification("n-miss");
+    let note = notification(&unique_test_nonce());
     let mut ack = sign_ack(&note);
     ack.headers
         .retain(|(k, _)| !k.eq_ignore_ascii_case(MCP_RE_DELEGATION_HEADER));
@@ -267,7 +305,7 @@ fn a_missing_credential_header_is_rejected() {
 /// error, not a pick-one.
 #[test]
 fn a_duplicated_credential_header_is_rejected() {
-    let note = notification("n-dup");
+    let note = notification(&unique_test_nonce());
     let mut ack = sign_ack(&note);
     let cred = ack
         .headers
@@ -295,7 +333,7 @@ fn a_duplicated_credential_header_is_rejected() {
 /// unbounded header is a memory/DoS surface.
 #[test]
 fn an_oversized_credential_header_is_rejected() {
-    let note = notification("n-big");
+    let note = notification(&unique_test_nonce());
     let mut ack = sign_ack(&note);
     for h in ack.headers.iter_mut() {
         if h.0.eq_ignore_ascii_case(MCP_RE_DELEGATION_HEADER) {
@@ -319,7 +357,7 @@ fn an_oversized_credential_header_is_rejected() {
 /// The revocation seam is live: a revoked delegated key is refused.
 #[test]
 fn a_revoked_delegated_key_is_rejected() {
-    let note = notification("n-rev");
+    let note = notification(&unique_test_nonce());
     let ack = sign_ack(&note);
     let revoked = |id: &str| id == DELEGATED_KID;
     assert_eq!(
@@ -346,8 +384,8 @@ fn a_revoked_delegated_key_is_rejected() {
 /// `a_delegated_202_refuses_a_retransmission_of_the_same_notification` below.
 #[test]
 fn a_delegated_202_refuses_a_content_distinct_notification() {
-    let note_a = notification_method("n-a", "notifications/initialized");
-    let note_b = notification_method("n-b", "notifications/cancelled");
+    let note_a = notification_method(&unique_test_nonce(), "notifications/initialized");
+    let note_b = notification_method(&unique_test_nonce(), "notifications/cancelled");
     let ack_a = sign_ack(&note_a);
     verify_delegated_accepted_202(
         &ack_a,
@@ -380,8 +418,8 @@ fn a_delegated_202_refuses_a_content_distinct_notification() {
 /// later transmission the server in fact refused as a replay.
 #[test]
 fn a_delegated_202_refuses_a_retransmission_of_the_same_notification() {
-    let a = notification("n-transmission-a");
-    let a_prime = notification("n-transmission-a-prime");
+    let a = notification(&unique_test_nonce());
+    let a_prime = notification(&unique_test_nonce());
     assert_eq!(
         a.body, a_prime.body,
         "the two transmissions are content-identical"
@@ -412,10 +450,61 @@ fn a_delegated_202_refuses_a_retransmission_of_the_same_notification() {
     );
 }
 
+/// Owner ruling C019b: the `mcp-re-request-evidence` header an attacker derives from A′
+/// is spliced onto A's acknowledgement. The verifier's derived-value comparison passes by
+/// construction, so only signature coverage of that header can refuse it. This is the
+/// control that turns red if the header leaves the covered set.
+#[test]
+fn a_delegated_202_refuses_a_forged_request_evidence_header() {
+    const NAME: &str = "mcp-re-request-evidence";
+    let a = notification(&unique_test_nonce());
+    let a_prime = notification(&unique_test_nonce());
+    let ack_a = sign_ack(&a);
+    let ack_a_prime = sign_ack(&a_prime);
+    verify_delegated_accepted_202(
+        &ack_a_prime,
+        &a_prime,
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
+        &expectations(&[EPOCH]),
+        &no_revocation(),
+        NOW,
+    )
+    .expect("positive control: A′'s own acknowledgement binds to A′");
+
+    let forged_value = ack_a_prime
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(NAME))
+        .map(|(_, v)| v.clone())
+        .expect("the acknowledgement carries the request-evidence header");
+    let mut forged = ack_a;
+    let slot = forged
+        .headers
+        .iter_mut()
+        .find(|(k, _)| k.eq_ignore_ascii_case(NAME))
+        .expect("A's acknowledgement carries the request-evidence header");
+    slot.1 = forged_value;
+
+    let err = verify_delegated_accepted_202(
+        &forged,
+        &a_prime,
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
+        &expectations(&[EPOCH]),
+        &no_revocation(),
+        NOW,
+    )
+    .expect_err("a header value derived from A′ must not verify under A's signature");
+    assert_ne!(
+        err,
+        HttpProfileError::ResponseBindingMismatch,
+        "only signature coverage can refuse the forged header"
+    );
+}
+
 /// A wrong trust epoch is refused (the credential's epoch must be accepted).
 #[test]
 fn a_stale_trust_epoch_is_rejected() {
-    let note = notification("n-epoch");
+    let note = notification(&unique_test_nonce());
     let ack = sign_ack(&note);
     assert_eq!(
         verify_delegated_accepted_202(
@@ -428,5 +517,52 @@ fn a_stale_trust_epoch_is_rejected() {
         )
         .unwrap_err(),
         HttpProfileError::DelegationTrustEpochStale,
+    );
+}
+
+/// The acknowledgement binds to its notification, so it is not signed over one carrying a
+/// request evidence block that does not validate. Refused before any signature exists.
+#[test]
+fn no_acknowledgement_is_signed_over_a_notification_carrying_an_invalid_block() {
+    let note = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: format!(
+            r#"{{"jsonrpc":"2.0","method":"notifications/initialized","_meta":{{"{}":{{"profile":"another-profile","audience":{{"audience_id":"a","target_uri":"https://mcp.example.com/mcp"}},"artifact_bindings":[]}}}}}}"#,
+            mcp_re_http_profile::REQUEST_EVIDENCE_BLOCK_KEY
+        )
+        .into_bytes(),
+    };
+    let err = sign_delegated_accepted_202_with_owned_key(
+        &note,
+        &credential(),
+        &delegated_key(),
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect_err("refused");
+    assert_eq!(err, HttpProfileError::UnknownProfileTag);
+}
+
+/// THM-0001's window property on the delegated acknowledgement path: the acknowledgement's
+/// own signature window is checked before the credential is, through `check_params`.
+#[test]
+fn a_delegated_202_outside_its_signature_window_is_refused() {
+    let note = notification(&unique_test_nonce());
+    let ack = sign_ack(&note);
+    let stale = EXPIRES + VerifierPolicy::default().max_clock_skew() + 1;
+    assert_eq!(
+        verify_delegated_accepted_202(
+            &ack,
+            &note,
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
+            &expectations(&[EPOCH]),
+            &no_revocation(),
+            stale,
+        )
+        .unwrap_err(),
+        HttpProfileError::StaleWindow,
     );
 }

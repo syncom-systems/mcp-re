@@ -10,6 +10,7 @@
 //! header nobody is permitted to believe.
 
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::sign::sign_request_as_given;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::HttpProfileError;
@@ -17,6 +18,7 @@ use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
+use mcp_re_test_paths::unique_test_nonce;
 
 const CREATED: i64 = 1_700_000_000;
 const EXPIRES: i64 = 1_700_000_300;
@@ -62,7 +64,7 @@ fn signed(extra: &[(&str, &str)]) -> HttpRequest {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-mcp",
+        &unique_test_nonce(),
     )
     .expect("signing succeeds");
     r
@@ -102,13 +104,44 @@ fn mcp_transport_headers_are_covered_when_present() {
 /// them, and signs exactly what it signed before — the rule is
 /// version-conditional without the signer being told which version it is on.
 #[test]
-fn absent_headers_are_not_covered_and_still_verify() {
+fn the_signer_derives_and_covers_the_headers_and_a_request_omitting_them_is_refused() {
+    // Signed through the profile: the three routing headers are derived from the body and
+    // covered, so the request satisfies the contract without the caller stating them.
     let r = signed(&[]);
     let input = signature_input(&r);
-    assert!(!input.contains("mcp-method"), "nothing to cover: {input}");
+    for covered in ["mcp-method", "mcp-name", "mcp-protocol-version"] {
+        assert!(
+            input.contains(covered),
+            "{covered} must be covered: {input}"
+        );
+    }
     Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request_floor(&r, NOW)
-        .expect("a request without MCP headers verifies");
+        .expect("a request the profile signed verifies under the mandatory contract");
+
+    // Signed as given, with none of them: the contract is not optional, so it is refused.
+    let mut bare = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
+    };
+    sign_request_as_given(
+        &mut bare,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        &unique_test_nonce(),
+    )
+    .expect("signs");
+    assert_eq!(
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request_floor(&bare, NOW)
+            .unwrap_err(),
+        HttpProfileError::McpTransportHeaderMissing("mcp-method"),
+    );
 }
 
 // --- negative: present but uncovered ----------------------------------------
@@ -173,7 +206,7 @@ fn header_body_method_divergence_is_rejected() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-div",
+        &unique_test_nonce(),
     )
     .expect("the client really does sign the contradiction");
 
@@ -220,7 +253,7 @@ fn an_mcp_method_header_with_no_body_method_is_rejected() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-nom",
+        &unique_test_nonce(),
     )
     .expect("signing succeeds");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -230,10 +263,10 @@ fn an_mcp_method_header_with_no_body_method_is_rejected() {
     assert_eq!(err.wire_code(), "mcp-re.malformed_envelope");
 }
 
-/// The same result-shaped body WITHOUT the header verifies, so it is the
-/// unconstrained header that is refused above — not the message shape.
+/// A result-shaped body carries no `method`, so no contract header is derivable for it and
+/// the mandatory contract refuses it: a request the verifier admits names its method.
 #[test]
-fn a_result_shaped_body_without_the_header_verifies() {
+fn a_result_shaped_body_carries_no_method_and_is_refused() {
     let mut r = HttpRequest {
         method: "POST".into(),
         target_uri: "https://mcp.example.com/mcp".into(),
@@ -246,12 +279,15 @@ fn a_result_shaped_body_without_the_header_verifies() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-nom2",
+        &unique_test_nonce(),
     )
     .expect("signing succeeds");
-    Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_request_floor(&r, NOW)
-        .expect("no header, nothing to constrain");
+    assert_eq!(
+        Verifier::new(&VerifierPolicy::default(), &resolver())
+            .verify_request_floor(&r, NOW)
+            .unwrap_err(),
+        HttpProfileError::McpTransportHeaderMissing("mcp-method"),
+    );
 }
 
 // --- session-id is scoped out ------------------------------------------------
@@ -335,7 +371,7 @@ fn conforming_2026_request_verifies_under_the_transport_contract() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-ok",
+        &unique_test_nonce(),
     )
     .expect("signs");
     Verifier::new(&strict_transport(), &resolver())
@@ -357,13 +393,13 @@ fn a_required_header_absent_is_rejected_through_verify() {
         ],
         body: br#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#.to_vec(),
     };
-    sign_request(
+    sign_request_as_given(
         &mut r,
         &client_key(),
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-miss",
+        &unique_test_nonce(),
     )
     .expect("signs");
     let err = Verifier::new(&strict_transport(), &resolver())
@@ -395,7 +431,7 @@ fn an_unsupported_protocol_version_is_rejected_through_verify() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-ver",
+        &unique_test_nonce(),
     )
     .expect("signs");
     let err = Verifier::new(&strict_transport(), &resolver())
@@ -425,7 +461,7 @@ fn protocol_version_header_body_divergence_is_rejected_through_verify() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-vd",
+        &unique_test_nonce(),
     )
     .expect("signs");
     let err = Verifier::new(&strict_transport(), &resolver())
@@ -459,7 +495,7 @@ fn mcp_name_body_divergence_is_rejected_through_verify() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-nd",
+        &unique_test_nonce(),
     )
     .expect("signs");
     let err = Verifier::new(&strict_transport(), &resolver())
@@ -486,38 +522,10 @@ fn absent_headers_verify_when_no_transport_policy_is_attached() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "n-none",
+        &unique_test_nonce(),
     )
     .expect("signs");
     Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request_floor(&r, NOW)
         .expect("no transport policy: present-header integrity only, absence allowed");
-}
-
-/// Legacy omission serves a headerless client but still rejects a present header
-/// that lies — through the real verify path.
-#[test]
-fn legacy_omission_serves_bare_client_but_rejects_a_lie_through_verify() {
-    let policy = VerifierPolicy::default().with_mcp_transport(
-        McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"]).with_legacy_header_omission(true),
-    );
-    let mut bare = HttpRequest {
-        method: "POST".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
-            .to_vec(),
-    };
-    sign_request(
-        &mut bare,
-        &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        "n-leg",
-    )
-    .expect("signs");
-    Verifier::new(&policy, &resolver())
-        .verify_request_floor(&bare, NOW)
-        .expect("a legacy client omitting the headers is served");
 }

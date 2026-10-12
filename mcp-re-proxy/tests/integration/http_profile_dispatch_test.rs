@@ -15,6 +15,7 @@
 //!     refusal still fires (defense in depth) even with an acceptable declared tier.
 
 use mcp_re_core::InMemoryReplayCache;
+use mcp_re_core::MaxClockSkew;
 use mcp_re_core::ReplayCache;
 use mcp_re_core::ReplayCacheError;
 use mcp_re_core::ReplayDecision;
@@ -46,6 +47,10 @@ use mcp_re_proxy::replay_tier::ReplayDurabilityTier;
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const SERVER_SEED: [u8; 32] = [22u8; 32];
 const NOW: i64 = 1_700_000_100;
+
+fn no_skew() -> MaxClockSkew {
+    MaxClockSkew::new(0).expect("0 s is inside the bound")
+}
 const CREATED: i64 = 1_700_000_000;
 const EXPIRES: i64 = 1_700_000_300;
 const TARGET: &str = "https://mcp.example.com/mcp?route=a";
@@ -171,14 +176,14 @@ impl ReplayCache for DurableTestCache {
 }
 
 fn durable_cache() -> DurableTestCache {
-    DurableTestCache(InMemoryReplayCache::new(0))
+    DurableTestCache(InMemoryReplayCache::new(no_skew()))
 }
 
 // --- AT1: fleet-strict refuses a sub-minimum declared tier -------------------
 
 #[test]
 fn fleet_strict_refuses_redis_async_tier() {
-    let (_req, verified) = signed_and_verified("nonce-async");
+    let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
     let cache = durable_cache(); // durable cache: the core gate would pass...
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
@@ -195,7 +200,7 @@ fn fleet_strict_refuses_redis_async_tier() {
 
 #[test]
 fn fleet_strict_refuses_single_store_fail_closed_tier() {
-    let (_req, verified) = signed_and_verified("nonce-ssfc");
+    let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
     let cache = durable_cache();
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
@@ -212,7 +217,7 @@ fn fleet_strict_refuses_single_store_fail_closed_tier() {
 
 #[test]
 fn fleet_strict_refuses_undeclared_tier() {
-    let (_req, verified) = signed_and_verified("nonce-none");
+    let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
     let cache = durable_cache();
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
@@ -228,7 +233,7 @@ fn fleet_strict_refuses_undeclared_tier() {
 
 #[test]
 fn fleet_strict_admits_redis_wait_quorum_tier() {
-    let (_req, verified) = signed_and_verified("nonce-wq");
+    let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
     let cache = durable_cache();
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
@@ -244,7 +249,7 @@ fn fleet_strict_admits_redis_wait_quorum_tier() {
 
 #[test]
 fn fleet_strict_admits_linearizable_tier() {
-    let (_req, verified) = signed_and_verified("nonce-lin");
+    let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
     let cache = durable_cache();
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
@@ -258,14 +263,14 @@ fn fleet_strict_admits_linearizable_tier() {
 
 #[test]
 fn core_single_process_gate_fires_beneath_an_acceptable_tier() {
-    let (_req, verified) = signed_and_verified("nonce-defense");
+    let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
     // The operator DECLARES an acceptable tier (passes the upper gate)...
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
         tier: Some(ReplayDurabilityTier::Linearizable),
     };
     // ...but the ACTUAL wired cache self-declares the single-process reference class.
-    let single_process = InMemoryReplayCache::new(0);
+    let single_process = InMemoryReplayCache::new(no_skew());
     let err = dispatch_request_with_tier_gate(&verified, &single_process, None, &cfg)
         .expect_err("the core single-process gate must still fire beneath the tier gate");
     assert_eq!(
@@ -279,8 +284,8 @@ fn core_single_process_gate_fires_beneath_an_acceptable_tier() {
 fn non_fleet_strict_skips_the_tier_gate_but_keeps_core_admission() {
     // Without fleet-strict, a sub-minimum tier and a single-process cache are BOTH
     // acceptable (the deployment made no strict claim); the request still admits.
-    let (_req, verified) = signed_and_verified("nonce-lax");
-    let single_process = InMemoryReplayCache::new(0);
+    let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
+    let single_process = InMemoryReplayCache::new(no_skew());
     let cfg = ProxyDispatchConfig {
         fleet_strict: false,
         tier: Some(ReplayDurabilityTier::AsyncReplicatedBounded),
@@ -293,7 +298,7 @@ fn non_fleet_strict_skips_the_tier_gate_but_keeps_core_admission() {
 
 #[test]
 fn http_profile_request_flows_verify_dispatch_serve_end_to_end() {
-    // 1. Sign + verify the request (capturing the RequestEvidence handle the
+    // 1. Sign + verify the request (capturing the RequestRoleEvidence handle the
     //    response must carry back).
     let block = request_block();
     let mut req = base_request();
@@ -304,7 +309,7 @@ fn http_profile_request_flows_verify_dispatch_serve_end_to_end() {
         CLIENT_KEY_ID,
         CREATED,
         EXPIRES,
-        "nonce-e2e",
+        &mcp_re_test_paths::unique_test_nonce(),
     )
     .expect("sign request");
     let verified_request = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -364,5 +369,12 @@ fn http_profile_request_flows_verify_dispatch_serve_end_to_end() {
     let verified_response = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_bound_response(&resp, &req, NOW)
         .expect("verify response e2e");
-    assert_eq!(verified_response.server_signer.keyid, SERVER_KEY_ID);
+    assert_eq!(
+        verified_response
+            .floor()
+            .resolved_server_actor()
+            .identity
+            .keyid,
+        SERVER_KEY_ID
+    );
 }

@@ -28,6 +28,7 @@ use std::time::Duration;
 
 use mcp_re_proxy::async_serve;
 use mcp_re_proxy::config_snapshot::ServerConfigSnapshot;
+use mcp_re_proxy::config_state::ClientCredentialWindow;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 
 use mcp_re_proxy::ServerLimits;
@@ -42,22 +43,29 @@ use rcgen::KeyPair;
 use rcgen::KeyUsagePurpose;
 use rcgen::SanType;
 
-use rustls::client::danger::HandshakeSignatureValid;
-use rustls::client::danger::ServerCertVerified;
-use rustls::client::danger::ServerCertVerifier;
 use rustls::crypto::ring;
 use rustls::ClientConfig;
 use rustls::ClientConnection;
-use rustls::DigitallySignedStruct;
-use rustls::SignatureScheme;
+use rustls::RootCertStore;
 use rustls::StreamOwned;
-use rustls_pki_types::CertificateDer;
 use rustls_pki_types::PrivateKeyDer;
 use rustls_pki_types::PrivatePkcs8KeyDer;
 use rustls_pki_types::ServerName;
-use rustls_pki_types::UnixTime;
 
 const CLIENT_URI_SAN: &str = "spiffe://example.org/agent-1";
+
+/// The credential window every served test deployment states.
+fn window() -> ClientCredentialWindow {
+    ClientCredentialWindow::new(Duration::from_secs(3600), Duration::from_secs(300))
+        .expect("a legal credential window")
+}
+
+/// Validity `[now - 60s, now + 1800s]`: inside the window, so a served request finds the
+/// leaf current.
+fn short_lived(params: &mut CertificateParams) {
+    params.not_before = (std::time::SystemTime::now() - Duration::from_secs(60)).into();
+    params.not_after = (std::time::SystemTime::now() + Duration::from_secs(1800)).into();
+}
 
 struct Ca {
     cert: rcgen::Certificate,
@@ -95,6 +103,9 @@ fn make_leaf(ca: &Ca, sans: Vec<SanType>, client_auth: bool) -> (rcgen::Certific
     } else {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
+    if client_auth {
+        short_lived(&mut params);
+    }
     let cert = params.signed_by(&key, &ca.issuer()).expect("leaf signed");
     (cert, key)
 }
@@ -106,63 +117,33 @@ fn dns(value: &str) -> SanType {
     SanType::DnsName(value.try_into().expect("ia5 dns"))
 }
 
-/// A server config trusting exactly `client_ca` for client authentication.
-fn server_config_trusting(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
-    let server_ca = make_ca("mcp-re-snapshot-server-ca");
-    let (server_cert, server_key) = make_leaf(&server_ca, vec![dns("localhost")], false);
+/// A server config trusting exactly `client_ca` for client authentication, whose
+/// leaf is issued by `server_ca`.
+fn server_config_trusting(client_ca: &Ca, server_ca: &Ca) -> Arc<rustls::ServerConfig> {
+    let (server_cert, server_key) = make_leaf(server_ca, vec![dns("localhost")], false);
     let server_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(server_key.serialize_der()));
     Arc::new(
-        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-            .build_exported_key_config(vec![server_cert.der().clone()], server_key_der, Vec::new())
-            .expect("server config"),
+        TlsListenerSecurityState::new(
+            vec![client_ca.cert.der().clone()],
+            mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+        )
+        .build_exported_key_config(vec![server_cert.der().clone()], server_key_der, Vec::new())
+        .expect("server config"),
     )
 }
 
-#[derive(Debug)]
-struct AcceptAnyServer;
-impl ServerCertVerifier for AcceptAnyServer {
-    fn verify_server_cert(
-        &self,
-        _e: &CertificateDer<'_>,
-        _i: &[CertificateDer<'_>],
-        _n: &ServerName<'_>,
-        _o: &[u8],
-        _t: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
-    }
-    fn verify_tls12_signature(
-        &self,
-        _m: &[u8],
-        _c: &CertificateDer<'_>,
-        _d: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-    fn verify_tls13_signature(
-        &self,
-        _m: &[u8],
-        _c: &CertificateDer<'_>,
-        _d: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
-    }
-}
-
-fn client_config(ca: &Ca) -> ClientConfig {
+fn client_config(ca: &Ca, server_ca: &Ca) -> ClientConfig {
     let (leaf, key) = make_leaf(ca, vec![uri(CLIENT_URI_SAN)], true);
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
+    let mut roots = RootCertStore::empty();
+    roots
+        .add(server_ca.cert.der().clone())
+        .expect("add server CA root");
     let provider = Arc::new(ring::default_provider());
     ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .expect("client versions")
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAnyServer))
+        .with_root_certificates(roots)
         .with_client_auth_cert(vec![leaf.der().clone()], key_der)
         .expect("client auth")
 }
@@ -251,13 +232,13 @@ fn spawn(snapshot: Arc<ServerConfigSnapshot>) -> Server {
                 };
             let options = ServerOptions {
                 limits: ServerLimits::default(),
-                ..Default::default()
+                ..ServerOptions::new(window())
             };
             // The handshake bound comes from the pool that built this runtime (4 workers),
             // never from a constant that never saw the depth.
             let handshake_bound = mcp_re_proxy::async_fleet::CorePool::for_core(
                 mcp_re_proxy::async_fleet::ShardDepth::stated(4),
-                &options,
+                snapshot.key_exposure(),
             )
             .expect("a stated depth above one is a shape every custody has")
             .handshake_bound();
@@ -289,12 +270,16 @@ fn spawn(snapshot: Arc<ServerConfigSnapshot>) -> Server {
 fn swapped_server_config_is_in_force_on_the_next_connection() {
     let ca_a = make_ca("client-ca-A");
     let ca_b = make_ca("client-ca-B");
+    let server_ca = make_ca("mcp-re-snapshot-server-ca");
 
-    let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&ca_a)));
+    let (snapshot, publisher) = ServerConfigSnapshot::establish(
+        server_config_trusting(&ca_a, &server_ca),
+        mcp_re_proxy::config_state::PrivateKeyExposure::ProcessReadable,
+    );
     let server = spawn(Arc::clone(&snapshot));
 
-    let client_a = client_config(&ca_a);
-    let client_b = client_config(&ca_b);
+    let client_a = client_config(&ca_a, &server_ca);
+    let client_b = client_config(&ca_b, &server_ca);
 
     // Before the swap: CA-A is trusted, CA-B is not.
     assert_eq!(
@@ -307,7 +292,7 @@ fn swapped_server_config_is_in_force_on_the_next_connection() {
     );
 
     // Swap in a config that trusts only CA-B — the shape of a CRL/trust reload.
-    snapshot.store(server_config_trusting(&ca_b));
+    publisher.store(server_config_trusting(&ca_b, &server_ca));
 
     // After the swap, with NO restart: the new config governs.
     assert_eq!(
