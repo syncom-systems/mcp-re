@@ -217,7 +217,17 @@ def check(workflow_text: str, required: list[str]) -> list[str]:
                     "it leaves units the lane would then not re-measure"
                 )
     pull_request, push = triggers.get("pull_request"), triggers.get("push")
-    if pull_request and push and set(pull_request) != set(push):
+    if pull_request is None or push is None:
+        return failures
+    if bool(pull_request) != bool(push):
+        filtered = "pull_request" if pull_request else "push"
+        unfiltered = "push" if pull_request else "pull_request"
+        failures.append(
+            f"`{filtered}` has a path filter and `{unfiltered}` has none — the two "
+            "triggers must re-run the lane on the same changes, or main and its pull "
+            "requests measure different things"
+        )
+    elif set(pull_request) != set(push):
         for path in sorted(set(pull_request) ^ set(push)):
             only = "pull_request" if path in pull_request else "push"
             failures.append(
@@ -237,9 +247,11 @@ def selftest() -> int:
         ("covered on pull_request but not on push", "on:\n  pull_request:\n    paths:\n      - \"Cargo.lock\"\n      - \"mcp-re-core/src/**\"\n  push:\n    paths:\n      - \"mcp-re-core/src/**\"\n", "push: no path filter matches 'Cargo.lock'"),
         ("no paths filter means everything triggers", "on:\n  pull_request:\n  push:\n", ""),
         ("a single star must not cross a separator", "on:\n  pull_request:\n    paths:\n      - \"mcp-re-core/*\"\n      - \"Cargo.lock\"\n  push:\n    paths:\n      - \"mcp-re-core/*\"\n      - \"Cargo.lock\"\n", "mcp-re-core/src/time.rs"),
+        ("a filter on pull_request only is asymmetric", "on:\n  pull_request:\n    paths:\n      - \"Cargo.lock\"\n      - \"mcp-re-core/src/**\"\n      - \"scripts/install.py\"\n  push:\n    paths:\n      - \"Cargo.lock\"\n      - \"mcp-re-core/src/**\"\n", "'scripts/install.py' is on `pull_request` only"),
+        ("a filtered trigger beside an unfiltered one is asymmetric", "on:\n  pull_request:\n    paths:\n      - \"Cargo.lock\"\n      - \"mcp-re-core/src/**\"\n  push:\n", "`pull_request` has a path filter and `push` has none"),
+        ("an unfiltered trigger beside a filtered one is asymmetric", "on:\n  pull_request:\n  push:\n    paths:\n      - \"Cargo.lock\"\n      - \"mcp-re-core/src/**\"\n", "`push` has a path filter and `pull_request` has none"),
         # The parser's own false positive: a comment between two entries used to
         # end the list, so the gate reported a gap the workflow did not have.
-        ("a filter on pull_request only is asymmetric", "on:\n  pull_request:\n    paths:\n      - \"Cargo.lock\"\n      - \"mcp-re-core/src/**\"\n      - \"scripts/install.py\"\n  push:\n    paths:\n      - \"Cargo.lock\"\n      - \"mcp-re-core/src/**\"\n", "'scripts/install.py' is on `pull_request` only"),
         ("a comment inside the list does not truncate it", "on:\n  pull_request:\n    paths:\n      - \"mcp-re-core/src/**\"\n      # why the next one is here\n      - \"Cargo.lock\"\n  push:\n    paths:\n      - \"mcp-re-core/src/**\"\n\n      - \"Cargo.lock\"\n", ""),
     ]
     for label, text, expected in cases:
