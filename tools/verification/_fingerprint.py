@@ -139,6 +139,7 @@ import hashlib
 import json
 import subprocess
 import tomllib
+from contextvars import ContextVar
 from functools import lru_cache
 
 from _ecosystems import build_configuration_patterns
@@ -157,10 +158,14 @@ from _manifest import (
     claims_mutation_evidence,
     claims_structural_evidence,
     claims_test_evidence,
+    ASSUMPTIONS_TOML,
     expand_paths,
     FORMAL_CLASSES,
     load_trust_boundaries,
     REPO_ROOT,
+    TOOLCHAINS_LOCK_TOML,
+    TRUST_BOUNDARIES_TOML,
+    VERIFICATION_TOML,
 )
 
 # Every attestation carrying an earlier version is UNKNOWN from the moment this moves, which
@@ -173,22 +178,64 @@ ENCODING_VERSION = 10
 #: touching a line of the source the unit declares. Bazel's, because Bazel builds it.
 WORKSPACE_BUILD_INPUTS = RUST.workspace_inputs
 
+#: The registries a caller parses and hands `fingerprint_unit` as documents. Their bytes
+#: reach the digest through the parsed values — the policy revision, a unit's own entry, the
+#: in-scope assumptions, the crossed boundaries — so each is in every unit's read set.
+POLICY_DOCUMENTS = tuple(
+    path.relative_to(REPO_ROOT).as_posix()
+    for path in (VERIFICATION_TOML, TOOLCHAINS_LOCK_TOML, ASSUMPTIONS_TOML, TRUST_BOUNDARIES_TOML)
+)
+
+#: The committed build-graph table every Rust label resolves through.
+RUST_TARGETS_TABLE = _rust_targets.TABLE.relative_to(REPO_ROOT).as_posix()
+
 #: Where extraction deposits machine-generated proof input. Units do not declare paths here
 #: — see `_generated_inputs`, which derives the population from the lakefile instead.
 GENERATED_ROOT = "verification/lean/generated"
 
 
-def _digest_paths(patterns: list[str]) -> dict[str, str]:
+#: The read set of the fingerprint being computed under `fingerprint_read_set`, or None
+#: when nobody is asking. Recorded where bytes are read rather than restated beside each
+#: component: a second list of "what the fingerprint reads" is the drift
+#: `scripts/verification_trigger_gate.py` exists to catch, so there is no second list.
+_READS: ContextVar[set[str] | None] = ContextVar("fingerprint_reads", default=None)
+
+
+def _record(*paths: str) -> None:
+    reads = _READS.get()
+    if reads is not None:
+        reads.update(paths)
+
+
+def _is_pattern(path: str) -> bool:
+    return any(ch in path for ch in "*?[")
+
+
+def _digest_paths(patterns: list[str], *, tracked_only: bool = False) -> dict[str, str]:
     """SHA-256 per file, keyed by repo-relative path, sorted.
 
     Content-addressed rather than mtime-based: a file restored to identical content is
     identical evidence, and a file whose bytes changed is not, regardless of timestamps.
+
+    Every file digested is recorded in the read set if git tracks it; the read set
+    describes the committed tree, as `_tracked_files` explains. A wildcard-free pattern
+    is recorded even when nothing occupies it, because creating that file moves the
+    digest. `tracked_only` inputs are the exception: they name alternatives — a
+    `poetry.lock` where a project uses `uv` — that contribute nothing until tracked.
     """
+    tracked = _tracked_files() if tracked_only or _READS.get() is not None else None
     out: dict[str, str] = {}
     for pattern in sorted(patterns):
+        if not tracked_only and not _is_pattern(pattern):
+            _record(pattern)
         for path in sorted(REPO_ROOT.glob(pattern)):
             if path.is_file():
                 rel = path.relative_to(REPO_ROOT).as_posix()
+                if tracked is not None and rel not in tracked:
+                    if tracked_only:
+                        continue
+                else:
+                    _record(rel)
                 out[rel] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
     return out
 
@@ -256,10 +303,7 @@ def _tracked_files() -> frozenset[str]:
 
 def _digest_tracked(patterns: list[str]) -> dict[str, str]:
     """`_digest_paths`, restricted to what git tracks — for the glob-driven inputs."""
-    tracked = _tracked_files()
-    return {
-        path: digest for path, digest in _digest_paths(patterns).items() if path in tracked
-    }
+    return _digest_paths(patterns, tracked_only=True)
 
 
 def _build_configuration(unit: dict, formal_closure: list[str]) -> dict[str, str]:
@@ -373,6 +417,7 @@ def _test_selection(unit: dict) -> dict:
     """
     if not claims_test_evidence(unit):
         return {}
+    _record(RUST_TARGETS_TABLE)
     labels = sorted({str(s).partition("#")[0] for s in unit.get("tested_symbols", [])})
     return {
         "project": test_project_for(unit),
@@ -387,16 +432,10 @@ def _test_selection(unit: dict) -> dict:
 
 
 def test_source_patterns(unit: dict) -> list[str]:
-    """The globs naming the integration-test targets this unit's selectors run.
-
-    Exposed because two things read it: this module, which digests them, and
-    `scripts/verification_trigger_gate.py`, which checks the workflow re-runs the lane when
-    one of them changes. A path-filtered workflow and a content-addressed fingerprint are
-    one dependency set stated twice, and they drift in the direction that produces a false
-    green — so they are derived from one function.
-    """
+    """The globs naming the integration-test targets this unit's selectors run."""
     if not claims_test_evidence(unit):
         return []
+    _record(RUST_TARGETS_TABLE)
     patterns: set[str] = set()
     for symbol in unit.get("tested_symbols", []):
         label = str(symbol).partition("#")[0]
@@ -472,6 +511,7 @@ def _mutation_probes(unit_id: str) -> dict[str, str]:
     and same shape, as `_trusted_assumptions`.
     """
     registry = REPO_ROOT / "verification" / "policy" / "mutation-probes.toml"
+    _record(registry.relative_to(REPO_ROOT).as_posix())
     if not registry.is_file():
         return {}
     with registry.open("rb") as handle:
@@ -510,6 +550,7 @@ def _registry_entries(filename: str, key: str, unit_id: str) -> dict[str, str]:
     DIRTY. The registry entry IS the claim, so the entry's content participates.
     """
     registry = REPO_ROOT / "verification" / "policy" / filename
+    _record(registry.relative_to(REPO_ROOT).as_posix())
     if not registry.is_file():
         return {}
     with registry.open("rb") as handle:
@@ -729,6 +770,7 @@ def fingerprint_unit(
     proof_dependencies: dict[str, str] = {}
     formal_closure: list[str] = []
     if formal:
+        _record(RUST_TARGETS_TABLE)
         closure: set[str] = set()
         for crate in crates:
             closure |= _rust_targets.dependency_closure(crate)
@@ -844,6 +886,33 @@ def fingerprint_unit(
         "fingerprint": canonical_digest(components),
         "components": components,
     }
+
+
+def fingerprint_read_set(
+    unit: dict,
+    doc: dict,
+    toolchains: dict,
+    assumptions: dict,
+    boundaries: dict | None = None,
+) -> frozenset[str]:
+    """Every repo path whose bytes can move this unit's fingerprint.
+
+    Computed by fingerprinting the unit and recording what was read, so the answer cannot
+    drift from the encoding: a component added to `fingerprint_unit` reads through
+    `_digest_paths` or a registry, and both record. The trigger gate checks the
+    verification workflow re-runs on every path in it.
+
+    Tracked files, plus wildcard-free inputs nothing occupies yet — creating one of those
+    moves the digest, so a filter naming it is live.
+    """
+    token = _READS.set(set())
+    try:
+        fingerprint_unit(unit, doc, toolchains, assumptions, boundaries)
+        reads = _READS.get()
+        assert reads is not None
+        return frozenset(reads | set(POLICY_DOCUMENTS))
+    finally:
+        _READS.reset(token)
 
 
 # ---------------------------------------------------------------------------

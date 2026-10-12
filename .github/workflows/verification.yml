@@ -460,6 +460,8 @@ on:
       - "scripts/authorization_provenance_gate.py"
       - "scripts/refusal_provenance_gate.py"
       - "scripts/serving_product_provenance_gate.py"
+      - "scripts/install_pinned_verus.py"
+      - "scripts/hosted_negative_controls.py"
       - "mcp-re-core/src/**"
       - "mcp-re-http-profile/src/**"
       # Encoding v4 digests the INTEGRATION-TEST SOURCES a unit's selectors run, not only
