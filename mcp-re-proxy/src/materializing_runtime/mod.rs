@@ -7,39 +7,35 @@
 //!
 //! [`RuntimeLifecycle`] on its own proves only that a legal sequence of events was
 //! applied. It does not prove that the resources whose existence *defines* `Materialized`
-//! are actually owned by anything. This type is what makes those the same fact:
-//! `MaterializationSucceeded` is applied inside [`finish`](MaterializingRuntime::finish),
-//! *after* every required resource has been moved out of the builder and into
-//! [`MaterializedRuntime`]. There is no other producer of that event, and
-//! `MaterializedRuntime` has no other constructor. So a `Materialized` lifecycle cannot
-//! exist over an incomplete resource graph — not by convention, but because no code path
-//! creates one.
+//! are actually owned by anything. This type is what makes those the same fact. The
+//! lifecycle is created by [`begin`](MaterializingRuntime::begin) and never leaves the
+//! owners: `MaterializationSucceeded` is applied by [`MaterializedLifecycle::reached`],
+//! whose only caller is [`finish`](MaterializingRuntime::finish), *after* every required
+//! resource has been moved out of the builder; the certified lifecycle then moves into
+//! [`MaterializedRuntime`], whose constructor accepts nothing else. So a `Materialized`
+//! lifecycle cannot exist over an incomplete resource graph, and a runtime cannot be
+//! served on a lifecycle that skipped validation, planning or materialization — not by
+//! convention, but because no code path creates either value (R-SEAL).
 //!
-//! # What this fixes (F3)
+//! # Owned from acquisition (F3)
 //!
-//! `MaterializedRuntime` used to be constructed by the last statement of `run_validated`,
-//! after roughly 38 fallible steps. Each of those steps could fail, and the acquisitions
-//! that had already succeeded were plain locals — so they unwound in reverse DECLARATION
-//! order, not the order teardown is documented in. `materialized_runtime` states that it
-//! exists "to make successful shutdown and failed materialization obey the same rules";
-//! for the failure path that was not true. Nothing went wrong today only because order
-//! among the planes was checked to be free.
-//!
-//! Here a resource becomes owned the moment it is acquired. A later failure drops the
-//! builder, and [`Drop`] reclaims what was installed in the documented order — the same
-//! order a successful shutdown uses, because it is the same sequence of steps.
+//! A resource becomes owned the moment it is acquired. A later failure drops the builder,
+//! and [`Drop`] reclaims what was installed in the documented order — the same order a
+//! successful shutdown uses, because it is the same sequence of steps — rather than in
+//! reverse declaration order of locals in the composition root.
 //!
 //! # Failure is a transition, not an unwind
 //!
-//! [`RuntimeEvent::MaterializationFailed`] is emitted only from here, and only where the
+//! `MaterializationFailed` is emitted only from here, and only where the
 //! partial resources have actually been reclaimed. It is not applied because a `?`
 //! returned an error: an event that merely decorated an error path would assert an
 //! ownership fact nobody established.
 
+use crate::config_state::validation::ValidatedDeployment;
 use crate::control_runtime::ControlRuntimeProvision;
 use crate::materialized_runtime::MaterializedRuntime;
-use crate::runtime_state::RuntimeEvent;
 use crate::runtime_state::RuntimeLifecycle;
+#[cfg(test)]
 use crate::runtime_state::RuntimeState;
 use crate::signing_plane::SigningPlane;
 use crate::tls_plane::TlsPlane;
@@ -47,6 +43,9 @@ use crate::trust_plane::TrustPlane;
 use crate::HttpProfileProxy;
 
 mod completeness;
+mod materialized_lifecycle;
+
+pub(crate) use materialized_lifecycle::MaterializedLifecycle;
 
 /// A runtime under construction: the lifecycle, plus every teardown-bearing resource
 /// acquired so far.
@@ -71,13 +70,16 @@ pub(crate) struct MaterializingRuntime {
 }
 
 impl MaterializingRuntime {
-    /// Begin materializing. `lifecycle` must be in [`RuntimeState::Planned`]; the
-    /// `MaterializationStarted` transition is applied here, so entering this type and
-    /// entering the state are one act.
-    pub(crate) fn begin(mut lifecycle: RuntimeLifecycle) -> Result<Self, String> {
-        lifecycle.apply(RuntimeEvent::MaterializationStarted)?;
+    /// Begin materializing (ADR-MCPRE-057 §3): the lifecycle becomes a value here, created
+    /// at `Materializing`, so entering this type and entering the state are one act.
+    ///
+    /// Holding a `ValidatedDeployment` IS the proof of `ValidationSucceeded`, and of
+    /// `PlanBuilt`: every plan is a pure, total projection of it (`*Plan::from_validated`).
+    /// Some pure planning still runs inside `Materializing`, which the relation tolerates
+    /// (ADR-MCPRE-058 §17A step 5 is where the two stop interleaving).
+    pub(crate) fn begin(deployment: &ValidatedDeployment) -> Result<Self, String> {
         Ok(MaterializingRuntime {
-            lifecycle: Some(lifecycle),
+            lifecycle: Some(materialized_lifecycle::started(deployment)?),
             trust: None,
             signing: None,
             tls: None,
@@ -125,14 +127,15 @@ impl MaterializingRuntime {
         &self.control
     }
 
-    /// Every required resource is owned: assemble the runtime and advance the lifecycle.
+    /// Every required resource is owned: advance the lifecycle and assemble the runtime,
+    /// which owns it from here on.
     ///
     /// The order here is load-bearing. The resources are taken FIRST, and only once all
     /// four are in hand is `MaterializationSucceeded` applied. Applying it earlier — the
     /// obvious-looking simplification — would let a `Materialized` lifecycle exist while
     /// a required resource was still absent, which is precisely the equivalence this type
     /// is for.
-    pub(crate) fn finish(mut self) -> Result<(MaterializedRuntime, RuntimeLifecycle), String> {
+    pub(crate) fn finish(mut self) -> Result<MaterializedRuntime, String> {
         let present = [
             self.trust.is_some(),
             self.signing.is_some(),
@@ -157,14 +160,18 @@ impl MaterializingRuntime {
         let control = self.control.take();
 
         // `finish` consumes `self`, so the lifecycle is here; reported all the same.
-        let Some(mut lifecycle) = self.lifecycle.take() else {
+        let Some(lifecycle) = self.lifecycle.take() else {
             return Err("internal error: materialization finished without a lifecycle".to_owned());
         };
-        lifecycle.apply(RuntimeEvent::MaterializationSucceeded)?;
+        let materialized = MaterializedLifecycle::reached(lifecycle)?;
 
-        Ok((
-            MaterializedRuntime::new(trust, signing, tls, proxy, control),
-            lifecycle,
+        Ok(MaterializedRuntime::new(
+            trust,
+            signing,
+            tls,
+            proxy,
+            control,
+            materialized,
         ))
     }
 
@@ -190,13 +197,8 @@ impl Drop for MaterializingRuntime {
     /// released, so it must not be applied before they were.
     fn drop(&mut self) {
         self.reclaim_partial();
-        if let Some(mut lifecycle) = self.lifecycle.take() {
-            // `Materializing` always has this transition, so a failure here would mean the
-            // relation changed underneath us. Ignored rather than panicking: this runs on
-            // an unwind path, where panicking again aborts the process and loses the
-            // original error the operator needs.
-            let _ = lifecycle.apply(RuntimeEvent::MaterializationFailed);
-            debug_assert_eq!(lifecycle.state(), RuntimeState::FailedToStart);
+        if let Some(lifecycle) = self.lifecycle.take() {
+            let _ended_at = materialized_lifecycle::failed(lifecycle);
         }
     }
 }
@@ -210,12 +212,10 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    /// A lifecycle that has legally reached `Planned` — the precondition `begin` takes.
-    fn planned() -> RuntimeLifecycle {
-        let mut lifecycle = RuntimeLifecycle::new();
-        lifecycle.apply(RuntimeEvent::ValidationSucceeded).unwrap();
-        lifecycle.apply(RuntimeEvent::PlanBuilt).unwrap();
-        lifecycle
+    /// A deployment that passed the legality boundary — the proof `begin` takes.
+    fn deployment() -> ValidatedDeployment {
+        ValidatedDeployment::try_from(crate::config_state::test_support::legal_config())
+            .expect("the fixture validates")
     }
 
     /// A worker that waits to be halted and then records WHEN it stopped, relative to the
@@ -240,11 +240,12 @@ mod tests {
     /// assert.
     ///
     /// What matters is covered without it. That `Materialized` is reachable ONLY through
-    /// `finish` is a property of the type: `MaterializedRuntime::new` is the sole
-    /// constructor and `finish` is its only caller, and `MaterializationSucceeded` has no
-    /// other producer in the crate. That the lifecycle does NOT reach it when a resource
-    /// is missing is asserted below against the real type. The transition itself is
-    /// covered by the 110-pair relation test in `runtime_state`.
+    /// `finish` is a property of the types: `MaterializedRuntime::new` takes a
+    /// `MaterializedLifecycle`, whose only producer is `reached`, `pub(super)` to this
+    /// module and called from `finish` alone — probes S55 and S56 compile the two forgeries
+    /// and require the refusal. That the lifecycle does NOT reach it when a resource is
+    /// missing is asserted below against the real type. The transition itself is covered
+    /// by the 110-pair relation test in `runtime_state`.
     #[allow(dead_code)]
     const WHY_NO_FULL_SUCCESS_TEST: () = ();
 
@@ -258,7 +259,7 @@ mod tests {
     fn a_failure_after_partial_acquisition_reaches_neither_materialized_nor_a_leak() {
         let stopped = Arc::new(AtomicUsize::new(0));
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut building = MaterializingRuntime::begin(planned()).unwrap();
+        let mut building = MaterializingRuntime::begin(&deployment()).unwrap();
         assert_eq!(building.state(), RuntimeState::Materializing);
 
         building
@@ -290,7 +291,7 @@ mod tests {
     /// past this type is the success return.
     #[test]
     fn a_refused_finish_yields_no_lifecycle_at_all() {
-        let building = MaterializingRuntime::begin(planned()).unwrap();
+        let building = MaterializingRuntime::begin(&deployment()).unwrap();
         assert_eq!(building.state(), RuntimeState::Materializing);
         assert!(
             building.finish().is_err(),
@@ -309,7 +310,7 @@ mod tests {
     /// reaches the caller, and it says the graph was incomplete rather than merely failing.
     #[test]
     fn finish_reports_the_incomplete_graph_and_names_a_resource() {
-        let building = MaterializingRuntime::begin(planned()).unwrap();
+        let building = MaterializingRuntime::begin(&deployment()).unwrap();
         let err = match building.finish() {
             Err(e) => e,
             Ok(_) => panic!("an empty builder cannot finish"),
@@ -332,7 +333,7 @@ mod tests {
     fn dropping_an_unfinished_builder_reclaims_and_records_the_failure() {
         let stopped = Arc::new(AtomicUsize::new(0));
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut building = MaterializingRuntime::begin(planned()).unwrap();
+        let mut building = MaterializingRuntime::begin(&deployment()).unwrap();
         building
             .install_trust(TrustPlane::for_teardown_test(recording(
                 Arc::clone(&counter),
@@ -369,7 +370,7 @@ mod tests {
         let trust_at = Arc::new(AtomicUsize::new(0));
         let signing_at = Arc::new(AtomicUsize::new(0));
 
-        let mut building = MaterializingRuntime::begin(planned()).unwrap();
+        let mut building = MaterializingRuntime::begin(&deployment()).unwrap();
         building
             .install_signing(SigningPlane::for_teardown_test(recording(
                 Arc::clone(&counter),
@@ -404,7 +405,7 @@ mod tests {
         let first_at = Arc::new(AtomicUsize::new(0));
         let second_at = Arc::new(AtomicUsize::new(0));
 
-        let mut building = MaterializingRuntime::begin(planned()).unwrap();
+        let mut building = MaterializingRuntime::begin(&deployment()).unwrap();
         building
             .install_trust(TrustPlane::for_teardown_test(recording(
                 Arc::clone(&counter),
