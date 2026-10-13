@@ -17,12 +17,14 @@ import platform
 import shutil
 import sys
 import tempfile
-import tomllib
 import urllib.request
 import zipfile
 from pathlib import Path
 
-LOCK = Path(__file__).resolve().parents[1] / "verification" / "policy" / "toolchains.lock.toml"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "verification"))
+
+import _toolchains  # noqa: E402
+
 HOST_PINS = {("Darwin", "arm64"): "verus", ("Linux", "x86_64"): "verus_linux_x86_64"}
 
 
@@ -39,7 +41,7 @@ def main() -> int:
     if name is None:
         print(f"no Verus build is pinned for {platform.system()} {platform.machine()}", file=sys.stderr)
         return 1
-    pin = tomllib.loads(LOCK.read_text())[name]
+    pin = _toolchains.load()[name]
     if pin.get("state") != "resolved":
         print(f"[{name}] is not resolved", file=sys.stderr)
         return 1

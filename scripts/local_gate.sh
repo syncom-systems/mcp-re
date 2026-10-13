@@ -141,6 +141,8 @@ stage_static() {
     && python3 scripts/workflow_reader.py \
     && python3 scripts/verification_trigger_gate.py --selftest \
     && python3 scripts/verification_trigger_gate.py \
+    `# The one reader of the toolchain lock; both runtime gates apply its pin shape.` \
+    && python3 tools/verification/_toolchains.py --selftest \
     `# The Python support claim may not exceed the Python evidence: requires-python and` \
     `# the pinned interpreter set are two facts in two files, and they had drifted.` \
     && python3 scripts/python_runtime_gate.py --selftest \

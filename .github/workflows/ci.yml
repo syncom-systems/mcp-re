@@ -457,6 +457,9 @@ jobs:
           python3 scripts/workflow_reader.py
           python3 scripts/verification_trigger_gate.py --selftest
           python3 scripts/verification_trigger_gate.py
+          # The one reader of the toolchain lock, whose runtime-pin shape both runtime
+          # gates below and both matrix installers apply.
+          python3 tools/verification/_toolchains.py --selftest
           # The Python support claim may not exceed the Python evidence — #746. Here as
           # well as in the local gate, because a control that lives only in local_gate.sh
           # is a control enforced by remembering to run it.
