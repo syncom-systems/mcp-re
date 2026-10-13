@@ -1893,7 +1893,7 @@ tested_symbols = [
 [[unit]]
 id = "http_profile.dispatch_product_seal"
 class = "V0"
-description = "No code outside `dispatch::outcome` can assemble a `PreparedDispatch` or a `DispatchOutcome`: the fields are private to that module and their posture type private to `dispatch`, the one `PreparedDispatch` constructor `from_admitted` is `pub(in crate::dispatch)` and consumes a `ReplayTierAdmitted`, and a `DispatchOutcome` is produced only by `PreparedDispatch::into_admitted_outcome`. No `Default`, `From` or serialization produces either."
+description = "No code outside `dispatch::outcome` can assemble a `PreparedDispatch` or a `DispatchOutcome`: the fields are private to that module and their posture type private to `dispatch`, the one `PreparedDispatch` constructor `from_admitted` is `pub(in crate::dispatch)` and consumes a `ReplayTierAdmitted`, and a `DispatchOutcome` is produced only by `PreparedDispatch::admit`, from a `Fresh` replay-store answer. No `Default`, `From` or serialization produces either."
 paths = [
   "mcp-re-http-profile/src/dispatch/outcome.rs",
   "mcp-re-http-profile/src/dispatch/replay_posture.rs",
@@ -8932,7 +8932,7 @@ evidence = ["structural://proxy/delegated_signer/write_authority"]
 [[unit]]
 id = "proxy.replay_admission_gate"
 class = "V0"
-description = "The fail-closed order of replay admission, measured on BOTH dispatch entry points and therefore on the one the serving path runs: an undeclared or sub-minimum tier and a store that self-reports the single-process class are refused before the store is touched, the atomic admission is the last step, and a store that does not answer refuses rather than admitting."
+description = "The fail-closed order of replay admission, measured on the dispatch entry point the serving path runs: an undeclared or sub-minimum tier and a store that self-reports the single-process class are refused before the store is touched, the atomic admission is the last step, and a store that does not answer refuses rather than admitting."
 paths = [
   "mcp-re-proxy/src/http_profile_dispatch.rs",
   "mcp-re-proxy/src/http_profile_dispatch/core_projection.rs",
@@ -8954,41 +8954,27 @@ evidence = [
 # theorem — per mechanism, because what a Redis `WAIT` acknowledgement establishes is not
 # what an etcd transaction success establishes.
 tested_symbols = [
-  # Refused BEFORE the store is touched — the witness cache makes "before" observable, so
-  # these are not satisfied by a refusal that already spent the side effect.
-  "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::an_undeclared_tier_is_refused_before_the_store_is_touched",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::a_sub_minimum_tier_is_refused_before_the_store_is_touched",
-  # Defense in depth: a strong DECLARATION does not excuse a store that says it cannot
-  # prevent a cross-node replay.
-  "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::a_strong_declared_tier_does_not_excuse_a_single_process_store",
-  # The admission step itself. The store is reached, does not answer, and the exchange does
-  # not dispatch — and the verdict is an outage rather than a replay, because "already
-  # served" and "nothing was established" are opposite advice to a caller.
-  "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::a_store_that_cannot_establish_the_state_refuses_rather_than_dispatching",
-  # The mirrors. Without them the four above are satisfied by a gate that refuses
-  # everything, which would establish nothing about the requests that ARE admitted.
-  "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::a_strict_minimum_tier_over_a_durable_store_reaches_the_dispatcher",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::the_tier_gate_does_not_fire_outside_fleet_strict",
   # The projection: the two tier failures are one fact about the store, and the delegating
   # arm does not re-decide a verdict the dispatcher already gave.
   "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::core_projection::tests::an_unusable_tier_and_an_undeclared_one_are_one_verdict",
   "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::core_projection::tests::a_delegated_failure_keeps_the_dispatchers_verdict",
-  # THE SERVING PATH. Everything above drives `dispatch_request_with_tier_gate`, which no
-  # production caller reaches — it is the reference reading of the profile pipeline. These
-  # six drive `dispatch_request_with_async_tier`, which `answering_commitment` calls, and
-  # they are listed separately because a test property includes the FUNCTION the test
-  # exists in: the two entry points share the deployment tier gate but not their shape, and
-  # the store-class refusal the sync path inherits from `dispatch_request` is carried by the
-  # async one itself.
+  # THE SERVING PATH: `dispatch_request_with_async_tier`, which `answering_commitment` calls.
+  # Refused BEFORE the store is touched — the witness store makes "before" observable, so
+  # these are not satisfied by a refusal that already spent the side effect.
   "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::the_serving_path_refuses_an_undeclared_tier_before_the_store_is_touched",
   "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::the_serving_path_refuses_a_sub_minimum_tier_before_the_store_is_touched",
+  # Defense in depth: a strong DECLARATION does not excuse a store that says it cannot
+  # prevent a cross-node replay.
   "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::a_strong_declared_tier_does_not_excuse_a_single_process_async_store",
+  # The mirrors. Without them the refusals are satisfied by a gate that refuses everything,
+  # which would establish nothing about the requests that ARE admitted.
   "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::neither_serving_path_gate_fires_outside_fleet_strict",
   "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::the_serving_path_admits_a_strict_minimum_tier_over_a_durable_store",
-  # The admission step on the serving path: the store is reached, does not answer, and the
-  # exchange does not dispatch. The last of the six, and the twin of
-  # `a_store_that_cannot_establish_the_state_refuses_rather_than_dispatching` above, which
-  # establishes the same fact only about the entry point no production caller reaches.
+  # The admission step. The store is reached, does not answer, and the exchange does not
+  # dispatch — and the verdict is an outage rather than a replay, because "already served"
+  # and "nothing was established" are opposite advice to a caller. The answer is read by
+  # `PreparedDispatch::admit` in the profile crate; M86 weakens it there and names this
+  # control.
   "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::the_serving_path_refuses_a_store_that_cannot_establish_the_state",
   # ADR-MCPRE-069 NP-161. The same conjuncts driven through the REAL profile sign/verify
   # seam rather than through a hand-built `VerifiedMcpRequest`: `signed_and_verified` signs
@@ -9008,8 +8994,8 @@ tested_symbols = [
   "//mcp-re-proxy:integration_test#http_profile_dispatch_test::fleet_strict_admits_redis_wait_quorum_tier",
   "//mcp-re-proxy:integration_test#http_profile_dispatch_test::fleet_strict_admits_linearizable_tier",
   # Defense in depth beneath the deployment gate, and the outside-fleet-strict mirror. The
-  # production arm both of these reach is `mcp-re-http-profile/src/dispatch.rs`, which is
-  # not this unit's `paths`: its falsifier is M323, under `http_profile.fleet_strict_store_class`.
+  # production arm both of these reach is `DispatchConfig::admit_replay_tier`, which is not
+  # in this unit's `paths`: its falsifier is M323, under `http_profile.fleet_strict_store_class`.
   # They are here because the conjunct they measure — a strong declaration does not excuse a
   # single-process store, and the tier gate does not fire outside fleet-strict — is this
   # unit's description, measured at the adapter that composes both gates.
