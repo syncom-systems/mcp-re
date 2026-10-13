@@ -12054,7 +12054,6 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::only_the_redis_replay_tier_selects_a_networked_store",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::planning_reaches_a_networked_tier_without_contacting_anything",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_assertion_arm_is_refused_at_the_boundary",
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_both_set_arm_agrees_with_the_gate_on_an_unreachable_input",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_build_refusal_is_stated_once_and_names_both_consequences",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_old_alias_is_refused_rather_than_reinterpreted",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::a_networked_locator_is_readable_only_through_the_build_verdict",
@@ -12063,8 +12062,11 @@ tested_symbols = [
 [[unit]]
 id = "proxy.startup_plan_pool_ceiling"
 class = "V0"
-description = "THE PER-CORE POOL CEILING SATURATES, AND THE POOL IS RAISED ONLY WHEN IT MUST BE: a ceiling that would overflow SATURATES rather than wrapping, both bounds reach the inner pool through the admission gate's per-core ceiling rather than through a second reading of the flags, a fleet total that does not divide evenly yields the aggregate the gate actually admits, and the pool is raised only where the fleet ceiling exceeds its default. Says nothing about which basis the operator stated, which `proxy.in_flight_limit_basis` classifies."
-paths = ["mcp-re-proxy/src/startup_plan.rs"]
+description = "THE FLEET'S ADMISSION AGGREGATE SATURATES, AND THE INNER POOL IS RAISED ONLY WHEN IT MUST BE: `InFlightLimitBasis::fleet_ceiling` SATURATES rather than wrapping, both bases reach the fleet through the per-core ceiling every core enforces rather than through a second reading of the flags, a fleet total that does not divide evenly rounds each share UP and yields the aggregate the gate actually admits, and the inner pool is raised only where that aggregate exceeds its default and is never lowered. Says nothing about which basis the operator stated, which `proxy.in_flight_limit_basis` classifies."
+paths = [
+  "mcp-re-proxy/src/config_state/in_flight_limit.rs",
+  "mcp-re-proxy/src/inner_plane_bound.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
@@ -12073,10 +12075,10 @@ evidence = [
   "mutation://proxy/startup_plan_pool_ceiling/ceiling_saturates",
 ]
 tested_symbols = [
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::a_ceiling_that_would_overflow_saturates_rather_than_wrapping",
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::a_total_that_does_not_divide_evenly_yields_the_aggregate_the_gate_admits",
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::both_bounds_reach_the_pool_through_the_gates_per_core_ceiling",
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_pool_is_raised_only_when_the_fleet_ceiling_exceeds_its_default",
+  "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::an_aggregate_that_would_overflow_saturates",
+  "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::a_total_that_does_not_divide_evenly_rounds_each_share_up",
+  "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::both_bases_reach_the_fleet_through_the_per_core_ceiling",
+  "//mcp-re-proxy:proxy_unit_test#inner_plane_bound::tests::a_fleet_ceiling_equal_to_the_default_keeps_the_pool",
 ]
 
 [[unit]]
@@ -12113,7 +12115,6 @@ evidence = [
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::a_stated_basis_is_carried_through_unchanged",
   "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::the_default_is_applied_to_absence_and_never_to_a_value_that_equals_it",
-  "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::exactly_one_projection_answers_for_every_basis",
   "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::saying_nothing_resolves_to_the_bounded_default",
 ]
 
@@ -12143,7 +12144,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.deployment_topology_state"
 class = "V0"
-description = "WHAT THIS DEPLOYMENT IS, AT TWO ALTITUDES THAT DO NOT CONSTRAIN EACH OTHER: the default deployment is a single node and `--fleet` names the Fleet state, a zero shard or worker count is a DEFERRAL to the host rather than a count of zero, the runtime projection spells that deferral as the `0` the serving runtime encodes it with, and the semantic topology and the shard request constrain each other in neither direction. Says nothing about the resolved shard count, which is host discovery and therefore runtime evidence rather than a layer-A fact."
+description = "WHAT THIS DEPLOYMENT IS, AT TWO ALTITUDES THAT DO NOT CONSTRAIN EACH OTHER: the default deployment is a single node and `--fleet` names the Fleet state, a zero shard or worker count is a DEFERRAL to the host rather than a count of zero, and the semantic topology and the shard request constrain each other in neither direction. Says nothing about the resolved shard count, which is host discovery and therefore runtime evidence rather than a layer-A fact."
 paths = ["mcp-re-proxy/src/config_state/topology.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -12154,7 +12155,6 @@ evidence = [
 ]
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::topology::tests::the_default_deployment_is_a_single_node",
-  "//mcp-re-proxy:proxy_unit_test#config_state::topology::tests::the_runtime_projection_spells_auto_as_zero",
   "//mcp-re-proxy:proxy_unit_test#config_state::topology::tests::the_topology_and_the_shard_request_do_not_constrain_each_other",
   "//mcp-re-proxy:proxy_unit_test#config_state::topology::tests::zero_is_a_deferral_not_a_count",
 ]
@@ -12884,6 +12884,7 @@ description = "AN EXPLICITLY CONFIGURED FLEET TOPOLOGY IS RESOLVED UNCHANGED: a 
 # rewritten under a standing attestation would be measuring half of what it names. This
 # unit claims nothing about the per-shard runtime builder.
 paths = [
+  "mcp-re-proxy/src/async_fleet/resolved_topology.rs",
   "mcp-re-proxy/src/async_fleet/mod.rs",
   "mcp-re-proxy/src/async_fleet/core_runtime.rs",
 ]
@@ -12894,12 +12895,10 @@ evidence = [
   "test://proxy/async_fleet/topology_provenance",
   "mutation://proxy/async_fleet/topology_provenance",
 ]
-# One symbol, measured rather than chosen. The other two controls on this carrier assert
-# over `auto_for`, a helper defined INSIDE `topology_tests` that restates the policy
-# `resolve_topology` implements; no edit to production turns them red, so naming them here
-# would put a control that cannot fail inside a battery.
+# The provenance control alone. The automatic-path controls beside it in `resolved_topology`
+# state a throughput and availability policy, which stays in the ADR-069 census under NP-147.
 tested_symbols = [
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::topology_tests::explicit_topology_is_never_overridden",
+  "//mcp-re-proxy:proxy_unit_test#async_fleet::resolved_topology::tests::explicit_topology_is_never_overridden",
   "//mcp-re-proxy:proxy_unit_test#async_fleet::start_gate_tests::a_core_that_fails_to_start_leaves_every_started_core_unserved_and_joined",
   "//mcp-re-proxy:proxy_unit_test#async_fleet::start_gate_tests::every_core_is_released_once_all_have_started",
 ]
@@ -12936,8 +12935,9 @@ paths = [
   "mcp-re-proxy/src/async_fleet/core_runtime.rs",
   "mcp-re-proxy/src/async_fleet/shard_depth.rs",
   # The ORDERING half: the resolver that produces the provenance, and the one call site
-  # that must consult the decision before it binds anything. A closure without this file
+  # that must consult the decision before it binds anything. A closure without these files
   # would attest a refusal while the line that has to come first could move.
+  "mcp-re-proxy/src/async_fleet/resolved_topology.rs",
   "mcp-re-proxy/src/async_fleet/mod.rs",
   # CLOSURE, NOT CLAIM: the refusal must precede the first bind, and this file performs it.
   "mcp-re-proxy/src/async_fleet/reuseport.rs",
@@ -12964,7 +12964,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#async_fleet::core_runtime::tests::neither_half_of_the_refused_pair_refuses_on_its_own",
   # THE PROVENANCE, at the resolver that spends `0 = auto`. This is the fact the refusal
   # turns on, and it is established one layer before the refusal can see it.
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::topology_tests::a_resolved_depth_says_whether_the_operator_or_the_host_chose_it",
+  "//mcp-re-proxy:proxy_unit_test#async_fleet::resolved_topology::tests::a_resolved_depth_says_whether_the_operator_or_the_host_chose_it",
   # BEFORE THE FIRST BIND, driven through `serve_fleet` itself against an address no host
   # can bind — so a run that reached the listener loop fails with an OS error instead, and
   # the two verdicts are distinguishable. The second is the positive control: an admitted

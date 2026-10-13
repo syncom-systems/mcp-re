@@ -35,10 +35,10 @@
 //! InFlightLimitRequest  (what was asked; absence is representable)
 //!         ↓ layer A: mutual exclusivity + default
 //! InFlightLimitBasis    (which basis survived)
-//!         ↓ + resolved cores
-//! async_fleet::derived_per_core_ceiling
+//!         ↓ + resolved shards
+//! InFlightLimitBasis::per_core_ceiling
 //!         ↓
-//! the per-core ceiling every consumer enforces
+//! the per-core ceiling every core enforces
 //! ```
 
 use std::num::NonZeroUsize;
@@ -78,26 +78,30 @@ pub enum InFlightLimitBasis {
 }
 
 impl InFlightLimitBasis {
-    /// The per-core ceiling this basis states DIRECTLY, or `None` when it is expressed
-    /// fleet-wide and needs the core count to become one.
+    /// The ceiling each core enforces when the fleet runs `shards` cores.
     ///
-    /// Paired with [`fleet_total`](Self::fleet_total) so the two are read off the basis
-    /// rather than matched on at each call site — exactly one is `Some`, which is what
-    /// makes them safe inputs to
-    /// [`derived_per_core_ceiling`](crate::async_fleet::derived_per_core_ceiling).
-    pub fn per_core(&self) -> Option<usize> {
+    /// A per-core basis is that ceiling verbatim. A fleet-wide target is divided evenly,
+    /// rounding UP: equal integer shares cannot express a total that does not divide by the
+    /// shard count, and rounding down would admit fewer than the operator asked for. So
+    /// `--max-in-flight-total 1000` over 3 cores is 334 per core. Every core enforces only
+    /// its own share, which keeps admission lock-free across cores (ADR-MCPRE-051 §1).
+    pub fn per_core_ceiling(&self, shards: NonZeroUsize) -> NonZeroUsize {
         match self {
-            Self::PerCore { requests } => Some(requests.get()),
-            Self::FleetTotal { .. } => None,
+            Self::PerCore { requests } => *requests,
+            Self::FleetTotal { requests } => requests.div_ceil(shards),
         }
     }
 
-    /// The fleet-wide target this basis states, or `None` when it is expressed per core.
-    pub fn fleet_total(&self) -> Option<usize> {
-        match self {
-            Self::PerCore { .. } => None,
-            Self::FleetTotal { requests } => Some(requests.get()),
-        }
+    /// The aggregate the fleet actually admits on `shards` cores: the per-core ceiling
+    /// times the shard count, saturating.
+    ///
+    /// This is the number a process-wide component must stay at or above, and it is a
+    /// projection of the gate's own rounding rather than a second reading of the flags:
+    /// `--max-in-flight-total 1000` over 3 cores admits 1002, not 1000. Saturating, because
+    /// a wrapped aggregate would be SMALLER than the real one and would size a shared pool
+    /// below the gate it must not undercut.
+    pub fn fleet_ceiling(&self, shards: NonZeroUsize) -> NonZeroUsize {
+        self.per_core_ceiling(shards).saturating_mul(shards)
     }
 }
 
@@ -172,29 +176,54 @@ mod tests {
         );
     }
 
-    /// Exactly one of the two projections is `Some`, for every basis. `derived_per_core_ceiling`
-    /// takes both, and its both-set arm is the unreachable one — so a basis that could
-    /// answer both would hand the gate the input nothing is supposed to produce.
+    /// A per-core basis is enforced verbatim on every core, so the fleet admits it times
+    /// the shard count; `--max-in-flight-total` is written fleet-wide and enforced per core.
     #[test]
-    fn exactly_one_projection_answers_for_every_basis() {
-        for basis in [
-            InFlightLimitBasis::PerCore { requests: n(32) },
-            InFlightLimitBasis::FleetTotal { requests: n(1000) },
+    fn both_bases_reach_the_fleet_through_the_per_core_ceiling() {
+        let eight = n(8);
+        let per_core = InFlightLimitBasis::PerCore { requests: n(10) };
+        assert_eq!(per_core.per_core_ceiling(eight), n(10));
+        assert_eq!(per_core.fleet_ceiling(eight), n(80));
+        let total = InFlightLimitBasis::FleetTotal { requests: n(80) };
+        assert_eq!(total.per_core_ceiling(eight), n(10));
+        assert_eq!(total.fleet_ceiling(eight), n(80));
+    }
+
+    /// THE PROPERTY: a fleet-wide target that does not divide evenly rounds each core's
+    /// share UP, and the aggregate is what that rounding implies, not the operator's number.
+    /// A pool sized at 1000 against a gate admitting 1002 would shed the last two at a
+    /// cliff no flag names.
+    #[test]
+    fn a_total_that_does_not_divide_evenly_rounds_each_share_up() {
+        for (total, shards, share, aggregate) in [
+            (1000usize, 3usize, 334usize, 1002usize),
+            (1000, 8, 125, 1000),
+            (10, 4, 3, 12),
+            (3, 8, 1, 8),
         ] {
+            let basis = InFlightLimitBasis::FleetTotal { requests: n(total) };
             assert_eq!(
-                basis.per_core().is_some(),
-                basis.fleet_total().is_none(),
-                "{basis:?} answers both or neither"
+                basis.per_core_ceiling(n(shards)),
+                n(share),
+                "{total}/{shards}"
+            );
+            assert_eq!(
+                basis.fleet_ceiling(n(shards)),
+                n(aggregate),
+                "{total}/{shards}"
             );
         }
-        assert_eq!(
-            InFlightLimitBasis::PerCore { requests: n(32) }.per_core(),
-            Some(32)
-        );
-        assert_eq!(
-            InFlightLimitBasis::FleetTotal { requests: n(1000) }.fleet_total(),
-            Some(1000)
-        );
+    }
+
+    /// A huge per-core bound on a many-core box saturates instead of wrapping: a wrapped
+    /// aggregate would be smaller than the default and would lower a pool instead of
+    /// raising it.
+    #[test]
+    fn an_aggregate_that_would_overflow_saturates() {
+        let huge = InFlightLimitBasis::PerCore {
+            requests: NonZeroUsize::MAX,
+        };
+        assert_eq!(huge.fleet_ceiling(n(64)), NonZeroUsize::MAX);
     }
 
     /// The unspecified case resolves to the fail-safe default rather than to "no ceiling".

@@ -1040,11 +1040,9 @@ mod tests {
             crate::config_state::InFlightLimitRequest::FleetTotal(nz(256))
         );
 
-        let basis = crate::config_state::in_flight_limit::classify(&config);
-        assert_eq!(basis.fleet_total(), Some(256));
         assert_eq!(
-            basis.per_core(),
-            None,
+            crate::config_state::in_flight_limit::classify(&config),
+            crate::config_state::InFlightLimitBasis::FleetTotal { requests: nz(256) },
             "a fleet-wide basis has no per-core answer until the core count is resolved"
         );
 
@@ -1053,8 +1051,8 @@ mod tests {
         built.limits = crate::tls::ServerLimits::default();
         built.in_flight_limit = crate::config_state::InFlightLimitRequest::FleetTotal(nz(1000));
         assert_eq!(
-            crate::config_state::in_flight_limit::classify(&built).fleet_total(),
-            Some(1000),
+            crate::config_state::in_flight_limit::classify(&built),
+            crate::config_state::InFlightLimitBasis::FleetTotal { requests: nz(1000) },
             "the fail-safe default in ServerLimits must not out-rank a stated fleet target"
         );
     }

@@ -432,7 +432,7 @@ mod admission_bound_tests {
     #[test]
     fn the_handshake_bound_leaves_workers_for_the_rest_of_the_core() {
         // Every depth a fleet can RESOLVE, under both signing custodies and both
-        // provenances — `resolve_topology` produces a stated depth or a derived one, and
+        // provenances — `ResolvedTopology` holds a stated depth or a derived one, and
         // the pair (delegated custody, stated 1) is refused rather than resolved, so it is
         // not a depth a fleet can reach and is excluded here. Its own controls are
         // `async_fleet::core_runtime`'s.

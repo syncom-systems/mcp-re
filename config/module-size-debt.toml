@@ -264,10 +264,12 @@ path = "mcp-re-proxy/src/app.rs"
 # one, records validation and planning on its own word, or hands it to `serve`:
 # 789 (measured at 1021196) -> 775.
 # MCPRE-196: the admission capability hands the root an enforcer, so the root no longer
-# destructures a four-field gate: 775 (measured at 6f2000c) -> 770. `baseline_sha` names that
-# parent.
-baseline_prod_loc = 770
-baseline_sha = "6f2000c"
+# destructures a four-field gate: 775 (measured at 6f2000c) -> 770.
+# MCPRE-197: the root resolves the shard topology once and hands the fleet the owners' values
+# whole, so it no longer projects the basis into `ServerLimits` or the topology into `0 = auto`:
+# 770 (measured at 75fae5e) -> 760. `baseline_sha` names that parent.
+baseline_prod_loc = 760
+baseline_sha = "75fae5e"
 status = "reviewed-exception"
 review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 
@@ -461,8 +463,11 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/async_fleet/mod.rs"
-baseline_prod_loc = 578
-baseline_sha = "d1fc5fa"
+# MCPRE-197: topology resolution moved to `async_fleet/resolved_topology.rs` and the share rule
+# to `InFlightLimitBasis`, so the `Option` x `Option` ceiling and its fleet-global rebuild are
+# gone: 510 (measured at bff0cb9) -> 374. `baseline_sha` names that parent.
+baseline_prod_loc = 374
+baseline_sha = "bff0cb9"
 status = "unreviewed"
 
 # MCPRE-175: the checks that cannot be expressed in the type left for
@@ -517,8 +522,10 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/startup_plan.rs"
-baseline_prod_loc = 476
-baseline_sha = "d1fc5fa"
+# MCPRE-197: the inner-plane ceiling and raise left with the `Option` x `Option` interface they
+# projected: 385 (measured at bff0cb9) -> 340. `baseline_sha` names that parent.
+baseline_prod_loc = 340
+baseline_sha = "bff0cb9"
 status = "unreviewed"
 
 [[debt]]

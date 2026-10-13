@@ -56,7 +56,7 @@ pub(super) fn http_builder(options: &ServerOptions) -> auto::Builder<TokioExecut
     // in-flight semaphore sheds them with a 503 only AFTER hyper has accepted the
     // stream. Capping at the connection level applies the same bound one layer earlier,
     // at the multiplexer. Every validated deployment resolves a per-core ceiling
-    // (`InFlightLimit::per_core` / `apply_global_admission`), so it is unset only for a
+    // (`InFlightLimitBasis::per_core_ceiling`, applied by the fleet), so it is unset only for a
     // directly built `ServerLimits` that set `None`; a ceiling above `u32::MAX` saturates,
     // since H2 cannot state more and the in-flight semaphore still holds the real ceiling.
     if let Some(ceiling) = stream_ceiling {

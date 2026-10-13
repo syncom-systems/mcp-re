@@ -1967,7 +1967,7 @@ about a line whose subject is the tier, and what it must contain as much as what
 ## NP-064 — the root resolves exactly one bind, and refuses an unresolvable one
 
 **Controls:** `mcp-re-proxy/src/app.rs::an_unresolvable_bind_is_refused_and_names_the_flag`,
-`::the_fleet_config_carries_the_topology_and_resolves_the_bind`.
+`::the_fleet_config_carries_the_owners_values_and_resolves_the_bind`.
 **Statement.** *A bind address that cannot be resolved is refused, and the refusal NAMES THE
 FLAG; and the fleet configuration carries the topology and resolves the bind, so one place
 decides what the process listens on.*
@@ -3302,16 +3302,16 @@ the callers in `retention_ledger.rs` and not about the report.
 
 ## NP-147 — the automatic fleet topology is at least one shard of one worker
 
-**Controls:** `mcp-re-proxy/src/async_fleet` (3) —
-`topology_tests::{auto_is_always_at_least_one_shard_of_one_worker, auto_keeps_a_shard_per_cpu_and_adds_depth}`, and
-(added 2026-09-29) `topology_tests::the_auto_model_matches_the_resolver_on_this_host`, which ties the model to the production resolver.
+**Controls:** `mcp-re-proxy/src/async_fleet/resolved_topology.rs` (3) —
+`tests::{auto_is_a_listener_per_cpu_with_a_capped_pool, auto_keeps_a_shard_per_cpu_and_adds_depth}`, and
+`tests::resolve_asks_this_host`, which ties the injected-cpu resolver to this host's.
 **Statement.** *Where the operator stated nothing, the automatic topology keeps a shard per CPU, adds depth on top up to the default maximum, and is never degenerate — at least one shard of one worker on any host the runtime reports.*
 **If false.** A deployment that configured no topology starts with zero shards and serves nothing, or trades shards away for depth on a profile where shards are what parallelise `accept`.
 **Likely owner:** none.
 **Severity:** `high`.
 **Registered in part, ADR-MCPRE-069 S-06.** `explicit_topology_is_never_overridden` is now `unit://proxy.fleet_topology_provenance` under **THM-0077**, falsified by `M337-proxy-an-explicit-worker-depth-is-not-capped`. THM-0077's security consequence is the clause: *"a serving component cannot disagree with the owner about what was configured."*
 **The lane, determined and stated.** `async_fleet` sits behind NO feature gate: `pub mod async_fleet;` at `mcp-re-proxy/src/lib.rs:214` carries no `cfg`, nothing inside `async_fleet/mod.rs` or `core_runtime.rs` is feature-gated, and `cargo test -p mcp-re-proxy --lib -- --list` selects all three controls in the DEFAULT lane. No `test_features` is needed or declared, and the scheduling analysis's open question about this record is closed.
-**Refused, ADR-MCPRE-069 S-06, for two independent reasons.** First, what the automatic path computes is a THROUGHPUT and AVAILABILITY policy — shard count against CPU count, worker depth against a measured rps envelope — and THM-0077's scope excludes exactly that: *"SECURITY POSTURE, not liveness and not permanent runtime availability."* Second, and measured rather than argued: both rows assert over `auto_for`, a helper defined INSIDE `topology_tests` that restates the policy rather than calling `resolve_topology`, so no edit to production code turns either of them red. A control that cannot be falsified by a production change is not evidence for any theorem, whichever one it is attached to. **Root relationship.** A premise of the proxy units above it. Packet at `verification/reviews/packets/adr069-np-123-np-143-np-147-np-148-np-184-np-185-ratification-2026-09-19.md`.
+**Refused, ADR-MCPRE-069 S-06, for two independent reasons.** First, what the automatic path computes is a THROUGHPUT and AVAILABILITY policy — shard count against CPU count, worker depth against a measured rps envelope — and THM-0077's scope excludes exactly that: *"SECURITY POSTURE, not liveness and not permanent runtime availability."* Second, and measured rather than argued: both rows assert over `auto_for`, a helper defined INSIDE `topology_tests` that restates the policy rather than calling `resolve_topology`, so no edit to production code turns either of them red. A control that cannot be falsified by a production change is not evidence for any theorem, whichever one it is attached to. **Updated 2026-10-13 (MCPRE-197).** The second reason no longer holds: the controls now drive the production resolver, `ResolvedTopology::resolve_on`, with the cpu count injected. The first reason stands on its own, so the refusal stands. **Root relationship.** A premise of the proxy units above it. Packet at `verification/reviews/packets/adr069-np-123-np-143-np-147-np-148-np-184-np-185-ratification-2026-09-19.md`.
 
 ## NP-148 — signing-plane materialization publishes a usable key and owns one rotation worker
 

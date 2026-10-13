@@ -64,7 +64,8 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `FreshnessWindow` | `config_state/freshness.rs` | `verifier_policy()`, `max_clock_skew()`, `replay_retain_until()` |
 | `TrustDocumentSource` | `config_state/trust_document.rs` | `path()` |
 | `ClientCredentialWindow` | `config_state/client_credential_window.rs` | `cert_lifetime()`, `connection_age()`, `exposure_window()` |
-| `ShardTopologyRequest` | `config_state/topology.rs` | `shards()`, `workers_per_shard()`, `shards_or_auto()`, `workers_per_shard_or_auto()` |
+| `ShardTopologyRequest` | `config_state/topology.rs` | `shards()`, `workers_per_shard()` |
+| `ResolvedTopology` | `async_fleet/resolved_topology.rs` | `shards() -> NonZeroUsize`, `depth() -> ShardDepth` |
 | `TrustPlan` | `trust_plan.rs` | `revocation()`, `document_path()`, `response_kid()`, `reload()`, `epoch()` |
 | `TlsListenerSecurityState` | `tls_listener_state/` (a module TREE) | `epoch()`, `build_exported_key_config()`, `build_delegated_config()`, `build_delegated_resolver_config()` |
 | `PeerIdentityValue` | `communication_assurance/peer_identity_value.rs` | `as_str()` |
@@ -298,7 +299,12 @@ question a value like this answers is *whose rule is this?*, not *which inhabita
 
 `ShardTopologyRequest` IS sealed, and the difference is instructive: `0` there is not a
 count but a deferral, so a public `usize` is a value every reader has to remember to
-interpret — and the composition root was the reader remembering it.
+interpret — and the composition root was the reader remembering it. Nothing re-encodes it
+as one either: the root resolves the request once into a `ResolvedTopology`, and the inner
+plane and the fleet both take that value, so the host's answer cannot be read twice and
+disagree. The admission basis travels the same way — `InFlightLimitBasis` reaches the fleet
+whole, and `per_core_ceiling` / `fleet_ceiling` are its own rule, not a function over two
+`Option`s rebuilt from it.
 
 ## Where sealing buys nothing
 
