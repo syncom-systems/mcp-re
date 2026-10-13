@@ -327,8 +327,8 @@ def test_a_measured_unit_declares_the_four_fields_and_no_battery():
     The battery goes with the class: a `tested_symbols` list no declared lane selects reads
     as coverage."""
     from _evidence_class import MEASUREMENT_KEYS
+    from _measured import declaration_problems
 
-    measurements = {m["unit"]: m for m in load_measurements(REGISTRY)}
     for unit_id, unit in UNITS.items():
         if unit.get("evidence_class") != "measured":
             continue
@@ -336,9 +336,7 @@ def test_a_measured_unit_declares_the_four_fields_and_no_battery():
             assert str(unit.get(key, "")).strip(), f"{unit_id}: {key}"
         assert not unit.get("tested_symbols"), unit_id
         assert not any(str(e).startswith("test://") for e in unit.get("evidence", [])), unit_id
-    from _measured import declaration_problems
-
-    assert declaration_problems(UNITS, list(measurements.values())) == []
+    assert declaration_problems(UNITS, load_measurements(REGISTRY)) == []
 
 
 def test_the_registered_measurement_runs_and_its_apparatus_moves():
