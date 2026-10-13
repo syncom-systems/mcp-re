@@ -78,6 +78,7 @@ use std::sync::Arc;
 
 use crate::config_snapshot;
 use crate::control_runtime::ControlRuntime;
+use crate::materializing_runtime::MaterializedLifecycle;
 use crate::runtime_state::RuntimeEvent;
 use crate::runtime_state::RuntimeLifecycle;
 use crate::runtime_state::RuntimeState;
@@ -118,6 +119,10 @@ pub(crate) struct MaterializedRuntime {
     /// reference, so taking it here is what actually drops the assembly. The substrate is
     /// reclaimed last, after the proxy has released the clients bound to it.
     phase3: Reclaim<Arc<HttpProfileProxy>, ControlRuntime>,
+    /// At `Materialized` from construction: `new` accepts only a [`MaterializedLifecycle`],
+    /// so holding the runtime is holding a lifecycle that reached that state over the
+    /// resources above (ADR-MCPRE-057 §9). Advanced only by `serve`, from proven events.
+    lifecycle: RuntimeLifecycle,
 }
 
 /// The phase-3 pair: a consumer holding clients bound to a substrate. `reclaim` releases
@@ -168,6 +173,7 @@ impl MaterializedRuntime {
         tls: TlsPlane,
         proxy: HttpProfileProxy,
         control: Option<ControlRuntime>,
+        lifecycle: MaterializedLifecycle,
     ) -> Self {
         Self {
             trust: Some(trust),
@@ -177,27 +183,23 @@ impl MaterializedRuntime {
                 consumer: Some(Arc::new(proxy)),
                 substrate: control,
             },
+            lifecycle: lifecycle.into_lifecycle(),
         }
     }
 
     /// Serve until `shutdown` is raised, then tear down in the documented order.
     ///
     /// Consumes `self`: the ordering guarantee is only worth having if the runtime cannot
-    /// be used again afterwards.
-    ///
-    /// `lifecycle` must have legally reached [`RuntimeState::Materialized`]
-    /// (ADR-MCPRE-057 §3). Taking it BY VALUE is what makes that a real precondition
-    /// rather than a comment: the only way to hold one in that state is to have applied
-    /// every preceding transition, so a caller cannot serve a runtime whose lifecycle
-    /// skipped validation or planning. It is also the sole issuer of the fleet's
-    /// [`FleetServeAuthorized`](fleet_serve_authorized::FleetServeAuthorized).
+    /// be used again afterwards. The lifecycle it records against is its own, at
+    /// `Materialized` by construction (ADR-MCPRE-057 §3), so no caller can serve a runtime
+    /// whose lifecycle skipped validation or planning. It is also the sole issuer of the
+    /// fleet's [`FleetServeAuthorized`](fleet_serve_authorized::FleetServeAuthorized).
     pub(crate) fn serve(
         mut self,
         config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
         serve_options: Arc<ServerOptions>,
         fleet_cfg: crate::async_fleet::FleetConfig,
         shutdown: Arc<AtomicBool>,
-        mut lifecycle: RuntimeLifecycle,
     ) -> Result<(), String> {
         // PHASE 1 — drain. Returns only once every per-core worker has stopped, so no
         // request can be using anything below when phase 2 begins.
@@ -221,21 +223,20 @@ impl MaterializedRuntime {
         // and go on to record `FleetDrained`, asserting a join that never ran, ending at
         // the `Stopped` reserved for a clean drained shutdown.
         for event in serving_events(&served) {
-            lifecycle.apply(*event)?;
+            self.lifecycle.apply(*event)?;
         }
         if served.is_ok() {
-            self.transition_and_reclaim(&mut lifecycle)?;
+            self.transition_and_reclaim()?;
             return served;
         }
 
         // Phases 2 and 3 run whether serving succeeded or failed: a fleet that could not
         // bind still leaves every plane's workers running, and a failure path that skipped
-        // teardown would be the §I leak this ADR exists to close. They run here WITHOUT the
-        // lifecycle, which has no transition out of `Materialized` for a serve that never
-        // started, so the record stops at the last state the process actually reached
-        // instead of borrowing the vocabulary of a shutdown that did not occur.
+        // teardown would be the §I leak this ADR exists to close. They run here without
+        // recording: the lifecycle has no transition out of `Materialized` for a serve
+        // that never started, so the record stops at the last state the process actually
+        // reached instead of borrowing the vocabulary of a shutdown that did not occur.
         self.shutdown();
-        debug_assert_eq!(lifecycle.state(), RuntimeState::Materialized);
         served
     }
 
@@ -255,15 +256,14 @@ impl MaterializedRuntime {
     /// relation changed underneath this method; the caller propagates rather than
     /// continuing, because a lifecycle that did not reach `Stopped` must not be reported
     /// as if it had.
-    fn transition_and_reclaim(
-        &mut self,
-        lifecycle: &mut RuntimeLifecycle,
-    ) -> Result<(), crate::runtime_state::InvalidTransition> {
+    fn transition_and_reclaim(&mut self) -> Result<(), crate::runtime_state::InvalidTransition> {
         self.transition();
-        lifecycle.apply(RuntimeEvent::SecurityTransitionCompleted)?;
+        self.lifecycle
+            .apply(RuntimeEvent::SecurityTransitionCompleted)?;
         self.reclaim();
-        lifecycle.apply(RuntimeEvent::ResourceReclaimCompleted)?;
-        debug_assert_eq!(lifecycle.state(), RuntimeState::Stopped);
+        self.lifecycle
+            .apply(RuntimeEvent::ResourceReclaimCompleted)?;
+        debug_assert_eq!(self.lifecycle.state(), RuntimeState::Stopped);
         Ok(())
     }
 
@@ -322,18 +322,23 @@ mod tests {
     use std::time::Duration;
     use std::time::Instant;
 
-    /// A lifecycle driven legally to `Materialized`, where `serve` receives it.
-    fn materialized() -> RuntimeLifecycle {
+    /// A lifecycle driven legally through `events`, the way `serve` gets there.
+    fn driven(events: &[RuntimeEvent]) -> RuntimeLifecycle {
         let mut lifecycle = RuntimeLifecycle::new();
-        for event in [
+        for event in events {
+            lifecycle.apply(*event).expect("the path is legal");
+        }
+        lifecycle
+    }
+
+    /// A lifecycle at `Materialized`, where a runtime holds it from construction.
+    fn materialized() -> RuntimeLifecycle {
+        driven(&[
             RuntimeEvent::ValidationSucceeded,
             RuntimeEvent::PlanBuilt,
             RuntimeEvent::MaterializationStarted,
             RuntimeEvent::MaterializationSucceeded,
-        ] {
-            lifecycle.apply(event).expect("the startup path is legal");
-        }
-        lifecycle
+        ])
     }
 
     /// The events are FACTS, so a `serve_fleet` that failed before binding justifies none
@@ -392,9 +397,8 @@ mod tests {
     #[test]
     fn the_post_drain_sequence_is_unreachable_from_a_serve_that_never_started() {
         let mut runtime = populated(cooperative, cooperative, cooperative);
-        let mut lifecycle = materialized();
         let err = runtime
-            .transition_and_reclaim(&mut lifecycle)
+            .transition_and_reclaim()
             .expect_err("a failed startup may not borrow the shutdown vocabulary");
         assert_eq!(err.state, RuntimeState::Materialized);
         assert_eq!(err.event, RuntimeEvent::SecurityTransitionCompleted);
@@ -442,6 +446,7 @@ mod tests {
                 consumer: None,
                 substrate: Some(substrate()),
             },
+            lifecycle: materialized(),
         }
     }
 
@@ -536,8 +541,7 @@ mod tests {
         let signer = runtime.signing.as_ref().expect("signing").signer();
 
         // A lifecycle that legally reached the drain, the way `serve` gets there.
-        let mut lifecycle = RuntimeLifecycle::new();
-        for event in [
+        runtime.lifecycle = driven(&[
             RuntimeEvent::ValidationSucceeded,
             RuntimeEvent::PlanBuilt,
             RuntimeEvent::MaterializationStarted,
@@ -545,10 +549,8 @@ mod tests {
             RuntimeEvent::ServingStarted,
             RuntimeEvent::ShutdownRequested,
             RuntimeEvent::FleetDrained,
-        ] {
-            lifecycle.apply(event).expect("the serving path is legal");
-        }
-        assert_eq!(lifecycle.state(), RuntimeState::Transitioning);
+        ]);
+        assert_eq!(runtime.lifecycle.state(), RuntimeState::Transitioning);
         // The child states the combinations below must exclude are live right now, so
         // reaching them terminal cannot be an artifact of a fixture that started empty.
         assert!(
@@ -557,10 +559,10 @@ mod tests {
         );
 
         runtime
-            .transition_and_reclaim(&mut lifecycle)
+            .transition_and_reclaim()
             .expect("the post-drain sequence is legal from Transitioning");
 
-        assert_eq!(lifecycle.state(), RuntimeState::Stopped);
+        assert_eq!(runtime.lifecycle.state(), RuntimeState::Stopped);
         assert!(
             matches!(
                 resolver.resolve(TRUST_SIGNER, TRUST_KID),
@@ -587,19 +589,16 @@ mod tests {
     #[test]
     fn the_post_drain_sequence_is_refused_before_the_drain_is_proven() {
         let mut runtime = populated(cooperative, cooperative, cooperative);
-        let mut lifecycle = RuntimeLifecycle::new();
-        for event in [
+        // Serving, not yet drained.
+        runtime.lifecycle = driven(&[
             RuntimeEvent::ValidationSucceeded,
             RuntimeEvent::PlanBuilt,
             RuntimeEvent::MaterializationStarted,
             RuntimeEvent::MaterializationSucceeded,
             RuntimeEvent::ServingStarted,
-        ] {
-            lifecycle.apply(event).expect("the serving path is legal");
-        }
-        // Serving, not yet drained.
+        ]);
         let err = runtime
-            .transition_and_reclaim(&mut lifecycle)
+            .transition_and_reclaim()
             .expect_err("the security transition must not precede a proven drain");
         assert_eq!(err.state, RuntimeState::Serving);
         assert_eq!(err.event, RuntimeEvent::SecurityTransitionCompleted);
@@ -705,6 +704,7 @@ mod tests {
                 consumer: None,
                 substrate: None,
             },
+            lifecycle: materialized(),
         }
     }
 
@@ -770,6 +770,7 @@ mod tests {
                 consumer: None,
                 substrate: Some(control),
             },
+            lifecycle: materialized(),
         });
 
         still_running.store(false, Ordering::SeqCst);
@@ -807,6 +808,7 @@ mod tests {
                 consumer: None,
                 substrate: Some(control),
             },
+            lifecycle: materialized(),
         };
 
         runtime.transition();

@@ -15086,6 +15086,15 @@ proposition = "NP-278"
 recorded = "2026-10-08"
 
 [[proposition]]
+id = "NP-280"
+title = "The materialization-phase lifecycle transitions are applied where their facts are established"
+carrier = "mcp-re-proxy/src/materializing_runtime/materialized_lifecycle.rs"
+likely_owner = "proxy.materialized_lifecycle_sole_producer owns the files and establishes, by compiler refusal, that no other site produces these transitions; it is a `structural`-class unit with only structural:// evidence, so registering a test battery there changes the unit's evidence shape, which is an owner decision this disposition does not take."
+consequence = "medium"
+root_relationship = "THM-0012's path has a materialization leg — Validated -> Planned -> Materializing -> Materialized, or Materializing -> FailedToStart — and these tests establish what each producer records: `started` ends at Materializing, `reached` at Materialized and refuses a lifecycle that never started, `failed` at FailedToStart."
+record = "docs/architecture/control-dispositions.md#np-280"
+
+[[proposition]]
 id = "NP-279"
 title = "The audit scalar's format-control table equals Unicode General_Category Cf"
 carrier = "mcp-re-proxy/src/audit_record/scalar.rs"
@@ -15164,4 +15173,36 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#control_runtime::tests::concurrent_first_requests_share_the_one_runtime_the_provision_owns"
 decision = "new-proposition"
 proposition = "NP-124"
+recorded = "2026-10-13"
+
+[[disposition]]
+id = "CD-20459"
+project = "mcp-re-proxy"
+control = "src/lib.rs#materializing_runtime::materialized_lifecycle::tests::started_yields_a_lifecycle_at_materializing"
+decision = "new-proposition"
+proposition = "NP-280"
+recorded = "2026-10-13"
+
+[[disposition]]
+id = "CD-20460"
+project = "mcp-re-proxy"
+control = "src/lib.rs#materializing_runtime::materialized_lifecycle::tests::failed_ends_the_lifecycle_at_failed_to_start"
+decision = "new-proposition"
+proposition = "NP-280"
+recorded = "2026-10-13"
+
+[[disposition]]
+id = "CD-20461"
+project = "mcp-re-proxy"
+control = "src/lib.rs#materializing_runtime::materialized_lifecycle::tests::reached_applies_materialization_succeeded_and_yields_materialized"
+decision = "new-proposition"
+proposition = "NP-280"
+recorded = "2026-10-13"
+
+[[disposition]]
+id = "CD-20462"
+project = "mcp-re-proxy"
+control = "src/lib.rs#materializing_runtime::materialized_lifecycle::tests::reached_refuses_a_lifecycle_that_never_started_materializing"
+decision = "new-proposition"
+proposition = "NP-280"
 recorded = "2026-10-13"

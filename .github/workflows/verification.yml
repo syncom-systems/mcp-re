@@ -58,6 +58,9 @@ on:
       - "mcp-re-proxy/src/runtime_state.rs"
       - "mcp-re-proxy/src/materialized_runtime.rs"
       - "mcp-re-proxy/src/materialized_runtime/fleet_serve_authorized.rs"
+      - "mcp-re-proxy/src/materializing_runtime/mod.rs"
+      - "mcp-re-proxy/src/materializing_runtime/completeness.rs"
+      - "mcp-re-proxy/src/materializing_runtime/materialized_lifecycle.rs"
       # Issue #744: the two store-materialization owners, sibling authorities that had
       # no unit between them.
       - "mcp-re-proxy/src/replay_plane/**"
@@ -473,6 +476,9 @@ on:
       - "mcp-re-proxy/src/runtime_state.rs"
       - "mcp-re-proxy/src/materialized_runtime.rs"
       - "mcp-re-proxy/src/materialized_runtime/fleet_serve_authorized.rs"
+      - "mcp-re-proxy/src/materializing_runtime/mod.rs"
+      - "mcp-re-proxy/src/materializing_runtime/completeness.rs"
+      - "mcp-re-proxy/src/materializing_runtime/materialized_lifecycle.rs"
       # Issue #744: the two store-materialization owners, sibling authorities that had
       # no unit between them.
       - "mcp-re-proxy/src/replay_plane/**"
