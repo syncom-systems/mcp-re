@@ -1016,4 +1016,6 @@ candidates, and are Phase 1's.
 Nothing structural. The remaining owners (`ChannelBindingState`, `DelegatedSigningFacts`,
 `ServerIdentityFacts`, `AuditState`, `VerifiedContextState`) carry no representation a
 consumer reads: measured at 0 external destructuring sites each, and the fieldless ones
-have no illegal inhabitant to exclude.
+have no illegal inhabitant to exclude. `ChannelBindingState` is also matched only inside its
+owner subtree: its serving effects (binding, identity policy, peer-identity provenance) come
+from one projection, `serving_effects`, which is a projection rather than a seal.

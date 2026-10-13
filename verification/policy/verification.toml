@@ -11643,6 +11643,7 @@ class = "V0"
 description = "WHICH PEER-IDENTITY BINDING AND WHICH OFFLINE-REVOCATION POSTURE THIS DEPLOYMENT RECOGNISES: both binding states and every legal CRL state form are classified and accepted, only an EXACT transport binding becomes a state and every other kind is refused aloud, attested ingress is refused BY NAME rather than passed over, the deprecated identity source names no state, the identity field names the state while the form decides whether there is one, a cadence with no list to re-read and a CRL list holding an empty path are refused, and a ZERO cadence is an unbounded reloader rather than a disabled one. The attested-ingress clause measures a DELIBERATE product refusal (ADR-MCPRE-050; the capability is refused, not removed), not an unimplemented mode."
 paths = [
   "mcp-re-proxy/src/config_state/transport.rs",
+  "mcp-re-proxy/src/config_state/channel_binding_effects.rs",
   "mcp-re-proxy/src/config_state/crl_revocation.rs",
 ]
 exported_contracts = []
@@ -11661,6 +11662,9 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::transport::tests::both_binding_states_are_classified_and_accepted",
   "//mcp-re-proxy:proxy_unit_test#config_state::transport::tests::only_exact_binding_becomes_a_state_and_every_other_kind_is_refused_aloud",
   "//mcp-re-proxy:proxy_unit_test#config_state::transport::tests::the_identity_field_names_the_state_and_the_form_decides_whether_there_is_one",
+  # The recognised state's one projection onto the serving path: each state reads its own SAN
+  # and the identity from the verified peer certificate.
+  "//mcp-re-proxy:proxy_unit_test#config_state::channel_binding_effects::tests::each_state_projects_its_own_san_and_the_channel_credential",
   # ADR-MCPRE-069 CO-S3-6 (NP-153). Three clauses this owner already states, measured on a
   # `DeploymentRequest` that met no parser. The zero-cadence refusal is this module's own
   # sentence (`crl_revocation.rs`: "--client-crl-reload-secs 0 makes the CRL reloader spin"), and

@@ -273,11 +273,14 @@ path = "mcp-re-proxy/src/app.rs"
 # 760 (measured at c939c2f) -> 748.
 # MCPRE-203: the fleet states the shape it built, so the root no longer restates the rule
 # `CorePool::for_core` owns: 748 (measured at 61605e1) -> 737.
+# MCPRE-208: the channel-binding state projects its serving effects once, so the root no
+# longer derives the binding and identity policy itself or asks `startup_plan` for the
+# provenance: 737 (measured at 132f448) -> 698.
 # MCPRE-204: the connection-bounds owner hands the root a read timeout that is always present,
-# so the root no longer re-proves it: 737 (measured at 0ba3db2) -> 736. `baseline_sha` names that
+# so the root no longer re-proves it: 698 (measured at 1c318c4) -> 697. `baseline_sha` names that
 # parent.
-baseline_prod_loc = 736
-baseline_sha = "0ba3db2"
+baseline_prod_loc = 697
+baseline_sha = "1c318c4"
 status = "reviewed-exception"
 review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 
@@ -559,10 +562,12 @@ path = "mcp-re-proxy/src/startup_plan.rs"
 # MCPRE-197: the inner-plane ceiling and raise left with the `Option` x `Option` interface they
 # projected: 385 (measured at bff0cb9) -> 340.
 # MCPRE-209: the response-authority plans have one producer here and the signing plan's
-# fields are private behind projections: 340 (measured at c939c2f) -> 338. `baseline_sha`
+# fields are private behind projections: 340 (measured at c939c2f) -> 338.
+# MCPRE-208: the peer-identity provenance is part of the channel-binding state's projection,
+# so its second exhaustive match here goes: 338 (measured at 132f448) -> 312. `baseline_sha`
 # names that parent.
-baseline_prod_loc = 338
-baseline_sha = "c939c2f"
+baseline_prod_loc = 312
+baseline_sha = "132f448"
 status = "unreviewed"
 
 [[debt]]
