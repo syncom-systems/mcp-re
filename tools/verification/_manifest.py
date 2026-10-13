@@ -34,6 +34,8 @@ from _evidence_class import severity_problem
 from _premise import class_problem, registration_problems
 from _premise import is_live
 import _registries
+import _toolchains
+from _toolchains import unresolved_pins
 from _registries import REPO_ROOT
 from _registries import ManifestError
 
@@ -51,7 +53,7 @@ ASSUMPTIONS_TOML = _registries.path("assumptions")
 #: tolerated.
 ASSUMPTIONS_SCHEMA_VERSION = 2
 TRUST_BOUNDARIES_TOML = _registries.path("trust-boundaries")
-TOOLCHAINS_LOCK_TOML = _registries.path("toolchains")
+TOOLCHAINS_LOCK_TOML = _toolchains.path()
 
 #: Bumped to 2 by ADR-MCPRE-068 Phase 0A, which made `evidence_class` and
 #: `direct_consequence_severity` required on every unit. The bump is not bookkeeping: the
@@ -1032,29 +1034,7 @@ def assumption_scope_defects(verification: dict, assumptions: dict) -> list[str]
 
 def load_toolchains() -> dict:
     """Load and validate the toolchain lock."""
-    doc = _load(TOOLCHAINS_LOCK_TOML)
-    where = "toolchains.lock.toml"
-    _require(where, doc, {"schema_version"})
-    for name, entry in doc.items():
-        if name == "schema_version":
-            continue
-        if not isinstance(entry, dict):
-            raise ManifestError(f"{where}: [{name}] must be a table")
-        state = entry.get("state")
-        if state not in {"resolved", "unresolved"}:
-            raise ManifestError(
-                f"{where}: [{name}] state must be 'resolved' or 'unresolved', got "
-                f"{state!r}. A tool with no state is a tool of unknown identity."
-            )
-        for sub_name, sub in entry.items():
-            if isinstance(sub, dict) and sub.get("state") not in {
-                "resolved",
-                "unresolved",
-            }:
-                raise ManifestError(
-                    f"{where}: [{name}.{sub_name}] state must be 'resolved' or "
-                    f"'unresolved'"
-                )
+    doc = _toolchains.load()
     # The extraction container's identity is COMPUTABLE from the inputs recorded beside it,
     # so it is computed here rather than trusted. Validating in the loader binds every
     # consumer at once — the gate, the Lean lane, the graph — instead of one script
@@ -1068,25 +1048,6 @@ def load_toolchains() -> dict:
     for problem in artifact_record_problems(doc):
         raise ManifestError(problem)
     return doc
-
-
-def unresolved_pins(toolchains: dict) -> list[str]:
-    """Every toolchain identity that is not pinned, as dotted names.
-
-    An unresolved pin means the tool's identity is unknown, and unknown is dirty. The
-    lanes that depend on it refuse to run rather than running against whatever is on
-    PATH — a proof checked by an unknown prover is not evidence.
-    """
-    out: list[str] = []
-    for name, entry in toolchains.items():
-        if name == "schema_version" or not isinstance(entry, dict):
-            continue
-        if entry.get("state") == "unresolved":
-            out.append(name)
-        for sub_name, sub in entry.items():
-            if isinstance(sub, dict) and sub.get("state") == "unresolved":
-                out.append(f"{name}.{sub_name}")
-    return sorted(out)
 
 
 def unpinned_identities(toolchains: dict, required: Iterable[str]) -> dict[str, str]:

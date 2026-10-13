@@ -21,7 +21,11 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-LOCK = ROOT / "verification/policy/toolchains.lock.toml"
+sys.path.insert(0, str(ROOT / "tools" / "verification"))
+
+import _toolchains  # noqa: E402
+
+LOCK = _toolchains.path(ROOT)
 PROOF = ROOT / "mcp-re-core/src/verus_proofs.rs"
 
 

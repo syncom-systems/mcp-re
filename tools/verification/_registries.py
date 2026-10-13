@@ -17,16 +17,12 @@ So this module owns two things.
   * READING. `parse`, `read`, `document`, `rows`, `text`, `text_at` and `blob_at` are the
     only code that turns a policy registry's bytes into data. The typed loaders
     (`_manifest.load_verification`, `_theorems.load_theorems`, `_mutation.load_probes`,
-    `_structural.load_probes`, `_measured.load_measurements`) read through them and add
-    their own schema.
+    `_structural.load_probes`, `_measured.load_measurements`, `_toolchains.load`) read
+    through them and add their own schema.
   * REFERENCES. `load` runs every typed loader once, `reference_problems` checks every
     reference from one registry into another or into the tree, and `named_paths` is every
     repository path a registry names, with the record that names it. `check-registries`
     runs both on the merge path, and `reader_problems` keeps the first half true.
-
-`toolchains.lock.toml` is read here and is outside the reader rule. It is a pin file that
-installers read before any of this tooling can run, and it names nothing another registry
-references.
 
 Stdlib only at import. The reference checks import the typed loaders when they run,
 because those loaders import this module.
@@ -58,9 +54,8 @@ REGISTRIES = {
     "toolchains": "toolchains.lock.toml",
 }
 
-#: The registries `reader_problems` holds to this module. See the module docstring for the
-#: one that is not.
-GUARDED = frozenset(name for name in REGISTRIES if name != "toolchains")
+#: The registries `reader_problems` holds to this module: every one it reads.
+GUARDED = frozenset(REGISTRIES)
 
 
 class ManifestError(Exception):

@@ -30,8 +30,8 @@ from _manifest import (  # noqa: E402
     load_toolchains,
     load_trust_boundaries,
     load_verification,
-    unresolved_pins,
 )
+from _toolchains import unresolved_pins  # noqa: E402
 
 
 def main() -> int:
