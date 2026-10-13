@@ -6328,7 +6328,7 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-15100"
 project = "mcp-re-http-profile"
-control = "src/lib.rs#verify::bound_request::tests::a_request_with_no_signature_input_has_no_handle"
+control = "src/lib.rs#evidence::request_role::tests::a_request_with_no_signature_input_has_no_handle"
 decision = "new-proposition"
 proposition = "NP-098"
 recorded = "2026-09-19"
