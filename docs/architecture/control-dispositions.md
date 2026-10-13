@@ -4316,11 +4316,11 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 
 ## NP-221 — the delegated-TLS depth refusal names both conflicting settings and both remedies
 
-**Controls:** `mcp-re-proxy` `lib#async_fleet::shard_depth::tests::the_refusal_names_both_settings_and_both_ways_out`.
-**Carrier:** mcp-re-proxy/src/async_fleet/shard_depth.rs (impl Display for DelegatedTlsDepthRefusal).
-**Statement.** *DelegatedTlsDepthRefusal renders a sentence naming --workers-per-shard and DELEGATED TLS custody, and both ways out: raise the depth to 2 or more, or move TLS to an exported key.*
+**Controls:** `mcp-re-proxy` `lib#config_state::cross_machine::delegated_tls_depth::tests::the_depth_refusal_names_both_settings_and_both_ways_out`.
+**Carrier:** mcp-re-proxy/src/config_state/cross_machine/delegated_tls_depth.rs (`DELEGATED_TLS_DEPTH_REFUSAL`, relation X10).
+**Statement.** *Relation X10's refusal is a sentence naming --workers-per-shard and DELEGATED TLS custody, and both ways out: raise the depth to 2 or more, or move TLS to an exported key.*
 **If false.** An operator refused at startup is sent to change only the depth, or cannot tell from the message which two settings disagree, and may choose a remedy their deployment does not want.
-**Likely owner:** proxy.delegated_tls_depth_refusal owns the file, but states only that the pair is refused, 'There is no acknowledgement or unsafe flag'. The refusal holds whatever the sentence says, so this is operator-facing prose, the axis NP-123 and NP-145 were referred on.
+**Likely owner:** proxy.delegated_tls_depth_refusal has the file in its paths, but states only that the pair is refused, 'There is no acknowledgement or unsafe flag'. The refusal holds whatever the sentence says, so this is operator-facing prose, the axis NP-123 and NP-145 were referred on.
 **Severity:** `medium` (the ADR-MCPRE-068 §4.1 floor).
 **Root relationship.** An operator-facing promise about a startup refusal; no theorem states what a refusal must tell an operator.
 **Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
