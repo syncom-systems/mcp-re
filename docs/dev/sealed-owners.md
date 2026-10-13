@@ -53,7 +53,7 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `ReplayPlan` | `config_state/replay.rs` | `store() -> PlannedStore<'_>`, `tier()` |
 | `ContinuationControlState` | `config_state/continuation_control.rs` | `continuation_plan()`, `is_shared()` |
 | `ContinuationControlPlan` | `config_state/continuation_control.rs` | `shared_store() -> Option<&str>`, `shared()` |
-| `AdmissionState` | `config_state/admission.rs` | `enforced() -> Option<EnforcedAdmission<'_>>`, `is_enforced()` |
+| `AdmissionState` | `config_state/admission.rs` | `enforced() -> Option<EnforcedAdmission<'_>>`, `is_enforced()`; the view's `enforcer_policy(MaxClockSkew)` |
 | `RetentionState` | `config_state/evidence.rs` | `directory() -> Option<&str>`, `is_on()` |
 | `McpTransportContractState` | `config_state/mcp_transport_contract.rs` | `versions() -> &[String]` (non-empty: `classify_and_validate` produces no state for a refused set) |
 | `TrustRevocationState` | `config_state/trust_revocation.rs` | `epoch_source() -> Option<EpochSource<'_>>`, `reload_cadence()`, `tier()`, `declared_window_secs()`, `push_channel_is_inert()`, `has_networked_epoch()` |
@@ -75,6 +75,8 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `CryptographicSigningKeyEvidence` | `communication_assurance/signing_key_evidence.rs` | `key()` |
 | `CredentialKeyCorrespondenceFacts` | `communication_assurance/credential_key_correspondence.rs` | `corresponding_key()` |
 | `DelegatedCertResolver` | `delegated_tls/resolver.rs` | `budget()`, `materialize()` (the only constructor) |
+| `MaterializedLifecycle` | `materializing_runtime/materialized_lifecycle.rs` | `into_lifecycle()` — spent by `MaterializedRuntime::new`, the only consumer; `reached()` is `pub(super)`, called by `finish` alone |
+| `MaterializedRuntime` | `materialized_runtime.rs` | `serve()`, `shutdown()` — the lifecycle it records against is its own, never a parameter |
 | `P256Point` | http-profile `scitt.rs` | `verifying_key()` — the representation IS the decoded key |
 | `ScittServiceTrustPin` | http-profile `scitt.rs` | `verification_key()`, `kid()`, `service_identifier()`, `leaf_profile()`, `position_profile()`, `resolve()` |
 | `EvidenceCommitment` | http-profile `scitt.rs` | `corresponds_to()`, `is_complete_record()`, `commits_to_verified_evidence()`, `identifies_a_submission()`, `chain_label()` |
@@ -948,6 +950,12 @@ verify-structural --probe S20 --probe S21
 `enforced()` returns `None` where admission is not enforced, so the view's **existence** is
 itself the enforcement fact — which is why it has to be unforgeable.
 
+The view also projects the gate's §5.2 budget: `enforcer_policy(MaxClockSkew)` turns the
+availability rule into the two degraded fields as one cell and takes N from the profile's
+`AdmissionPolicy::default`. The admission capability builds the `AdmissionEnforcer` from that
+projection and the posture, and the root attaches the enforcer whole, so no consumer re-maps
+the availability or names N.
+
 **Two facts recorded rather than fixed here**, both pre-existing and both Phase 0E's:
 
 - neither this owner's `tested` half nor `proxy.custody_exposure`'s carries `mutation://`
@@ -956,6 +964,35 @@ itself the enforcement fact — which is why it has to be unforgeable.
   are **`NOT-ROOT-REACHABLE`**. Per the ratification that means only that no currently
   declared root transitively depends on them. It is not low importance, not complete
   assurance, and not permission to omit evidence.
+
+### After the campaign: the runtime lifecycle, where the constructed value owns the invariant
+
+**Landed 2026-10-13, MCPRE-195.** ADR-MCPRE-057 §9 asks that `Materialized` and "every
+teardown-bearing resource is owned" be one fact. Until this change they were one fact at one
+call site: the composition root created the `RuntimeLifecycle`, applied `ValidationSucceeded`
+and `PlanBuilt` on its own word, `finish` handed the pair `(MaterializedRuntime,
+RuntimeLifecycle)` back, and `serve` accepted *any* lifecycle value, checking the state only
+in a `debug_assert`. A second caller could serve a runtime on a lifecycle that never reached
+`Materialized`, and the operational test — *can the check be deleted and still leave an
+invalid value unconstructible?* — answered no.
+
+Now the value owns it. `MaterializingRuntime::begin` takes the `ValidatedDeployment` the
+root holds and creates the lifecycle from that proof; `MaterializedLifecycle::reached` is the
+only producer of `MaterializationSucceeded`, `pub(super)` to `materializing_runtime` and
+called by `finish` after the last required resource is taken; `MaterializedRuntime::new`
+accepts nothing but that certificate; and `serve` has no lifecycle parameter. The
+`debug_assert` is gone because the proposition it checked is now a type fact.
+
+| probe | construction | what it would buy |
+|---|---|---|
+| S54 | `runtime.serve(.., RuntimeLifecycle::new())` | serving on a record that skipped every state — **compiled on the tree before MCPRE-195** |
+| S55 | `MaterializedLifecycle::reached(RuntimeLifecycle::new())` | a certificate over nothing |
+| S56 | `MaterializedLifecycle { lifecycle }` | the same, by literal |
+
+The seam detector worked as documented: making the field private and removing the parameter
+produced three compile errors in the owner's own tests, each a struct literal that now had to
+say which lifecycle the runtime held — and nothing outside the two owners broke, because
+nothing outside them had a legitimate reason to touch the value.
 
 ## The campaign, finished
 

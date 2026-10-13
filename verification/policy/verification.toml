@@ -110,7 +110,7 @@ pilot = "verus-candidate"
 [[unit]]
 id = "proxy.fleet_serve_sole_route"
 class = "V0"
-description = "Crate code cannot execute the serving fleet except through `MaterializedRuntime::serve`: `app::serve_fleet` cannot be called without a `FleetServeAuthorized`, which carries the fleet configuration it authorizes and is spent to obtain it; its field is private to `materialized_runtime::fleet_serve_authorized`, its only producer `issue` is `pub(super)` so only `materialized_runtime` can name it, and `serve` — which holds a lifecycle that legally reached `Materialized` by value — is where it is issued. No `Default`, `Clone` or serialization produces one."
+description = "Crate code cannot execute the serving fleet except through `MaterializedRuntime::serve`: `app::serve_fleet` cannot be called without a `FleetServeAuthorized`, which carries the fleet configuration it authorizes and is spent to obtain it; its field is private to `materialized_runtime::fleet_serve_authorized`, its only producer `issue` is `pub(super)` so only `materialized_runtime` can name it, and `serve` — which runs on a runtime that owns a lifecycle at `Materialized` from construction — is where it is issued. No `Default`, `Clone` or serialization produces one."
 # The issuer is in the closure: "only `serve` issues it" is a fact about `materialized_runtime.rs`,
 # so a change there must move this unit's fingerprint.
 paths = [
@@ -131,6 +131,24 @@ exported_contracts = []
 evidence_class = "structural"
 direct_consequence_severity = "medium"
 evidence = ["structural://proxy/runtime_lifecycle/sole_mutator"]
+
+[[unit]]
+id = "proxy.materialized_lifecycle_sole_producer"
+class = "V0"
+description = "The runtime owns the lifecycle that describes it (ADR-MCPRE-057 §3/§9): `MaterializingRuntime::begin` creates the lifecycle from the `ValidatedDeployment` the root holds, `MaterializedLifecycle::reached` is the only producer of `MaterializationSucceeded` and is `pub(super)` to `materializing_runtime`, `MaterializedRuntime::new` accepts only that certificate, and `serve` takes no lifecycle — so no code can assemble or serve a runtime on a lifecycle that skipped validation, planning or materialization. No `Default`, `Clone` or serialization produces either value."
+# `serve`'s signature and the private `lifecycle` field are facts about `materialized_runtime.rs`,
+# and `completeness.rs` decides whether `finish` may reach `Materialized`, so a change in either
+# must move this unit's fingerprint.
+paths = [
+  "mcp-re-proxy/src/materializing_runtime/mod.rs",
+  "mcp-re-proxy/src/materializing_runtime/completeness.rs",
+  "mcp-re-proxy/src/materializing_runtime/materialized_lifecycle.rs",
+  "mcp-re-proxy/src/materialized_runtime.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "medium"
+evidence = ["structural://proxy/materialized_lifecycle/sole_producer"]
 
 [[unit]]
 id = "http_profile.keyid"
@@ -8416,6 +8434,7 @@ tested_symbols = [
   # store refusal, not the degraded route, with degraded mode opted in.
   "//mcp-re-proxy:proxy_ext_unit_test#admission_enforcer::tests::a_key_of_another_type_is_refused_at_the_store_and_never_degraded",
   "//mcp-re-proxy:proxy_unit_test#admission_enforcer::enforcement::tests::the_two_postures_are_distinct",
+  "//mcp-re-proxy:proxy_unit_test#admission_enforcer::enforcement::tests::each_configured_posture_is_its_own_enforcement",
   # WHY the gate refused, as a coordinate beside the facet. The wire code of an admission
   # refusal is frozen and nearly uniform, so a forged record, an absent one and a revoked
   # workload are one 403 to the client; the durable record is the only place the difference
@@ -8464,7 +8483,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.admission_configuration_state"
 class = "V0"
-description = "WHAT ADMISSION CONFIGURATION THIS DEPLOYMENT RECOGNISES: every legal form is classified and accepted, an enforcing state carries every value it cannot verify without, and a configuration that names no authority is refused rather than served as OFF. That the enforcing view a consumer reads was projected from one classified state, rather than assembled by the reader, is a compile-time fact and belongs to `proxy.admission_configuration_state_sole_producer`."
+description = "WHAT ADMISSION CONFIGURATION THIS DEPLOYMENT RECOGNISES: every legal form is classified and accepted, an enforcing state carries every value it cannot verify without, and a configuration that names no authority is refused rather than served as OFF. The enforcing view projects the PEP's §5.2 budget from the classified availability, so the degraded opt-in and P arrive as one cell. That the enforcing view a consumer reads was projected from one classified state, rather than assembled by the reader, is a compile-time fact and belongs to `proxy.admission_configuration_state_sole_producer`."
 paths = ["mcp-re-proxy/src/config_state/admission.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -8487,6 +8506,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::a_degraded_window_past_the_ceiling_names_no_state_and_the_ceiling_does",
   "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::an_enforcing_state_names_every_value_it_cannot_verify_without",
   "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::an_authority_key_that_cannot_verify_anything_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::a_fail_closed_gate_projects_no_degraded_window",
+  "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::a_bounded_degraded_gate_projects_its_window_and_the_opt_in",
 ]
 
 

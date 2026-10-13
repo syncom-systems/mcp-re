@@ -166,10 +166,10 @@ mod tests {
 
     fn policy(bound: i64, skew: i64, allow_degraded: bool) -> AdmissionPolicy {
         AdmissionPolicy {
-            max_assertion_age: 300,
             max_clock_skew: skew,
             degraded_propagation_bound: bound,
             allow_degraded_mode: allow_degraded,
+            ..AdmissionPolicy::default()
         }
     }
 

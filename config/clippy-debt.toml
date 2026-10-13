@@ -212,10 +212,12 @@ lint = "indexing_slicing"
 count = 19
 
 # 0 -> 3: the same measurement correction as `arithmetic_side_effects` above.
+# 3 -> 2: MCPRE-196 — the admission owner projects its enforcer, so the capability no longer
+# re-maps posture and availability field by field.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "too_many_lines"
-count = 3
+count = 2
 
 # 3 -> 0: the runfiles-only resolver replaced the source-tree fallbacks.
 [[debt]]

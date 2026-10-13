@@ -5014,3 +5014,14 @@ this one covers request signers too. No theorem depends on it.
 **Severity:** `medium`.
 **Recorded:** 2026-10-08, r12 step 7.
 
+
+## NP-280 — the materialization-phase lifecycle transitions are applied where their facts are established
+
+**Controls:** `materializing_runtime::materialized_lifecycle::tests::{started_yields_a_lifecycle_at_materializing, failed_ends_the_lifecycle_at_failed_to_start, reached_applies_materialization_succeeded_and_yields_materialized, reached_refuses_a_lifecycle_that_never_started_materializing}`.
+**Carrier:** `mcp-re-proxy/src/materializing_runtime/materialized_lifecycle.rs` — `started`, `failed`, `MaterializedLifecycle::reached`.
+**Statement.** *`started` spends the `ValidatedDeployment` proof for a lifecycle at `Materializing` and nowhere else; `reached` applies `MaterializationSucceeded` and refuses a lifecycle that never started materializing; `failed` ends at `FailedToStart`.*
+**If false.** A producer that recorded a state its fact did not establish — `started` ending past `Materializing`, or `reached` certifying a lifecycle at `Configured` — would hand `MaterializedRuntime::new` a certificate over nothing, and the runtime would serve on a record that skipped a state. The structural probes S54–S56 establish that no OTHER site produces these transitions; only these tests establish what the sole producers record.
+**Likely owner:** `proxy.materialized_lifecycle_sole_producer`.
+**Root relationship.** THM-0012 (the recorded terminal state implies every event of the path was applied, in order).
+**Severity:** `medium`.
+**Recorded:** 2026-10-13, MCPRE-195.

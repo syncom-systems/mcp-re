@@ -318,29 +318,15 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
         trust_plan.epoch().clone(),
     );
 
-    // ADR-MCPRE-057 §3 — the lifecycle becomes a value here.
-    //
-    // `PlanBuilt` is applied at THIS line because everything above it is pure and the
-    // next statement is the first effect this process performs. That boundary is real but
-    // not yet tidy: some pure planning (`ReplayPlan::from_config`, the inner-plane
-    // ceiling) still runs below, INSIDE `Materializing`. The state machine tolerates it —
-    // planning during materialization is untidy, not illegal — and ADR-MCPRE-058 §17A
-    // step 5 is where the two stop interleaving. Instrumenting what is here, rather than
-    // reordering to make the model look clean, is deliberate: a state machine that
-    // required its own preconditions to be manufactured would be describing an
-    // architecture that does not exist.
-    let mut lifecycle = crate::runtime_state::RuntimeLifecycle::new();
-    // Holding a `ValidatedDeployment` IS the proof: there is no route to this function that
-    // skips the boundary.
-    lifecycle.apply(crate::runtime_state::RuntimeEvent::ValidationSucceeded)?;
-    lifecycle.apply(crate::runtime_state::RuntimeEvent::PlanBuilt)?;
-
-    // ADR-MCPRE-057 §9 — from here every teardown-bearing resource is owned the moment it
-    // is acquired. `begin` applies `MaterializationStarted`, so entering the state and
-    // entering the owner are one act; a failure at any `?` below drops the builder, which
-    // reclaims what was installed in the documented order instead of unwinding locals in
-    // reverse declaration order (F3).
-    let mut building = crate::materializing_runtime::MaterializingRuntime::begin(lifecycle)?;
+    // ADR-MCPRE-057 §3 and §9 — the lifecycle becomes a value here, owned by the runtime
+    // it describes. Everything above this line is pure and the next statement is the
+    // first effect this process performs; `begin` records validation, planning and the
+    // start of materialization from the proof it is handed, so this root asserts nothing
+    // on its own word. From here every teardown-bearing resource is owned the moment it
+    // is acquired: a failure at any `?` below drops the builder, which reclaims what was
+    // installed in the documented order instead of unwinding locals in reverse
+    // declaration order (F3).
+    let mut building = crate::materializing_runtime::MaterializingRuntime::begin(config)?;
 
     building.install_trust(crate::trust_plane::TrustPlane::materialize(
         &trust_plan,
@@ -621,13 +607,8 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
         building.control(),
     )?
     .into_parts();
-    if let Some(gate) = admission {
-        proxy = proxy.with_admission(
-            gate.source,
-            gate.policy,
-            gate.enforcement,
-            gate.resolve_authority,
-        );
+    if let Some(enforcer) = admission {
+        proxy = proxy.with_admission_enforcer(enforcer);
     }
     posture.declare(Seam::AdmissionCurrency, admission_state);
 
@@ -647,24 +628,24 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     // The last two teardown-bearing resources join the owner, and `finish` assembles.
     //
     // `MaterializationSucceeded` is applied INSIDE `finish`, after every required
-    // resource has been taken — so a `Materialized` lifecycle cannot exist over an
-    // incomplete graph. That is the equivalence ADR-MCPRE-057 §9 asks for: the lifecycle
-    // state and the ownership state are the same fact, not two facts kept in step by
-    // convention.
+    // resource has been taken, and the runtime keeps the lifecycle — so a `Materialized`
+    // lifecycle cannot exist over an incomplete graph, and nothing can serve on one that
+    // reached the state another way. That is the equivalence ADR-MCPRE-057 §9 asks for:
+    // the lifecycle state and the ownership state are the same fact, not two facts kept
+    // in step by convention.
     // Composed BEFORE the runtime exists. `--bind` resolution can fail, and a failure
     // after `finish` would drop a materialized runtime instead of tearing it down in the
     // order it owns — the one thing that type is for.
     let fleet_cfg = fleet_config(values, topology, in_flight_limit)?;
 
     building.install_proxy(proxy)?;
-    let (runtime, lifecycle) = building.finish()?;
+    let runtime = building.finish()?;
 
     runtime.serve(
         Arc::clone(&config_snapshot),
         Arc::new(serve_options),
         fleet_cfg,
         shutdown,
-        lifecycle,
     )
 }
 

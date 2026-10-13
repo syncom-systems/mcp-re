@@ -343,31 +343,28 @@ impl HttpProfileProxy {
         self
     }
 
-    /// Enforce §7 admission currency (ADR-MCPRE-053) against an authoritative source.
+    /// Enforce §7 admission currency (ADR-MCPRE-053) through `enforcer`.
     ///
-    /// Without this the assertion and its binding are verified evidence that decides
-    /// nothing: a call carrying a fresh, correctly-bound assertion is served even
-    /// after the workload's admission has been superseded or revoked, because
-    /// currency is a comparison against state only the deployment can supply.
-    ///
-    /// `enforcement` decides what an admission-free request means. It is a
-    /// deployment's call, not a default: `Required` on a fleet that does not issue
-    /// assertions refuses every call, and `Optional` on one that does silently
-    /// accepts a caller who simply omits the evidence.
+    /// Without it the assertion and its binding are verified evidence that decides nothing:
+    /// a fresh, correctly-bound assertion is served after its workload has been revoked,
+    /// because currency is a comparison against state only the deployment can supply.
+    pub(crate) fn with_admission_enforcer(mut self, enforcer: AdmissionEnforcer) -> Self {
+        self.admission = Some(enforcer);
+        self
+    }
+
+    /// The same gate from its four collaborators, for a caller outside this crate.
+    /// `enforcement` is a deployment's call: `Required` on a fleet that issues no assertions
+    /// refuses every call, `Optional` on one that does accepts a caller who omits them.
     pub fn with_admission(
-        mut self,
+        self,
         source: Arc<dyn AsyncAdmissionSource>,
         policy: AdmissionPolicy,
         enforcement: AdmissionEnforcement,
         resolve_authority: AdmissionAuthorityResolver,
     ) -> Self {
-        self.admission = Some(AdmissionEnforcer::new(
-            source,
-            policy,
-            enforcement,
-            resolve_authority,
-        ));
-        self
+        let enforcer = AdmissionEnforcer::new(source, policy, enforcement, resolve_authority);
+        self.with_admission_enforcer(enforcer)
     }
 
     /// Turn a stage's decision into the signed refusal the client receives.
