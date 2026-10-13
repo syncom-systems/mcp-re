@@ -181,8 +181,7 @@ def scripts_in(commands: list[Command]) -> set[str]:
     return {
         path
         for command in commands
-        if not command.prints
-        for path in named_paths(command.code)
+        for path in named_paths(command.executed)
         if path.endswith((".py", ".sh"))
     }
 
@@ -316,8 +315,7 @@ def names_in(commands: list[Command]) -> set[str]:
     return {
         path
         for command in commands
-        if not command.prints
-        for path in named_paths(command.code)
+        for path in named_paths(command.executed)
         if path.startswith(f"{ENTRY_ROOT}/")
     }
 

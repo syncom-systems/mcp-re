@@ -16,17 +16,18 @@ So this module owns the syntax, and a gate states only its own property:
     filter or none, and `jobs`, each with the check name GitHub reports and its steps.
   * `shell_commands(text)` gives the logical commands of a `run:` body or a shell script.
     Comment lines and trailing comments are dropped and `\\` continuations are joined.
-    `Command.prints` marks a usage line (`echo`, `printf`), which names a command without
-    running it.
-  * `Command.invocations()` gives what each segment of a command runs: the program, or the
-    script an interpreter is handed. `named_paths` gives every repository path a command
+    A segment that prints (`echo`, `printf`) names a command without running it:
+    `Command.executed` is the command without its printing segments, and `Command.prints`
+    marks a command that only prints. `echo "$T" | docker login …` still runs `docker`.
+  * `Command.invocations()` gives what each non-printing segment of a command runs: the
+    program, or the script an interpreter is handed. `named_paths` gives every repository path a command
     names in any position.
   * `glob_matches` is GitHub's path-filter matching.
 
 It is stdlib only. The YAML read is the subset these workflows use: block mappings and
 sequences, `|`/`>` block scalars, flow sequences, quoted and plain scalars, and comments.
 Anything outside that subset (an anchor, an alias, a merge key, a flow mapping with
-content) raises `WorkflowSyntaxError` rather than being read wrongly. A reader that guesses
+content, a block scalar header with an indentation indicator, a repeated key) raises `WorkflowSyntaxError` rather than being read wrongly. A reader that guesses
 is the defect this module exists to remove.
 
 Run:  python3 scripts/workflow_reader.py --selftest
@@ -175,6 +176,8 @@ class _Parser:
         rest = rest.strip()
         if _BLOCK.match(_strip_comment(rest)):
             return self.block_scalar(i, indent, _strip_comment(rest), line)
+        if rest[:1] in ("|", ">"):
+            raise WorkflowSyntaxError(f"line {line}: a block scalar header this reader does not read: {rest!r}")
         if not rest or rest.startswith("#"):
             nxt = self._next(i)
             if nxt < len(self.lines):
@@ -209,6 +212,8 @@ class _Parser:
             key = _unquote(match.group("key"))
             if key == "<<":
                 raise WorkflowSyntaxError(f"line {i + 1}: a merge key")
+            if key in node.items:
+                raise WorkflowSyntaxError(f"line {i + 1}: key {key!r} repeats the one at line {node.key_lines[key]}")
             value, nxt = self.value(match.group("rest"), i + 1, indent, i + 1)
             node.items[key] = value
             node.key_lines[key] = i + 1
@@ -280,8 +285,19 @@ class Command:
 
     @property
     def prints(self) -> bool:
-        """A usage line — `echo`/`printf` — names a command without running it."""
-        return bool(_PRINTS.match(self.code.strip()))
+        """A usage line: every segment prints, so the command names others without running them."""
+        segments = self.segments()
+        return bool(segments) and all(_prints(segment) for segment in segments)
+
+    @property
+    def executed(self) -> str:
+        """The segments this command runs, without those that only print.
+
+        A segment, not the whole command: `echo "$T" | docker login …` prints and runs
+        `docker login`, and a reader that dropped the command for its first word would hide
+        the login.
+        """
+        return " ; ".join(segment for segment in self.segments() if not _prints(segment))
 
     def segments(self) -> list[str]:
         return _segments(self.text)
@@ -292,10 +308,12 @@ class Command:
         return _BACKTICK_COMMENT.sub(" ", self.text)
 
     def invocations(self) -> list[Invocation]:
-        """What each segment of this command runs."""
-        if self.prints:
-            return []
-        return [inv for seg in self.segments() if (inv := _invocation(seg)) is not None]
+        """What each segment of this command runs, without the segments that only print."""
+        return [
+            inv
+            for seg in self.segments()
+            if (inv := _invocation(seg)) is not None and inv.program not in _PRINTERS
+        ]
 
 
 @dataclass(frozen=True)
@@ -416,7 +434,8 @@ def workflows(root: Path) -> list[Workflow]:
 
 # ---------------------------------------------------------------------------- shell commands
 
-_PRINTS = re.compile(r"^(?:echo|printf)\b")
+#: Programs that write their operands rather than run them.
+_PRINTERS = {"echo", "printf"}
 _BACKTICK_COMMENT = re.compile(r"`\s*#[^`]*`")
 
 
@@ -557,6 +576,11 @@ def _invocation(segment: str) -> Invocation | None:
             return None
         return Invocation(_program(rest[0]), head, tuple(rest[1:]))
     return Invocation(_program(head), None, tuple(words[1:]))
+
+
+def _prints(segment: str) -> bool:
+    inv = _invocation(segment)
+    return inv is not None and inv.program in _PRINTERS
 
 
 def _program(word: str) -> str:
@@ -712,9 +736,11 @@ def selftest() -> int:
         ("python3 scripts/x.py --flag", [("scripts/x.py", "python3")], "an interpreted script"),
         ("FOO=1 ./scripts/x.sh a b", [("scripts/x.sh", None)], "a program after an assignment"),
         ("true && tools/verification/verify || exit 1", [("true", None), ("tools/verification/verify", None), ("exit", None)], "segments at && and ||"),
-        ("if python3 -I scripts/x.py; then echo ok; fi", [("scripts/x.py", "python3"), ("echo", None), ("fi", None)], "a program after `if`, flags before the script"),
+        ("if python3 -I scripts/x.py; then echo ok; fi", [("scripts/x.py", "python3"), ("fi", None)], "a program after `if`, flags before the script; `echo` prints"),
         ("timeout 300 sudo apt-get update", [("apt-get", None)], "timeout and sudo wrap a program"),
         ('echo "run scripts/x.py"', [], "a usage line runs nothing"),
+        ('echo "$T" | docker login ghcr.io -u u --password-stdin', [("docker", None)], "a pipe after `echo` runs its program"),
+        ('echo "::group::x" && python3 scripts/x.py', [("scripts/x.py", "python3")], "a chain after `echo` runs its program"),
         ('grep "a|b" file', [("grep", None)], "a quoted `|` does not split"),
         (". scripts/lib/shim.sh", [("scripts/lib/shim.sh", ".")], "a sourced file"),
         ('image="$(python3 tools/x load)" || return 1', [("tools/x", "python3"), ("return", None)], "a command substitution runs its own command"),
@@ -723,6 +749,22 @@ def selftest() -> int:
     ]:
         got = ran(text)
         results.append(_case(f"invocations: {label}", got == expect, got))
+
+    piped = shell_commands('echo "$T" | docker login ghcr.io -u u --password-stdin')[0]
+    chained = shell_commands('echo "::group::x" && python3 scripts/x.py')[0]
+    usage = shell_commands('echo "usage: scripts/x.py" | tee -a log && printf x')[0]
+    results.append(_case(
+        "a command that prints and runs is not a usage line; its executed code keeps what runs",
+        not piped.prints and "docker login" in piped.executed and "echo" not in piped.executed
+        and not chained.prints and named_paths(chained.executed) == {"scripts/x.py"},
+        (piped.prints, piped.executed, chained.executed),
+    ))
+    results.append(_case(
+        "`prints` is a command whose every segment prints, and then nothing is executed",
+        shell_commands('echo a && printf b')[0].prints and shell_commands('echo a && printf b')[0].executed == ""
+        and not usage.prints and named_paths(usage.executed) == set(),
+        (usage.prints, usage.executed),
+    ))
 
     noted = shell_commands("true \\\n  `# scripts/x.py explains the next link` \\\n  && python3 scripts/y.py")[0]
     results.append(_case(
@@ -752,6 +794,10 @@ def selftest() -> int:
         ("x: &anchor\n  a: 1\n", "an anchor"),
         ("x: {a: 1}\n", "a flow mapping with content"),
         ("x:\n  - a\n  y: 1\n", "content the reader cannot place"),
+        ("jobs:\n  a: {}\n  a: {}\n", "a repeated key"),
+        ("on:\n  pull_request:\n  pull_request:\n    paths: [a]\n", "a repeated trigger"),
+        ("x: |2\n    a # b\n    c\n", "a block scalar header with an indentation indicator"),
+        ("x:\n  - >-1\n    a\n", "an indentation indicator in a sequence entry"),
     ]:
         try:
             parse_yaml(text)

@@ -68,7 +68,7 @@ def commands(path: Path) -> list[Command]:
     """
     text = path.read_text(encoding="utf-8")
     found = parse(text, str(path)).commands() if path.suffix == ".yml" else shell_commands(text)
-    return [command for command in found if not command.prints]
+    return [command for command in found if command.executed]
 
 
 def root_modules(root: Path, row: dict) -> set[str]:
@@ -84,7 +84,7 @@ def check(root: Path, targets: dict[str, dict]) -> tuple[list[str], int]:
         for path in sorted(root.glob(pattern)):
             rel = path.relative_to(root)
             for command in commands(path):
-                number, block = command.line, command.code
+                number, block = command.line, command.executed
                 if not BAZEL_TEST.search(block):
                     continue
                 labels = [lbl for lbl in LABEL.findall(block) if not lbl.startswith("//...")]

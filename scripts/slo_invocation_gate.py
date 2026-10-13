@@ -77,9 +77,9 @@ def invocation_lines(path: Path, root: Path) -> list[tuple[int, str, bool]]:
     text = path.read_text(errors="replace")
     rel = path.relative_to(root)
     if rel.parts[:2] == (".github", "workflows"):
-        return [(c.line, c.code, False) for c in parse(text, str(rel)).commands() if not c.prints]
+        return [(c.line, c.executed, False) for c in parse(text, str(rel)).commands() if c.executed]
     if path.suffix == ".sh":
-        return [(c.line, c.code, False) for c in shell_commands(text) if not c.prints]
+        return [(c.line, c.executed, False) for c in shell_commands(text) if c.executed]
     return [(n, line, True) for n, line in enumerate(text.splitlines(), 1)]
 
 

@@ -74,7 +74,7 @@ def findings(root: Path) -> list[str]:
             # gives commands without them, the same distinction `slo_invocation_gate` draws
             # between an invocation and a paragraph warning about one.
             logs_in = any(
-                _DOCKER_LOGIN.search(command.code) for command in job.commands() if not command.prints
+                _DOCKER_LOGIN.search(command.executed) for command in job.commands()
             ) or any((step.uses or "").startswith(_LOGIN_ACTION) for step in job.steps)
             if logs_in:
                 out.append(
@@ -148,6 +148,26 @@ def selftest() -> int:
         )
         if len(findings(root)) != 1:
             print("SELFTEST FAILED: a docker/login-action step was not caught")
+            return 1
+
+        # A login fed by a pipe from `echo`: the command prints AND logs in.
+        target.write_text(
+            "jobs:\n  extraction:\n    runs-on: [self-hosted, macOS, ARM64]\n    steps:\n"
+            "      - name: piped\n        run: echo \"$T\" | docker login ghcr.io -u u --password-stdin\n",
+            encoding="utf-8",
+        )
+        if len(findings(root)) != 1:
+            print("SELFTEST FAILED: a `docker login` piped from `echo` was not caught")
+            return 1
+
+        # A usage line that names the login runs nothing.
+        target.write_text(
+            "jobs:\n  extraction:\n    runs-on: [self-hosted, macOS, ARM64]\n    steps:\n"
+            "      - name: usage\n        run: echo \"never docker login here\"\n",
+            encoding="utf-8",
+        )
+        if findings(root):
+            print("SELFTEST FAILED: an `echo` naming docker login was read as a call")
             return 1
 
         # A comment explaining the contract is not a breach of it.

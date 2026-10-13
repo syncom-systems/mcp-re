@@ -176,8 +176,7 @@ def workflow_jobs() -> list[tuple[str, str, set[str]]]:
             invoked = {
                 script
                 for command in job.commands()
-                if not command.prints
-                for script in named_paths(command.code)
+                for script in named_paths(command.executed)
             }
             jobs.append((path.name, job.name, invoked))
     return jobs
