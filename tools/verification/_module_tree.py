@@ -19,9 +19,9 @@ The resolution is rustc's (`rustc_expand::module`), stated as the state a module
   * an inline `mod z { … }` moves the directory to `dir/[offset/]z` (or `dir/p` under its
     own `#[path]`), so a `mod y;` inside it resolves under `z/`.
 
-Declarations are read from code only: comments, string literals and char literals are
-blanked first, with line structure kept, so a `mod` in a doc comment or a fixture string
-declares nothing.
+Declarations are read from code only: `_rust_source.code_only` blanks comments, string
+literals and char literals first, with line structure kept, so a `mod` in a doc comment or
+a fixture string declares nothing.
 
 `walk(root)` gives every file a crate root reaches, with its module path, the declaration
 that reached it, and whether it is reachable only through a `#[cfg(test)]` declaration.
@@ -40,8 +40,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-_IDENT = re.compile(r"[A-Za-z0-9_]")
+from _rust_source import TEST_ATTR, code_only  # noqa: E402
+
 #: A module declaration in code-only text: optional visibility, `mod`, the name, then `;`
 #: (a file module) or `{` (an inline one).
 _DECL = re.compile(
@@ -49,106 +51,6 @@ _DECL = re.compile(
 )
 _TOKENS = re.compile(r"#!?\[|[{};]")
 _PATH_ATTR = re.compile(r'^#\[\s*path\s*=\s*"([^"]*)"\s*\]$', re.S)
-_CFG_TEST = re.compile(r"^#\[\s*cfg\s*\(\s*(?:all\s*\(\s*)?test\b")
-
-
-# --------------------------------------------------------------------------- code only
-
-
-def code_only(text: str) -> str:
-    """`text` with comments, string literals and char literals blanked out.
-
-    Line structure and columns are preserved, so a finding still names the line it came
-    from. rustc compiles neither the `mod` in a doc comment nor the one inside a fixture
-    string.
-    """
-    out: list[str] = []
-    i, n = 0, len(text)
-
-    def blank(upto: int) -> None:
-        nonlocal i
-        out.extend("\n" if ch == "\n" else " " for ch in text[i:upto])
-        i = upto
-
-    while i < n:
-        c = text[i]
-        nxt = text[i + 1] if i + 1 < n else ""
-        if c == "/" and nxt == "/":
-            j = text.find("\n", i)
-            blank(n if j < 0 else j)
-        elif c == "/" and nxt == "*":
-            # Rust block comments nest.
-            depth, j = 0, i
-            while j < n:
-                if text.startswith("/*", j):
-                    depth += 1
-                    j += 2
-                elif text.startswith("*/", j):
-                    depth -= 1
-                    j += 2
-                    if depth == 0:
-                        break
-                else:
-                    j += 1
-            blank(j)
-        elif c == '"' or (c == "r" and _raw_string_here(text, i)) or (c == "b" and _byte_string_here(text, i)):
-            blank(_string_end(text, i))
-        elif c == "'":
-            blank(_char_literal_end(text, i))
-        else:
-            out.append(c)
-            i += 1
-    return "".join(out)
-
-
-def _raw_string_here(text: str, i: int) -> bool:
-    """True when the `r` at `i` opens a raw string rather than ending an identifier."""
-    if i and _IDENT.match(text[i - 1]) and not (text[i - 1] == "b" and (i < 2 or not _IDENT.match(text[i - 2]))):
-        return False
-    j = i + 1
-    while j < len(text) and text[j] == "#":
-        j += 1
-    return j < len(text) and text[j] == '"'
-
-
-def _byte_string_here(text: str, i: int) -> bool:
-    """True when the `b` at `i` opens `b"…"`; `br"…"` is handled at its `r`."""
-    return (not i or not _IDENT.match(text[i - 1])) and text.startswith('b"', i)
-
-
-def _string_end(text: str, i: int) -> int:
-    """Index one past the string literal starting at `i`."""
-    n = len(text)
-    if text[i] == "b":
-        i += 1
-    if text[i] == "r":
-        j = i + 1
-        hashes = 0
-        while j < n and text[j] == "#":
-            hashes += 1
-            j += 1
-        close = '"' + "#" * hashes
-        end = text.find(close, j + 1)
-        return n if end < 0 else end + len(close)
-    j = i + 1
-    while j < n:
-        if text[j] == "\\":
-            j += 2
-            continue
-        if text[j] == '"':
-            return j + 1
-        j += 1
-    return n
-
-
-def _char_literal_end(text: str, i: int) -> int:
-    """Index one past a char literal at `i`; `i + 1` when it is a lifetime."""
-    if text.startswith("'\\", i):
-        j = text.find("'", i + 2)
-        return i + 1 if j < 0 else j + 1
-    if i + 2 < len(text) and text[i + 2] == "'":
-        return i + 3
-    return i + 1
 
 
 # ------------------------------------------------------------------------ declarations
@@ -184,7 +86,7 @@ class Declaration:
     @property
     def cfg_test(self) -> bool:
         """Compiled only under test: its own attribute, or an enclosing test module's."""
-        return self.in_test_region or any(_CFG_TEST.match(a) for a in self.attributes)
+        return self.in_test_region or any(TEST_ATTR.match(a) for a in self.attributes)
 
 
 def _attribute_end(code: str, start: int) -> int:

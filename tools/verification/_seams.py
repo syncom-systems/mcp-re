@@ -24,6 +24,8 @@ import re
 from bisect import bisect_left
 from pathlib import Path
 
+from _rust_source import production_view
+
 #: Mechanisms that move a proof obligation out of the proof and into the trusted computing
 #: base. Word-bounded so `assumed_state` or `external_id` do not trip the gate.
 MECHANISMS = {
@@ -74,43 +76,18 @@ PRODUCTION_MECHANISMS = {
 }
 
 
-TEST_REGION = re.compile(r"^#\[cfg\((all\()?test\b")
-
-
 def production_lines(text: str) -> list[tuple[int, str]]:
     """`(1-based line number, line)` for every line OUTSIDE a test region.
 
-    A region runs from its `#[cfg(test)]`-family attribute to the end of the module it
-    introduces, tracked by brace depth, and scanning resumes afterwards — not "everything
-    above the first one", which would discard production items below a test module.
-
-    Why the PRODUCTION scan needs this at all: its mechanism list exists because the bare
-    words are ordinary English and ordinary Rust, and a test region is where ordinary Rust
-    is densest. `mcp-re-http-profile/src/replay.rs` has a test helper `fn admit(..)`; Verus'
-    `admit()` deletes a proof obligation, and the two share a name and nothing else. A
-    region that ships in no binary cannot weaken a proof about one, so the honest scope for
-    "which escape hatches does this shipped code use" is the shipped code.
+    The region is `_rust_source`'s. Why the PRODUCTION scan needs this at all: its mechanism
+    list exists because the bare words are ordinary English and ordinary Rust, and a test
+    region is where ordinary Rust is densest. `mcp-re-http-profile/src/replay.rs` has a test
+    helper `fn admit(..)`; Verus' `admit()` deletes a proof obligation, and the two share a
+    name and nothing else. A region that ships in no binary cannot weaken a proof about one,
+    so the honest scope for "which escape hatches does this shipped code use" is the shipped
+    code.
     """
-    lines = text.splitlines()
-    kept: list[tuple[int, str]] = []
-    i = 0
-    while i < len(lines):
-        if TEST_REGION.match(lines[i].lstrip()):
-            depth = 0
-            opened = False
-            while i < len(lines):
-                depth += lines[i].count("{") - lines[i].count("}")
-                if "{" in lines[i]:
-                    opened = True
-                i += 1
-                if opened and depth <= 0:
-                    break
-            continue
-        kept.append((i + 1, lines[i]))
-        i += 1
-    return kept
-
-
+    return list(production_view(text).lines)
 
 
 #: A line comment's tail, and a whole-line block-comment body. Removed before a line is

@@ -52,6 +52,9 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools" / "verification"))
+
+from _rust_source import crate_sources, production_view  # noqa: E402
 
 #: The two direct-TLS serving paths. Both reach an establishment boundary, both resolve a
 #: transport identity for the request they are about to serve, and ADR-MCPRE-051 §1 makes
@@ -138,15 +141,6 @@ RESOLVERS = (
 COMPOSITION = "authenticate_relationship_peer"
 
 # ADR-MCPRE-061 §5.1 — both `#[cfg(test)]` and `#[cfg(all(test, ...))]` open a test region.
-TEST_ATTR = re.compile(r"^#\[cfg\((all\()?test\b")
-
-def signature_re(name: str) -> re.Pattern:
-    """`pub(crate) fn <name>( .. ) -> ..` up to the opening brace."""
-    return re.compile(r"fn\s+" + name + r"\s*\((?P<params>.*?)\)\s*->[^{]*\{", re.S)
-
-
-SIGNATURE = signature_re(RESOLVER)
-
 #: A parameter naming certificate representation or a rival identity product. The check is
 #: on the parameter LIST, so a local variable of any of these names is untouched — what is
 #: forbidden is a caller being able to supply one.
@@ -155,33 +149,12 @@ FORBIDDEN_PARAM = re.compile(
 )
 
 
-def production_text(text: str) -> str:
-    """The source with every test region removed.
+def signature_re(name: str) -> re.Pattern:
+    """`pub(crate) fn <name>( .. ) -> ..` up to the opening brace."""
+    return re.compile(r"fn\s+" + name + r"\s*\((?P<params>.*?)\)\s*->[^{]*\{", re.S)
 
-    Same definition as `scripts/module_size_gate.py`: a region runs from its
-    `#[cfg(test)]`-family attribute to the end of the module it introduces, tracked by
-    brace depth, and counting resumes afterwards. A control that drives a real handshake
-    and then asserts something about a historical extractor is evidence, not a production
-    route, and a gate that could not tell them apart would forbid writing the controls.
-    """
-    lines = text.splitlines()
-    kept: list[str] = []
-    i = 0
-    while i < len(lines):
-        if TEST_ATTR.match(lines[i].lstrip()):
-            depth = 0
-            opened = False
-            while i < len(lines):
-                depth += lines[i].count("{") - lines[i].count("}")
-                if "{" in lines[i]:
-                    opened = True
-                i += 1
-                if opened and depth <= 0:
-                    break
-            continue
-        kept.append(lines[i])
-        i += 1
-    return "\n".join(kept)
+
+SIGNATURE = signature_re(RESOLVER)
 
 
 def resolver_body(text: str, name: str = RESOLVER) -> str | None:
@@ -241,11 +214,11 @@ def serving_path_text(path: Path) -> str:
     and the resolver-called-exactly-once count is precisely what that would corrupt.
     """
     if path.is_file():
-        return production_text(path.read_text(encoding="utf-8"))
-    members = sorted(p for p in path.rglob("*.rs") if p.is_file())
+        return production_view(path).text()
+    members = crate_sources(path)
     if not members:
         raise SystemExit(f"{path}: a serving path with no Rust source is not measurable")
-    return "\n".join(production_text(m.read_text(encoding="utf-8")) for m in members)
+    return "\n".join(production_view(m).text() for m in members)
 
 
 def check_dispatch(text: str) -> list[str]:
@@ -331,7 +304,7 @@ def check_facade_containment(root: Path) -> list[str]:
         rel = path.relative_to(root).as_posix()
         if rel in (FACADE, EXTRACTOR_HOME):
             continue
-        text = production_text(path.read_text(encoding="utf-8"))
+        text = production_view(path).text()
         if re.search(r"\bextract_identity\s*\(", text):
             problems.append(
                 f"{rel}: calls `extract_identity` in production. The historical extractor "
@@ -357,14 +330,14 @@ def check(root: Path) -> tuple[list[str], int]:
         problems.append(f"{DISPATCH_MODULE}: missing.")
     else:
         examined += 1
-        problems += check_dispatch(production_text(dispatch.read_text(encoding="utf-8")))
+        problems += check_dispatch(production_view(dispatch).text())
 
     owner = root / PEER_OWNER_MODULE
     if not owner.exists():
         problems.append(f"{PEER_OWNER_MODULE}: missing.")
     else:
         examined += 1
-        problems += check_constructor(production_text(owner.read_text(encoding="utf-8")))
+        problems += check_constructor(production_view(owner).text())
 
     problems += check_facade_containment(root)
     return problems, examined
@@ -456,7 +429,7 @@ def selftest() -> int:
 
     failures = 0
     for name, text, expected in constructor_cases:
-        found = check_constructor(production_text(text))
+        found = check_constructor(production_view(text).text())
         status = "ok " if len(found) == expected else "FAIL"
         if len(found) != expected:
             failures += 1
@@ -465,8 +438,8 @@ def selftest() -> int:
             print(f"        {problem}")
 
     for name, serving, dispatch, expected in cases:
-        found = check_serving_path("probe.rs", production_text(serving))
-        found += check_dispatch(production_text(dispatch))
+        found = check_serving_path("probe.rs", production_view(serving).text())
+        found += check_dispatch(production_view(dispatch).text())
         status = "ok " if len(found) == expected else "FAIL"
         if len(found) != expected:
             failures += 1

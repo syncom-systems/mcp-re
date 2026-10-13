@@ -72,6 +72,9 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools" / "verification"))
+
+from _rust_source import code_only, crate_sources, production_view  # noqa: E402
 
 #: The authorization authority. Every file of it, because the claim is about the AUTHORITY,
 #: not about one module of it — a route added next door would otherwise be invisible.
@@ -177,48 +180,10 @@ FORBIDDEN_PARAM = re.compile(
 )
 
 # ADR-MCPRE-061 §5.1 — both `#[cfg(test)]` and `#[cfg(all(test, ...))]` open a test region.
-TEST_ATTR = re.compile(r"^#\[cfg\((all\()?test\b")
-
-
-#: A line comment, including a doc comment. Stripped before the vocabulary scan: a module
-#: whose documentation explains why it does NOT read `Mcp-Name` is exactly what these
-#: modules should carry, and a gate that forbade saying so would forbid the explanation
-#: while leaving the route open.
-LINE_COMMENT = re.compile(r"^\s*(///|//!|//).*$", re.M)
-
-
-def code_only(text: str) -> str:
-    """`text` with line comments removed. The claim is about the ROUTE, not the prose."""
-    return LINE_COMMENT.sub("", text)
-
-
-def production_text(text: str) -> str:
-    """The source with every test region removed.
-
-    Same definition as `scripts/module_size_gate.py`: a region runs from its
-    `#[cfg(test)]`-family attribute to the end of the module it introduces, tracked by brace
-    depth, and counting resumes afterwards. A control that drives a real handshake and then
-    names a certificate is evidence, not a production route, and a gate that could not tell
-    them apart would forbid writing the controls.
-    """
-    lines = text.splitlines()
-    kept: list[str] = []
-    i = 0
-    while i < len(lines):
-        if TEST_ATTR.match(lines[i].lstrip()):
-            depth = 0
-            opened = False
-            while i < len(lines):
-                depth += lines[i].count("{") - lines[i].count("}")
-                if "{" in lines[i]:
-                    opened = True
-                i += 1
-                if opened and depth <= 0:
-                    break
-            continue
-        kept.append(lines[i])
-        i += 1
-    return "\n".join(kept)
+def without_comments(text: str) -> str:
+    """`text` with comments blanked and literals kept. The claim is about the ROUTE, and a
+    header name on the route is a string literal, so literals stay."""
+    return code_only(text, literals=True)
 
 
 def signature_re(name: str) -> re.Pattern:
@@ -266,9 +231,9 @@ def struct_body(text: str, name: str) -> str | None:
 def check_authority(sources: dict[str, str]) -> list[str]:
     """(1), (2), (3), (5), (6) over the authorization authority."""
     problems: list[str] = []
-    joined = code_only("\n".join(sources.values()))
+    joined = without_comments("\n".join(sources.values()))
     for path, text in sources.items():
-        code = code_only(text)
+        code = without_comments(text)
         for name in RAW_PEER_ROUTE:
             if name in code:
                 problems.append(
@@ -285,7 +250,7 @@ def check_authority(sources: dict[str, str]) -> list[str]:
                 )
     for filename, fn, must_reach in LINKS:
         source = next(
-            (code_only(t) for path, t in sources.items() if path.endswith("/" + filename)),
+            (without_comments(t) for path, t in sources.items() if path.endswith("/" + filename)),
             None,
         )
         if source is None:
@@ -340,7 +305,7 @@ def check_posture_producers(sources: dict[str, str]) -> list[str]:
     for path, text in sources.items():
         if path.endswith(POSTURE_SITES):
             continue
-        code = code_only(text)
+        code = without_comments(text)
         for variant in POSTURE_VARIANTS:
             if f"{POSTURE}::{variant}" in code:
                 problems.append(
@@ -494,8 +459,8 @@ def authority_sources(directory: Path) -> dict[str, str]:
     less than it claims to, which is the failure mode that matters most in a gate.
     """
     return {
-        str(p.relative_to(REPO)): Anchored(production_text(p.read_text(encoding="utf-8")))
-        for p in sorted(directory.rglob("*.rs"))
+        str(p.relative_to(REPO)): Anchored(production_view(p).text())
+        for p in crate_sources(directory)
     }
 
 
@@ -508,12 +473,12 @@ def read(repo: Path, rel: str) -> str:
     """
     target = repo / rel
     if target.is_file():
-        return Anchored(code_only(production_text(target.read_text(encoding="utf-8"))))
-    members = sorted(m for m in target.rglob("*.rs") if m.is_file())
+        return Anchored(production_view(target).without_comments())
+    members = crate_sources(target)
     if not members:
         raise SystemExit(f"{rel}: a serving path with no Rust source is not measurable")
     return Anchored("\n".join(
-        code_only(production_text(m.read_text(encoding="utf-8"))) for m in members
+        production_view(m).without_comments() for m in members
     ))
 
 
@@ -525,7 +490,7 @@ def check(repo: Path) -> tuple[list[str], int]:
     problems += check_serving(serving)
     problems += check_dispatch(
         read(repo, STAGES),
-        code_only("\n".join(sources.values())),
+        without_comments("\n".join(sources.values())),
         serving,
         read(repo, PLANE),
     )
@@ -659,16 +624,16 @@ def selftest() -> int:
         ("a second producer of the dispatchable body",
          lambda t: check_dispatch(
              read(REPO, STAGES), t, read(REPO, SERVING), read(REPO, PLANE)),
-         code_only("\n".join(sources.values())) + "\n    fn release(self, b: Vec<u8>) -> AuthorizedRequestBody { todo!() }\n", 1),
+         without_comments("\n".join(sources.values())) + "\n    fn release(self, b: Vec<u8>) -> AuthorizedRequestBody { todo!() }\n", 1),
         ("the transmitting seam widened back to `Vec<u8>`",
          lambda t: check_dispatch(
-             read(REPO, STAGES), code_only("\n".join(sources.values())),
+             read(REPO, STAGES), without_comments("\n".join(sources.values())),
              read(REPO, SERVING), t),
          read(REPO, PLANE).replace(
              "forwarded: AuthorizedRequestBody,", "forwarded: Vec<u8>,"), 1),
         ("the ready state assembled from something other than the capability",
          lambda t: check_dispatch(
-             t, code_only("\n".join(sources.values())), read(REPO, SERVING),
+             t, without_comments("\n".join(sources.values())), read(REPO, SERVING),
              read(REPO, PLANE)),
          read(REPO, STAGES).replace(
              "prepared: PreparedInnerDispatch<'a>,", "prepared: Vec<u8>,"), 1),
