@@ -28,9 +28,9 @@ budget_report.rs` and `audit_sink/writer.rs` — while this gate was being speci
 
 # Why neither neighbouring gate covers it
 
-`scripts/bazel_srcs_gate.py` walks the same module tree, but its subject is one BUILD
-file's hand-listed `srcs`. It fired on the `signing_plane` split and was satisfied the
-moment the new files joined the Bazel list — which says nothing about `verification.toml`.
+`scripts/bazel_srcs_gate.py` walks the same module tree, but its subject is a library
+target's `srcs`. It fired on the `signing_plane` split and was satisfied the moment the new
+files joined the Bazel list — which says nothing about `verification.toml`.
 
 `tools/verification/_manifest.py` raises when a declared path matches nothing, so a
 DELETED path is caught. That check is one-directional: declared ⇒ exists. A file that

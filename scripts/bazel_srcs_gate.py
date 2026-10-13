@@ -1,29 +1,28 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Bazel srcs gate — a hand-listed `srcs` must match the crate's module tree.
+"""Bazel srcs gate — every file a library's module tree reaches is in its `srcs`.
 
-Every crate but one lets Bazel `glob(["src/**/*.rs"])`, which cannot drift from what
-cargo compiles. `mcp-re-proxy` hand-lists its sources (`_PROXY_LIB_SRCS`) because
-three library flavors share the list, and a hand-list drifts: `src/audit_sink.rs`
-landed with the ADR-MCPS-035 audit surface and was never added, so cargo built a
-module Bazel could not find and every Bazel target downstream of the proxy library
-failed with E0583.
+`mcp-re-proxy` hand-lists its library sources (`_PROXY_LIB_SRCS`) because three library
+flavors share the list, and a hand-list drifts: `src/audit_sink.rs` landed with the
+ADR-MCPS-035 audit surface and was never added, so cargo built a module Bazel could not
+find and every Bazel target downstream of the proxy library failed with E0583.
 
-The existing semantic-drift gate compares TARGETS, not sources, so it passed. The
-only thing that caught this was a full `bazel test //...` — 30+ minutes, and per its
-own commit message it "had never once completed during this audit", which is exactly
-how the miss survived several rounds of review.
+The semantic-drift gate compares TARGETS, not sources, so it passed. The only thing that
+caught this was a full `bazel test //...` — 30+ minutes, and per its own commit message it
+"had never once completed during this audit", which is exactly how the miss survived
+several rounds of review.
 
-This is that check at one second. For every crate whose library sources are hand
-listed, it walks the module tree from `lib.rs` and requires that each declared
-module's declaration file appears in the list, and that each listed file exists.
+This is that check at one second. The build graph's `srcs` for every library target come
+from the committed target table, `verification/generated/rust-targets.json`, which
+`tools/verification/rust-targets --check` holds to `bazel query`. The gate walks each
+library's module tree from its crate root and requires that each reached file is in that
+target's `srcs`, and that each listed file exists. A glob cannot drift, so a globbing
+library passes by construction; checking it costs nothing and needs no exemption rule.
 
-Three properties are load-bearing, because each one had a silent-blindness failure
-mode:
+Two properties are load-bearing, because each one had a silent-blindness failure mode:
 
-- **Only a glob over `src/` exempts a crate.** A crate is exempt when its library
-  sources cannot drift, not when the word `glob` occurs somewhere in its BUILD file.
-  `mcp-re-proxy` globs its integration-test sources while hand-listing its library.
+- **The `srcs` are the LIBRARY target's.** A test target compiling the library's sources,
+  or a `data` glob over `src/`, satisfies nothing: the table row is the library's own.
 - **The module tree is rustc's.** `tools/verification/_module_tree.py` owns it: both
   file forms, `#[path]`, inline modules, and declarations read from code only. A walk
   that stops at a resolved file observes nothing after the first file-to-directory
@@ -34,7 +33,9 @@ crate packages it scans, `COMPILED_SOURCE_DIRS` the directories it walks in each
 package's `guard_src_files` glob the files its runfiles carry. A crate package missing from
 the list, a file a crate target reaches outside those directories, or one the glob leaves
 out of the runfiles, is a file the guard never reads while it reports a clean scan. Each is
-checked against the module tree of every crate target the build graph compiles.
+checked against the module tree of every crate target the build graph compiles. The
+`guard_src_files` filegroup is not a Rust target, so its glob is read from `BUILD.bazel`
+and matched with `workflow_reader.glob_matches`, where `**` crosses `/` as Bazel's does.
 
 Run:  python3 scripts/bazel_srcs_gate.py
       python3 scripts/bazel_srcs_gate.py --selftest
@@ -51,25 +52,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "tools" / "verification"))
+sys.path.insert(0, str(REPO / "scripts"))
 
 import _module_tree  # noqa: E402
-
-SRC_ENTRY = re.compile(r'"(src/[A-Za-z0-9_/]+\.rs)"')
-# A glob reaching into `src/`. Undriftable ONLY when it is the value of the PRODUCTION
-# LIBRARY target's `srcs` — see `library_srcs`.
-SRC_GLOB = re.compile(r'glob\(\s*\[[^]]*"src/')
-
-#: A top-level Starlark list variable, e.g. `_PROXY_LIB_SRCS = [...]`. Resolved because
-#: `srcs = _PROXY_LIB_SRCS` is how the largest crate here declares its library.
-LIST_VAR = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\[", re.M)
-
-#: A top-level rule call: an identifier at column 0 followed by `(`.
-RULE_CALL = re.compile(r"^([A-Za-z_][A-Za-z0-9_.]*)\s*\(", re.M)
-
-#: Rule names that declare a Rust LIBRARY. The gate's subject is the crate's library
-#: module tree rooted at `src/lib.rs`, so only these targets can answer for it.
-LIBRARY_RULE = re.compile(r"(?:^|_)rust_library$")
-
+from workflow_reader import glob_matches  # noqa: E402
 
 def balanced(text: str, start: int, opener: str, closer: str) -> str:
     """The text from `start` (at `opener`) through its matching `closer`, inclusive."""
@@ -105,93 +91,45 @@ def attribute_value(text: str, start: int) -> str:
     return text[start:]
 
 
-def list_variables(build_text: str) -> dict[str, str]:
-    """Top-level `NAME = [ ... ]` assignments, as raw text."""
-    return {
-        m.group(1): balanced(build_text, build_text.index("[", m.start()), "[", "]")
-        for m in LIST_VAR.finditer(build_text)
-    }
-
-
-def rule_calls(build_text: str) -> list[tuple[str, str]]:
-    """Every top-level `rule_name( ... )`, as `(rule_name, body)`."""
-    calls = []
-    for m in RULE_CALL.finditer(build_text):
-        body = balanced(build_text, build_text.index("(", m.start()), "(", ")")
-        calls.append((m.group(1), body))
-    return calls
-
-
-def resolve(value: str, variables: dict[str, str]) -> str:
-    """`value` with any bare top-level list variable it names replaced by that list.
-
-    Substitution is textual and one level deep, which is all this repository's BUILD files
-    use (`srcs = _PROXY_LIB_SRCS`, `deps = A + B`). A variable the gate cannot resolve stays
-    as its own name and simply contributes no `src/` entries — the conservative direction,
-    because an unresolved list makes the gate demand MORE, never less.
-    """
-    out = value
-    for name, text in variables.items():
-        out = re.sub(r"\b%s\b" % re.escape(name), text, out)
-    return out
-
-
-def library_srcs(build_text: str) -> str | None:
-    """The resolved `srcs` of the production library target(s) that own `src/lib.rs`.
-
-    THE POINT. The proposition this gate checks is not "some target in this BUILD has a
-    srcs glob" — it is "the production LIBRARY target whose Rust module tree is being
-    checked has an undriftable srcs definition". Those differ, and the difference is a
-    false green: a `rust_test` carrying `srcs = glob(["src/**/*.rs"])` next to a
-    hand-listed `rust_library` would otherwise exempt the whole crate, which is the same
-    defect as the earlier `data = glob(...)` one at a different attribute.
-
-    So `srcs` is read from the LIBRARY targets and from nowhere else, and the hand-listed
-    set the module walk is checked against comes from the same place. A file named only by
-    a test target's `srcs` or `data` is not something the compiler is handed for the
-    library, and must not satisfy a `mod` declaration in it.
-
-    Returns the concatenated `srcs` text of every library target that owns `src/lib.rs`, or
-    `None` when the BUILD declares no such target.
-    """
-    variables = list_variables(build_text)
-    owning: list[str] = []
-    for rule_name, body in rule_calls(build_text):
-        if not LIBRARY_RULE.search(rule_name):
-            continue
-        match = re.search(r"\bsrcs\s*=", body)
-        if not match:
-            continue
-        srcs = resolve(attribute_value(body, match.end()), variables)
-        # A library owns the crate root either by naming it or by globbing over it.
-        if '"src/lib.rs"' in srcs or SRC_GLOB.search(srcs):
-            owning.append(srcs)
-    return "\n".join(owning) if owning else None
-
-
-def check_module_tree(crate: Path, listed: set[str]) -> list[str]:
-    """Findings for every file the library's module tree reaches, and every declaration
-    that reaches none.
+def check_library(root: Path, label: str, row: dict) -> list[str]:
+    """Findings for one library target: every file its module tree reaches is in its
+    `srcs`, every listed file exists, and every declaration resolves.
 
     The tree is walked to the bottom even under an unlisted file: one run names every
     missing entry, not one per re-run.
     """
+    listed = set(row["srcs"])
     findings: list[str] = []
-    tree = _module_tree.walk(crate / "src" / "lib.rs")
-    for module in tree.files[1:]:
-        rel = module.path.relative_to(crate).as_posix()
+    tree = _module_tree.walk(root / row["root"])
+    for module in tree.files:
+        rel = module.path.relative_to(root).as_posix()
         if rel not in listed:
-            declared = module.declared_by.relative_to(crate).as_posix() if module.declared_by else "?"
+            declared = module.declared_by.relative_to(root).as_posix() if module.declared_by else "?"
             findings.append(
-                f"{crate.name}/BUILD.bazel: `mod {module.module[-1]};` in {declared} needs {rel} "
-                f"in the hand-listed srcs — rustc compiles it, Bazel cannot find it (E0583)"
+                f"{label}: `mod {module.module[-1]};` in {declared} needs {rel} in the target's "
+                f"srcs — rustc compiles it, Bazel cannot find it (E0583). If BUILD.bazel already "
+                f"lists it, regenerate the table: `tools/verification/rust-targets --write`"
             )
     for declaring, decl in tree.unresolved:
         findings.append(
-            f"{crate.name}: `mod {decl.name};` in {declaring.relative_to(crate).as_posix()} "
+            f"{label}: `mod {decl.name};` in {declaring.relative_to(root).as_posix()} "
             f"names no file — rustc cannot compile it either"
         )
+    for entry in sorted(listed):
+        if not (root / entry).is_file():
+            findings.append(f"{label}: lists {entry}, which does not exist")
     return findings
+
+
+def check_libraries(root: Path) -> tuple[list[str], int]:
+    """Every library target in the table against its module tree. Returns the findings and
+    how many libraries were checked."""
+    rows = json.loads((root / TARGET_TABLE).read_text(encoding="utf-8"))["targets"]
+    findings: list[str] = []
+    libraries = sorted(label for label, row in rows.items() if row["kind"] == "rust_library")
+    for label in libraries:
+        findings.extend(check_library(root, label, rows[label]))
+    return findings, len(libraries)
 
 
 GUARD = Path("mcp-re-conformance") / "tests" / "audit_vocabulary_guard_test.rs"
@@ -234,11 +172,6 @@ def _guard_patterns(build_text: str) -> tuple[list[str], list[str]]:
     if re.sub(r"\bexclude\s*=\s*\[[^\]]*\]", "", rest).strip(" ,\n") != "":
         raise ValueError(f"guard_src_files glob arguments this gate does not read: {value!r}")
     return re.findall(r'"([^"]+)"', include), re.findall(r'"([^"]+)"', exclude)
-
-
-def _glob_matches(pattern: str, path: str) -> bool:
-    regex = re.escape(pattern).replace(r"\*\*/", "(?:.*/)?").replace(r"\*", "[^/]*")
-    return re.fullmatch(regex, path) is not None
 
 
 def check_source_trees(root: Path) -> tuple[list[str], int]:
@@ -290,8 +223,8 @@ def check_source_trees(root: Path) -> tuple[list[str], int]:
                     f"walks in {package} — the guard never reads it"
                 )
             elif read is not None and (
-                not any(_glob_matches(p, within) for p in read[0])
-                or any(_glob_matches(p, within) for p in read[1])
+                not any(glob_matches(p, within) for p in read[0])
+                or any(glob_matches(p, within) for p in read[1])
             ):
                 findings.append(
                     f"{label} compiles {rel}, which {package}:guard_src_files does not glob — "
@@ -300,85 +233,25 @@ def check_source_trees(root: Path) -> tuple[list[str], int]:
     return findings, checked
 
 
-def check_crate(crate: Path) -> list[str]:
-    """Findings for one crate. Empty when the library globs or the list is complete."""
-    build, lib = crate / "BUILD.bazel", crate / "src" / "lib.rs"
-    if not build.is_file() or not lib.is_file():
-        return []
-    build_text = build.read_text(errors="replace")
-    srcs = library_srcs(build_text)
-    if srcs is None:
-        return []  # no library target here to answer for the module tree
-    if SRC_GLOB.search(srcs):
-        return []  # cannot drift
-
-    listed = set(SRC_ENTRY.findall(srcs))
-    if not listed:
-        return []  # nothing hand-listed to check
-
-    findings: list[str] = []
-    if "src/lib.rs" not in listed:
-        findings.append(
-            f"{crate.name}/BUILD.bazel: hand-lists sources without src/lib.rs — "
-            f"the crate root itself is missing"
-        )
-    findings.extend(check_module_tree(crate, listed))
-
-    for entry in sorted(listed):
-        if not (crate / entry).is_file():
-            findings.append(
-                f"{crate.name}/BUILD.bazel: lists {entry}, which does not exist"
-            )
-    return findings
-
-
-def scan(root: Path) -> list[str]:
-    findings: list[str] = []
-    for crate in sorted(root.glob("mcp-re-*")):
-        if crate.is_dir():
-            findings.extend(check_crate(crate))
-    return findings
-
-
-def checked_crates(root: Path) -> list[str]:
-    """The crates this gate actually examines — what a green run measured."""
-    names = []
-    for crate in sorted(root.glob("mcp-re-*")):
-        build, lib = crate / "BUILD.bazel", crate / "src" / "lib.rs"
-        if not crate.is_dir() or not build.is_file() or not lib.is_file():
-            continue
-        srcs = library_srcs(build.read_text(errors="replace"))
-        if srcs is None or SRC_GLOB.search(srcs) or not SRC_ENTRY.search(srcs):
-            continue
-        names.append(crate.name)
-    return names
-
-
-def selftest() -> int:  # noqa: C901 — a control per property, each one named
-    def case(name: str, build: str, files: dict[str, str], expect: str | None) -> bool:
-        """Build a crate, scan it, and compare against one expected finding.
-
-        `expect` is a substring the single finding must contain, or None for
-        "this tree is correct and must produce nothing".
-
-        `build` is wrapped in an `nt_rust_library(...)` call unless it already declares one:
-        the gate reads `srcs` from the LIBRARY TARGET, so a fixture that were only a bare
-        attribute would exercise a shape no BUILD file has and would pass by finding no
-        library at all.
-        """
-        if "rust_library(" not in build:
-            body = build.strip()
-            build = 'nt_rust_library(\n    name = "thing",\n    ' + body + '\n)\n'
+def selftest() -> int:
+    def case(name: str, srcs: list[str], files: dict[str, str], expect: str | None,
+             extra_rows: dict | None = None) -> bool:
+        """Build a crate and a one-library table, check it, and compare against one
+        expected finding: `expect` is a substring the single finding must contain, or None
+        for "this tree is correct and must produce nothing"."""
+        library = {"kind": "rust_library", "package": "thing", "root": "thing/src/lib.rs",
+                   "srcs": [f"thing/{s}" for s in srcs], "testonly": False}
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            crate = root / "mcp-re-thing"
-            (crate / "src").mkdir(parents=True)
-            for rel, content in files.items():
-                path = crate / "src" / rel
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(content)
-            (crate / "BUILD.bazel").write_text(build)
-            found = scan(root)
+            _module_tree.materialize_fixture(root, {f"thing/src/{rel}": text for rel, text in files.items()})
+            (root / TARGET_TABLE).parent.mkdir(parents=True)
+            (root / TARGET_TABLE).write_text(
+                json.dumps({"targets": {"//thing:thing": library, **(extra_rows or {})}})
+            )
+            found, checked = check_libraries(root)
+        if checked == 0:
+            print(f"SELFTEST FAILED [{name}]: no library was checked — a vacuous pass")
+            return False
         if expect is None:
             if found:
                 print(f"SELFTEST FAILED [{name}]: expected nothing, got {found}")
@@ -395,139 +268,63 @@ def selftest() -> int:  # noqa: C901 — a control per property, each one named
 
     # --- the module tree is the owner's: its one fixture, listed and not ----------
     # Which files the tree reaches — both forms, `#[path]`, inline modules, code only — is
-    # `_module_tree`'s selftest. What this gate adds is the hand-list against that tree.
+    # `_module_tree`'s selftest. What this gate adds is the target's srcs against that tree.
     fixture = {
         rel[len("src/"):]: text
         for rel, text in _module_tree.FIXTURE.items()
         if rel.startswith("src/") and "mod missing;" not in text
     }
     fixture["lib.rs"] = _module_tree.FIXTURE["src/lib.rs"].replace("mod missing;\n", "")
-    reached = sorted(
-        path for path, _ in _module_tree.FIXTURE_TREES["src/lib.rs"].values()
-    )
-    listing = "srcs = [" + ", ".join(f'"{p}"' for p in reached) + "]\n"
-    ok &= case("the fixture tree, every reached file listed", listing, fixture, None)
+    reached = sorted(path for path, _ in _module_tree.FIXTURE_TREES["src/lib.rs"].values())
+    ok &= case("the fixture tree, every reached file listed", reached, fixture, None)
     ok &= case(
         "the fixture tree, a file reached only through `#[path]` unlisted",
-        listing.replace('"src/elsewhere/sibling.rs", ', ""),
+        [p for p in reached if p != "src/elsewhere/sibling.rs"],
         fixture,
-        "needs src/elsewhere/sibling.rs",
+        "needs thing/src/elsewhere/sibling.rs",
     )
     ok &= case(
         "the fixture tree, the child of an inline module unlisted",
-        listing.replace('"src/outer/nested.rs", ', ""),
+        [p for p in reached if p != "src/outer/nested.rs"],
         fixture,
-        "needs src/outer/nested.rs",
+        "needs thing/src/outer/nested.rs",
     )
     ok &= case(
         "file module, one missing — the defect that shipped",
-        'srcs = ["src/lib.rs", "src/alpha.rs"]\n',
-        {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
-        "mod beta",
-    )
-
-    # --- exemption and staleness ------------------------------------------------
-    ok &= case(
-        "a glob over src/ is exempt",
-        'srcs = glob(["src/**/*.rs"]),\n',
-        {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
-        None,
-    )
-    ok &= case(
-        "a glob over tests/ does NOT exempt a hand-listed library",
-        'nt_rust_library(\n'
-        '    name = "thing",\n'
-        '    srcs = ["src/lib.rs", "src/alpha.rs"],\n'
-        ")\n"
-        "nt_rust_test(\n"
-        '    srcs = glob(["tests/integration/*.rs"]) + ["src/lib.rs"],\n'
-        ")\n",
+        ["src/lib.rs", "src/alpha.rs"],
         {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
         "mod beta",
     )
     ok &= case(
-        "a `data` glob over src/ does NOT exempt a hand-listed library",
-        # The first measured regression: a test target listing serving sources in `data` so
-        # its runfiles contain them made the whole crate read as undriftable, and the gate
-        # reported a clean pass over a library nobody was checking any more.
-        'nt_rust_library(\n'
-        '    name = "thing",\n'
-        '    srcs = ["src/lib.rs", "src/alpha.rs"],\n'
-        ")\n"
-        "nt_rust_test(\n"
-        '    srcs = glob(["tests/integration/*.rs"]),\n'
-        '    data = glob(["src/**/*.rs"]),\n'
-        ")\n",
+        "a file in a TEST target's srcs does not satisfy the library's mod",
+        # The srcs checked are the library row's own: a `rust_test` compiling the library's
+        # sources into its own crate answers for nothing in the library.
+        ["src/lib.rs", "src/alpha.rs"],
         {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
         "mod beta",
-    )
-    ok &= case(
-        "an unrelated TEST target's own srcs glob over src/ does NOT exempt the library",
-        # THE POISON PILL. The first repair asked "does any `srcs` attribute glob into
-        # `src/`", which is a different proposition from "does the production LIBRARY have
-        # an undriftable srcs". A `rust_test` compiling the library's sources into its own
-        # crate is a real shape, and under the looser question it exempted everything.
-        'nt_rust_library(\n'
-        '    name = "thing",\n'
-        '    srcs = ["src/lib.rs", "src/alpha.rs"],\n'
-        ")\n"
-        "nt_rust_test(\n"
-        '    name = "thing_test",\n'
-        '    srcs = glob(["src/**/*.rs"]),\n'
-        ")\n",
-        {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
-        "mod beta",
-    )
-    ok &= case(
-        "a library declaring its srcs through a top-level list variable is read",
-        "_LIB_SRCS = [\n"
-        '    "src/lib.rs",\n'
-        '    "src/alpha.rs",\n'
-        "]\n"
-        'nt_rust_library(\n'
-        '    name = "thing",\n'
-        "    srcs = _LIB_SRCS,\n"
-        ")\n",
-        {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
-        "mod beta",
-    )
-    ok &= case(
-        "a file named only by a TEST target does not satisfy the library's mod",
-        # The same binding, in the other direction: the hand-listed set comes from the
-        # library's srcs, so a `beta.rs` the compiler is handed only for a test crate must
-        # not answer for a `mod beta;` in the library.
-        'nt_rust_library(\n'
-        '    name = "thing",\n'
-        '    srcs = ["src/lib.rs", "src/alpha.rs"],\n'
-        ")\n"
-        "nt_rust_test(\n"
-        '    srcs = ["src/beta.rs"],\n'
-        ")\n",
-        {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
-        "mod beta",
-    )
-    ok &= case(
-        "a multi-line srcs glob over src/ is still exempt",
-        "srcs = glob([\n"
-        '        "src/**/*.rs",\n'
-        "    ]) + [\n"
-        '        "src/lib.rs",\n'
-        "    ],\n",
-        {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
-        None,
+        extra_rows={"//thing:thing_test": {
+            "kind": "rust_test", "package": "thing", "root": "thing/src/lib.rs",
+            "srcs": ["thing/src/lib.rs", "thing/src/alpha.rs", "thing/src/beta.rs"], "testonly": True}},
     )
     ok &= case(
         "a listed file that does not exist",
-        'srcs = ["src/lib.rs", "src/alpha.rs", "src/beta.rs", "src/gone.rs"]\n',
+        ["src/lib.rs", "src/alpha.rs", "src/beta.rs", "src/gone.rs"],
         {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
         "does not exist",
     )
     ok &= case(
         "a mod that resolves to no file at all",
-        'srcs = ["src/lib.rs", "src/alpha.rs"]\n',
+        ["src/lib.rs", "src/alpha.rs"],
         {"lib.rs": "pub mod alpha;\npub mod nowhere;\n", "alpha.rs": ""},
         "names no file",
     )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / TARGET_TABLE).parent.mkdir(parents=True)
+        (root / TARGET_TABLE).write_text(json.dumps({"targets": {}}))
+        if check_libraries(root)[1] != 0:
+            print("SELFTEST FAILED [an empty table]: it reported libraries checked")
+            ok = False
 
     ok &= _selftest_source_trees()
 
@@ -616,6 +413,11 @@ def _selftest_source_trees() -> bool:
         srcs='glob(["src/**/*.rs", "examples/**/*.rs"]) + ["extra.rs"]',
     )
     ok &= case(
+        "a trailing `**` crosses `/`, as Bazel's glob does",
+        None,
+        srcs='glob(["src/**", "examples/**"])',
+    )
+    ok &= case(
         "a test-only target's sources are test sources",
         None,
         rows={
@@ -630,9 +432,9 @@ def _selftest_source_trees() -> bool:
 def main() -> int:
     if "--selftest" in sys.argv:
         return selftest()
-    crates = checked_crates(REPO)
+    library_findings, libraries = check_libraries(REPO)
     tree_findings, tree_files = check_source_trees(REPO)
-    findings = scan(REPO) + tree_findings
+    findings = library_findings + tree_findings
     if findings:
         print("bazel srcs gate: FAIL", file=sys.stderr)
         for f in findings:
@@ -643,18 +445,17 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    if not crates:
+    if not libraries:
         print(
-            "bazel srcs gate: FAIL — no crate hand-lists its library sources, so this "
-            "gate checked nothing. Either the hand-list moved or the exemption rule "
-            "is wrong; a pass here would be vacuous.",
+            f"bazel srcs gate: FAIL — {TARGET_TABLE} holds no library target, so this gate "
+            f"checked nothing; a pass here would be vacuous.",
             file=sys.stderr,
         )
         return 1
     print(
-        f"bazel srcs gate: OK — module tree matches the hand-listed srcs in "
-        f"{', '.join(crates)}; the audit-vocabulary guard's source trees carry all "
-        f"{tree_files} file(s) its crates' targets compile"
+        f"bazel srcs gate: OK — the module tree of each of {libraries} library target(s) is "
+        f"in its srcs; the audit-vocabulary guard's source trees carry all {tree_files} "
+        f"file(s) its crates' targets compile"
     )
     return 0
 
