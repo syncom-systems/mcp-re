@@ -137,9 +137,11 @@ id = "proxy.materialized_lifecycle_sole_producer"
 class = "V0"
 description = "The runtime owns the lifecycle that describes it (ADR-MCPRE-057 §3/§9): `MaterializingRuntime::begin` creates the lifecycle from the `ValidatedDeployment` the root holds, `MaterializedLifecycle::reached` is the only producer of `MaterializationSucceeded` and is `pub(super)` to `materializing_runtime`, `MaterializedRuntime::new` accepts only that certificate, and `serve` takes no lifecycle — so no code can assemble or serve a runtime on a lifecycle that skipped validation, planning or materialization. No `Default`, `Clone` or serialization produces either value."
 # `serve`'s signature and the private `lifecycle` field are facts about `materialized_runtime.rs`,
-# so a change there must move this unit's fingerprint.
+# and `completeness.rs` decides whether `finish` may reach `Materialized`, so a change in either
+# must move this unit's fingerprint.
 paths = [
   "mcp-re-proxy/src/materializing_runtime/mod.rs",
+  "mcp-re-proxy/src/materializing_runtime/completeness.rs",
   "mcp-re-proxy/src/materializing_runtime/materialized_lifecycle.rs",
   "mcp-re-proxy/src/materialized_runtime.rs",
 ]
