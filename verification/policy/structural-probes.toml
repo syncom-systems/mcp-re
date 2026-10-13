@@ -2040,3 +2040,84 @@ module-tree-visibility = "`lifecycle` is bare-private to `materialized_lifecycle
 alternate-constructors = "`reached` is the only associated function returning `Self` (S55); no `From`, `Default` or builder"
 generated-or-deserialization = "no derives at all; nothing decodes or clones a certificate"
 test-only-construction = "the owner's tests construct only through `reached`; no test-gated constructor and no test-gated field visibility exists"
+
+
+# --- client.validated_config_sole_producer (MCPRE-202) -----------------------------------
+#
+# The client runs only on a validated document. S58 is the bypass the issue named: a
+# `ClientConfig` built or mutated without the checks, handed to `build`. Before MCPRE-202 it
+# compiled, and `build` re-ran the checks on it as a convention. S57 closes the other route:
+# assembling the validated value directly around an unchecked document.
+#
+# Both are injected inside `config`, because `validated` is a private module whose TYPE is
+# re-exported: a probe outside would earn E0603 about the module, a boundary neither claims.
+
+[[probe]]
+id = "S57"
+unit = "client.validated_config_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-client:mcp_re_client"
+invariant = "no code outside `config::validated` can assemble a ValidatedClientConfig, so every value of it came from `new`, which runs every document check"
+insertion_parent = "mcp-re-client/src/config/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE HOSTILE VALUE IS ONE THE CHECKS REFUSE: an empty route table, which `check_routes`
+rejects, wrapped with a loopback scope that is itself legal. What is illegal is pairing a
+document with a scope without running the checks, which is the whole content of the claim.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S57. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::config::BindScope;
+use crate::config::ClientConfig;
+use crate::config::ValidatedClientConfig;
+
+pub fn hostile(mut config: ClientConfig) -> ValidatedClientConfig {
+    config.routes = Vec::new();
+    ValidatedClientConfig {
+        config, // STRUCTURAL-PROBE-SITE
+        bind_scope: BindScope::decide("127.0.0.1:8640".parse().expect("an address"), false)
+            .expect("loopback"),
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "both fields are bare-private to `config::validated`, and the module is private to `config`, which re-exports the TYPE only (`pub use validated::ValidatedClientConfig`). The probe is a sibling module inside `config`, the widest position from which the field privacy rather than the module privacy is what refuses"
+alternate-constructors = "`new(ClientConfig)` is the only associated function returning `Self` without parsing, and it runs `check_local`, `check_trust_and_delegation` and `check_routes`; `from_json` and `read` reach it. The projections return shared references or a copied `BindScope` and `Duration`, never the representation; there is no setter, `From`, `Default`, `Deserialize` or `DerefMut`"
+generated-or-deserialization = "the derives are Debug and Clone. No Serialize, no Deserialize: the raw `ClientConfig` is the type serde fills, and it becomes this one only through `new`"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` builds values only through `from_json` and `new`; no test-gated constructor and no test-gated field visibility exists"
+
+[[probe]]
+id = "S58"
+unit = "client.validated_config_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-client:mcp_re_client"
+invariant = "`build` accepts only a ValidatedClientConfig, so a ClientConfig that was built or mutated without the checks cannot reach the signing pipeline"
+insertion_parent = "mcp-re-client/src/lib.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0308"
+note = """
+THE BYPASS MCPRE-202 NAMED, and the falsifier: restore `build(config: &ClientConfig, ..)` and
+this is exactly the old, legal call, which the lane reports as the boundary open. The mutation
+is one the checks refuse — an empty accepted-epoch set — so a `build` that took the raw type
+and no longer re-ran the checks would sign under a policy that accepts no server credential.
+On the tree before MCPRE-202 this probe compiled.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S58. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::config::ClientConfig;
+
+pub fn hostile(mut config: ClientConfig) -> bool {
+    config.delegation.accepted_epochs = Vec::new();
+    crate::build(&config, 0).is_ok() // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`build` is `pub` at the crate root, the widest position any consumer occupies; its configuration parameter is `&ValidatedClientConfig`"
+alternate-constructors = "the listener takes a `BindScope` (`serve::bind`), which the validated configuration projects; no entry point takes a raw `ClientConfig` or `LocalConfig`"
+generated-or-deserialization = "`ValidatedClientConfig` has no Deserialize; a document becomes one only through `from_json`, which runs the checks"
+test-only-construction = "the crate's tests build through `ValidatedClientConfig::from_json`; no test-gated `build` overload exists"

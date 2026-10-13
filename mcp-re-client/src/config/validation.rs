@@ -25,12 +25,10 @@ use super::MAX_MANIFEST_RELOAD_SECS;
 const MAX_REQUEST_LIFETIME_SECS: i64 = 3600;
 
 /// Where this client offers its signing key, and the bounds that keep one caller from
-/// holding the sidecar.
-pub(super) fn check_local(local: &LocalConfig) -> Result<(), ConfigError> {
-    // The refusal itself is `BindScope`'s, not a statement here that happens to run
-    // first: a scope in hand means the bind was permitted, so there is no check at this
-    // site that could be deleted to admit an off-host listener.
-    BindScope::decide(local.bind, local.allow_non_loopback)?;
+/// holding the sidecar. Returns the bind scope `BindScope::decide` granted, which the
+/// validated configuration carries to the listener; the refusal is the scope's own.
+pub(super) fn check_local(local: &LocalConfig) -> Result<BindScope, ConfigError> {
+    let scope = BindScope::decide(local.bind, local.allow_non_loopback)?;
     if !(1..=MAX_REQUEST_LIFETIME_SECS).contains(&local.request_lifetime_secs) {
         return Err(err(
             "local.request_lifetime_secs is outside 1..=3600: no verifier accepts a wider \
@@ -40,7 +38,7 @@ pub(super) fn check_local(local: &LocalConfig) -> Result<(), ConfigError> {
     if local.max_in_flight == 0 {
         return Err(err("local.max_in_flight must be positive"));
     }
-    Ok(())
+    Ok(scope)
 }
 
 /// Which documents this client will believe, and how far a window may be widened.
@@ -201,12 +199,13 @@ fn check_binding(
 #[cfg(test)]
 mod tests {
     use super::super::ClientConfig;
+    use super::super::ValidatedClientConfig;
     use super::MAX_MANIFEST_RELOAD_SECS;
     use super::MAX_REQUEST_LIFETIME_SECS;
 
     /// A document valid in every respect except the one under test, so a refusal can only be
-    /// about `trust.reload_secs`.
-    fn with_reload_secs(secs: u64) -> Result<ClientConfig, String> {
+    /// about `trust.reload_secs` — parsed, not yet checked.
+    fn raw(secs: u64) -> ClientConfig {
         let doc = format!(
             r#"{{
   "local": {{ "bind": "127.0.0.1:8640" }},
@@ -239,7 +238,11 @@ mod tests {
   }}]
 }}"#
         );
-        ClientConfig::from_json(doc.as_bytes()).map_err(|e| e.to_string())
+        serde_json::from_str(&doc).expect("the document parses")
+    }
+
+    fn with_reload_secs(secs: u64) -> Result<ValidatedClientConfig, String> {
+        ValidatedClientConfig::new(raw(secs)).map_err(|e| e.to_string())
     }
 
     /// The refresh cadence is the only place anchors whose manifest has expired are
@@ -277,21 +280,19 @@ mod tests {
 
     #[test]
     fn a_route_whose_target_uri_differs_from_its_audience_is_refused() {
-        let mut config = with_reload_secs(60).expect("the baseline document is valid");
+        let mut config = raw(60);
         config.routes[0].target_uri = "https://mcp.example.com/mcp/".to_owned();
-        let error = config
-            .validate()
+        let error = ValidatedClientConfig::new(config)
             .expect_err("a mismatched target_uri must be refused");
         assert!(error.to_string().contains("target_uri"), "got {error}");
     }
 
     #[test]
     fn an_empty_expected_audience_hash_is_refused() {
-        let mut config = with_reload_secs(60).expect("the baseline document is valid");
+        let mut config = raw(60);
         config.delegation.expected_audience_hash = String::new();
-        let error = config
-            .validate()
-            .expect_err("an empty audience hash must be refused");
+        let error =
+            ValidatedClientConfig::new(config).expect_err("an empty audience hash must be refused");
         assert!(
             error
                 .to_string()
@@ -311,9 +312,9 @@ mod tests {
             (1, true),
             (MAX_REQUEST_LIFETIME_SECS, true),
         ] {
-            let mut config = with_reload_secs(60).expect("the baseline document is valid");
+            let mut config = raw(60);
             config.local.request_lifetime_secs = secs;
-            let result = config.validate();
+            let result = ValidatedClientConfig::new(config);
             if accepted {
                 result.unwrap_or_else(|e| panic!("lifetime {secs} is inside the bound: {e}"));
             } else {

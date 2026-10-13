@@ -45,6 +45,7 @@ not an omission to hide.
 | client.transport_message_hygiene | V0 | THM-0110 | 0 |
 | client.transport_server_identity | V0 | THM-0109 | 1 |
 | client.trust_manifest_lifecycle | V0 | THM-0057 | 3 |
+| client.validated_config_sole_producer | V0 | _none_ | 0 |
 | client.verified_outcome | V0 | THM-0126 | 0 |
 | conformance.audit_vocabulary_drift | V0 | _none_ | 0 |
 | conformance.carrier_minting_absence | V0 | _none_ | 0 |

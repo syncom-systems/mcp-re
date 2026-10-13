@@ -533,7 +533,7 @@ record = "docs/architecture/control-dispositions.md#np-247"
 
 [[proposition]]
 id = "NP-248"
-title = "The assembled client gives every route the one trust-anchor snapshot and re-validates a handed-in configuration"
+title = "The assembled client gives every route the one trust-anchor snapshot"
 carrier = "mcp-re-client/src/lib.rs"
 likely_owner = ""
 consequence = "high"
@@ -13940,7 +13940,7 @@ recorded = "2026-10-04"
 [[disposition]]
 id = "CD-20240"
 project = "mcp-re-client"
-control = "src/lib.rs#tests::build_gives_every_route_the_one_snapshot_and_revalidates_a_handed_in_config"
+control = "src/lib.rs#tests::build_gives_every_route_the_one_snapshot"
 decision = "new-proposition"
 proposition = "NP-248"
 recorded = "2026-10-04"

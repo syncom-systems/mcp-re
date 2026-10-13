@@ -374,13 +374,10 @@ fn start_sidecar_with_backend(
         nonce: Box::new(mcp_re_client::next_nonce),
     });
 
-    let listener = mcp_re_client::serve::bind(&mcp_re_client::config::LocalConfig {
-        bind: "127.0.0.1:0".parse().expect("addr"),
-        allow_non_loopback: false,
-        request_lifetime_secs: 300,
-        default_route: None,
-        max_in_flight: 8,
-    })
+    let listener = mcp_re_client::serve::bind(
+        mcp_re_client::config::BindScope::decide("127.0.0.1:0".parse().expect("addr"), false)
+            .expect("loopback"),
+    )
     .expect("bind an ephemeral loopback port");
     let addr = listener.local_addr();
     let stop = Arc::new(AtomicBool::new(false));

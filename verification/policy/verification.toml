@@ -4719,6 +4719,7 @@ tested_symbols = [
   "//mcp-re-client:mcp_re_client_test#config::bind_scope::tests::a_loopback_bind_needs_nothing_and_the_flag_does_not_change_it",
   "//mcp-re-client:mcp_re_client_test#config::bind_scope::tests::an_exposed_bind_names_one_further_authority_and_no_more",
   "//mcp-re-client:mcp_re_client_test#config::bind_scope::tests::a_wildcard_bind_names_no_authority_and_is_refused_even_when_declared",
+  "//mcp-re-client:mcp_re_client_test#config::bind_scope::tests::a_bound_address_is_admitted_off_host_only_under_an_off_host_scope",
   # ADR-MCPRE-069 `register`: the COMPOSITION control, and the one that distinguishes "the
   # guard refused" from "the bind failed" without opening a socket on every interface. It
   # lived in a file this unit's predecessor already owned and was claimed by nothing.
@@ -11386,6 +11387,7 @@ class = "V0"
 description = "What a client deployment may declare: an unknown field fails rather than defaulting, a binding on a header the client does not send is refused, a DPoP binding digests what the verifier digests and only on a bearer `authorization`, the clock-skew bound matches the profile's, a disabled or unbounded reload cadence is refused, route ids are unique, the org-key pin set is non-empty and the rollback floor must be named."
 paths = [
   "mcp-re-client/src/config/mod.rs",
+  "mcp-re-client/src/config/validated.rs",
   "mcp-re-client/src/config/validation.rs",
 ]
 exported_contracts = []
@@ -11421,7 +11423,25 @@ tested_symbols = [
   # they live in this file and this unit measures it.
   "//mcp-re-client:mcp_re_client_test#config::tests::a_loopback_bind_is_accepted",
   "//mcp-re-client:mcp_re_client_test#config::tests::a_non_loopback_bind_is_refused_unless_declared",
+  # The validated document: a refused one yields no value, whether parsed or built and
+  # mutated, and the scope it carries is the one its checks decided.
+  "//mcp-re-client:mcp_re_client_test#config::validated::tests::a_document_the_checks_refuse_yields_no_validated_value",
+  "//mcp-re-client:mcp_re_client_test#config::validated::tests::the_bind_scope_is_the_one_the_checks_decided",
 ]
+
+# The client runs only on a document that passed every check. `ValidatedClientConfig`'s
+# representation is private to `config::validated` and its one constructor runs the checks, so
+# `build` and the listener take it and check nothing themselves. S57 and S58 are the compile
+# refusals: the literal, and a raw `ClientConfig` handed to `build`.
+[[unit]]
+id = "client.validated_config_sole_producer"
+class = "V0"
+description = "The client builds and serves only on a `ValidatedClientConfig`, whose representation is private to `config::validated` and whose one constructor runs every document check — so a configuration that was built, deserialized or mutated without passing them cannot reach `build` or the listener, and deleting a re-check at either cannot admit one."
+paths = ["mcp-re-client/src/config/validated.rs"]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "high"
+evidence = ["structural://client/validated_config/sole_producer"]
 
 # The request-construction half of the client seam. `client.response_binding_disposition` owns what a
 # client will accept back; nothing owned what it puts on the wire, and both SDKs and the
