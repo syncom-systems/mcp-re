@@ -15,14 +15,12 @@ use crate::async_serve::ServedHttpRequest;
 use crate::clock::now_unix;
 use crate::config_snapshot;
 use crate::config_state::validation::ValidatedDeployment;
-use crate::config_state::ChannelBindingState;
+use crate::config_state::ChannelBindingEffects;
 use crate::deployment_request::DeploymentRequest;
 use crate::http_inner::HttpInnerPool;
 use crate::key_source::ResponseSigner;
 use crate::startup_posture::PostureLog;
 use crate::startup_posture::Seam;
-use crate::transport::IdentityPolicy;
-use crate::transport::TransportBinding;
 use crate::HttpProfileProxy;
 use crate::ServerOptions;
 use mcp_re_http_profile::AudienceTuple;
@@ -113,39 +111,6 @@ pub fn run_request(config: DeploymentRequest, shutdown: Arc<AtomicBool>) -> Resu
 fn drained(outcome: Result<(), String>) -> Result<(), String> {
     crate::audit_sink::drain::at_shutdown();
     outcome
-}
-
-/// What a recognised [`ChannelBindingState`] installs on the serving path.
-///
-/// One value, because the two halves are one decision: the policy that compares the
-/// verified request signer with the channel identity, and the certificate field that
-/// identity is read from. Splitting them across two derivations is what lets them
-/// disagree.
-struct ChannelBindingEffects {
-    binding: TransportBinding,
-    identity_policy: IdentityPolicy,
-}
-
-/// Project the recognised channel-binding state onto the serving path.
-///
-/// The state is the authority: `config_state::transport` decides whether a deployment is
-/// channel-bound and how, and this is the only place that answer becomes an effect. A
-/// request the owner refuses to classify — a binding kind no deployment can be in —
-/// reaches no state, so there is nothing here to derive from and no exact-match policy
-/// can be installed over a binding the owner rejected.
-///
-/// Every state in the model binds exactly, so the policy does not vary; what the state
-/// carries is which SAN the identity comes from. A second binding mode would appear here
-/// as a second arm, not as a second reading of the request.
-fn channel_binding_effects(state: ChannelBindingState) -> ChannelBindingEffects {
-    let identity_policy = match state {
-        ChannelBindingState::ExactUriSan => IdentityPolicy::UriSan,
-        ChannelBindingState::ExactDnsSan => IdentityPolicy::DnsSan,
-    };
-    ChannelBindingEffects {
-        binding: TransportBinding::exact_match(),
-        identity_policy,
-    }
 }
 
 /// The serving path proper. Reachable only with a [`crate::config_state::validation::ValidatedDeployment`], which
@@ -312,12 +277,14 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     .into_parts();
     posture.declare(Seam::Authorization, authorization_state);
 
-    // Mode-A transport binding and the certificate field the connection seam reads the
-    // identity from, both derived from the ONE state `config_state::transport` recognised.
+    // Mode-A transport binding, the certificate field the identity is read from and where
+    // the connection seam reads it, all projected from the ONE state `config_state::transport`
+    // recognised.
     let ChannelBindingEffects {
         binding,
         identity_policy,
-    } = channel_binding_effects(config.state().channel_binding());
+        peer_identity_provenance,
+    } = config.state().channel_binding().serving_effects();
     // ADR-MCPRE-051 §4: the AUTHORITATIVE async replay tier. The atomic
     // insert-if-absent is AWAITED on the per-core request path without blocking a
     // runtime worker. Shared selects a durable networked store — etcd (CP/linearizable)
@@ -390,12 +357,6 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
         );
     }
 
-    // Which field the connection seam reads the client's identity from. Decided purely,
-    // from configuration alone, in `startup_plan` — the three modes are mutually
-    // exclusive and `parse_args` already refused the combinations.
-    let peer_identity_provenance =
-        crate::startup_plan::peer_identity_provenance(config.state().channel_binding());
-
     // #4030 ONLINE OCSP client-cert revocation. Attached to `ServerOptions` below rather
     // than to the PEP, because revocation is decided during the TLS handshake.
     let (ocsp_checker, ocsp_state) = crate::serving_capabilities::online_ocsp().into_parts();
@@ -409,10 +370,13 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     // request, resolved ONCE: the inner plane and the fleet both size from these two values.
     let in_flight_limit = config.state().in_flight_limit();
     let topology = crate::async_fleet::ResolvedTopology::resolve(config.state().shard_topology());
+    let bounds = config.state().connection_bounds();
     let serve_options = ServerOptions {
         identity_policy,
         peer_identity_provenance,
         limits: values.limits.clone(),
+        // The owner's resolved bounds: serving reads every timeout and limit here, not the request.
+        connection_bounds: bounds,
         // The owner's sealed window; serving reads both bounds from it, not from the request.
         client_credential_window: config.state().client_credential_window(),
         client_revocation: client_revocation.clone(),
@@ -424,12 +388,8 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     // ADR-MCPRE-051 §3: the async inner plane — a per-core pooled hyper client to
     // the stateless Streamable-HTTP inner backends. Forwarding is AWAITED, never
     // blocking a per-core runtime worker.
-    // Unreachable — the boundary refuses an absent read timeout — and it REFUSES rather
-    // than defaulting, so dropping that clause is an outage, not a second opinion (R12-636).
-    let configured = &values.limits;
-    let inner_timeout = configured.read_timeout.ok_or("--read-timeout-secs unset")?;
     let backends = &values.inner_http_urls;
-    let pool = HttpInnerPool::from_url_strs(backends.expose().to_vec(), inner_timeout)?;
+    let pool = HttpInnerPool::from_url_strs(backends.expose().to_vec(), bounds.read_timeout())?;
     // Named where the pool that forwards to them is BUILT. Reporting them from the fleet
     // instead would mean carrying the URLs through serving purely to print them, and the
     // fleet does not forward — it accepts.
@@ -866,7 +826,7 @@ mod tests {
             assert!(refusals.is_empty(), "{source:?} refused: {refusals:?}");
             assert_eq!(state, Some(expected_state));
 
-            let effects = super::channel_binding_effects(expected_state);
+            let effects = expected_state.serving_effects();
             assert_eq!(
                 effects.identity_policy, expected_policy,
                 "{expected_state:?} must read the identity from its own SAN"

@@ -3995,6 +3995,9 @@ supported_by = [
   # unowned classifiers, and the clause that one classifier decides only its own subject.
   "unit://proxy.evidence_retention_state",
   "unit://proxy.in_flight_limit_basis",
+  # MCPRE-204: the connection bounds, the classifier for the five quantities that bound one
+  # connection's life, decided by the same boundary under the same claim.
+  "unit://proxy.connection_bounds",
   "unit://proxy.mcp_transport_contract_state",
   "unit://proxy.deployment_topology_state",
   "unit://proxy.continuation_control_subject_boundary",

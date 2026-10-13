@@ -273,11 +273,16 @@ path = "mcp-re-proxy/src/app.rs"
 # 760 (measured at c939c2f) -> 748.
 # MCPRE-203: the fleet states the shape it built, so the root no longer restates the rule
 # `CorePool::for_core` owns: 748 (measured at 61605e1) -> 737.
+# MCPRE-208: the channel-binding state projects its serving effects once, so the root no
+# longer derives the binding and identity policy itself or asks `startup_plan` for the
+# provenance: 737 (measured at 132f448) -> 698.
+# MCPRE-204: the connection-bounds owner hands the root a read timeout that is always present,
+# so the root no longer re-proves it: 698 (measured at 1c318c4) -> 697.
 # MCPRE-210: the startup clock reading is a value; the CRL freshness reference is the TLS
 # plane's own input, so the root no longer carries the fault refusal or reads the clock
-# twice: 737 (measured at 0ba3db2) -> 685. `baseline_sha` names that parent.
-baseline_prod_loc = 685
-baseline_sha = "0ba3db2"
+# twice: 697 (measured at a36c92f) -> 645. `baseline_sha` names that parent.
+baseline_prod_loc = 645
+baseline_sha = "a36c92f"
 status = "reviewed-exception"
 review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 
@@ -559,18 +564,21 @@ path = "mcp-re-proxy/src/startup_plan.rs"
 # MCPRE-197: the inner-plane ceiling and raise left with the `Option` x `Option` interface they
 # projected: 385 (measured at bff0cb9) -> 340.
 # MCPRE-209: the response-authority plans have one producer here and the signing plan's
-# fields are private behind projections: 340 (measured at c939c2f) -> 338. `baseline_sha`
-# names that parent.
-# MCPRE-210: the clock-fault rule moves to the clock owner: 338 (measured at 4dc1510) -> 318.
+# fields are private behind projections: 340 (measured at c939c2f) -> 338.
+# MCPRE-208: the peer-identity provenance is part of the channel-binding state's projection,
+# so its second exhaustive match here goes: 338 (measured at 132f448) -> 312.
+# MCPRE-210: the clock-fault rule moves to the clock owner: 312 (measured at a36c92f) -> 292.
 # `baseline_sha` names that parent.
-baseline_prod_loc = 318
-baseline_sha = "4dc1510"
+baseline_prod_loc = 292
+baseline_sha = "a36c92f"
 status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/config_state/validation/mod.rs"
-baseline_prod_loc = 474
-baseline_sha = "d1fc5fa"
+# MCPRE-204: the three residue calls become one owner's splice. With MCPRE-203's X10 clause
+# already spliced on main: 374 (measured at 0ba3db2) -> 362. `baseline_sha` names that parent.
+baseline_prod_loc = 362
+baseline_sha = "0ba3db2"
 status = "unreviewed"
 
 [[debt]]
@@ -696,12 +704,13 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/config_state/validation/residue.rs"
-baseline_prod_loc = 405
-baseline_sha = "99ff012"
+# MCPRE-204: the connection ceiling, drain-window and slow-loris rules leave for their owner,
+# `config_state::connection_bounds`: 405 (measured at 9734fe2) -> 316. `baseline_sha` names
+# that parent.
+baseline_prod_loc = 316
+baseline_sha = "9734fe2"
 status = "reviewed-exception"
 review_ref = "EX-017 in docs/architecture/review-dispositions.md"
-growth_from_prod_loc = 378
-growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/async_etcd_store.rs"

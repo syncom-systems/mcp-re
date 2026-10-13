@@ -49,6 +49,11 @@ use crate::transport::RequestHeaders;
 /// defense against slow-loris, oversized-request, and connection-exhaustion
 /// denial of service. Every limit fails closed: a connection that exceeds one is
 /// dropped (or never accepted), never served partially.
+///
+/// The three timeouts, the connection ceiling and the drain window are the REQUEST: a
+/// disabled one is representable so the boundary can refuse it by name. The async serving
+/// path reads them from [`ServerOptions::connection_bounds`], which holds them resolved and
+/// in force; the blocking harness reads them here.
 #[derive(Debug, Clone)]
 pub struct ServerLimits {
     /// Maximum bytes accepted before the end-of-headers marker. Caps header
@@ -127,10 +132,11 @@ impl Default for ServerLimits {
         ServerLimits {
             max_header_bytes: 64 * 1024,
             max_body_bytes: 16 * 1024 * 1024,
-            read_timeout: Some(Duration::from_secs(30)),
-            request_deadline: Some(Duration::from_secs(30)),
-            write_timeout: Some(Duration::from_secs(30)),
-            max_concurrent_connections: 256,
+            read_timeout: Some(crate::config_state::connection_bounds::DEFAULT_TIMEOUT),
+            request_deadline: Some(crate::config_state::connection_bounds::DEFAULT_TIMEOUT),
+            write_timeout: Some(crate::config_state::connection_bounds::DEFAULT_TIMEOUT),
+            max_concurrent_connections:
+                crate::config_state::connection_bounds::DEFAULT_MAX_CONNECTIONS,
             // A DEFENSIBLE per-core ceiling rather than the unbounded historical
             // default. Unbounded meant one peer holding a valid client certificate
             // could multiplex unbounded HTTP/2 streams, each buffering up to
@@ -150,7 +156,7 @@ impl Default for ServerLimits {
             ),
             // >= request_deadline (so every admitted request can finish) and, in
             // production, < k8s terminationGracePeriodSeconds.
-            drain_grace: Duration::from_secs(30),
+            drain_grace: crate::config_state::connection_bounds::DEFAULT_DRAIN_GRACE,
             // Bounds how long a peer keeps serving on a certificate validated only at
             // its handshake. 300s is well inside the 1h certificate-lifetime
             // ceiling and short enough that a CRL reload takes effect within one
@@ -182,6 +188,10 @@ pub struct ServerOptions {
     pub peer_identity_provenance: PeerIdentityProvenance,
     /// Connection resource limits (DoS defense).
     pub limits: ServerLimits,
+    /// The read, write and request-deadline timeouts, the connection ceiling and the drain
+    /// window, every one in force. The async serving path reads these here and never from
+    /// [`Self::limits`], so it has no disabled-bound arm to take.
+    pub connection_bounds: crate::config_state::ConnectionBounds,
     /// The lifetime ceiling and the connection-age bound, one owner-sealed fact. There is
     /// no options value without it, so the per-request currency check always evaluates
     /// the lifetime ceiling.
@@ -227,6 +237,7 @@ impl ServerOptions {
             identity_policy: IdentityPolicy::RECOMMENDED,
             peer_identity_provenance: PeerIdentityProvenance::default(),
             limits: ServerLimits::default(),
+            connection_bounds: crate::config_state::ConnectionBounds::default(),
             client_credential_window,
             client_revocation: None,
             #[cfg(feature = "online_ocsp")]

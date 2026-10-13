@@ -165,6 +165,7 @@ not an omission to hide.
 | proxy.client_revocation_currency | V0 | THM-0131 | 1 |
 | proxy.client_revocation_index_verdict | V0 | _none_ | 1 |
 | proxy.client_revocation_snapshot | V0 | _none_ | 0 |
+| proxy.connection_bounds | V0 | _none_ | 0 |
 | proxy.continuation_capacity | V0 | _none_ | 0 |
 | proxy.continuation_consume_contract | V0 | _none_ | 0 |
 | proxy.continuation_control_subject_boundary | V0 | _none_ | 0 |
