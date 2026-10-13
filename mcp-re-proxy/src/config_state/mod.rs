@@ -57,6 +57,7 @@
 
 pub mod admission;
 pub mod authorization;
+mod channel_binding_effects;
 pub mod channel_credential_custody;
 pub mod channel_key_material;
 pub mod client_credential_window;
@@ -84,6 +85,7 @@ pub mod validation;
 
 pub use admission::{AdmissionAvailability, AdmissionPosture, AdmissionState, EnforcedAdmission};
 pub use authorization::{AuthorizationState, EnforcedAuthorization};
+pub(crate) use channel_binding_effects::ChannelBindingEffects;
 pub use channel_credential_custody::ChannelCredentialCustodyState;
 pub use channel_key_material::ChannelKeyMaterial;
 pub use client_credential_window::ClientCredentialWindow;

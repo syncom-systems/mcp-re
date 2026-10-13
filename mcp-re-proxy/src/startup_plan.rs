@@ -14,9 +14,7 @@
 //! interchangeable claims, and every posture statement derived from them would inherit
 //! the confusion.
 
-use crate::communication_assurance::peer_identity_provenance::PeerIdentityProvenance;
 use crate::config_state::validation::ValidatedDeployment;
-use crate::config_state::ChannelBindingState;
 
 /// The replay plan and the store view materialization reads it through.
 ///
@@ -62,30 +60,6 @@ pub fn response_authority_plans(config: &ValidatedDeployment) -> (TrustPlan, Sig
         trust,
         SigningPlan::from_validated(config, response_kid, epoch),
     )
-}
-
-/// Where the connection seam reads the peer's identity from.
-///
-/// Derived from the channel-binding OWNER, not from the request. `ChannelBindingState` is
-/// what layer A decided the deployment's identity binding is, and both of its states read
-/// the verified peer certificate — they differ in which SAN, which is the identity policy's
-/// business and not this seam's.
-///
-/// The match is exhaustive over the owner's states on purpose. The other
-/// `PeerIdentityProvenance` arm serves a capability the boundary refuses and
-/// `docs/AGENT_INSTRUCTIONS.md` item 9 retains deliberately (Mode B / Mode C); they stay
-/// compiled and tested. What is gone is composition BRANCHING on raw request fields to
-/// reach them: no `ValidatedDeployment` could ever satisfy those branches, because a
-/// binding that is not `Exact` produces no `ChannelBindingState` and therefore no validated
-/// deployment at all. If a refused mode is ever admitted, it becomes a state here and this
-/// match stops compiling — which is where the arm should be wired, rather than in an `if`
-/// that silently never fires.
-pub fn peer_identity_provenance(binding: ChannelBindingState) -> PeerIdentityProvenance {
-    match binding {
-        ChannelBindingState::ExactUriSan | ChannelBindingState::ExactDnsSan => {
-            PeerIdentityProvenance::ChannelCredential
-        }
-    }
 }
 
 /// The trust plan and its reload posture live with their OWNER — the trust subtree —
@@ -355,6 +329,7 @@ pub use crate::config_state::continuation_control::ContinuationControlPlan;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::communication_assurance::peer_identity_provenance::PeerIdentityProvenance;
     use crate::deployment_request::{
         AttestedIngressRequest, DeploymentRequest, IngressAssertionRequest,
         PeerIdentityEvidenceRequest, PinnedChannelAcknowledgement,
@@ -412,7 +387,11 @@ mod tests {
         argv.extend_from_slice(extra);
         let config = parse(&argv).expect("args parse");
         let validated = ValidatedDeployment::try_from(config).expect("config validates");
-        peer_identity_provenance(validated.state().channel_binding())
+        validated
+            .state()
+            .channel_binding()
+            .serving_effects()
+            .peer_identity_provenance
     }
 
     /// A deployable configuration reads identity from the verified peer certificate.
@@ -474,7 +453,7 @@ mod tests {
             assert!(
                 refusal.contains(named),
                 "{named} must be refused at the boundary and named; if it now starts, \
-                 peer_identity_provenance has a reachable arm with no test: {refusal}"
+                 `ChannelBindingState::serving_effects` has a reachable arm with no test: {refusal}"
             );
         }
     }
