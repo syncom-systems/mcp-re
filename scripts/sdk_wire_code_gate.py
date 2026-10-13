@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""SDK wire-code gate — every `mcp-re.*` token the SDKs spell is a frozen wire code.
+"""SDK wire-code gate — every `mcp-re.*` token the clients spell is a frozen wire code.
 
-WHAT THIS PROVES, exactly: every literal `mcp-re.<name>` token in the Python and TypeScript
-SDK trees (sources, native bindings and tests) is the wire code of a verdict that
-`mcp-re-core`'s `ALL_ERRORS` lists. The set is read from `mcp-re-core/src/error.rs`: the
+WHAT THIS PROVES, exactly: every literal `mcp-re.<name>` token in the client trees — the
+Python and TypeScript SDKs (sources, native bindings and tests), `mcp-re-client-core` and
+`mcp-re-client-proxy` — is the wire code of a verdict that `mcp-re-core`'s `ALL_ERRORS`
+lists. The set is read from `mcp-re-core/src/error.rs`: the
 variants `ALL_ERRORS` names, each mapped through its `wire_code()` arm. A variant `ALL_ERRORS`
 names with no arm is a measurement failure, not an empty set.
 
-The SDKs spell these tokens by hand: in error messages they compare against, in the wire
+The clients spell these tokens by hand: in error messages they compare against, in the wire
 codes their test fixtures put into simulated server receipts, and in documentation. A token
 no server can emit makes a fixture model a receipt that never occurs, and makes a host-side
 comparison one that never matches.
@@ -34,7 +35,12 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 ERROR_RS = Path("mcp-re-core/src/error.rs")
-SDK_TREES = (Path("sdk/python"), Path("sdk/typescript"))
+SDK_TREES = (
+    Path("sdk/python"),
+    Path("sdk/typescript"),
+    Path("mcp-re-client-core"),
+    Path("mcp-re-client-proxy"),
+)
 SKIP_DIRS = frozenset({"node_modules", "dist", "coverage", "target", "site-packages", "__pycache__", ".pytest_cache"})
 
 
@@ -77,7 +83,7 @@ def frozen_codes(error_rs: str) -> set[str]:
 
 
 def sdk_files(root: Path) -> list[Path]:
-    """Every scanned file in the SDK trees under `root`, sorted."""
+    """Every scanned file in the client trees under `root`, sorted."""
     out: list[Path] = []
     for tree in SDK_TREES:
         for directory, subdirs, files in os.walk(root / tree):
@@ -91,7 +97,7 @@ def problems(root: Path) -> list[str]:
     found: list[str] = []
     files = sdk_files(root)
     if not files:
-        raise MeasurementError(f"no SDK file found under {', '.join(str(t) for t in SDK_TREES)}")
+        raise MeasurementError(f"no client file found under {', '.join(str(t) for t in SDK_TREES)}")
     for path in files:
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             for token in TOKEN.findall(line):
@@ -112,7 +118,7 @@ def run(root: Path) -> int:
         for line in found:
             print(f"  - {line}")
         return 1
-    print(f"sdk wire-code gate: OK — every `mcp-re.*` token in {len(sdk_files(root))} SDK file(s) is a frozen wire code")
+    print(f"sdk wire-code gate: OK — every `mcp-re.*` token in {len(sdk_files(root))} client file(s) is a frozen wire code")
     return 0
 
 
@@ -162,6 +168,11 @@ def selftest() -> int:
     case("a token outside ALL_ERRORS is red, with its site",
          len(got) == 1 and "t.test.ts:1" in got[0] and "mcp-re.upstream_unavailable" in got[0], got)
 
+    client = {**clean, "mcp-re-client-core/src/response.rs": 'RejectionReason::new("mcp-re.request_signature_invalid", "x")\n'}
+    got = problems(_tree(client))
+    case("a client crate's drifted token is red too",
+         len(got) == 1 and "response.rs:1" in got[0] and "request_signature_invalid" in got[0], got)
+
     vendored = {
         **clean,
         "sdk/typescript/node_modules/x/index.js": '"mcp-re.not_a_code"\n',
@@ -182,9 +193,9 @@ def selftest() -> int:
 
     try:
         problems(_tree({}))
-        case("no SDK file is a measurement failure, not a pass", False, "no error")
+        case("no client file is a measurement failure, not a pass", False, "no error")
     except MeasurementError:
-        case("no SDK file is a measurement failure, not a pass", True)
+        case("no client file is a measurement failure, not a pass", True)
 
     real = frozen_codes((REPO / ERROR_RS).read_text(encoding="utf-8"))
     case("the real error.rs yields the frozen set", "mcp-re.replay_detected" in real and len(real) > 10, len(real))
@@ -193,7 +204,7 @@ def selftest() -> int:
         print(f"sdk wire-code gate selftest: FAIL ({failures} case(s))")
         return 1
     print("sdk wire-code gate selftest: PASS (frozen and namespaced tokens pass, a drifted token is red at its "
-          "site, vendored trees are skipped, the set is ALL_ERRORS through wire_code, and an unreadable set refuses)")
+          "site in an SDK or a client crate, vendored trees are skipped, the set is ALL_ERRORS through wire_code, and an unreadable set refuses)")
     return 0
 
 

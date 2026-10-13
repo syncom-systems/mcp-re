@@ -109,6 +109,41 @@ def test_a_gate_a_unit_declares_is_claimed():
     assert len(claimed_gates) >= 4, sorted(claimed_gates)
 
 
+def test_the_gate_population_is_the_registry_less_its_non_controls():
+    """A `not_a_control` row leaves the census; a script with no row stays in it.
+
+    The second half is the fail-safe: a missing row can only widen the census, so the
+    merge-path gate, which refuses the missing row, is never the only thing between a new
+    gate and the residue.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "scripts").mkdir()
+        (root / "config").mkdir()
+        for name in ("a_gate.py", "demo.sh", "new_gate.py"):
+            (root / "scripts" / name).write_text("")
+        (root / "config" / "gates.toml").write_text(
+            '[[script]]\npath = "scripts/a_gate.py"\nstages = [1]\nci = []\nselftest = false\n'
+            '[[script]]\npath = "scripts/demo.sh"\nstages = []\nci = []\nselftest = false\n'
+            'not_a_control = "a demo runner"\n'
+        )
+        identities = {c.identity for c in _controls.gate_controls(root)}
+    assert identities == {"gate#scripts/a_gate.py", "gate#scripts/new_gate.py"}, identities
+
+
+def test_every_registry_non_control_is_outside_the_census():
+    """The live registry's `not_a_control` rows and the census agree, row for row."""
+    import _gates
+
+    excluded = {f"gate#{path}" for path in _gates.not_controls(_gates.load())}
+    assert excluded, "the registry marks nothing as not a control; the marker went dark"
+    gates = {identity for (_, identity) in INDEX if identity.startswith("gate#")}
+    assert not excluded & gates, sorted(excluded & gates)
+    assert gates, "the census found no gate at all"
+
+
 def test_a_measurements_own_argv_claims_its_controls():
     """A `measured` unit declares no battery, and its protocol still selects controls.
 

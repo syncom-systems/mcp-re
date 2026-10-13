@@ -42,15 +42,13 @@ pub use retry_contract::retry_semantics;
 pub use retry_contract::ExecutionDisposition;
 use serde_json::Value;
 
-use mcp_re_core::SigningKey;
-
-use crate::block::ActorIdentity;
+use crate::custody::DelegatedSigner;
 use crate::error::HttpProfileError;
 use crate::evidence::UnboundRequestDiagnostic;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
-use crate::sign::sign_delegated_response_full_with_owned_key;
-use crate::sign::sign_delegated_response_unbound_with_owned_key;
+use crate::sign::emit_delegated_response_full;
+use crate::sign::emit_delegated_response_unbound;
 
 /// The JSON-RPC error code MCP-RE rejections carry. The wire code in `data`,
 /// not this integer, is the stable signal.
@@ -141,33 +139,20 @@ fn request_id(request: &HttpRequest) -> Value {
 /// (replay / revocation / policy / transport binding). It verifies through the
 /// delegated chain (`Verifier::verify_delegated_bound_response`), never as a directly
 /// root-signed response.
-#[allow(clippy::too_many_arguments)]
-pub fn build_delegated_rejection_with_owned_key(
+///
+/// Crate-private: [`crate::custody::build_delegated_rejection`] is the public path.
+pub(crate) fn emit_delegated_rejection(
     request: &HttpRequest,
     reason: &RejectionReason,
     status: u16,
-    server_signer: &ActorIdentity,
-    server_delegation: &str,
-    delegated_key: &SigningKey,
-    delegated_kid: &str,
-    created: i64,
-    expires: i64,
+    signer: &DelegatedSigner<'_>,
 ) -> Result<HttpResponse, HttpProfileError> {
     let mut response = HttpResponse {
         status,
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: rejection_body(request_id(request), reason),
     };
-    sign_delegated_response_full_with_owned_key(
-        &mut response,
-        request,
-        server_signer,
-        server_delegation,
-        delegated_key,
-        delegated_kid,
-        created,
-        expires,
-    )?;
+    emit_delegated_response_full(&mut response, request, signer)?;
     Ok(response)
 }
 
@@ -179,17 +164,13 @@ pub fn build_delegated_rejection_with_owned_key(
 /// (`verify_delegated_response_unbound`) — but it is response-only signed and does
 /// NOT pretend to be bound to a valid request. When `received` is present its bytes
 /// are recorded as a diagnostic digest (never a binding) and its id is echoed.
-#[allow(clippy::too_many_arguments)]
-pub fn build_delegated_rejection_preflight_with_owned_key(
+///
+/// Crate-private: [`crate::custody::build_delegated_rejection_preflight`] is the public path.
+pub(crate) fn emit_delegated_rejection_preflight(
     received: Option<&HttpRequest>,
     reason: &RejectionReason,
     status: u16,
-    server_signer: &ActorIdentity,
-    server_delegation: &str,
-    delegated_key: &SigningKey,
-    delegated_kid: &str,
-    created: i64,
-    expires: i64,
+    signer: &DelegatedSigner<'_>,
 ) -> Result<HttpResponse, HttpProfileError> {
     let id = received.map(request_id).unwrap_or(Value::Null);
     // Diagnostic ONLY: a digest of the received bytes so an operator can correlate,
@@ -202,16 +183,7 @@ pub fn build_delegated_rejection_preflight_with_owned_key(
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: rejection_body(id, reason),
     };
-    sign_delegated_response_unbound_with_owned_key(
-        &mut response,
-        server_signer,
-        server_delegation,
-        &diagnostic,
-        delegated_key,
-        delegated_kid,
-        created,
-        expires,
-    )?;
+    emit_delegated_response_unbound(&mut response, &diagnostic, signer)?;
     Ok(response)
 }
 
@@ -254,6 +226,7 @@ mod tests {
         assert_eq!(e.len(), 1, "only wire_code: {e:?}");
     }
     use super::*;
+    use mcp_re_core::SigningKey;
 
     pub(super) const CLIENT_SEED: [u8; 32] = [11u8; 32];
     pub(super) const SERVER_SEED: [u8; 32] = [22u8; 32];

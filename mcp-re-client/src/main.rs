@@ -7,7 +7,7 @@
 
 use std::process::ExitCode;
 
-use mcp_re_client::config::ClientConfig;
+use mcp_re_client::config::ValidatedClientConfig;
 
 /// Everything between the command line and the serving loop: what was asked for, and what
 /// running until shutdown means.
@@ -80,7 +80,7 @@ fn main() -> ExitCode {
         Ok(invocation) => invocation,
         Err(code) => return code,
     };
-    let config = match ClientConfig::read(std::path::Path::new(&invocation.config_path)) {
+    let config = match ValidatedClientConfig::read(std::path::Path::new(&invocation.config_path)) {
         Ok(config) => config,
         Err(error) => {
             eprintln!("{error}");
@@ -111,22 +111,22 @@ fn main() -> ExitCode {
          manifest_expires_at={}, trust.reload_secs={}",
         built.manifest_version,
         floor,
-        floor_posture(&config.trust.floor),
+        floor_posture(&config.trust().floor),
         built.manifest_expires_at,
-        config.trust.reload_secs
+        config.trust().reload_secs
     );
     if invocation.check_only {
         eprintln!("mcp-re-client: configuration and trust anchors load; not serving (--check)");
         return ExitCode::SUCCESS;
     }
-    let listener = match mcp_re_client::serve::bind(&config.local) {
+    let listener = match mcp_re_client::serve::bind(config.bind_scope()) {
         Ok(listener) => listener,
         Err(error) => {
-            eprintln!("bind {}: {error}", config.local.bind);
+            eprintln!("bind {}: {error}", config.local().bind);
             return ExitCode::FAILURE;
         }
     };
-    serve_until_shutdown(&config, built, listener)
+    serve_until_shutdown(config.reload_interval(), built, listener)
 }
 
 #[cfg(test)]

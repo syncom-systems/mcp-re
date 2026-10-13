@@ -74,10 +74,42 @@ impl BindScope {
     pub fn listen_address(&self) -> SocketAddr {
         self.address
     }
+
+    /// The scope of the address a socket opened under this scope is actually bound to.
+    ///
+    /// The OS may choose the port (`:0`), so the names that reach the socket are decided
+    /// over the bound address. That address is admitted off-host only when this scope
+    /// already was, which the operator declared; a loopback scope admits a loopback bound
+    /// address and nothing else.
+    pub(crate) fn bound_to(&self, bound: SocketAddr) -> Result<Self, ConfigError> {
+        Self::decide(bound, self.exposed)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    /// A loopback scope cannot be re-targeted off-host; an off-host scope the operator
+    /// declared carries that declaration to the bound address.
+    #[test]
+    fn a_bound_address_is_admitted_off_host_only_under_an_off_host_scope() {
+        let loopback =
+            BindScope::decide("127.0.0.1:0".parse().expect("an address"), true).expect("loopback");
+        let off_host: SocketAddr = "198.51.100.7:8640".parse().expect("an address");
+        assert!(loopback.bound_to(off_host).is_err());
+        let bound = loopback
+            .bound_to("127.0.0.1:40000".parse().expect("an address"))
+            .expect("a loopback bound address");
+        assert_eq!(bound.listen_address().port(), 40000);
+        let declared = BindScope::decide(off_host, true).expect("declared");
+        assert_eq!(
+            declared
+                .bound_to(off_host)
+                .expect("declared off-host")
+                .exposed_authority(),
+            Some(off_host)
+        );
+    }
+
     use super::*;
 
     #[test]

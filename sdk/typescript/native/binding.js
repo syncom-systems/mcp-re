@@ -780,6 +780,7 @@ module.exports.__napiBindingTarget = __napiStampBindingTarget(nativeBinding, __n
 module.exports = nativeBinding
 module.exports.coreVersion = nativeBinding.coreVersion
 module.exports.profileTag = nativeBinding.profileTag
+module.exports.SIGNING_DEVICE_FAILURE = nativeBinding.SIGNING_DEVICE_FAILURE
 module.exports.signNotification = nativeBinding.signNotification
 module.exports.signNotificationWithSigner = nativeBinding.signNotificationWithSigner
 module.exports.signPreimage = nativeBinding.signPreimage

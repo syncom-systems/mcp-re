@@ -59,6 +59,7 @@ REGISTRY = REPO / REGISTRY_REL
 
 sys.path.insert(0, str(REPO / "tools" / "verification"))
 import _ratchet  # noqa: E402
+import _rust_targets  # noqa: E402
 
 #: The register's shape: one count per crate and lint, keyed `crate::lint`.
 SCHEMA = _ratchet.Schema(
@@ -125,12 +126,6 @@ LINT_FLAGS = [f"-W clippy::{lint}".split()[i] for lint in ADOPTED for i in (0, 1
 #: measurement did not use.
 STRICT_CONF_LABEL = "//config/clippy-strict:.clippy.toml"
 
-#: Library flavors that are test support rather than something that ships: the pre-052
-#: fixture, test-fixture, fault-injection and dev-env key-source builds. The ruling exempts
-#: test code, and these flavors exist to compile it.
-NOT_PRODUCTION = re.compile(r"_(pre052|test_fixtures|fault|dev_env)$")
-
-
 def clippy_diagnostics(targets: list[str], root: Path = REPO) -> tuple[int, str, list[dict]]:
     """Lint `targets` with the adopted lints on, and return every diagnostic clippy wrote.
 
@@ -165,16 +160,6 @@ def clippy_diagnostics(targets: list[str], root: Path = REPO) -> tuple[int, str,
     return proc.returncode, proc.stderr, diagnostics
 
 
-def production_targets(root: Path = REPO) -> list[str]:
-    """Every library and binary flavor that ships."""
-    proc = subprocess.run(
-        ["bazel", "query", "--output=label",
-         'kind("^(rust_library|rust_binary) rule$", //...) except attr(tags, "\\bmanual\\b", //...)'],
-        cwd=root, capture_output=True, text=True,
-    )
-    return [t for t in proc.stdout.split() if t.startswith("//") and not NOT_PRODUCTION.search(t)]
-
-
 def measure(root: Path) -> tuple[Counter, int]:
     """Run clippy over the production targets and count primary spans per (crate, lint).
 
@@ -183,7 +168,9 @@ def measure(root: Path) -> tuple[Counter, int]:
 
     Returns (counter keyed by "crate::lint", number of compiler messages seen).
     """
-    targets = production_targets(root)
+    # The test-support flavors are `testonly`, so the table's projection leaves them out:
+    # the ruling exempts test code, and those flavors exist to compile it.
+    targets = _rust_targets.production_targets()
     if not targets:
         raise RuntimeError("the build graph holds no production Rust target — nothing measured")
     rc, stderr, diagnostics = clippy_diagnostics(targets, root)
@@ -498,6 +485,25 @@ def selftest() -> int:
         print("selftest FAIL: a vanished baseline entry was accepted")
         return 1
 
+    # The measured targets are the table's shipping rows: a test-only flavor, a manual
+    # probe and a test binary are not production code.
+    def row(kind: str, *, manual: bool = False, testonly: bool = False) -> dict:
+        return {"kind": kind, "manual": manual, "testonly": testonly}
+
+    fixture = {
+        "//a:a": row("rust_library"),
+        "//a:a_pre052": row("rust_library", testonly=True),
+        "//a:a_fault": row("rust_library", testonly=True),
+        "//a:cli": row("rust_binary"),
+        "//a:probe": row("rust_library", manual=True),
+        "//a:a_test": row("rust_test", testonly=True),
+        "//a:native": row("rust_shared_library"),
+    }
+    if _rust_targets.production_targets(fixture) != ["//a:a", "//a:cli"]:
+        print(f"selftest FAIL: the production projection is "
+              f"{_rust_targets.production_targets(fixture)}, not the two shipping rows")
+        return 1
+
     # allow discipline
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -546,6 +552,7 @@ def selftest() -> int:
 
     print("clippy-ratchet gate selftest: PASS (at-baseline, growth, improvement, "
           "deny-at-zero for unbaselined and for unwrap_used, unadopted lint ignored; "
+          "production targets are the table's shipping rows; "
           "allow discipline: crate-wide, module-scoped, unjustified, both justified forms, "
           "unadopted lint, empty scan)")
     return 0

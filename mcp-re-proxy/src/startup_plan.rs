@@ -45,25 +45,23 @@ pub fn host_clock_is_faulted(now_unix: i64) -> bool {
     now_unix < EPOCH_CLOCK_FAULT_THRESHOLD_SECS
 }
 
-/// The kid naming the ROOT issuer that delegated credentials chain to (ADR-MCPRE-052).
+/// The trust plan and the signing plan, produced together: the one producer of both.
 ///
-/// A projection, not a derivation: layer A owns the rule that `--delegated-issuer-kid`
-/// wins when set and the server key id names the issuer otherwise, and this reads the
-/// value that rule produced
-/// ([`DelegatedSigningFacts`](crate::config_state::DelegatedSigningFacts)). Both the trust
-/// plane and the signing plane are handed the result rather than either producing it.
-///
-/// Planned, not materialized: the kid is a statement of INTENT about which issuer this
-/// deployment will chain to, not evidence that the issuer answered. That ordering is
-/// forced — trust is established well before the root issuer is invoked — and correct for
-/// the same reason.
-///
-/// The invariant that makes it safe belongs to signing, and the two planes consume
-/// opposite halves of it: this kid answers the Response slot, and it is never enrolled as
-/// a REQUEST signer. They cannot disagree about which key that is, because there is one
-/// resolved value and neither of them resolves it.
-pub fn response_issuer_kid(config: &ValidatedDeployment) -> String {
-    config.state().delegated_signing().issuer_kid().to_string()
+/// Both planes consume the root issuer kid delegated credentials chain to (ADR-MCPRE-052)
+/// and the shared trust epoch (CF-09). Each is read here once, from what layer A decided —
+/// the kid from [`DelegatedSigningFacts`](crate::config_state::DelegatedSigningFacts), the
+/// epoch from the classified trust-revocation state — and handed to both plans, so trust
+/// never enrolls as a request signer a kid other than the one signing mints under, and the
+/// two follow one epoch. `SigningPlan`'s constructor is private to this module and
+/// `TrustPlan`'s is reached only from here in production.
+pub fn response_authority_plans(config: &ValidatedDeployment) -> (TrustPlan, SigningPlan) {
+    let response_kid = config.state().delegated_signing().issuer_kid().to_string();
+    let epoch = TrustEpochPlan::from_validated(config);
+    let trust = TrustPlan::from_validated(config, response_kid.clone(), epoch.clone());
+    (
+        trust,
+        SigningPlan::from_validated(config, response_kid, epoch),
+    )
 }
 
 /// Where the connection seam reads the peer's identity from.
@@ -225,39 +223,22 @@ impl TrustEpochPlan {
 /// What response-signing custody must establish (ADR-MCPRE-052).
 ///
 /// Delegated signing is the only response mode, so this is a STRUCT and not an enum: the
-/// layer A classifies it as guard-only, with one state, and manufacturing variants for
-/// symmetry with `ClientRevocationPlan` would describe postures that do not exist.
-///
-/// The plan holds the normalized custody policy itself. Every default is applied here,
-/// once — and that is not cosmetic. `issuer_kid` was derived in TWO places: by
-/// [`response_issuer_kid`], whose value the startup transcript prints and which the trust
-/// plane excludes from the request-signer set, and again inside the delegated wiring, which
-/// is the one that reached the credential. Both spelled `--delegated-issuer-kid` falling
-/// back to `--server-key-id`, so they agreed; nothing made them. A deployment could
-/// therefore have been told it was chaining to one issuer while minting under another —
-/// the same class of declared-versus-established gap the TLS custody check closes, except
-/// that here it is closed structurally, by there being one derivation.
+/// layer A classifies it as guard-only, with one state. The plan holds the normalized
+/// custody policy, every default applied once.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SigningPlan {
     /// The credential policy the rotor mints under, fully resolved.
-    pub custody: mcp_re_http_profile::CustodyConfig,
-    /// The shared epoch mechanism — an INPUT, exactly as it is for `TrustPlan`. Trust
-    /// landing first must not make it the source (CF-09).
-    pub epoch: TrustEpochPlan,
+    custody: mcp_re_http_profile::CustodyConfig,
+    /// The shared epoch mechanism, the decision the trust plan holds (CF-09).
+    epoch: TrustEpochPlan,
 }
 
 impl SigningPlan {
     /// Project the plan from the validated configuration and the two shared decisions.
     ///
-    /// **Infallible.** It used to be two refusals inside the wiring: a missing trust epoch
-    /// and `0 < overlap < ttl`. The second was already a boundary clause and the first is
-    /// one now, so both are layer A's, made once, before this.
-    ///
-    /// `response_kid` and `epoch` are passed IN. Signing is the SECOND consumer of both,
-    /// and the temptation this shape removes is precisely the one that comes with being
-    /// second: deriving from the sibling that landed first, or from configuration, rather
-    /// than from the authority above them.
-    pub fn from_validated(
+    /// Infallible: the epoch source and `0 < overlap < ttl` are layer A's clauses. The kid
+    /// and the epoch are passed in, by [`response_authority_plans`] alone.
+    fn from_validated(
         config: &ValidatedDeployment,
         response_kid: String,
         epoch: TrustEpochPlan,
@@ -274,20 +255,44 @@ impl SigningPlan {
                 aud: values.audience.clone(),
                 audience_hash: facts.audience_hash().to_string(),
                 trust_epoch: facts.trust_epoch().clone(),
-                // The three identity components come from the ONE derived identity rather
-                // than from the primitives; a second assembly here is what let this and
-                // `app::run_validated` disagree about what the server's actor identity is.
+                // The three identity components come from the ONE derived identity.
                 server_role: identity.role.clone(),
                 server_trust_domain: identity.trust_domain.clone(),
                 server_subject: identity.subject.clone(),
-                // The owner's sealed pair, PROJECTED — not two accessors read back and
-                // re-paired here, which is what let a validated TTL meet an arbitrary
-                // overlap. This composition root combines owner-provided facts; it does
-                // not reconstruct one. No fallible step exists to get wrong.
+                // The owner's sealed TTL/overlap pair, projected whole.
                 window: rotation,
             },
             epoch,
         }
+    }
+
+    /// The credential policy the rotor mints under.
+    pub fn custody(&self) -> &mcp_re_http_profile::CustodyConfig {
+        &self.custody
+    }
+
+    /// The shared epoch mechanism, the same decision the trust plan holds.
+    pub fn epoch(&self) -> &TrustEpochPlan {
+        &self.epoch
+    }
+
+    /// This plan minting under `epoch`, the label the signing plane read from this
+    /// plan's own epoch source at startup; nothing else changes. `pub(crate)` for that one
+    /// consumer, a sibling subtree.
+    pub(crate) fn minting_under(&self, epoch: mcp_re_http_profile::custody::TrustEpoch) -> Self {
+        let mut minting = self.clone();
+        minting.custody.trust_epoch = epoch;
+        minting
+    }
+
+    /// A plan from parts, for in-crate tests of the signing plane's rotation loop, which
+    /// need windows and epoch sources no validated deployment states.
+    #[cfg(test)]
+    pub(crate) fn from_parts(
+        custody: mcp_re_http_profile::CustodyConfig,
+        epoch: TrustEpochPlan,
+    ) -> SigningPlan {
+        SigningPlan { custody, epoch }
     }
 }
 
@@ -619,7 +624,7 @@ mod tests {
         let config = parse(SHARED_REDIS).expect("args parse");
         let validated = ValidatedDeployment::try_from(config).expect("config validates");
         assert_eq!(
-            response_issuer_kid(&validated),
+            response_authority_plans(&validated).0.response_kid(),
             "k1",
             "with no --delegated-issuer-kid the server key id names the issuer"
         );
@@ -627,7 +632,10 @@ mod tests {
         let explicit = parse(&[SHARED_REDIS, &["--delegated-issuer-kid", "root-kms-1"]].concat())
             .expect("args parse");
         let validated = ValidatedDeployment::try_from(explicit).expect("config validates");
-        assert_eq!(response_issuer_kid(&validated), "root-kms-1");
+        assert_eq!(
+            response_authority_plans(&validated).0.response_kid(),
+            "root-kms-1"
+        );
     }
 
     // ---- control-runtime selections ---------------------------------------------
@@ -868,7 +876,7 @@ mod tests {
 
     /// The issuer kid has ONE derivation, and the plan carries whatever it is handed.
     ///
-    /// The defect this closes: the kid was derived twice — by `response_issuer_kid`, whose
+    /// The defect this closes: the kid was derived twice — by the planner, whose
     /// value the startup transcript prints and which trust excludes from the request-signer
     /// set, and again inside the delegated wiring, which is the one that reached the
     /// credential. Both spelled the same fallback, so they agreed. A deployment could
@@ -879,14 +887,18 @@ mod tests {
     #[test]
     fn the_issuer_kid_in_the_credential_is_the_one_that_was_planned() {
         let config = validated(&[]);
-        assert_ne!(response_issuer_kid(&config), "decided-above");
+        assert_ne!(
+            response_authority_plans(&config).0.response_kid(),
+            "decided-above"
+        );
         let plan = SigningPlan::from_validated(
             &config,
             "decided-above".to_string(),
             TrustEpochPlan::NoNetworkChannel,
         );
         assert_eq!(
-            plan.custody.issuer_kid, "decided-above",
+            plan.custody().issuer_kid,
+            "decided-above",
             "the credential must be minted under the planned issuer, not a re-derived one"
         );
     }
@@ -894,56 +906,54 @@ mod tests {
     /// The audience-scope hash defaults to the response audience, once.
     #[test]
     fn the_audience_scope_defaults_to_the_response_audience_and_is_overridable() {
-        let plan = SigningPlan::from_validated(
-            &validated(&[]),
-            "k1".to_string(),
-            TrustEpochPlan::NoNetworkChannel,
-        );
-        assert_eq!(plan.custody.audience_hash, plan.custody.aud);
+        let (_, plan) = response_authority_plans(&validated(&[]));
+        assert_eq!(plan.custody().audience_hash, plan.custody().aud);
 
-        let plan = SigningPlan::from_validated(
-            &validated(&["--delegated-audience-hash", "scope-1"]),
-            "k1".to_string(),
-            TrustEpochPlan::NoNetworkChannel,
-        );
-        assert_eq!(plan.custody.audience_hash, "scope-1");
-        assert_ne!(plan.custody.audience_hash, plan.custody.aud);
+        let (_, plan) =
+            response_authority_plans(&validated(&["--delegated-audience-hash", "scope-1"]));
+        assert_eq!(plan.custody().audience_hash, "scope-1");
+        assert_ne!(plan.custody().audience_hash, plan.custody().aud);
     }
 
-    /// CF-09's independence control, on the second consumer.
+    /// CF-09's independence control, on the second consumer: the signing plan cannot be
+    /// given an epoch the trust plan does not hold.
     ///
     /// Signing is the plane that landed last, which is exactly when the shortcut is
     /// tempting: take the epoch from the sibling that already has one, or from
-    /// configuration. This asserts the plan carries what it was GIVEN — an epoch pointing
-    /// at a host the configuration never names.
+    /// configuration through a second reading. Its constructor is private to this module and
+    /// its fields are private, so the one producer is the only way to obtain a plan — and
+    /// the plan it returns carries the epoch decision the trust plan carries, read once from
+    /// the classified state, for a networked source and for none.
     #[test]
-    fn the_signing_plan_carries_the_epoch_it_was_given_not_one_it_found() {
-        let config = validated(PUSH_NETWORKED);
-        let from_config = TrustEpochPlan::from_validated(&config);
-        let handed_down = TrustEpochPlan::redis("redis://198.51.100.7:6379", "decided-above");
-        assert_ne!(
-            from_config, handed_down,
-            "the fixture must distinguish them"
-        );
-
-        let plan = SigningPlan::from_validated(&config, "k1".to_string(), handed_down.clone());
-        assert_eq!(plan.epoch, handed_down);
+    fn the_signing_plan_cannot_be_given_a_different_epoch() {
+        for args in [PUSH_NETWORKED, &[] as &[&str]] {
+            let config = validated(args);
+            let (trust, signing) = response_authority_plans(&config);
+            assert_eq!(*signing.epoch(), TrustEpochPlan::from_validated(&config));
+            assert_eq!(signing.epoch(), trust.epoch());
+        }
+        assert!(matches!(
+            response_authority_plans(&validated(PUSH_NETWORKED))
+                .1
+                .epoch(),
+            TrustEpochPlan::Redis { .. }
+        ));
     }
 
     /// Both consumers of one decision hold the SAME value — the property CF-09 exists for,
-    /// asserted where the two plans meet rather than left to the wiring in `app`.
+    /// asserted on the producer `app` calls rather than on a re-creation of its wiring.
     #[test]
     fn both_consumers_of_the_epoch_hold_one_decision() {
         let config = validated(PUSH_NETWORKED);
-        let epoch = TrustEpochPlan::from_validated(&config);
-        let kid = response_issuer_kid(&config);
-        let trust = TrustPlan::from_validated(&config, kid.clone(), epoch.clone());
-        let signing = SigningPlan::from_validated(&config, kid.clone(), epoch);
-        // Read through the named projections. The fields are private to `trust_plan`
-        // since MCPRE-148, and that is the point: a consumer relates the two plans by the
-        // facts they publish, not by destructuring one of them.
-        assert_eq!(*trust.epoch(), signing.epoch);
-        assert_eq!(trust.response_kid(), signing.custody.issuer_kid);
+        let (trust, signing) = response_authority_plans(&config);
+        // Read through the named projections: a consumer relates the two plans by the facts
+        // they publish, not by destructuring either of them.
+        assert_eq!(trust.epoch(), signing.epoch());
+        assert_eq!(trust.response_kid(), signing.custody().issuer_kid);
+        assert_eq!(
+            trust.response_kid(),
+            config.state().delegated_signing().issuer_kid()
+        );
     }
 
     // ---- the TLS plan --------------------------------------------------------------

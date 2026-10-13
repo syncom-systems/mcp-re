@@ -7293,7 +7293,10 @@ Executable, class V0, measured in the default Bazel lane (`bazel test //...`).
 """
 owner = "client.deployment_config"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://client.deployment_config"]
+supported_by = [
+  "unit://client.deployment_config",
+  "unit://client.validated_config_sole_producer",
+]
 depends_on = []
 
 [[theorem]]

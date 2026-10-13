@@ -10,23 +10,23 @@
 //! genuinely over these bytes — a signer naming a keyid it did not sign as, or a block
 //! advertising another exchange's evidence.
 //!
-//! The handle is DERIVED from `request` here rather than supplied alongside it. It used to
-//! be a second operand, and nothing related the two: a caller could pass request A and
-//! handle B, and a success then meant cryptographic binding to A and semantic equality with
-//! B and nothing about A and B being one exchange. See [`crate::verify::bound_request`].
+//! The handle is DERIVED from `request` here, by
+//! [`RequestRoleEvidence::of_signed_request`], rather than supplied alongside it, so a
+//! success means binding to and equality with ONE exchange: there is no second operand
+//! through which a caller could pair request A with handle B.
 
 use crate::block::HttpResponseEvidenceBlock;
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::body::extract_meta_block;
 use crate::error::HttpProfileError;
+use crate::evidence::RequestRoleEvidence;
 use crate::ids::PROFILE_TAG;
 use crate::ids::RESPONSE_EVIDENCE_BLOCK_KEY;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::policy::VerifierPolicy;
 use crate::verified_response::VerifiedMcpResponse;
-use crate::verify::bound_request::request_evidence_of;
 use crate::verify::floor::floor_bound_response;
 
 /// Body of [`crate::Verifier::verify_bound_response`] under a verifier-local [`VerifierPolicy`].
@@ -51,7 +51,7 @@ pub(crate) fn full_bound_response<R: Into<ResolverOutcome>>(
     // The handle OF this request. Derived, never accepted: there is no second operand to
     // disagree with the first. Derived AFTER the block parses, so the two values the
     // comparison below reads are produced next to each other.
-    let bound_request_evidence = request_evidence_of(request)?;
+    let bound_request_evidence = RequestRoleEvidence::of_signed_request(request)?;
 
     // 3. server_signer.keyid must be the keyid the signature was accepted under; the block's other coordinates are not compared and the product carries only the seam's identity.
     if block.server_signer.keyid != floor.resolved_server_actor().identity.keyid {

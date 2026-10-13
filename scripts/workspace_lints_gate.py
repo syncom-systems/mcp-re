@@ -33,8 +33,13 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools" / "verification"))
+
+import _rust_targets  # noqa: E402
+
 POLICY = "//bazel:workspace_lints"
-RUST_RULES = "rust_library|rust_binary|rust_test|rust_shared_library|rust_static_library|rust_proc_macro"
+#: Every rule class rustc compiles a crate for — the ones that take a `lint_config`.
+RUST_RULES = "|".join(_rust_targets.COMPILED_RULES)
 
 #: First-party Rust targets deliberately outside the policy, each with its reason.
 EXEMPT: dict[str, str] = {
