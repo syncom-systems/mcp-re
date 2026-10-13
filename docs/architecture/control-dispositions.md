@@ -3362,7 +3362,7 @@ the merge path checks.
 
 ## NP-153 — the startup transcript is what the deployment actually did
 
-**Controls:** 20 — `app_startup_characterization_test` (8), `config_refusal_precedence_test` (4), `startup_transcript::normalize_tests` (5), `documented_cli_test` (2), `config_legality_characterization_test` (1). All in `mcp-re-proxy/tests/integration`, all in the default lane.
+**Controls:** 21 — `app_startup_characterization_test` (8), `config_refusal_precedence_test` (4), `startup_transcript::normalize_tests` (5), `documented_cli_test` (2), `config_legality_characterization_test` (1), all in `mcp-re-proxy/tests/integration`; and `async_fleet::core_runtime::tests::the_startup_line_names_the_built_pool_and_bound` (1), a unit test in `mcp-re-proxy`. All in the default lane.
 **Statement.** *Over a real startup: a refusal precedence is stable and names the first thing wrong rather than merely refusing; the startup-transcript normalizer reads every state-carrying seam in both directions and fails rather than guessing; the authorization seam declares both of its postures; the documented sidecar command line is a configuration the proxy will start with; and the boundary's recommended replay backend is not a state the next stage will start.*
 **If false.** An operator reads a transcript that describes a deployment other than the one running, or follows a remedy the next stage refuses. This is the composition above NP-004, NP-123 and the argv family: each of those says a posture is stated; this says the statement is true of this process.
 **Likely owner:** none — a composition's source is every unit under it.
@@ -4291,11 +4291,11 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 
 ## NP-221 — the delegated-TLS depth refusal names both conflicting settings and both remedies
 
-**Controls:** `mcp-re-proxy` `lib#async_fleet::shard_depth::tests::the_refusal_names_both_settings_and_both_ways_out`.
-**Carrier:** mcp-re-proxy/src/async_fleet/shard_depth.rs (impl Display for DelegatedTlsDepthRefusal).
-**Statement.** *DelegatedTlsDepthRefusal renders a sentence naming --workers-per-shard and DELEGATED TLS custody, and both ways out: raise the depth to 2 or more, or move TLS to an exported key.*
+**Controls:** `mcp-re-proxy` `lib#config_state::cross_machine::delegated_tls_depth::tests::the_depth_refusal_names_both_settings_and_both_ways_out`.
+**Carrier:** mcp-re-proxy/src/config_state/cross_machine/delegated_tls_depth.rs (`DELEGATED_TLS_DEPTH_REFUSAL`, relation X10).
+**Statement.** *Relation X10's refusal is a sentence naming --workers-per-shard and DELEGATED TLS custody, and both ways out: raise the depth to 2 or more, or move TLS to an exported key.*
 **If false.** An operator refused at startup is sent to change only the depth, or cannot tell from the message which two settings disagree, and may choose a remedy their deployment does not want.
-**Likely owner:** proxy.delegated_tls_depth_refusal owns the file, but states only that the pair is refused, 'There is no acknowledgement or unsafe flag'. The refusal holds whatever the sentence says, so this is operator-facing prose, the axis NP-123 and NP-145 were referred on.
+**Likely owner:** proxy.delegated_tls_depth_refusal has the file in its paths, but states only that the pair is refused, 'There is no acknowledgement or unsafe flag'. The refusal holds whatever the sentence says, so this is operator-facing prose, the axis NP-123 and NP-145 were referred on.
 **Severity:** `medium` (the ADR-MCPRE-068 §4.1 floor).
 **Root relationship.** An operator-facing promise about a startup refusal; no theorem states what a refusal must tell an operator.
 **Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).

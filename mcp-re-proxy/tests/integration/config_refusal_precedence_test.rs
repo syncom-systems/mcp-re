@@ -101,6 +101,7 @@ fn keys(violations: &[String]) -> Vec<&'static str> {
         "--gcp-kms-endpoint",
         "--aws-sts-endpoint",
         "--key-source",
+        "--workers-per-shard",
         "--ingress-",
         // The structure of the list, before the clauses that read a different field.
         "--client-crl contains an empty path",
@@ -170,6 +171,10 @@ fn the_boundary_refuses_in_this_order() {
     config.server_signer = String::new();
     config.server_key_id = String::new();
     config.bind = String::new();
+    // The same delegated channel key beside an operator-stated single-threaded shard:
+    // relation X10, which has no safe serving shape and is refused here rather than by
+    // the fleet after every plane has materialized.
+    config.workers_per_shard = 1;
     config.channel_credential.credential_chain = String::new();
     config.peer_trust_anchors = String::new();
     config.trust_path = String::new();
@@ -235,6 +240,10 @@ fn the_boundary_refuses_in_this_order() {
             // required locators the parser checks and the boundary did not.
             "--inner-http-url",
             "--key-source",
+            // NEW. Delegated channel custody beside a stated `--workers-per-shard 1` was
+            // refused by the serving fleet, after materialization; it is a fact about the
+            // request alone, so it is refused here, beside the channel-custody clauses.
+            "--workers-per-shard",
             // NEW, and ahead of the cadence clause because it is about a different field:
             // a list member that names no file is a defect in the control the cadence
             // would be re-reading.

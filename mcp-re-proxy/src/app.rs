@@ -390,17 +390,6 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
         );
     }
 
-    // The delegated-TLS custody paths sign the handshake through a KMS or a PKCS#11
-    // token, synchronously, inside rustls' `Signer::sign` — so the serving runtime
-    // shape has to account for a blocking signer (see `async_fleet`).
-    if config_snapshot.key_exposure() == crate::config_state::PrivateKeyExposure::NonExporting {
-        eprintln!(
-            "mcp-re-proxy: TLS custody = DELEGATED: the handshake signature is a blocking \
-             KMS/PKCS#11 call inside rustls' synchronous signer, so each core serves on a \
-             small worker pool rather than the single-threaded share-nothing default. A \
-             stalled signer then costs one worker instead of a whole core."
-        );
-    }
     // Which field the connection seam reads the client's identity from. Decided purely,
     // from configuration alone, in `startup_plan` — the three modes are mutually
     // exclusive and `parse_args` already refused the combinations.

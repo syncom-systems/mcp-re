@@ -160,10 +160,14 @@ pub fn validate_configuration(
 ) -> Result<DeploymentConfigState, Vec<String>> {
     // PASS 1 — each machine recognises its own state and checks that state's columns.
     let recognised = Recognised::classify(config);
-    // PASS 2 — the relations between machines: X9 over the recognised trust-revocation
-    // state, X2a and X6 over request selections no machine re-decides here.
-    let cross =
-        crate::config_state::cross_machine::validate(recognised.states.trust_revocation(), config);
+    // PASS 2 — the relations between machines: X9 and X10 over recognised states, X2a and
+    // X6 over request selections no machine re-decides here.
+    let cross = crate::config_state::cross_machine::validate(
+        recognised.states.trust_revocation(),
+        recognised.states.channel_credential_custody(),
+        recognised.states.shard_topology(),
+        config,
+    );
     let violations = legality_violations(config, recognised.refusals.with_cross(cross));
     if !violations.is_empty() {
         return Err(violations);
@@ -203,6 +207,7 @@ fn legality_violations(
                 x2a_delegated_selector,
                 x6_unenforceable_deny_list,
                 x9_trust_epoch_posture,
+                x10_delegated_tls_depth,
             },
     }: MachineViolations,
 ) -> Vec<String> {
@@ -292,6 +297,9 @@ fn legality_violations(
     violations.extend(x2a_delegated_selector);
     // The `TlsCustody` machine's own column: the exported state has no key without one.
     violations.extend(channel_credential_custody);
+    // X10 — TlsCustody × ShardTopology, beside the custody it is about: a delegated
+    // handshake key on an operator-stated single-threaded shard has no safe serving shape.
+    violations.extend(x10_delegated_tls_depth);
     // Ingress-assertion coherence: whether the operator's belief about a request-binding
     // ingress control matches what runs.
     if let Some(refusal) = crate::config_state::transport::ingress_assertion_violation(config) {

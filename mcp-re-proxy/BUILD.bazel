@@ -155,6 +155,7 @@ _PROXY_LIB_SRCS = [
     "src/config_state/continuation_control.rs",
     "src/config_state/coordinate.rs",
     "src/config_state/cross_machine.rs",
+    "src/config_state/cross_machine/delegated_tls_depth.rs",
     "src/config_state/custody.rs",
     "src/config_state/delegated_signing.rs",
     "src/config_state/evidence.rs",
@@ -596,7 +597,6 @@ _PROXY_LIB_SRCS = [
     "src/async_fleet/core_runtime.rs",
     "src/async_fleet/resolved_topology.rs",
     "src/async_fleet/reuseport.rs",
-    "src/async_fleet/shard_depth.rs",
     # MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier (async store
     # contract + L1-never-Fresh wrapper) — the only replay path.
     "src/async_replay/mod.rs",

@@ -9963,15 +9963,17 @@ id = "M337-proxy-an-explicit-worker-depth-is-not-capped"
 unit = "proxy.fleet_topology_provenance"
 theorem = "THM-0077"
 conjunct = "a serving component cannot disagree with the owner about what was configured"
-# RE-ADJUDICATED at the new implementation, not restored: Owner Ruling 7 made the resolver
-# return a `ShardDepth` so the depth's provenance survives it. The conjunct is unchanged and
-# the weakening is the same clamp, now applied inside the stated arm.
+# The weakening is the same clamp, applied to the stated depth before the default fills an
+# absent one.
 path = "mcp-re-proxy/src/async_fleet/resolved_topology.rs"
 anchor = """
-            Some(stated) => ShardDepth::stated(stated.get()),
+            .workers_per_shard()
+            .unwrap_or(DEFAULT_MAX_WORKERS_PER_SHARD.min(available));
 """
 weakening = """
-            Some(stated) => ShardDepth::stated(DEFAULT_MAX_WORKERS_PER_SHARD.min(stated.get())),
+            .workers_per_shard()
+            .map(|stated| stated.min(DEFAULT_MAX_WORKERS_PER_SHARD))
+            .unwrap_or(DEFAULT_MAX_WORKERS_PER_SHARD.min(available));
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#async_fleet::resolved_topology::tests::explicit_topology_is_never_overridden",
@@ -10877,65 +10879,30 @@ is why it survives that fragility.
 id = "M413-an-explicit-single-thread-under-delegated-tls-is-refused"
 unit = "proxy.delegated_tls_depth_refusal"
 conjunct = "an operator-stated `--workers-per-shard 1` under delegated TLS custody is REFUSED, not silently widened to a worker pool"
-# The weakening is the defect verbatim: delete the refusal and the code below widens the
-# stated 1 to four workers exactly as it did before Owner Ruling 7. It compiles, it serves,
-# the whole serving battery stays green, and the operator is told nothing.
-path = "mcp-re-proxy/src/async_fleet/core_runtime.rs"
+# The weakening is the defect verbatim: the relation refuses nothing, the deployment is
+# admitted, and the fleet widens the stated 1 to four workers. It compiles, it serves, the
+# whole serving battery stays green, and the operator is told nothing.
+path = "mcp-re-proxy/src/config_state/cross_machine/delegated_tls_depth.rs"
 anchor = """
-        if tls_signing_may_block && stated_single_thread {
-            return Err(DelegatedTlsDepthRefusal);
-        }
+    vec![DELEGATED_TLS_DEPTH_REFUSAL.to_string()]
 """
 weakening = """
-        let _ = stated_single_thread;
+    let _ = DELEGATED_TLS_DEPTH_REFUSAL;
+    Vec::new()
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::core_runtime::tests::delegated_custody_with_a_stated_single_thread_is_refused",
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::core_runtime::tests::neither_half_of_the_refused_pair_refuses_on_its_own",
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::refusal_order_tests::the_delegated_tls_depth_refusal_precedes_the_first_bind",
+  "//mcp-re-proxy:proxy_unit_test#config_state::cross_machine::delegated_tls_depth::tests::a_delegated_channel_key_on_a_stated_single_worker_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::cross_machine::delegated_tls_depth::tests::the_boundary_refuses_the_pair_however_the_request_was_built",
 ]
 note = """
-THE THREE CONTROLS ARE THREE DIFFERENT READINGS, not one fact counted three times: the
-decision itself, the decision being about a PAIR, and the decision happening before a
-listener exists. A registry holding only the first would attest a refusal that could be
-correct and still fire after the fleet was up.
+THE TWO CONTROLS ARE TWO DIFFERENT READINGS, not one fact counted twice: the relation
+itself, and the relation reaching the boundary every `ValidatedDeployment` passes. A registry
+holding only the first would attest a refusal the boundary never splices.
 
-`a_share_nothing_core_has_no_pool_and_no_handshake_bound` and
-`delegated_custody_over_a_derived_depth_derives_the_safe_one` are deliberately absent, and
-must stay GREEN under this weakening: deleting a refusal cannot break the configurations
-that were never refused, and naming them would make the probe unsatisfiable for a reason
-that has nothing to do with the conjunct.
-"""
-
-[[probe]]
-id = "M414-a-stated-depth-and-a-derived-one-are-one-number-again"
-unit = "proxy.delegated_tls_depth_refusal"
-conjunct = "the resolver preserves WHOSE number the depth is, so an operator's explicit 1 and a single-cpu host's derived 1 remain distinguishable where the refusal is decided"
-# THE SUBTLER WEAKENING, and the shape the defect actually had. The refusal is untouched —
-# it is still there, still two-term, still before the bind. What is removed is the fact it
-# turns on: every resolved depth comes back as the host's, so no depth is ever
-# operator-stated and the condition can never be true. A refusal that cannot fire reads as
-# a refusal in every place a reader looks except the one that matters.
-path = "mcp-re-proxy/src/async_fleet/resolved_topology.rs"
-anchor = """
-            Some(stated) => ShardDepth::stated(stated.get()),
-"""
-weakening = """
-            Some(stated) => ShardDepth::derived(stated.get()),
-"""
-expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::resolved_topology::tests::a_resolved_depth_says_whether_the_operator_or_the_host_chose_it",
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::refusal_order_tests::the_delegated_tls_depth_refusal_precedes_the_first_bind",
-]
-note = """
-WHAT THIS PROBE ESTABLISHES THAT M413 CANNOT. M413 measures the decision; this measures its
-PREMISE. Provenance travelling from the resolver to the decision is the whole reason
-`ShardDepth` exists instead of a `usize`, and a type carrying a fact nothing preserves is
-the produced-but-not-consumed shape one step worse — consumed, and always the same value.
-
-`explicit_topology_is_never_overridden` stays green under it, correctly: the NUMBER still
-survives resolution, which is that unit's claim. Only the provenance is lost, and only the
-two controls above can see it.
+`neither_half_of_the_refused_pair_refuses_on_its_own` and the `core_runtime` shape controls
+are deliberately absent, and must stay GREEN under this weakening: deleting a refusal cannot
+break the configurations that were never refused, and naming them would make the probe
+unsatisfiable for a reason that has nothing to do with the conjunct.
 """
 
 [[probe]]
@@ -11909,16 +11876,17 @@ unit = "proxy.handshake_custody_snapshot"
 conjunct = "the serving fleet decides its runtime shape from the custody of the snapshot it serves"
 path = "mcp-re-proxy/src/async_fleet/mod.rs"
 anchor = """
-    let pool = CorePool::for_core(cfg.topology.depth(), config.key_exposure())
+    CorePool::for_core(topology.depth(), config.key_exposure())
 """
 weakening = """
-    let pool = CorePool::for_core(
-        cfg.topology.depth(),
+    let _ = config;
+    CorePool::for_core(
+        topology.depth(),
         crate::config_state::PrivateKeyExposure::ProcessReadable,
     )
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::refusal_order_tests::the_delegated_tls_depth_refusal_precedes_the_first_bind",
+  "//mcp-re-proxy:proxy_unit_test#async_fleet::snapshot_custody_tests::the_core_shape_follows_the_served_snapshots_custody",
 ]
 
 [[probe]]
