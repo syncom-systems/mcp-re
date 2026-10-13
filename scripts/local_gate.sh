@@ -101,6 +101,9 @@ stage_static() {
     && python3 scripts/slo_invocation_gate.py \
     && python3 scripts/os_entropy_census_gate.py --selftest \
     && python3 scripts/os_entropy_census_gate.py \
+    && python3 scripts/sdk_wire_code_gate.py --selftest \
+    && python3 scripts/sdk_wire_code_gate.py --probe \
+    && python3 scripts/sdk_wire_code_gate.py \
     && python3 scripts/finding_ledger_gate.py --selftest \
     && python3 scripts/finding_ledger_gate.py \
     `# Fixture-feature gate: a test-only cargo feature enabled by a NORMAL dependency` \

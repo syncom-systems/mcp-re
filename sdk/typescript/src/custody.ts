@@ -17,6 +17,7 @@
  * encapsulates a seed and exposes ONLY `.sign(preimage)`, with no getter for the key.
  */
 import {
+  SIGNING_DEVICE_FAILURE,
   signNotification,
   signNotificationWithSigner,
   signPreimage,
@@ -27,8 +28,6 @@ import {
 
 /** The Ed25519 seed length. */
 const SEED_LEN = 32;
-/** The Ed25519 detached-signature length the RFC 9421 profile emits. */
-const SIGNATURE_LEN = 64;
 
 /** How the signing key is held. */
 export enum CustodyClass {
@@ -63,12 +62,11 @@ export class McpReError extends McpReSdkError {
  *
  * Deliberately **not** an {@link McpReError}: this is a local condition — the device
  * threw, or handed back something that is not a 64-byte signature — and nothing was ever
- * transmitted, so no wire code describes it. Reporting it as `mcp-re.invalid_signature`
- * would claim a peer rejected a signature that was never sent, and the frozen taxonomy is
- * wire-only and reuse-only, so there is no client-side token to borrow either.
+ * transmitted, so no wire code describes it. The native module reports it typed, with
+ * `code` {@link SIGNING_DEVICE_FAILURE}, and this is that failure in the SDK's own family.
  *
- * Fail-closed either way: no evidence is emitted. `.cause` carries whatever the device
- * actually did.
+ * Fail-closed either way: no evidence is emitted. `.cause` is what the device threw, when
+ * it threw.
  */
 export class SignerUnavailable extends McpReSdkError {
   readonly detail: string;
@@ -209,7 +207,7 @@ export class Signer {
    * Sign an MCP request, dispatching on custody class.
    *
    * Throws {@link SignerUnavailable} if a non-exporting device cannot sign, and an Error
-   * carrying a frozen wire code for a genuine protocol failure.
+   * whose `code` is the frozen wire code for a genuine protocol failure.
    */
   signRequest(a: SignRequestArgs): SignedRequestJs {
     const tail = [
@@ -239,44 +237,22 @@ export class Signer {
   /**
    * Run one non-exporting signing operation, reporting a device failure as one.
    *
-   * The core cannot tell "the device is broken" from "the signature is bad" — it only
-   * sees a callback that failed, and maps that to a wire code. What the device actually
-   * did is captured on this side of the boundary so the local condition is reported as a
-   * local condition. Shared by both message shapes on purpose: a notification that took
-   * a different route through custody could pick up a different device-failure posture,
-   * and two signing paths disagreeing about what a broken device means is exactly the
-   * divergence this SDK pair has been bitten by before.
+   * The native module says in a thrown error's `code` that the device could not sign, so
+   * the local condition is reported as a local condition: never as a wire code, since
+   * nothing was signed or sent. Shared by both message shapes on purpose: a notification
+   * that took a different route through custody could pick up a different device-failure
+   * posture, and two signing paths disagreeing about what a broken device means is
+   * exactly the divergence this SDK pair has been bitten by before.
    */
-  #throughDevice(run: (guarded: (preimage: Buffer) => Buffer) => SignedRequestJs): SignedRequestJs {
-    let cause: unknown;
-    const guarded = (preimage: Buffer): Buffer => {
-      let sig: unknown;
-      try {
-        sig = this.#signCallback!(preimage);
-      } catch (e) {
-        cause = e;
-        throw e;
-      }
-      if (!Buffer.isBuffer(sig)) {
-        cause = new TypeError(`device returned ${typeof sig}, expected a Buffer`);
-        throw cause;
-      }
-      if (sig.length !== SIGNATURE_LEN) {
-        cause = new RangeError(
-          `device returned a ${sig.length}-byte signature, expected ${SIGNATURE_LEN}`,
-        );
-        throw cause;
-      }
-      return sig;
-    };
-
+  #throughDevice(run: (device: (preimage: Buffer) => Buffer) => SignedRequestJs): SignedRequestJs {
     try {
-      return run(guarded);
+      return run(this.#signCallback!);
     } catch (e) {
-      if (cause === undefined) throw e; // a real protocol failure in the core
+      if ((e as { code?: unknown }).code !== SIGNING_DEVICE_FAILURE) throw e;
+      const thrown = (e as Error).cause;
       throw new SignerUnavailable(
-        cause instanceof Error ? cause.message : String(cause),
-        cause,
+        thrown instanceof Error ? thrown.message : (e as Error).message,
+        thrown ?? e,
       );
     }
   }

@@ -385,12 +385,10 @@ describe("McpReHttpTransport notification handling", () => {
     });
   });
 
-  it("reports the ack failure as the frozen token, not the binding's prefixed spelling", async () => {
+  it("reports the ack failure as the frozen token", async () => {
     // `wireCode` is documented as the frozen `mcp-re.*` token a caller branches on
-    // without parsing prose. The napi binding spells a core failure
-    // `"mcp-re: mcp-re.<token>"`, and the request path already strips that; the
-    // notification path passed the prefixed string straight through, so the same wire
-    // event reached an application under two different spellings depending on which
+    // without parsing prose. The notification path reads it from the core refusal's
+    // `code`, as the request path does, so one wire event has one spelling whichever
     // message shape carried it. The Python twin pins the same assertion.
     const transport = new McpReHttpTransport(minimalConfig(), async () => unsignedAck);
     await transport.start();
@@ -498,14 +496,16 @@ describe("McpReHttpTransport failure delivery", () => {
   it("delivers the core's own fail-closed Error rather than letting the caller hang", async () => {
     const seen = await sendAndCapture(
       minimalConfig(),
-      throwingPoster(new Error("mcp-re.response_sig_invalid")),
+      throwingPoster(
+        Object.assign(new Error("mcp-re.response_sig_invalid"), { code: "mcp-re.response_sig_invalid" }),
+      ),
     );
     expect(seen).toMatchObject({ error: { message: "mcp-re.response_sig_invalid" } });
   });
 
   it("delivers a network error under the local prefix, not as something the peer said", async () => {
-    // The `poster` does real I/O, so a reset connection arrives here as a plain Error
-    // exactly like a frozen core token does. Passing it through verbatim would put
+    // The `poster` does real I/O, so a reset connection arrives here as a plain Error,
+    // with no core refusal's `code`. Passing it through verbatim would put
     // "socket hang up" in the field that otherwise only ever holds a wire outcome.
     // Mirrors `test_an_unexpected_exception_is_delivered_without_claiming_a_wire_code`.
     const seen = await sendAndCapture(minimalConfig(), throwingPoster(new Error("socket hang up")));
@@ -796,13 +796,13 @@ describe("McpReHttpTransport signing inputs", () => {
 });
 
 describe("McpReHttpTransport peer wire codes", () => {
-  // The napi binding formats every core failure as `mcp-re: mcp-re.<token>`, so a
-  // regex applied to the WHOLE message could never match one — every genuine
-  // peer-evidence failure was relabelled as a local `mcp-re-sdk:` condition, and the
-  // Python twin delivered the bare token for the same event.
+  // The napi binding throws a core refusal with its frozen token as the error's `code`;
+  // the token is read from that field, never parsed out of the message.
+  const coreRefusal = (token: string): Error => Object.assign(new Error(token), { code: token });
+
   it("delivers a core failure as its frozen token, not as a local SDK error", async () => {
     const poster: Poster = async () => {
-      throw new Error("mcp-re: mcp-re.response_sig_invalid");
+      throw coreRefusal("mcp-re.response_sig_invalid");
     };
     const transport = new McpReHttpTransport(minimalConfig(), poster);
     const delivered: JSONRPCMessage[] = [];
@@ -829,6 +829,21 @@ describe("McpReHttpTransport peer wire codes", () => {
 
     const error = (delivered[0] as { error: { message: string } }).error;
     expect(error.message).toMatch(/^mcp-re-sdk: Error: socket hang up$/);
+  });
+
+  it("does not read a wire code out of a message that merely says one", async () => {
+    const poster: Poster = async () => {
+      throw new Error("mcp-re.response_sig_invalid");
+    };
+    const transport = new McpReHttpTransport(minimalConfig(), poster);
+    const delivered: JSONRPCMessage[] = [];
+    transport.onmessage = (m) => delivered.push(m);
+    await transport.start();
+    await transport.send({ jsonrpc: "2.0", id: 1, method: "tools/list" } as JSONRPCMessage);
+    await transport.close();
+
+    const error = (delivered[0] as { error: { message: string } }).error;
+    expect(error.message).toBe("mcp-re-sdk: Error: mcp-re.response_sig_invalid");
   });
 });
 
@@ -1097,7 +1112,7 @@ describe("McpReHttpTransport verified-reply shape", () => {
     const delivered = await deliver(
       {
         outcome: "rejection",
-        wireCode: "mcp-re.upstream_unavailable",
+        wireCode: "mcp-re.inner_dispatch_indeterminate",
         bound: true,
         requestState: null,
         executionStatus: "possibly_executed",
@@ -1108,7 +1123,7 @@ describe("McpReHttpTransport verified-reply shape", () => {
       "{}",
     );
     const error = (delivered as { error: { message: string; data: unknown } }).error;
-    expect(error.message).toBe("mcp-re.upstream_unavailable");
+    expect(error.message).toBe("mcp-re.inner_dispatch_indeterminate");
     expect(error.data, "a member the receipt did not carry must not be invented").toEqual({
       requestBound: true,
       executionStatus: "possibly_executed",
@@ -1141,7 +1156,7 @@ describe("McpReHttpTransport verified-reply shape", () => {
     const delivered = await deliver(
       {
         outcome: "rejection",
-        wireCode: "mcp-re.request_signature_invalid",
+        wireCode: "mcp-re.invalid_signature",
         bound: false,
         requestState: null,
       },

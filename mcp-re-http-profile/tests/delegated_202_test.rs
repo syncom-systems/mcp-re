@@ -13,9 +13,11 @@
 //! set is the point of the whole design.
 
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::custody::ActiveDelegatedKey;
+use mcp_re_http_profile::custody::SigningWindow;
+use mcp_re_http_profile::sign_delegated_accepted_202;
 use mcp_re_http_profile::Verifier;
 
-use mcp_re_http_profile::bodyless::sign_delegated_accepted_202_with_owned_key;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::verify_delegated_accepted_202;
@@ -172,13 +174,13 @@ fn sign_ack(note: &HttpRequest) -> mcp_re_http_profile::HttpResponse {
 }
 
 fn sign_ack_with(note: &HttpRequest, credential: &str) -> mcp_re_http_profile::HttpResponse {
-    sign_delegated_accepted_202_with_owned_key(
+    sign_delegated_accepted_202(
         note,
-        credential,
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(delegated_key(), server_signer(), credential, DELEGATED_KID),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("the PEP delegated-signs the acceptance")
 }
@@ -534,13 +536,18 @@ fn no_acknowledgement_is_signed_over_a_notification_carrying_an_invalid_block() 
         )
         .into_bytes(),
     };
-    let err = sign_delegated_accepted_202_with_owned_key(
+    let err = sign_delegated_accepted_202(
         &note,
-        &credential(),
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                delegated_key(),
+                server_signer(),
+                credential(),
+                DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect_err("refused");
     assert_eq!(err, HttpProfileError::UnknownProfileTag);

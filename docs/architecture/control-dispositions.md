@@ -63,11 +63,13 @@ Two secondary readings, both used below and both stated because they decide the 
   necessary one: a gate can be the carrier of a proposition the graph has simply never
   stated, which is the whole subject of ADR-069.
 
-`scripts/merge_path_gate.py` already rules on part of this population, and its rulings are
-reused rather than re-derived: it names `module_map.py` and `startup_backedges.py` as
-"an architecture report with no verdict", `demo-local.sh` as "a demo runner, not a control",
-and `local_slo_lane.sh` as "an SLO measurement, not an admissibility control". Those are
-ADR-069 dispositions in everything but name, and ND-008 records them as such.
+Whether a script under `scripts/` is a control at all is decided once, in the gate registry
+`config/gates.toml`. A row marked `not_a_control` — a driver, runner, report, demo or
+repository operation — states its reason there and is outside the census's gate population,
+so this register holds no row for it. The same rows carry the merge-path gate's exemptions
+(`off_merge_path`), so the two rulings about one file cannot disagree. A script that grows a
+verdict of its own — an exit status that means a property failed rather than an operation
+failed — loses its `not_a_control` marker and returns to the census.
 
 ---
 
@@ -561,38 +563,6 @@ that stops being inert by default is running on every deployment, and a divide-b
 out-of-range slot in it is then a live refusal path rather than a report's arithmetic. Either
 one makes this the wrong family, and the disposition becomes `new-proposition`.
 
-## ND-008 — not a control: drivers, runners, reports and demos
-
-**Covers:** `bump_version.sh`, `coverage.sh`, `demo-gcp-kms.sh`, `demo-local.sh`,
-`local_gate.sh`, `local_slo_lane.sh`, `merge_readiness_gate.py`, `merge_verified_pr.py`,
-`module_map.py`, `run_gate.sh`, `run_gate_selftest.sh`, `run_test_lane.sh`,
-`runtime_topology_sweep.sh`, `saturation_liveness.sh`, `saturation_rig.sh`,
-`startup_backedges.py`, `test-demos.sh`.
-**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 2.
-
-The census enumerates every executable file under `scripts/`, deliberately: an
-under-inclusive enumeration is how a control kind goes dark, and ADR-069 §2.1 is what that
-costs. These are the files that enumeration catches which are not controls at all — they
-drive other controls, they print a report with no verdict, they run a demo, or they perform
-an operation on the repository.
-
-**Why they are not evidence.** They state no verdict, so there is nothing for a proposition
-to rest on. `module_map.py` and `startup_backedges.py` print an architecture report;
-`run_gate.sh` is the wrapper that keeps a verdict and an exit status one fact;
-`local_gate.sh` is the driver that runs the others; `merge_verified_pr.py` performs a merge.
-
-**This ruling is reused, not invented.** `scripts/merge_path_gate.py` already names four of
-these in its own exemption list, in these words — *an architecture report with no verdict*,
-*a demo runner, not a control*, *an SLO measurement, not an admissibility control*, *sourced
-toolchain shim*. A second authority reaching a different answer about the same file would be
-the defect this campaign exists to remove.
-
-**What would move a control out.** A file here that grows a verdict of its own — an exit
-status that means a property failed rather than an operation failed. `run_gate.sh --selftest`
-is deliberately NOT such a case: it proves the wrapper cannot report a false green, which is
-ND-003's subject, and it is invoked as a control from `local_gate.sh` stage 1 rather than
-being one itself.
-
 ---
 
 ## The propositions
@@ -624,8 +594,9 @@ falsifier that can go red in that lane (Ruling 9 option 1). The control then reg
 ## ND-016 — a test-support helper's own self-test
 
 **Covers:** `mcp-re-test-paths` `lib#tests::a_test_nonce_is_22_base64url_characters`,
-`lib#tests::test_nonces_are_distinct_across_threads`.
-**Recorded:** 2026-10-11, CodeQL hard-coded-value cleanup.
+`lib#tests::test_nonces_are_distinct_across_threads`; `mcp-re-http-profile`
+`lib#custody::active_key::stated::tests::a_stated_key_carries_what_the_caller_stated`.
+**Recorded:** 2026-10-11, CodeQL hard-coded-value cleanup; the third on 2026-10-13 (MCPRE-211).
 
 Two controls on `mcp_re_test_paths::unique_test_nonce`, the helper tests use where the property
 under test does not depend on a nonce's value: the output is 22 Base64URL characters, and 1,600
@@ -638,6 +609,10 @@ test fixture broke, not that a security fact is false.
 
 **What would move a control out.** A claim that the production nonce path shares this
 construction. It does not: the production nonce is `SystemNonceSource` over the OS CSPRNG.
+
+The third is the same shape on `ActiveDelegatedKey::stated`, the test-flavor producer the
+delegated-signing batteries use to sign what a verifier must refuse. It is compiled only under
+`test` or `pre_052_fixtures`; no product build has it, so no product theorem can rest on it.
 
 ## NP-001 — the SDK runtime support claim
 
@@ -1004,7 +979,7 @@ inherits that: the lane is the prepared interpreter, never a bare `pytest`.
 
 ## NP-015 — a device that cannot sign emits no evidence (Python)
 
-**Controls:** `sdk/python/tests/test_custody.py::TestDeviceFailsClosed` (7).
+**Controls:** `sdk/python/tests/test_custody.py::TestDeviceFailsClosed` (8).
 **Carrier:** `sdk/python/python/mcp_re_sdk/custody.py`'s device signer.
 **Statement.** *A signing device that throws, returns a non-`bytes` value, or returns a
 signature of the wrong length raises `SignerUnavailable` and emits no evidence; the
@@ -1017,12 +992,12 @@ the custody path instead of the transport path.
 **Likely owner:** `sdk_python.signer_policy`, and this is why it is a proposition rather
 than a registration: **`sdk_typescript.signer_policy` says "a device that cannot sign fails
 closed rather than emitting unsigned evidence" and `sdk_python.signer_policy` does not.**
-The Python statement stops at the policy check and the rendering refusal. Seven controls are
+The Python statement stops at the policy check and the rendering refusal. Eight controls are
 written, they pass in the measured lane, and the unit above them makes no claim they support.
 **Root relationship.** Under THM-0094. A second asymmetry between the two SDK roots, found
 the same way as NP-014 and recorded separately from it because it is a different clause.
 **Severity:** `high`, matching its TypeScript twin.
-**Note on shape.** One of the seven is parametrised over signature lengths, and pytest's
+**Note on shape.** One of the eight is parametrised over signature lengths, and pytest's
 generated ids for it embed raw bytes. That is a registration-mechanics problem for whoever
 ratifies this, not a reason the proposition is absent, and it is recorded here so the
 ratification meets it deliberately.
@@ -2581,12 +2556,12 @@ Packet at `verification/reviews/packets/adr069-np-094-ratification-2026-09-19.md
 
 ## NP-098 — the cryptographic floor refuses what it cannot state exactly
 
-**Controls:** `mcp-re-http-profile/src/verify/floor/sf_dictionary.rs`, `mcp-re-http-profile/src/verify/floor/signature_input.rs`, `mcp-re-http-profile/src/verify/floor/signature_parameters.rs`, `mcp-re-http-profile/src/verify/bound_request.rs`, `mcp-re-http-profile/tests/proof_path_test.rs`, `mcp-re-http-profile/tests/algorithm_confusion_test.rs`.
+**Controls:** `mcp-re-http-profile/src/verify/floor/sf_dictionary.rs`, `mcp-re-http-profile/src/verify/floor/signature_input.rs`, `mcp-re-http-profile/src/verify/floor/signature_parameters.rs`, `mcp-re-http-profile/src/evidence/request_role.rs`, `mcp-re-http-profile/tests/proof_path_test.rs`, `mcp-re-http-profile/tests/algorithm_confusion_test.rs`.
 **Statement.** *An empty dictionary member and dictionary-member spacing are REFUSED, NOT normalised or ignored; alternate signature-input spellings are refused rather than normalised, while a space inside a quoted parameter value is kept; negative zero is not an SF integer; a request with no signature-input has no handle; and the proof path admits no algorithm the header did not name.*
 **If false.** A verifier normalises an input into something that verifies, so two different wire forms produce one base — the parser-differential attack again, at the floor rather than at the surface. 'Refused, not normalised' is the same clause NP-088 makes about the body, at the other end of the exchange.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `critical`.
-**Registered in part, ADR-MCPRE-069 S1.** Six controls are now in `unit://http_profile.request_floor_result`, whose description states *"the RFC 9421 signature verified over the reconstructed base under a policy-accepted algorithm ... and the presented keyid resolved through the trust seam for the Request slot"* — the three algorithm-confusion controls are what makes *policy-accepted* non-vacuous (the unit already carries `an_ed25519_signature_declaring_ml_dsa_is_rejected`), and `unsigned_request_fails_closed`, `verified_request_exposes_resolved_actor_identity` and `same_keyid_different_slots_do_not_collapse_actor_id` are the signature and the slot-resolution clauses. `verified_response_exposes_resolved_server_actor` is in `unit://http_profile.bound_response_seam_result` (*"the actor the seam returned IS the accepted signer"*). Ten rows REMAIN: the five floor parser-strictness controls (*refused, not normalised* — NP-090's family, stated by no theorem), `foreign_tag_fails_closed` and `signer_and_verifier_derive_the_same_evidence_handle` (NP-087 / NP-100 handle family), `content_encoding_fails_closed` and `duplicate_authorization_fails_closed` (body representation and header strictness, and the second measures `sign_request`, not the verifier's return at all), and `a_request_with_no_signature_input_has_no_handle`, which measures `request_evidence_of` rather than `Verifier::verify_request_floor` — the function the unit's description names. Packet at `verification/reviews/packets/adr069-np-098-ratification-2026-09-19.md`.
+**Registered in part, ADR-MCPRE-069 S1.** Six controls are now in `unit://http_profile.request_floor_result`, whose description states *"the RFC 9421 signature verified over the reconstructed base under a policy-accepted algorithm ... and the presented keyid resolved through the trust seam for the Request slot"* — the three algorithm-confusion controls are what makes *policy-accepted* non-vacuous (the unit already carries `an_ed25519_signature_declaring_ml_dsa_is_rejected`), and `unsigned_request_fails_closed`, `verified_request_exposes_resolved_actor_identity` and `same_keyid_different_slots_do_not_collapse_actor_id` are the signature and the slot-resolution clauses. `verified_response_exposes_resolved_server_actor` is in `unit://http_profile.bound_response_seam_result` (*"the actor the seam returned IS the accepted signer"*). Ten rows REMAIN: the five floor parser-strictness controls (*refused, not normalised* — NP-090's family, stated by no theorem), `foreign_tag_fails_closed` and `signer_and_verifier_derive_the_same_evidence_handle` (NP-087 / NP-100 handle family), `content_encoding_fails_closed` and `duplicate_authorization_fails_closed` (body representation and header strictness, and the second measures `sign_request`, not the verifier's return at all), and `a_request_with_no_signature_input_has_no_handle`, which measures `RequestRoleEvidence::of_signed_request` rather than `Verifier::verify_request_floor` — the function the unit's description names. Packet at `verification/reviews/packets/adr069-np-098-ratification-2026-09-19.md`.
 **Registered in part, owner ruling 13 (`owner-signature:hp-1-wire-surface-closure-ratification`, sha256 `8cbd4d69…`).** The floor parser-strictness controls are
 `unit://http_profile.wire_surface_closure` under THM-0134: the five above and the six
 `sf_dictionary` / `signature_parameters` controls added since. Five rows REMAIN:
@@ -4194,7 +4169,7 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 ## NP-204 — a delegated snapshot and its lifecycle audit name this issuance's own identity and credential id
 
 **Controls:** `mcp-re-http-profile` `lib#custody::active_key::tests::an_identity_naming_another_keyid_is_refused`; `mcp-re-http-profile` `lib#custody::active_key::tests::an_identity_the_request_did_not_name_is_refused`; `mcp-re-http-profile` `lib#custody::active_key::tests::the_credential_id_is_read_out_of_the_credential`; `mcp-re-http-profile` `lib#custody::tests::a_reissue_retires_the_predecessor_under_its_own_credential_id_and_window`.
-**Carrier:** `mcp-re-http-profile/src/custody/active_key.rs`.
+**Carrier:** `mcp-re-http-profile/src/custody/active_key/mod.rs`.
 **Statement.** *A published ActiveDelegatedKey signs under the server-signer identity the root signed, whose keyid is the credential's own delegated_kid. Its revocation identifier is the credential's own jti. A reissue records the retired predecessor under that predecessor's own jti, window and kid.*
 **If false.** Either a node publishes a snapshot whose response identity every verifier rejects, found only at the next request, or the lifecycle log names a retirement under an identifier that does not revoke the retired credential.
 **Likely owner:** http_profile.delegated_signing_custody: both carriers are in its paths, but its description covers only lifecycle clauses (root untouched, overlap rotation, epoch advance, window, fail-closed). Amending the description would let these four register beside the M97/M98 siblings.
@@ -4394,10 +4369,10 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 ## NP-223 — the SDK's published signing surface admits no request the client core refuses
 
 **Controls:** `sdk/python` `pytest#tests/test_authorization.py::TestDpopStaysBuiltIn::test_a_provider_may_not_present_the_built_in_dpop_binding`; `sdk/python` `pytest#tests/test_correlation.py::TestInputRequiredAssociatesWithoutConsuming::test_a_partially_supplied_continuation_is_refused_not_dropped`; `sdk/python` `pytest#tests/test_correlation.py::TestInputRequiredAssociatesWithoutConsuming::test_an_empty_dpop_token_is_refused_rather_than_bound_over_nothing`; `sdk/typescript` `vitest#test/authorization.test.ts > DPoP stays built-in > refuses a provider that presents the built-in dpop binding`; `sdk/typescript` `vitest#test/correlation.test.ts > an input-required result associates without consuming > refuses a partially supplied continuation instead of dropping it`; `sdk/typescript` `vitest#test/correlation.test.ts > an input-required result associates without consuming > refuses an empty dpop token rather than binding over nothing`.
-**Carrier:** sdk/python/src/lib.rs and sdk/typescript/src/lib.rs (`signing_inputs` / `provided_authorization`).
+**Carrier:** sdk/binding-core/src/sign_args.rs (`SignArgs::read` / `provided_authorization`), called from both bindings' signing entry points.
 **Statement.** *Each SDK's native signing seam (`sdk/python/src/lib.rs` for PyO3 `sign_request`, `sdk/typescript/src/lib.rs` for napi `signRequest`) builds a request only through mcp-re-client-core's classifiers. So at the published surface, an empty DPoP token (`DpopCredential::present`), a partially supplied MRTR continuation (`ContinuationHandles::from_optional`), and a provider-presented `oauth-dpop` binding (`build_authorization`) each raise instead of being signed. An ordinary token, all five handles, and a non-DPoP provider binding still sign.*
 **If false.** The seam carries a rule of its own that disagrees with the core. This is the r12 R12-1455/1460/1463 shape: the five handles folded under one `if let (Some,...)` meant a partial continuation was silently dropped, and an approved-continuation answer went out as an unapproved new call. The other failures are a signed `Authorization: Bearer ` binding over zero bytes, or a second `oauth-dpop` binding attesting to a credential no covered header carries. Every client.* unit would stay green, because each measures the core at its own API and not the binding the application actually calls.
-**Likely owner:** sdk_python.native_binding and sdk_typescript.native_binding, the supporting units of THM-0094 and THM-0095, own sdk/python/src/lib.rs and sdk/typescript/src/lib.rs. The client.* units that own the three rules (`client.dpop_credential_exists`, `client.continuation_all_or_nothing`, `client.binding_spec_refusal`) are project mcp-re-client-core, so the pytest and vitest controls of THM-0094 and THM-0095 cannot select them.
+**Likely owner:** sdk_binding_core.adapter, a supporting unit of THM-0094 and THM-0095, owns sdk/binding-core/src/sign_args.rs. The client.* units that own the three rules (`client.dpop_credential_exists`, `client.continuation_all_or_nothing`, `client.binding_spec_refusal`) are project mcp-re-client-core, so the pytest and vitest controls of THM-0094 and THM-0095 cannot select them.
 **Severity:** `high`.
 **Root relationship.** This is the published-surface twin, for each SDK, of three client-core units. It sits under THM-0094/THM-0095 on the request side, which THM-0094's scope places outside its closure for authorization artefacts. That is the same position NP-020..NP-024 occupy.
 **Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
@@ -4674,12 +4649,13 @@ clause and its two `durable_file.rs` controls stay here.
 **Root relationship.** Beside core.verification_taxonomy: that unit owns token rendering, and this proposition covers the envelope placement.
 **Recorded:** 2026-10-04, round-12 remediation of wire.rs.
 
-## NP-248 — the assembled client gives every route the one trust-anchor snapshot and re-validates a handed-in configuration
+## NP-248 — the assembled client gives every route the one trust-anchor snapshot
 
-**Controls:** `mcp-re-client` `lib#tests::build_gives_every_route_the_one_snapshot_and_revalidates_a_handed_in_config`.
+**Controls:** `mcp-re-client` `lib#tests::build_gives_every_route_the_one_snapshot`.
 **Carrier:** `mcp-re-client/src/lib.rs`.
-**Statement.** *build hands every route the one trust-anchor snapshot the refresher publishes into, and re-validates a configuration handed in as a struct before using it.*
-**If false.** A published revocation reaches some routes and not others, or a constructed configuration reaches the signing pipeline unchecked.
+**Statement.** *build hands every route the one trust-anchor snapshot the refresher publishes into.*
+**If false.** A published revocation reaches some routes and not others.
+**Amended 2026-10-13 (MCPRE-202).** The statement's second clause, that `build` re-validates a configuration handed in as a struct, is withdrawn: `build` takes a `ValidatedClientConfig`, so an unchecked configuration cannot reach it at all. That is `client.validated_config_sole_producer`'s, witnessed by S57 and S58.
 **Likely owner:** none. `mcp-re-client/src/lib.rs` is in no unit's `paths` and is listed in
 `config/unit-closure-exclusions.toml`.
 **Root relationship.** A premise of the units above it.
@@ -4713,7 +4689,7 @@ clause and its two `durable_file.rs` controls stay here.
 `config::validation::tests::the_request_lifetime_bound_is_exactly_one_to_the_profiles_signature_validity_ceiling`,
 `config::validation::tests::the_request_lifetime_ceiling_is_the_profiles`.
 **Carrier:** `mcp-re-client/src/config/validation.rs`.
-**Statement.** *ClientConfig::validate refuses a route whose target_uri differs from its audience.target_uri, an empty delegation.expected_audience_hash, and a local.request_lifetime_secs outside 1..=the profile's signature-validity ceiling.*
+**Statement.** *ValidatedClientConfig::new refuses a route whose target_uri differs from its audience.target_uri, an empty delegation.expected_audience_hash, and a local.request_lifetime_secs outside 1..=the profile's signature-validity ceiling.*
 **If false.** A configuration passes `--check` while every request on a route fails AudienceMismatch at signing, a delegated credential with an empty audience-hash claim is accepted, or every call carries a validity window no verifier accepts.
 **Likely owner:** `client.deployment_config`. Its `paths` are `config/mod.rs` only, so `register` is not admissible; `client.local_leg_declaration` holds this file but its statement does not state these facts.
 **Root relationship.** A premise of the units above it.
@@ -4984,10 +4960,10 @@ this one covers request signers too. No theorem depends on it.
 ## NP-277 — an SDK binding judges its pinned root at the caller's now and never pins an empty identity
 
 **Controls:** `sdk/python/bazel_tests/core_lane_test.py` `TestPinnedRoot` (4), run by `//sdk/python:core_lane_test` (stdlib `unittest`, Bazel-built `_core`; the census names them `pytest#` by file shape); `sdk/typescript/test/pinned_root.test.ts` (4).
-**Carrier:** `sdk/python/src/trust.rs` (`root_anchor`) and `sdk/typescript/src/trust.rs` (`root_resolver`), called from each binding's `verify_response` and `verify_accepted_202`.
+**Carrier:** `sdk/binding-core/src/pinned_issuer.rs` (`PinnedIssuer::anchor`), called through `VerifyArgs::judge` from both bindings' `verify_response` and `verify_accepted_202`.
 **Statement.** *Each binding's root anchor is the core's `TrustedIssuerSet`, evaluated at the `now` the caller passes: a root declared retired through `issuer_retired_until` / `issuerRetiredUntil` verifies while `now` is at or before that deadline and resolves untrusted after it, and an absent deadline pins a current root. An `issuer_*` identity field that is empty or whitespace is refused, naming the field, before anything is verified.*
 **If false.** A caller cannot retire a root through the published surface, or a retirement it declares is never evaluated; and a pin with an empty principal matches a credential naming an empty one, since the core compares the two by equality.
-**Likely owner:** sdk_python.native_binding and sdk_typescript.native_binding, the supporting units of THM-0094 and THM-0095, own each binding's trust.rs and verify_response.
+**Likely owner:** sdk_binding_core.adapter, a supporting unit of THM-0094 and THM-0095, owns `pinned_issuer.rs` and the verify preamble both bindings call.
 **Root relationship.** Under THM-0094/THM-0095. Findings `31419f23`, `83208e90`, `9cf9662b` (Python) and the TypeScript twin of the same defect; `582be933` (empty `issuer_key_id`).
 **Severity:** `medium`.
 **Recorded:** 2026-10-05, owner Ruling 18, Stream A.

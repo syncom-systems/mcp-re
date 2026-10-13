@@ -49,6 +49,7 @@ attestations this view cannot see.
 | unit://client.transport_message_hygiene | source, contracts or evidence | THM-0110 | _no consumer_ |
 | unit://client.transport_server_identity | source, contracts or evidence | THM-0109 | _no consumer_ |
 | unit://client.trust_manifest_lifecycle | source, contracts or evidence | THM-0057, THM-0058 | _no consumer_ |
+| unit://client.validated_config_sole_producer | source, contracts or evidence | THM-0124 | _no consumer_ |
 | unit://client.verified_outcome | source, contracts or evidence | THM-0126 | _no consumer_ |
 | unit://conformance.audit_vocabulary_drift | source, contracts or evidence | THM-0122 | _no consumer_ |
 | unit://conformance.carrier_minting_absence | source, contracts or evidence | THM-0111 | _no consumer_ |
@@ -296,6 +297,7 @@ attestations this view cannot see.
 | unit://proxy.trust_snapshot_swap | source, contracts or evidence | THM-0100 | _no consumer_ |
 | unit://proxy.unestablishable_capability_refusal | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.verified_context_carrier_boundary | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://sdk_binding_core.adapter | source, contracts or evidence | THM-0094, THM-0095 | _no consumer_ |
 | unit://sdk_python.authorization_binding | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://sdk_python.bounded_read | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://sdk_python.continuation_drive | source, contracts or evidence | THM-0094 | _no consumer_ |

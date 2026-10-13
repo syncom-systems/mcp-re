@@ -29,7 +29,7 @@ reclassifications this phase exists to perform.
 
 A DEAD RECORD IS A DEFECT TOO. A record naming a transition that is neither happening now
 nor already landed on `main` is a claim about nothing, and it hides the next one that
-matters — the same rule `merge_path_gate.EXEMPT` follows for a dead exemption.
+matters — the same rule `merge_path_gate.py` applies to a dead `off_merge_path`.
 
 WHAT IT DOES NOT PROVE: that the new class is the right one. That is 0D's judgement, and a
 gate that could decide it would be deciding what a proposition MEANS.

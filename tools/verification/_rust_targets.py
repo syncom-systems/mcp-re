@@ -53,18 +53,23 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TABLE = REPO_ROOT / "verification" / "generated" / "rust-targets.json"
 SCHEMA = 1
 
-RULES = (
+#: The rule classes rustc compiles a crate for, each taking a `lint_config`.
+COMPILED_RULES = (
     "rust_library",
     "rust_binary",
     "rust_test",
     "rust_shared_library",
     "rust_static_library",
     "rust_proc_macro",
+)
+RULES = COMPILED_RULES + (
     "rust_doc_test",
     "verus_verify",
     "charon_llbc",
 )
 TEST_RULES = ("rust_test", "rust_doc_test")
+#: The rule classes whose targets ship: a library or a binary.
+SHIPPING_RULES = ("rust_library", "rust_binary")
 QUERY = 'kind("^(%s) rule$", //...)' % "|".join(RULES)
 
 
@@ -192,6 +197,21 @@ def table() -> dict[str, dict]:
     if data.get("schema") != SCHEMA:
         raise TargetTableError(f"{TABLE.relative_to(REPO_ROOT)} has schema {data.get('schema')}, not {SCHEMA}")
     return data["targets"]
+
+
+def production_targets(rows: dict[str, dict] | None = None) -> list[str]:
+    """Every library and binary that ships: not `manual`, not `testonly`.
+
+    A `testonly` flavor — the pre-052 fixture, test-fixture and fault-injection builds —
+    is one Bazel refuses to any consumer that is not a test, so its code is test code.
+    `rows` is the committed table unless a caller hands one in.
+    """
+    rows = table() if rows is None else rows
+    return sorted(
+        label
+        for label, row in rows.items()
+        if row["kind"] in SHIPPING_RULES and not row["manual"] and not row["testonly"]
+    )
 
 
 def target(label: str) -> dict | None:

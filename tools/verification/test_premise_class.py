@@ -33,7 +33,6 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from _load_tool import load_tool  # noqa: E402
 from _manifest import (  # noqa: E402
     ASSUMPTIONS_SCHEMA_VERSION,
     ASSUMPTIONS_TOML,
@@ -55,9 +54,8 @@ from _premise import (  # noqa: E402
     open_obligations,
     registration_problems,
     roots_reaching_premises,
+    stale_obligations,
 )
-
-lane = load_tool("check-assumptions", "check_assumptions_lane")
 
 REGISTRY = load_assumptions()
 ENTRIES = {entry["id"]: entry for entry in REGISTRY.get("assumption", [])}
@@ -312,7 +310,7 @@ def test_an_owner_event_is_never_decided_by_the_gate():
 def test_the_lane_reports_no_stale_obligation_today():
     """And it is a real evaluation rather than a constant: the case above proves the same
     function goes red on a perturbed record."""
-    assert lane.stale_obligations() == []
+    assert stale_obligations(REGISTRY, VERIFICATION, TOOLCHAINS) == []
 
 
 # --- the registry as it stands ---------------------------------------------------------

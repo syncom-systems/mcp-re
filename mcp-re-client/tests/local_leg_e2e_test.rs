@@ -374,13 +374,10 @@ fn start_sidecar_with_backend(
         nonce: Box::new(mcp_re_client::next_nonce),
     });
 
-    let listener = mcp_re_client::serve::bind(&mcp_re_client::config::LocalConfig {
-        bind: "127.0.0.1:0".parse().expect("addr"),
-        allow_non_loopback: false,
-        request_lifetime_secs: 300,
-        default_route: None,
-        max_in_flight: 8,
-    })
+    let listener = mcp_re_client::serve::bind(
+        mcp_re_client::config::BindScope::decide("127.0.0.1:0".parse().expect("addr"), false)
+            .expect("loopback"),
+    )
     .expect("bind an ephemeral loopback port");
     let addr = listener.local_addr();
     let stop = Arc::new(AtomicBool::new(false));
@@ -842,13 +839,8 @@ fn shutdown_waits_for_an_accepted_exchange_instead_of_dropping_it() {
 fn signing_plan(
     config: &mcp_re_proxy::deployment_request::DeploymentRequest,
 ) -> mcp_re_proxy::startup_plan::SigningPlan {
-    use mcp_re_proxy::startup_plan::{response_issuer_kid, SigningPlan, TrustEpochPlan};
     let validated =
         mcp_re_proxy::config_state::validation::ValidatedDeployment::try_from(config.clone())
             .expect("the fixture config must validate");
-    SigningPlan::from_validated(
-        &validated,
-        response_issuer_kid(&validated),
-        TrustEpochPlan::from_validated(&validated),
-    )
+    mcp_re_proxy::startup_plan::response_authority_plans(&validated).1
 }

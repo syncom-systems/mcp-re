@@ -95,6 +95,8 @@ nt_rust_test(
         "//mcp-re-test-paths:src/lib.rs",
         "//mcp-re-operator-display:guard_src_files",
         "//mcp-re-operator-display:src/lib.rs",
+        "//sdk/binding-core:guard_src_files",
+        "//sdk/binding-core:src/lib.rs",
         "//sdk/python:guard_src_files",
         "//sdk/python:src/lib.rs",
         "//sdk/typescript:guard_src_files",
@@ -128,6 +130,7 @@ nt_rust_test(
         "MCP_RE_SRC_TREE_DEMO": "$(rlocationpath //mcp-re-demo:src/lib.rs)",
         "MCP_RE_SRC_TREE_TEST_PATHS": "$(rlocationpath //mcp-re-test-paths:src/lib.rs)",
         "MCP_RE_SRC_TREE_OPERATOR_DISPLAY": "$(rlocationpath //mcp-re-operator-display:src/lib.rs)",
+        "MCP_RE_SRC_TREE_SDK_BINDING_CORE": "$(rlocationpath //sdk/binding-core:src/lib.rs)",
         "MCP_RE_SRC_TREE_SDK_PYTHON": "$(rlocationpath //sdk/python:src/lib.rs)",
         "MCP_RE_SRC_TREE_SDK_TYPESCRIPT": "$(rlocationpath //sdk/typescript:src/lib.rs)",
     },
@@ -343,7 +346,7 @@ nt_rust_test(
     },
     deps = [
         "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
+        "//mcp-re-http-profile:mcp_re_http_profile_pre052",  # keep
         "@crates_mcp_re//:serde",
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:sha2",

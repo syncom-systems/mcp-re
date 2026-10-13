@@ -296,27 +296,15 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     // Trust (ADR-MCPRE-056 §8). The plane owns the store, the freshness flag and the
     // workers that refresh them; what comes back is two narrow live handles.
     //
-    // `response_kid` names the root issuer the delegated credential chains to
-    // (ADR-MCPRE-052). Derived once, in the plan, and handed to BOTH planes: trust must
-    // not enroll it as a request signer, and signing mints under it. Two derivations
-    // could disagree about which key that is.
-    let response_kid = crate::startup_plan::response_issuer_kid(config);
-    // The shared trust-epoch mechanism, interpreted ONCE and handed to both consumers
-    // (CF-09). Trust flushes its cache on an advance; delegated signing mints under the
-    // resulting label. Each used to read the configuration for itself.
-    let trust_epoch = crate::startup_plan::TrustEpochPlan::from_validated(config);
-    let trust_plan =
-        crate::startup_plan::TrustPlan::from_validated(config, response_kid.clone(), trust_epoch);
+    // The response authority (ADR-MCPRE-052; CF-09): the root issuer kid the delegated
+    // credential chains to and the shared trust epoch, each read once and paired into the
+    // trust plan and the signing plan by their one producer. Trust must not enroll the kid
+    // as a request signer and flushes its cache on an epoch advance; signing mints under
+    // both.
+    let (trust_plan, signing_plan) = crate::startup_plan::response_authority_plans(config);
     // Transport custody and the offline client-cert revocation posture, both already
     // classified by layer A (ADR-MCPRE-056 §8).
     let tls_plan = crate::startup_plan::ChannelEstablishmentPlan::from_validated(config);
-    // Response-signing custody. The SECOND consumer of both shared decisions, and it
-    // receives them the same way the first did — from here, not from its sibling.
-    let signing_plan = crate::startup_plan::SigningPlan::from_validated(
-        config,
-        response_kid.clone(),
-        trust_plan.epoch().clone(),
-    );
 
     // ADR-MCPRE-057 §3 and §9 — the lifecycle becomes a value here, owned by the runtime
     // it describes. Everything above this line is pure and the next statement is the
@@ -369,7 +357,7 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     let (authorization, authorization_state) = crate::authorization::capability::evaluator(
         config.state().authorization(),
         config.state().trust_document(),
-        &response_kid,
+        trust_plan.response_kid(),
         &values.audience,
         config.state().freshness().max_clock_skew(),
     )?
