@@ -3387,7 +3387,7 @@ the merge path checks.
 
 ## NP-153 — the startup transcript is what the deployment actually did
 
-**Controls:** 20 — `app_startup_characterization_test` (8), `config_refusal_precedence_test` (4), `startup_transcript::normalize_tests` (5), `documented_cli_test` (2), `config_legality_characterization_test` (1). All in `mcp-re-proxy/tests/integration`, all in the default lane.
+**Controls:** 21 — `app_startup_characterization_test` (8), `config_refusal_precedence_test` (4), `startup_transcript::normalize_tests` (5), `documented_cli_test` (2), `config_legality_characterization_test` (1), all in `mcp-re-proxy/tests/integration`; and `async_fleet::core_runtime::tests::the_startup_line_names_the_built_pool_and_bound` (1), a unit test in `mcp-re-proxy`. All in the default lane.
 **Statement.** *Over a real startup: a refusal precedence is stable and names the first thing wrong rather than merely refusing; the startup-transcript normalizer reads every state-carrying seam in both directions and fails rather than guessing; the authorization seam declares both of its postures; the documented sidecar command line is a configuration the proxy will start with; and the boundary's recommended replay backend is not a state the next stage will start.*
 **If false.** An operator reads a transcript that describes a deployment other than the one running, or follows a remedy the next stage refuses. This is the composition above NP-004, NP-123 and the argv family: each of those says a posture is stated; this says the statement is true of this process.
 **Likely owner:** none — a composition's source is every unit under it.
