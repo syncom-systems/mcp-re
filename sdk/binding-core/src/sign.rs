@@ -15,7 +15,9 @@ use mcp_re_client_core::SignedRequest;
 use mcp_re_core::SigningKey;
 
 use crate::BindingError;
+use crate::DeviceFailure;
 use crate::SignArgs;
+use crate::SignError;
 
 /// A signed RFC 9421 message as plain values: the HTTP method, `@target-uri`, headers
 /// (carrying `Signature`, `Signature-Input` and `Content-Digest`) and body, plus the request
@@ -57,16 +59,33 @@ pub fn sign(args: SignArgs, seed: &[u8]) -> Result<SignedParts, BindingError> {
 
 /// Sign through a device (non-exporting custody).
 ///
-/// `device` returns the signature, or `None` when the host call failed or returned
-/// something that is not bytes. Either is an unusable signature, and so is an answer that
-/// is not 64 octets, which the HTTP profile's signer seam refuses: the call fails closed as
-/// `mcp-re.invalid_signature` rather than emitting unsigned or malformed evidence.
-pub fn sign_with_device(
+/// `device` returns the detached signature, or the host's own error when the call failed
+/// or answered something that is not bytes. A device failure is reported as
+/// [`SignError::Device`], never as a wire code: nothing was signed and nothing was sent,
+/// so `mcp-re.invalid_signature` would claim a peer rejected a signature that never
+/// existed. Fails closed either way: no unsigned or malformed evidence is emitted.
+///
+/// An answer of the wrong length is refused by the HTTP profile's signer seam, the one
+/// place that length is checked. On this path the device's answer is the only signature
+/// the seam can refuse, so a refusal that follows an answer is that answer's
+/// [`DeviceFailure::Malformed`].
+pub fn sign_with_device<E>(
     args: SignArgs,
-    device: impl FnOnce(&[u8]) -> Option<Vec<u8>>,
-) -> Result<SignedParts, BindingError> {
+    device: impl FnOnce(&[u8]) -> Result<Vec<u8>, E>,
+) -> Result<SignedParts, SignError<E>> {
     let m = args.read()?;
-    let sign_base = |preimage: &[u8]| device(preimage).ok_or(HttpProfileError::InvalidSignature);
+    let mut failed: Option<E> = None;
+    let mut answered: Option<usize> = None;
+    let sign_base = |preimage: &[u8]| match device(preimage) {
+        Ok(signature) => {
+            answered = Some(signature.len());
+            Ok(signature)
+        }
+        Err(e) => {
+            failed = Some(e);
+            Err(HttpProfileError::InvalidSignature)
+        }
+    };
     let signed = match &m.id {
         Some(id) => build_signed_request_with_signer(
             id,
@@ -83,8 +102,15 @@ pub fn sign_with_device(
             &m.inputs,
             sign_base,
         ),
-    }?;
-    Ok(SignedParts::from(signed))
+    };
+    match (signed, failed, answered) {
+        (Ok(signed), _, _) => Ok(SignedParts::from(signed)),
+        (Err(_), Some(e), _) => Err(SignError::Device(DeviceFailure::Failed(e))),
+        (Err(HttpProfileError::InvalidSignature), None, Some(octets)) => {
+            Err(SignError::Device(DeviceFailure::Malformed(octets)))
+        }
+        (Err(e), None, _) => Err(SignError::Refused(BindingError::from(e))),
+    }
 }
 
 /// Sign exact preimage bytes with a raw seed, returning the 64-byte detached Ed25519
@@ -111,7 +137,9 @@ mod tests {
     use crate::BindingError;
     use crate::Call;
     use crate::ContinuationArgs;
+    use crate::DeviceFailure;
     use crate::SignArgs;
+    use crate::SignError;
 
     const SEED: [u8; 32] = [7u8; 32];
 
@@ -143,7 +171,7 @@ mod tests {
     fn a_device_signature_is_byte_identical_to_the_software_one() {
         for call in [request(), Call::Notification] {
             let software = sign(args(call.clone()), &SEED).expect("software signs");
-            let device = sign_with_device(args(call), |pre| sign_preimage(&SEED, pre).ok())
+            let device = sign_with_device(args(call), |pre| sign_preimage(&SEED, pre))
                 .expect("a device signs");
             assert_eq!(software, device);
             assert!(software
@@ -154,20 +182,41 @@ mod tests {
     }
 
     #[test]
-    fn a_device_that_fails_or_answers_anything_but_64_octets_fails_closed() {
-        for answer in [
-            None,
-            Some(vec![0u8; 63]),
-            Some(vec![0u8; 65]),
-            Some(Vec::new()),
-        ] {
-            let got = sign_with_device(args(request()), |_| answer.clone());
-            assert_eq!(
-                got.err(),
-                Some(BindingError::Wire("mcp-re.invalid_signature")),
-                "{answer:?}"
+    fn a_device_that_fails_is_a_device_failure_carrying_the_host_error() {
+        for call in [request(), Call::Notification] {
+            let got = sign_with_device(args(call), |_| Err::<Vec<u8>, _>("HSM unavailable"));
+            assert!(
+                matches!(
+                    got,
+                    Err(SignError::Device(DeviceFailure::Failed("HSM unavailable")))
+                ),
+                "{got:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_device_answer_that_is_not_64_octets_is_a_malformed_device_answer() {
+        for octets in [0usize, 63, 65] {
+            let got = sign_with_device(args(request()), |_| Ok::<_, ()>(vec![0u8; octets]));
+            match got {
+                Err(SignError::Device(DeviceFailure::Malformed(n))) => assert_eq!(n, octets),
+                other => panic!("{octets}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_refusal_the_device_did_not_cause_is_not_blamed_on_it() {
+        let mut bad = args(request());
+        bad.params_json = r#""not-an-object""#.into();
+        let got = sign_with_device(bad, |_| -> Result<Vec<u8>, ()> {
+            panic!("the device is not consulted for a refused call")
+        });
+        assert!(
+            matches!(&got, Err(SignError::Refused(BindingError::Local(reason))) if reason == "params must be a JSON object"),
+            "{got:?}"
+        );
     }
 
     #[test]

@@ -28,11 +28,11 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from _load_tool import load_tool  # noqa: E402
-
-gate = load_tool('check-assumptions', 'check_assumptions')
-
 import _seams as seams  # noqa: E402
+from _manifest import REPO_ROOT, load_verification  # noqa: E402
+
+#: The gate's own source, read as text for the FAIL wording it must print.
+GATE_SOURCE = HERE / "check-assumptions"
 
 
 # --- registration is per SITE, inside a unit ----------------------------------
@@ -44,13 +44,13 @@ REGISTRY = {"core.time_rfc3339": {("external_body", SITE)}}
 
 
 def test_a_site_is_registered_inside_the_unit_that_registered_it():
-    assert gate.is_registered("external_body", SITE, {"core.time_rfc3339"}, REGISTRY)
+    assert seams.is_registered("external_body", SITE, {"core.time_rfc3339"}, REGISTRY)
 
 
 def test_a_mechanism_registered_in_one_unit_does_not_cover_another():
     """THE original control. `verus:external_body` trusted for the time parser said nothing
     about a new `external_body` in the admission path, and the gate passed it anyway."""
-    assert not gate.is_registered(
+    assert not seams.is_registered(
         "external_body", SITE, {"http_profile.admission_currency"}, REGISTRY
     )
 
@@ -60,7 +60,7 @@ def test_registering_one_seam_does_not_license_the_next_one_beside_it():
     mechanism kind) and `scope` names whole crates, so one entry licensed every present and
     FUTURE site of that mechanism in every file those units declare — the registry recorded
     "this unit trusts uninterpreted spec functions", which is not a fact about any seam."""
-    assert not gate.is_registered(
+    assert not seams.is_registered(
         "external_body", NEXT_SITE, {"core.time_rfc3339"}, REGISTRY
     )
 
@@ -68,23 +68,23 @@ def test_registering_one_seam_does_not_license_the_next_one_beside_it():
 def test_the_mechanism_still_has_to_match_at_the_same_site():
     """Trusting an uninterpreted spec function is not trusting an `external_body`, even
     where both sit on one item."""
-    assert not gate.is_registered("uninterp", SITE, {"core.time_rfc3339"}, REGISTRY)
+    assert not seams.is_registered("uninterp", SITE, {"core.time_rfc3339"}, REGISTRY)
 
 
 def test_a_seam_with_no_nameable_item_is_unregistrable_rather_than_registered():
     """Fail-closed on the identity, not just on the decision: a seam with no item has
     nothing to register, and answering yes would make the unnameable case the widest one."""
-    assert not gate.is_registered("external_body", None, {"core.time_rfc3339"}, REGISTRY)
+    assert not seams.is_registered("external_body", None, {"core.time_rfc3339"}, REGISTRY)
 
 
 def test_a_file_no_unit_declares_can_register_nothing():
-    assert not gate.is_registered("external_body", SITE, frozenset(), REGISTRY)
+    assert not seams.is_registered("external_body", SITE, frozenset(), REGISTRY)
 
 
 def test_a_file_shared_by_units_is_covered_by_any_of_their_registrations():
     """A trusted-specs file belongs to every unit that declares it, so a registration by
     one of them is a registration for that file — the crossing is visible in the listing."""
-    assert gate.is_registered(
+    assert seams.is_registered(
         "external_body", SITE, {"other.unit", "core.time_rfc3339"}, REGISTRY
     )
 
@@ -98,13 +98,8 @@ def test_an_assumption_with_no_sites_registers_nothing():
         "tool_specific_mechanism": "verus:external_body",
         "scope": ["unit://core.time_rfc3339"],
     }]}
-    original = gate.load_assumptions
-    gate.load_assumptions = lambda: doc
-    try:
-        registry = gate.registered_by_unit()
-    finally:
-        gate.load_assumptions = original
-    assert not gate.is_registered("external_body", SITE, {"core.time_rfc3339"}, registry)
+    registry = seams.registered_by_unit(doc)
+    assert not seams.is_registered("external_body", SITE, {"core.time_rfc3339"}, registry)
 
 
 # --- a site key is the ITEM, not a line number --------------------------------
@@ -172,7 +167,7 @@ def test_a_seam_with_no_following_item_has_no_key():
 def matched(line: str) -> set[str]:
     return {
         name
-        for name, pattern in gate.PRODUCTION_MECHANISMS.items()
+        for name, pattern in seams.PRODUCTION_MECHANISMS.items()
         if re.search(pattern, line)
     }
 
@@ -243,7 +238,7 @@ def test_the_production_scan_reads_the_shipped_half_only():
     `replay.rs` has a test helper `fn admit(..)`; Verus' `admit()` deletes a proof
     obligation. Scanning the whole file reports the first as the second.
     """
-    lines = gate.production_lines(
+    lines = seams.production_lines(
         "fn ship() {}\n"
         "#[cfg(test)]\nmod tests {\n    fn admit(x: u8) -> u8 { x }\n}\n"
         "fn late() {}\n"
@@ -292,8 +287,8 @@ pub fn check_params(x: u64) -> Result<u64, E> {
 
 
 def block_for(source: str) -> str:
-    sites = gate._definition_sites(
-        source.splitlines(), gate._definition("check_params")
+    sites = seams.definition_sites(
+        source.splitlines(), seams.definition_pattern("check_params")
     )
     assert len(sites) == 1, sites
     return sites[0][1]
@@ -312,14 +307,14 @@ def with_line_before(source: str, comment: str) -> str:
 def hatched(block: str) -> set[str]:
     return {
         name
-        for name, pattern in gate.VACUITY_AT_PROVED_SYMBOL.items()
+        for name, pattern in seams.VACUITY_AT_PROVED_SYMBOL.items()
         if re.search(pattern, block)
     }
 
 
 def test_a_real_specification_reads_as_one():
     block = block_for(PROVED)
-    assert gate.SPECIFICATION_TEXT.search(block)
+    assert seams.SPECIFICATION_TEXT.search(block)
     assert hatched(block) == set()
 
 
@@ -334,7 +329,7 @@ def test_a_deleted_specification_leaves_a_function_with_no_contract():
     """A Verus specification is a detachable attribute. Deleting it removes the theorem
     and nothing else — not the function, not the verified count, not the symbol list."""
     block = block_for(SPECIFICATION_DELETED)
-    assert not gate.SPECIFICATION_TEXT.search(block)
+    assert not seams.SPECIFICATION_TEXT.search(block)
 
 
 def test_prose_about_a_specification_is_not_a_specification():
@@ -354,7 +349,7 @@ def test_prose_about_a_specification_is_not_a_specification():
         "/// Ensures the parameter set is admissible, and requires a validated policy.",
     )
     block = block_for(described)
-    assert not gate.SPECIFICATION_TEXT.search(block), (
+    assert not seams.SPECIFICATION_TEXT.search(block), (
         "prose describing a specification read as the specification"
     )
 
@@ -379,16 +374,24 @@ def test_a_doc_comment_between_the_attribute_and_the_item_does_not_orphan_it():
     would report every such specification as deleted.
     """
     separated = with_line_before(PROVED, "/// What this function does, in prose.")
-    assert gate.SPECIFICATION_TEXT.search(block_for(separated))
+    assert seams.SPECIFICATION_TEXT.search(block_for(separated))
+
+
+def test_a_bracket_in_a_comment_does_not_close_the_attribute():
+    """A `// )])` comment inside a multi-line specification would otherwise end the block
+    early, and the `ensures` below it would no longer reach the item."""
+    commented = PROVED.replace("    ensures\n", "    ensures // )])\n")
+    assert commented != PROVED
+    assert seams.SPECIFICATION_TEXT.search(block_for(commented))
 
 
 def test_the_block_walker_does_not_reach_the_previous_item():
     """Otherwise a neighbouring function's `ensures` answers for this one, and the deleted
     specification above reads as present."""
     two = PROVED + SPECIFICATION_DELETED.replace("check_params", "other_fn")
-    sites = gate._definition_sites(two.splitlines(), gate._definition("other_fn"))
+    sites = seams.definition_sites(two.splitlines(), seams.definition_pattern("other_fn"))
     assert len(sites) == 1
-    assert not gate.SPECIFICATION_TEXT.search(sites[0][1])
+    assert not seams.SPECIFICATION_TEXT.search(sites[0][1])
 
 
 # --- the repository's own state ------------------------------------------------
@@ -397,7 +400,7 @@ def test_the_block_walker_does_not_reach_the_previous_item():
 def test_every_declared_theorem_is_established_in_the_tree_as_it_stands():
     """Not a unit test of the mechanism but of the repository: no unit currently advertises
     a theorem whose function is missing, excused, or unspecified."""
-    assert gate.proved_symbol_defects() == []
+    assert seams.proved_symbol_defects(load_verification(), REPO_ROOT) == []
 
 
 # --- the FAIL text must name a remedy that EXISTS ----------------------------
@@ -411,7 +414,7 @@ def test_a_site_no_unit_declares_is_told_to_declare_the_file_first():
     import io
     from contextlib import redirect_stderr
 
-    source = Path(gate.__file__).read_text(encoding="utf-8")
+    source = GATE_SOURCE.read_text(encoding="utf-8")
     assert "no unit declares this file" in source, (
         "the FAIL path must distinguish a site with an owning unit from one without"
     )
@@ -421,7 +424,7 @@ def test_a_site_no_unit_declares_is_told_to_declare_the_file_first():
     )
     # And the two branches are selected by the owner set, which is what `is_registered`
     # already answers `False` for.
-    assert not gate.is_registered(
+    assert not seams.is_registered(
         "external_body", SITE, frozenset(), {"u": {("external_body", SITE)}}
     )
 
@@ -443,8 +446,8 @@ def test_prose_mentioning_a_mechanism_is_not_a_site():
         "    * an uninterp note in a block comment",
     ):
         assert code_of(prose).strip() == "", prose
-    assert "external_body" in gate.code_of("#[verifier::external_body]")
-    assert gate.code_of("let x = 1; // uninterp").strip() == "let x = 1;"
+    assert "external_body" in seams.code_of("#[verifier::external_body]")
+    assert seams.code_of("let x = 1; // uninterp").strip() == "let x = 1;"
 
 
 def test_no_seam_hides_in_a_file_no_unit_declares():
@@ -487,16 +490,13 @@ def test_no_seam_hides_in_a_file_no_unit_declares():
 # --- a `none:` site is live when its item is declared, stale when it is not ---
 
 
-def _with_none_assumption(tmp: Path, sites: list[str]):
-    """Point the gate at `tmp` and at one `none:trusted-seam` assumption naming `sites`."""
-    saved = (gate.REPO_ROOT, gate.load_assumptions)
-    gate.REPO_ROOT = tmp
-    gate.load_assumptions = lambda: {
+def _none_assumption(sites: list[str]) -> dict:
+    """One `none:trusted-seam` assumption naming `sites`."""
+    return {
         "assumption": [
             {"id": "ASM-9999", "tool_specific_mechanism": "none:trusted-seam", "sites": sites}
         ]
     }
-    return saved
 
 
 def test_a_none_site_whose_item_is_declared_is_live():
@@ -511,11 +511,8 @@ def test_a_none_site_whose_item_is_declared_is_live():
             "pub struct Carrier;\nimpl Carrier {\n    pub fn attach(&self) {}\n}\n",
             encoding="utf-8",
         )
-        saved = _with_none_assumption(tmp, ["seam.rs#Carrier", "seam.rs#Carrier::attach"])
-        try:
-            assert gate.declared_seam_sites() == {"seam.rs#Carrier", "seam.rs#Carrier::attach"}
-        finally:
-            gate.REPO_ROOT, gate.load_assumptions = saved
+        doc = _none_assumption(["seam.rs#Carrier", "seam.rs#Carrier::attach"])
+        assert seams.declared_seam_sites(doc, tmp) == {"seam.rs#Carrier", "seam.rs#Carrier::attach"}
 
 
 def test_a_none_site_whose_item_was_renamed_or_moved_is_not_live():
@@ -526,13 +523,8 @@ def test_a_none_site_whose_item_was_renamed_or_moved_is_not_live():
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
         (tmp / "seam.rs").write_text("pub fn relocated() {}\n", encoding="utf-8")
-        saved = _with_none_assumption(
-            tmp, ["seam.rs#original", "gone.rs#relocated", "seam.rs#relocated"]
-        )
-        try:
-            assert gate.declared_seam_sites() == {"seam.rs#relocated"}
-        finally:
-            gate.REPO_ROOT, gate.load_assumptions = saved
+        doc = _none_assumption(["seam.rs#original", "gone.rs#relocated", "seam.rs#relocated"])
+        assert seams.declared_seam_sites(doc, tmp) == {"seam.rs#relocated"}
 
 
 if __name__ == "__main__":

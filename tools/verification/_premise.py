@@ -341,6 +341,30 @@ def has_come_true(entry: dict, verification: dict, toolchains: dict) -> str | No
 _VERSION_KEYS = ("release", "channel", "version", "revision", "tag")
 
 
+def stale_obligations(assumptions: dict, verification: dict, toolchains: dict) -> list[str]:
+    """Review obligations whose OBSERVABLE discharging event has already happened — C4.
+
+    Not a pass, and not a silent discharge. The registry would be asserting debt the tree
+    says is paid, which is the same stale-record defect `_evidence.write_bundle` records for
+    the evidence bundle: a record that outlives the state it describes makes the tree look
+    measured when it is not.
+
+    Discharge is a registry EDIT, owner-reviewed like every other security-sensitive change.
+    `check-assumptions`' job is not to notice a discharge; it is to make the debt impossible
+    to stop seeing. `owner-event` obligations are never reported here, because nothing
+    observes them — they are reported as OPEN, in the release view, against every root that
+    reaches them.
+    """
+    found = []
+    for entry in assumptions.get("assumption", []):
+        if not is_live(entry) or entry.get("premise_class") != "review-obligation":
+            continue
+        problem = has_come_true(entry, verification, toolchains)
+        if problem is not None:
+            found.append(problem)
+    return found
+
+
 def _pinned_version(toolchains: dict, tool: str) -> str | None:
     """The pinned version of one toolchain, or None if the lock does not name it."""
     entry = toolchains.get(tool)

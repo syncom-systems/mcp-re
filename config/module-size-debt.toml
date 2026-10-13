@@ -267,9 +267,12 @@ path = "mcp-re-proxy/src/app.rs"
 # destructures a four-field gate: 775 (measured at 6f2000c) -> 770.
 # MCPRE-197: the root resolves the shard topology once and hands the fleet the owners' values
 # whole, so it no longer projects the basis into `ServerLimits` or the topology into `0 = auto`:
-# 770 (measured at 75fae5e) -> 760. `baseline_sha` names that parent.
-baseline_prod_loc = 760
-baseline_sha = "75fae5e"
+# 770 (measured at 75fae5e) -> 760.
+# MCPRE-209: the trust and signing plans come from their one producer, so the root no longer
+# reads the issuer kid and the epoch and threads them into two constructors:
+# 760 (measured at c939c2f) -> 748. `baseline_sha` names that parent.
+baseline_prod_loc = 748
+baseline_sha = "c939c2f"
 status = "reviewed-exception"
 review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 
@@ -334,9 +337,11 @@ status = "unreviewed"
 path = "sdk/python/src/lib.rs"
 # MCPRE-198: the binding marshals into `mcp-re-binding-core`, which holds the signing inputs,
 # the root anchor, the verify preamble and the verdict projection both bindings restated:
-# 767 (measured at 6f2000c) -> 686. `baseline_sha` names that parent.
-baseline_prod_loc = 686
-baseline_sha = "6f2000c"
+# 767 (measured at 6f2000c) -> 686.
+# MCPRE-199: a refusal crosses into Python typed, and the refusal channel and device seam
+# are `refusal.rs`'s: 686 (measured at c198ef0) -> 683. `baseline_sha` names that parent.
+baseline_prod_loc = 683
+baseline_sha = "c198ef0"
 status = "unreviewed"
 
 [[debt]]
@@ -368,9 +373,11 @@ growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
 path = "sdk/typescript/src/lib.rs"
 # MCPRE-198: the binding marshals into `mcp-re-binding-core`, which holds the signing inputs,
 # the root anchor, the verify preamble and the verdict projection both bindings restated:
-# 727 (measured at 6f2000c) -> 649. `baseline_sha` names that parent.
-baseline_prod_loc = 649
-baseline_sha = "6f2000c"
+# 727 (measured at 6f2000c) -> 649.
+# MCPRE-199: a refusal crosses into JavaScript typed, and the refusal channel and device
+# seam are `refusal.rs`'s: 649 (measured at c198ef0) -> 645. `baseline_sha` names that parent.
+baseline_prod_loc = 645
+baseline_sha = "c198ef0"
 status = "unreviewed"
 
 # MCPRE-175 gave the local listener an owner subtree. `serve.rs` mixed the accept loop with
@@ -392,12 +399,14 @@ status = "unreviewed"
 # rather than added to a file the ratchet holds at 712. The debt moves WITH the file —
 # dropping the entry because the path changed would launder 712 registered lines as
 # progress — and the number falls to 707 because the actor projection left with it.
+# MCPRE-212: the request-role handle has one owner, `RequestRoleEvidence::of_signed_request`,
+# so the bodyless copy of its derivation goes: 391 (measured at c939c2f) -> 370.
 # MCPRE-211: the delegated 202 emitter is crate-private and reads its signer from one window's
-# projection. The file measured 391 at c939c2f under a 408 baseline and still does; the baseline
-# drops to the measurement so the headroom cannot be spent. `baseline_sha` names that parent.
+# projection; the file measures 370 with both changes. `baseline_sha` names the parent where
+# 391 was measured.
 [[debt]]
 path = "mcp-re-http-profile/src/bodyless/mod.rs"
-baseline_prod_loc = 391
+baseline_prod_loc = 370
 baseline_sha = "c939c2f"
 status = "unreviewed"
 
@@ -537,9 +546,12 @@ status = "unreviewed"
 [[debt]]
 path = "mcp-re-proxy/src/startup_plan.rs"
 # MCPRE-197: the inner-plane ceiling and raise left with the `Option` x `Option` interface they
-# projected: 385 (measured at bff0cb9) -> 340. `baseline_sha` names that parent.
-baseline_prod_loc = 340
-baseline_sha = "bff0cb9"
+# projected: 385 (measured at bff0cb9) -> 340.
+# MCPRE-209: the response-authority plans have one producer here and the signing plan's
+# fields are private behind projections: 340 (measured at c939c2f) -> 338. `baseline_sha`
+# names that parent.
+baseline_prod_loc = 338
+baseline_sha = "c939c2f"
 status = "unreviewed"
 
 [[debt]]

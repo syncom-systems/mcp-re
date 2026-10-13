@@ -107,7 +107,7 @@ pub(crate) fn emit_delegated_response_full(
     signer: &DelegatedSigner<'_>,
 ) -> Result<Vec<u8>, HttpProfileError> {
     request_block::require_valid(request)?;
-    let request_evidence = crate::verify::bound_request::request_evidence_of(request)?;
+    let request_evidence = crate::evidence::RequestRoleEvidence::of_signed_request(request)?;
     let block = HttpResponseEvidenceBlock {
         profile: PROFILE_TAG.to_owned(),
         server_signer: signer.server_signer().clone(),

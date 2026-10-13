@@ -1134,7 +1134,6 @@
     "mcp-re-http-profile/src/verified_response/mod.rs",
     "mcp-re-http-profile/src/verified_response/unbound.rs",
     "mcp-re-http-profile/src/verifier.rs",
-    "mcp-re-http-profile/src/verify/bound_request.rs",
     "mcp-re-http-profile/src/verify/floor/components.rs",
     "mcp-re-http-profile/src/verify/floor/covered_components.rs",
     "mcp-re-http-profile/src/verify/floor/mod.rs",
@@ -1490,7 +1489,6 @@
     "mcp-re-http-profile/src/verified_response/mod.rs",
     "mcp-re-http-profile/src/verified_response/unbound.rs",
     "mcp-re-http-profile/src/verifier.rs",
-    "mcp-re-http-profile/src/verify/bound_request.rs",
     "mcp-re-http-profile/src/verify/floor/components.rs",
     "mcp-re-http-profile/src/verify/floor/covered_components.rs",
     "mcp-re-http-profile/src/verify/floor/mod.rs",
@@ -1654,7 +1652,6 @@
     "mcp-re-http-profile/src/verified_response/mod.rs",
     "mcp-re-http-profile/src/verified_response/unbound.rs",
     "mcp-re-http-profile/src/verifier.rs",
-    "mcp-re-http-profile/src/verify/bound_request.rs",
     "mcp-re-http-profile/src/verify/floor/components.rs",
     "mcp-re-http-profile/src/verify/floor/covered_components.rs",
     "mcp-re-http-profile/src/verify/floor/mod.rs",
@@ -1822,7 +1819,6 @@
     "mcp-re-http-profile/src/verified_response/mod.rs",
     "mcp-re-http-profile/src/verified_response/unbound.rs",
     "mcp-re-http-profile/src/verifier.rs",
-    "mcp-re-http-profile/src/verify/bound_request.rs",
     "mcp-re-http-profile/src/verify/floor/components.rs",
     "mcp-re-http-profile/src/verify/floor/covered_components.rs",
     "mcp-re-http-profile/src/verify/floor/mod.rs",
@@ -1989,7 +1985,6 @@
     "mcp-re-http-profile/src/verified_response/mod.rs",
     "mcp-re-http-profile/src/verified_response/unbound.rs",
     "mcp-re-http-profile/src/verifier.rs",
-    "mcp-re-http-profile/src/verify/bound_request.rs",
     "mcp-re-http-profile/src/verify/floor/components.rs",
     "mcp-re-http-profile/src/verify/floor/covered_components.rs",
     "mcp-re-http-profile/src/verify/floor/mod.rs",
@@ -2155,7 +2150,6 @@
     "mcp-re-http-profile/src/verified_response/mod.rs",
     "mcp-re-http-profile/src/verified_response/unbound.rs",
     "mcp-re-http-profile/src/verifier.rs",
-    "mcp-re-http-profile/src/verify/bound_request.rs",
     "mcp-re-http-profile/src/verify/floor/components.rs",
     "mcp-re-http-profile/src/verify/floor/covered_components.rs",
     "mcp-re-http-profile/src/verify/floor/mod.rs",
@@ -9185,6 +9179,7 @@
    "package": "sdk/binding-core",
    "root": "sdk/binding-core/src/lib.rs",
    "srcs": [
+    "sdk/binding-core/src/device.rs",
     "sdk/binding-core/src/error.rs",
     "sdk/binding-core/src/lib.rs",
     "sdk/binding-core/src/pinned_issuer.rs",
@@ -9207,6 +9202,7 @@
    "package": "sdk/binding-core",
    "root": "sdk/binding-core/src/lib.rs",
    "srcs": [
+    "sdk/binding-core/src/device.rs",
     "sdk/binding-core/src/error.rs",
     "sdk/binding-core/src/lib.rs",
     "sdk/binding-core/src/pinned_issuer.rs",
@@ -9232,7 +9228,8 @@
    "package": "sdk/python",
    "root": "sdk/python/src/lib.rs",
    "srcs": [
-    "sdk/python/src/lib.rs"
+    "sdk/python/src/lib.rs",
+    "sdk/python/src/refusal.rs"
    ],
    "testonly": false,
    "verus_deps": []
@@ -9250,7 +9247,8 @@
    "package": "sdk/python",
    "root": "sdk/python/src/lib.rs",
    "srcs": [
-    "sdk/python/src/lib.rs"
+    "sdk/python/src/lib.rs",
+    "sdk/python/src/refusal.rs"
    ],
    "testonly": true,
    "verus_deps": []
@@ -9268,7 +9266,8 @@
    "package": "sdk/typescript",
    "root": "sdk/typescript/src/lib.rs",
    "srcs": [
-    "sdk/typescript/src/lib.rs"
+    "sdk/typescript/src/lib.rs",
+    "sdk/typescript/src/refusal.rs"
    ],
    "testonly": true,
    "verus_deps": []
@@ -9286,7 +9285,8 @@
    "package": "sdk/typescript",
    "root": "sdk/typescript/src/lib.rs",
    "srcs": [
-    "sdk/typescript/src/lib.rs"
+    "sdk/typescript/src/lib.rs",
+    "sdk/typescript/src/refusal.rs"
    ],
    "testonly": false,
    "verus_deps": []

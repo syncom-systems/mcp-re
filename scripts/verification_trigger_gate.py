@@ -72,7 +72,7 @@ from _manifest import (  # noqa: E402
     load_verification,
 )
 import _registries  # noqa: E402
-from _registries import structural_probe_paths  # noqa: E402
+from _registry_refs import structural_probe_paths  # noqa: E402
 
 
 def structural_probe_sites(probes: list[dict]) -> list[str]:

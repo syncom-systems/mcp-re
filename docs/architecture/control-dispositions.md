@@ -979,7 +979,7 @@ inherits that: the lane is the prepared interpreter, never a bare `pytest`.
 
 ## NP-015 — a device that cannot sign emits no evidence (Python)
 
-**Controls:** `sdk/python/tests/test_custody.py::TestDeviceFailsClosed` (7).
+**Controls:** `sdk/python/tests/test_custody.py::TestDeviceFailsClosed` (8).
 **Carrier:** `sdk/python/python/mcp_re_sdk/custody.py`'s device signer.
 **Statement.** *A signing device that throws, returns a non-`bytes` value, or returns a
 signature of the wrong length raises `SignerUnavailable` and emits no evidence; the
@@ -992,12 +992,12 @@ the custody path instead of the transport path.
 **Likely owner:** `sdk_python.signer_policy`, and this is why it is a proposition rather
 than a registration: **`sdk_typescript.signer_policy` says "a device that cannot sign fails
 closed rather than emitting unsigned evidence" and `sdk_python.signer_policy` does not.**
-The Python statement stops at the policy check and the rendering refusal. Seven controls are
+The Python statement stops at the policy check and the rendering refusal. Eight controls are
 written, they pass in the measured lane, and the unit above them makes no claim they support.
 **Root relationship.** Under THM-0094. A second asymmetry between the two SDK roots, found
 the same way as NP-014 and recorded separately from it because it is a different clause.
 **Severity:** `high`, matching its TypeScript twin.
-**Note on shape.** One of the seven is parametrised over signature lengths, and pytest's
+**Note on shape.** One of the eight is parametrised over signature lengths, and pytest's
 generated ids for it embed raw bytes. That is a registration-mechanics problem for whoever
 ratifies this, not a reason the proposition is absent, and it is recorded here so the
 ratification meets it deliberately.
@@ -2556,12 +2556,12 @@ Packet at `verification/reviews/packets/adr069-np-094-ratification-2026-09-19.md
 
 ## NP-098 — the cryptographic floor refuses what it cannot state exactly
 
-**Controls:** `mcp-re-http-profile/src/verify/floor/sf_dictionary.rs`, `mcp-re-http-profile/src/verify/floor/signature_input.rs`, `mcp-re-http-profile/src/verify/floor/signature_parameters.rs`, `mcp-re-http-profile/src/verify/bound_request.rs`, `mcp-re-http-profile/tests/proof_path_test.rs`, `mcp-re-http-profile/tests/algorithm_confusion_test.rs`.
+**Controls:** `mcp-re-http-profile/src/verify/floor/sf_dictionary.rs`, `mcp-re-http-profile/src/verify/floor/signature_input.rs`, `mcp-re-http-profile/src/verify/floor/signature_parameters.rs`, `mcp-re-http-profile/src/evidence/request_role.rs`, `mcp-re-http-profile/tests/proof_path_test.rs`, `mcp-re-http-profile/tests/algorithm_confusion_test.rs`.
 **Statement.** *An empty dictionary member and dictionary-member spacing are REFUSED, NOT normalised or ignored; alternate signature-input spellings are refused rather than normalised, while a space inside a quoted parameter value is kept; negative zero is not an SF integer; a request with no signature-input has no handle; and the proof path admits no algorithm the header did not name.*
 **If false.** A verifier normalises an input into something that verifies, so two different wire forms produce one base — the parser-differential attack again, at the floor rather than at the surface. 'Refused, not normalised' is the same clause NP-088 makes about the body, at the other end of the exchange.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `critical`.
-**Registered in part, ADR-MCPRE-069 S1.** Six controls are now in `unit://http_profile.request_floor_result`, whose description states *"the RFC 9421 signature verified over the reconstructed base under a policy-accepted algorithm ... and the presented keyid resolved through the trust seam for the Request slot"* — the three algorithm-confusion controls are what makes *policy-accepted* non-vacuous (the unit already carries `an_ed25519_signature_declaring_ml_dsa_is_rejected`), and `unsigned_request_fails_closed`, `verified_request_exposes_resolved_actor_identity` and `same_keyid_different_slots_do_not_collapse_actor_id` are the signature and the slot-resolution clauses. `verified_response_exposes_resolved_server_actor` is in `unit://http_profile.bound_response_seam_result` (*"the actor the seam returned IS the accepted signer"*). Ten rows REMAIN: the five floor parser-strictness controls (*refused, not normalised* — NP-090's family, stated by no theorem), `foreign_tag_fails_closed` and `signer_and_verifier_derive_the_same_evidence_handle` (NP-087 / NP-100 handle family), `content_encoding_fails_closed` and `duplicate_authorization_fails_closed` (body representation and header strictness, and the second measures `sign_request`, not the verifier's return at all), and `a_request_with_no_signature_input_has_no_handle`, which measures `request_evidence_of` rather than `Verifier::verify_request_floor` — the function the unit's description names. Packet at `verification/reviews/packets/adr069-np-098-ratification-2026-09-19.md`.
+**Registered in part, ADR-MCPRE-069 S1.** Six controls are now in `unit://http_profile.request_floor_result`, whose description states *"the RFC 9421 signature verified over the reconstructed base under a policy-accepted algorithm ... and the presented keyid resolved through the trust seam for the Request slot"* — the three algorithm-confusion controls are what makes *policy-accepted* non-vacuous (the unit already carries `an_ed25519_signature_declaring_ml_dsa_is_rejected`), and `unsigned_request_fails_closed`, `verified_request_exposes_resolved_actor_identity` and `same_keyid_different_slots_do_not_collapse_actor_id` are the signature and the slot-resolution clauses. `verified_response_exposes_resolved_server_actor` is in `unit://http_profile.bound_response_seam_result` (*"the actor the seam returned IS the accepted signer"*). Ten rows REMAIN: the five floor parser-strictness controls (*refused, not normalised* — NP-090's family, stated by no theorem), `foreign_tag_fails_closed` and `signer_and_verifier_derive_the_same_evidence_handle` (NP-087 / NP-100 handle family), `content_encoding_fails_closed` and `duplicate_authorization_fails_closed` (body representation and header strictness, and the second measures `sign_request`, not the verifier's return at all), and `a_request_with_no_signature_input_has_no_handle`, which measures `RequestRoleEvidence::of_signed_request` rather than `Verifier::verify_request_floor` — the function the unit's description names. Packet at `verification/reviews/packets/adr069-np-098-ratification-2026-09-19.md`.
 **Registered in part, owner ruling 13 (`owner-signature:hp-1-wire-surface-closure-ratification`, sha256 `8cbd4d69…`).** The floor parser-strictness controls are
 `unit://http_profile.wire_surface_closure` under THM-0134: the five above and the six
 `sf_dictionary` / `signature_parameters` controls added since. Five rows REMAIN:
