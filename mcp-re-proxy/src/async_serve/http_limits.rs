@@ -18,38 +18,27 @@ use crate::tls::ServerOptions;
 
 use super::MIN_HYPER_BUF_BYTES;
 
-/// How long a connection may carry no request: the header-read bound HTTP/1 already
-/// applies between requests, and the bound HTTP/2 is held to by the connection's own idle
-/// watch, so the two protocols share one answer.
-pub(super) fn idle_bound(options: &ServerOptions) -> Option<std::time::Duration> {
-    options
-        .limits
-        .request_deadline
-        .or(options.limits.read_timeout)
-}
-
 /// hyper configured from the operator's limits.
 ///
 /// Every one of these was parsed and validated already; this is where each becomes a bound
 /// on the wire rather than a number in a struct. `--max-header-bytes` in particular was
 /// read by nothing on this path, so an operator tightening it got a silent no-op.
 pub(super) fn http_builder(options: &ServerOptions) -> auto::Builder<TokioExecutor> {
-    let header_read_timeout = idle_bound(options);
+    let header_read_timeout = options.connection_bounds.idle_bound();
     let stream_ceiling = options.limits.max_in_flight_requests;
     let max_header_bytes = options.limits.max_header_bytes;
-    let write_timeout = options.limits.write_timeout;
+    let write_timeout = options.connection_bounds.write_timeout();
     let mut builder = auto::Builder::new(TokioExecutor::new());
     // Bound the HTTP/1 header read so a slow-loris trickling header bytes cannot
     // hold a keep-alive connection between requests (the per-request analogue of
     // the blocking `request_deadline` over the header block).
-    if let Some(read_timeout) = header_read_timeout {
-        // `header_read_timeout` needs a `Timer` on the connection or hyper panics
-        // when it arms the deadline; supply the tokio timer.
-        builder
-            .http1()
-            .timer(TokioTimer::new())
-            .header_read_timeout(read_timeout);
-    }
+    // `header_read_timeout` needs a `Timer` on the connection or hyper panics when it arms
+    // the deadline; supply the tokio timer. The bound is the connection owner's idle bound,
+    // which HTTP/2's idle watch in `connection` reads too, so the two protocols share it.
+    builder
+        .http1()
+        .timer(TokioTimer::new())
+        .header_read_timeout(header_read_timeout);
     // Cap HTTP/2 concurrent streams to the same per-core in-flight ceiling. Without a
     // cap, ONE connection holding a valid client certificate can open unbounded
     // concurrent streams; each is a request that buffers up to `max_body_bytes`, so the
@@ -81,13 +70,11 @@ pub(super) fn http_builder(options: &ServerOptions) -> auto::Builder<TokioExecut
     // here. HTTP/2 has no per-write deadline in hyper; the keep-alive PING probe is
     // the equivalent liveness bound, and it closes a connection whose peer has stopped
     // reading. HTTP/1's write side is covered by the connection-age bound below.
-    if let Some(write_timeout) = write_timeout {
-        builder
-            .http2()
-            .timer(TokioTimer::new())
-            .keep_alive_interval(Some(write_timeout))
-            .keep_alive_timeout(write_timeout);
-    }
+    builder
+        .http2()
+        .timer(TokioTimer::new())
+        .keep_alive_interval(Some(write_timeout))
+        .keep_alive_timeout(write_timeout);
     builder
 }
 
@@ -107,6 +94,8 @@ mod tests {
 
     fn rendered(limits: ServerLimits) -> String {
         let options = ServerOptions {
+            connection_bounds: crate::config_state::ConnectionBounds::from_limits(&limits)
+                .expect("bounds in force"),
             limits,
             ..ServerOptions::new(window())
         };
@@ -145,22 +134,14 @@ mod tests {
     }
 
     #[test]
-    fn the_read_bound_arms_the_h1_header_read_timeout() {
+    fn the_idle_bound_arms_the_h1_header_read_timeout() {
         let out = rendered(ServerLimits {
             request_deadline: Some(Duration::from_secs(7)),
-            ..ServerLimits::default()
-        });
-        assert!(
-            out.contains("h1_header_read_timeout: Configured(Some(7s))"),
-            "{out}"
-        );
-        let out = rendered(ServerLimits {
-            request_deadline: None,
             read_timeout: Some(Duration::from_secs(9)),
             ..ServerLimits::default()
         });
         assert!(
-            out.contains("h1_header_read_timeout: Configured(Some(9s))"),
+            out.contains("h1_header_read_timeout: Configured(Some(7s))"),
             "{out}"
         );
     }

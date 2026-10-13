@@ -64,6 +64,7 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `FreshnessWindow` | `config_state/freshness.rs` | `verifier_policy()`, `max_clock_skew()`, `replay_retain_until()` |
 | `TrustDocumentSource` | `config_state/trust_document.rs` | `path()` |
 | `ClientCredentialWindow` | `config_state/client_credential_window.rs` | `cert_lifetime()`, `connection_age()`, `exposure_window()` |
+| `ConnectionBounds` | `config_state/connection_bounds/` | `read_timeout()`, `write_timeout()`, `request_deadline()`, `idle_bound()`, `drain_grace()`, `max_connections()` — every one in force; `from_limits` refuses a disabled bound, and `classify_and_validate` also refuses a drain window shorter than the deadline, so only a deployment's bounds carry that relation |
 | `ShardTopologyRequest` | `config_state/topology.rs` | `shards()`, `workers_per_shard()` |
 | `ResolvedTopology` | `async_fleet/resolved_topology.rs` | `shards() -> NonZeroUsize`, `depth() -> NonZeroUsize` |
 | `TrustPlan` | `trust_plan.rs` | `revocation()`, `document_path()`, `response_kid()`, `reload()`, `epoch()` |

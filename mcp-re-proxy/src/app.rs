@@ -422,10 +422,13 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     // request, resolved ONCE: the inner plane and the fleet both size from these two values.
     let in_flight_limit = config.state().in_flight_limit();
     let topology = crate::async_fleet::ResolvedTopology::resolve(config.state().shard_topology());
+    let bounds = config.state().connection_bounds();
     let serve_options = ServerOptions {
         identity_policy,
         peer_identity_provenance,
         limits: values.limits.clone(),
+        // The owner's resolved bounds: serving reads every timeout and limit here, not the request.
+        connection_bounds: bounds,
         // The owner's sealed window; serving reads both bounds from it, not from the request.
         client_credential_window: config.state().client_credential_window(),
         client_revocation: client_revocation.clone(),
@@ -437,12 +440,8 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     // ADR-MCPRE-051 §3: the async inner plane — a per-core pooled hyper client to
     // the stateless Streamable-HTTP inner backends. Forwarding is AWAITED, never
     // blocking a per-core runtime worker.
-    // Unreachable — the boundary refuses an absent read timeout — and it REFUSES rather
-    // than defaulting, so dropping that clause is an outage, not a second opinion (R12-636).
-    let configured = &values.limits;
-    let inner_timeout = configured.read_timeout.ok_or("--read-timeout-secs unset")?;
     let backends = &values.inner_http_urls;
-    let pool = HttpInnerPool::from_url_strs(backends.expose().to_vec(), inner_timeout)?;
+    let pool = HttpInnerPool::from_url_strs(backends.expose().to_vec(), bounds.read_timeout())?;
     // Named where the pool that forwards to them is BUILT. Reporting them from the fleet
     // instead would mean carrying the URLs through serving purely to print them, and the
     // fleet does not forward — it accepts.

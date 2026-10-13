@@ -152,6 +152,8 @@ _PROXY_LIB_SRCS = [
     "src/config_state/admission.rs",
     "src/config_state/authorization.rs",
     "src/config_state/client_credential_window.rs",
+    "src/config_state/connection_bounds/mod.rs",
+    "src/config_state/connection_bounds/refusal.rs",
     "src/config_state/continuation_control.rs",
     "src/config_state/coordinate.rs",
     "src/config_state/cross_machine.rs",

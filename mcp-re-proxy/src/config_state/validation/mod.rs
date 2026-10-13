@@ -195,6 +195,7 @@ fn legality_violations(
         custody,
         delegated_signing,
         freshness,
+        connection_bounds,
         mcp_transport_contract,
         replay,
         trust_document,
@@ -330,26 +331,13 @@ fn legality_violations(
     // its inert and networked states. Spliced here because this is where its clauses have
     // always been read.
     violations.extend(trust_revocation);
-    // MCPS-093/094: the socket timeouts and the aggregate read-phase deadline ARE the
-    // slow-loris defense — a peer trickling bytes just under `read_timeout` is stopped by
-    // `request_deadline`, and with either gone a handful of connections pin serve slots up
-    // to `max_concurrent_connections` with nothing to drop them.
-    //
-    // An out-of-range value was already rejected LOUDLY, with the stated reason that "the
-    // control can never be turned off by out-of-range input". `0` turned the same control
-    // off silently, which left the binary asserting a maximal-security posture while its
-    // own defense was disabled. Each default is `Some(30s)`, so `None` here only ever comes
-    // from an operator explicitly passing `0`.
-    // The freshness tolerance moved to `config_state::freshness`, which owns the fact and
-    // its two projections; its violations arrive with every other owner's below.
-    // The two `ServerLimits` quantities that are legally PRESENT but illegally zero, stated
-    // ahead of the timeout clauses because they are the same class — a limit that disables
-    // the control it bounds — and an operator reading about limits should meet them together.
-    // Neither is `Option`, so absence is not the question and a fail-safe default already
-    // applies; only an explicit zero reaches here.
-    violations.extend(residue::connection_ceiling_violations(config));
-    violations.extend(residue::drain_window_violations(config));
-    violations.extend(residue::slow_loris_timeout_violations(config));
+    // The `ConnectionBounds` owner (MCPS-093/094): the connection ceiling and the drain
+    // window, which are legally present but illegally zero, then the three timeouts, which
+    // are the slow-loris defense — a peer trickling bytes just under `read_timeout` is
+    // stopped by `request_deadline`, and with either gone a handful of connections pin serve
+    // slots up to `max_concurrent_connections` with nothing to drop them. Each default is
+    // `Some(30s)`, so a disabled timeout only ever comes from an operator passing `0`.
+    violations.extend(connection_bounds);
     // The `Replay` machine: which shared store holds admitted nonces, and every locator
     // that store requires or excludes. Spliced where the `memory` refusal and the
     // tier-strength refusal were read, in that order — the machine emits the input-form
