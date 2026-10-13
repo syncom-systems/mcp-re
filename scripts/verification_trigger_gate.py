@@ -54,13 +54,14 @@ Run:  python3 scripts/verification_trigger_gate.py
 
 from __future__ import annotations
 
-import re
 import sys
 import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO / ".github" / "workflows" / "verification.yml"
+
+from workflow_reader import WorkflowSyntaxError, glob_matches, parse  # noqa: E402
 
 sys.path.insert(0, str(REPO / "tools" / "verification"))
 from _fingerprint import fingerprint_read_set  # noqa: E402
@@ -99,63 +100,6 @@ def structural_probe_sites(registry: Path) -> list[str]:
     return sorted(set(sites))
 
 
-def glob_matches(pattern: str, path: str) -> bool:
-    """GitHub Actions path matching, restricted to the forms this repository uses.
-
-    `**` crosses directory separators, `*` does not. Implemented directly rather
-    than with `fnmatch`, whose `*` crosses `/` — that difference would make the
-    gate accept a narrower filter than GitHub actually applies.
-    """
-    out = []
-    index = 0
-    while index < len(pattern):
-        if pattern.startswith("**", index):
-            out.append(".*")
-            index += 2
-        elif pattern[index] == "*":
-            out.append("[^/]*")
-            index += 1
-        else:
-            out.append(re.escape(pattern[index]))
-            index += 1
-    return re.fullmatch("".join(out), path) is not None
-
-
-def trigger_paths(text: str) -> dict[str, list[str]]:
-    """The `paths:` list under each top-level trigger in the workflow.
-
-    Keyed by trigger name, because a filter present on `pull_request` and absent
-    on `push` still leaves `main` unmeasured after the merge.
-    """
-    found: dict[str, list[str]] = {}
-    trigger = ""
-    collecting = False
-    for line in text.splitlines():
-        stripped = line.strip()
-        header = re.fullmatch(r"(pull_request|push|schedule|workflow_dispatch):", stripped)
-        if header:
-            trigger = header.group(1)
-            collecting = False
-            found.setdefault(trigger, [])
-            continue
-        if stripped == "paths:" and trigger:
-            collecting = True
-            continue
-        if collecting:
-            # A comment or a blank line inside the list does not end it. Treating
-            # either as a terminator silently truncates the filter set, and the
-            # gate would then report a gap that the workflow does not have —
-            # which is how this parser first read its own fix as still broken.
-            if not stripped or stripped.startswith("#"):
-                continue
-            item = re.fullmatch(r'-\s+"?([^"]+)"?', stripped)
-            if item:
-                found[trigger].append(item.group(1))
-            else:
-                collecting = False
-    return found
-
-
 def fingerprint_inputs() -> list[str]:
     """Every repo path a unit fingerprint reads, as the fingerprint itself reports it.
 
@@ -173,23 +117,19 @@ def fingerprint_inputs() -> list[str]:
     return sorted(required)
 
 
-# A filter entry with no wildcard names exactly one path, so whether that path exists is
-# decidable. Anything with `*` is a pattern over files that may legitimately not exist yet.
-LITERAL_FILTER = re.compile(r'^\s*-\s*"([^"*?\[]+)"\s*$', re.M)
-
-
 def stale_filters(workflow_text: str, repo: Path, required: list[str]) -> list[str]:
     """Wildcard-free `paths:` entries that name neither a file in the tree nor a required
     fingerprint input.
 
-    Scoped to entries inside a `paths:` list, so an unrelated quoted scalar elsewhere in
-    the workflow is not read as a filter. A path that IS a fingerprint input is live
-    whether or not the tree holds it today — see the module docstring.
+    A filter entry with no wildcard names exactly one path, so whether that path exists is
+    decidable; anything with `*` is a pattern over files that may legitimately not exist
+    yet. A path that IS a fingerprint input is live whether or not the tree holds it
+    today — see the module docstring.
     """
     wanted = set(required)
     stale: list[str] = []
-    for patterns in trigger_paths(workflow_text).values():
-        for pattern in patterns:
+    for trigger in parse(workflow_text).triggers.values():
+        for pattern in trigger.paths or ():
             if any(ch in pattern for ch in "*?["):
                 continue
             if pattern in wanted:
@@ -200,8 +140,16 @@ def stale_filters(workflow_text: str, repo: Path, required: list[str]) -> list[s
 
 
 def check(workflow_text: str, required: list[str]) -> list[str]:
-    triggers = trigger_paths(workflow_text)
-    failures: list[str] = []
+    triggers = {
+        name: (list(trigger.paths) if trigger.paths is not None else [])
+        for name, trigger in parse(workflow_text).triggers.items()
+    }
+    failures: list[str] = [
+        f"`{trigger.name}` filters with `paths-ignore:`, which names what does NOT start the "
+        "lane; coverage of the fingerprint inputs cannot be read from it"
+        for trigger in parse(workflow_text).triggers.values()
+        if trigger.paths_ignore is not None and trigger.name in ("pull_request", "push")
+    ]
     for trigger in ("pull_request", "push"):
         patterns = triggers.get(trigger)
         if patterns is None:
@@ -348,7 +296,11 @@ def main(argv: list[str]) -> int:
         return 1
     required = sorted(set(inputs) | set(structural_probe_sites(STRUCTURAL_PROBES)))
     text = WORKFLOW.read_text(encoding="utf-8")
-    failures = check(text, required)
+    try:
+        failures = check(text, required)
+    except WorkflowSyntaxError as exc:
+        print(f"verification-trigger gate: FAILED — {WORKFLOW.name} cannot be read: {exc}")
+        return 1
     failures += [
         f"path filter {p!r} names nothing in the tree — a filter that matches nothing is "
         "not a trigger, and a file that became an owner subtree leaves exactly this behind"

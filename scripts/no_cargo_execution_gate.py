@@ -42,6 +42,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+from workflow_reader import WorkflowSyntaxError, parse
+
 REPO = Path(__file__).resolve().parent.parent
 
 #: Directories and files that record history rather than state a command to run.
@@ -134,12 +136,34 @@ def markdown_hits(text: str) -> list[tuple[int, str, str]]:
     return out
 
 
+#: Actions that drive Cargo for a step.
+CARGO_ACTION = re.compile(
+    r"^(?:EmbarkStudios/cargo-deny-action|actions-rs/cargo|PyO3/maturin-action|messense/maturin-action)(?:@|$)"
+)
+
+
 def workflow_hits(text: str) -> list[tuple[int, str, str]]:
-    """Every shell line of a workflow, and every action that drives Cargo."""
-    out = shell_hits(text)
-    for number, line in enumerate(text.splitlines(), start=1):
-        if re.search(r"uses:\s*[\"']?(?:EmbarkStudios/cargo-deny-action|actions-rs/cargo|PyO3/maturin-action|messense/maturin-action)", line):
-            out.append((number, "cargo action", line.strip()))
+    """Every command a workflow's steps run, and every action that drives Cargo.
+
+    The commands come from the workflow reader, so a step's `name:`, a comment and a usage
+    line are not commands, and a command continued across lines is one. A workflow the
+    reader cannot read is a hit: a file this gate cannot see into is not one it may pass.
+    """
+    try:
+        workflow = parse(text)
+    except WorkflowSyntaxError as exc:
+        return [(0, "unreadable workflow", str(exc))]
+    out = [
+        (command.line, rule, line)
+        for command in workflow.commands()
+        for _n, rule, line in shell_hits(command.code)
+    ]
+    out += [
+        (step.line, "cargo action", step.uses)
+        for job in workflow.jobs.values()
+        for step in job.steps
+        if step.uses and CARGO_ACTION.match(step.uses)
+    ]
     return out
 
 
@@ -351,9 +375,12 @@ def selftest() -> int:
         ("scripts/a.sh", "bazel test //... # not cargo test\n", False),
         ("scripts/a.sh", "CARGO_BAZEL_REPIN=1 bazel mod show_extension x\n", False),
         ("scripts/a.sh", "ls ~/.cargo/bin\n", False),
-        (".github/workflows/x.yml", "      - run: rustup show && cargo --version\n", True),
-        (".github/workflows/x.yml", "      - uses: EmbarkStudios/cargo-deny-action@v1\n", True),
-        (".github/workflows/x.yml", "    name: cargo build + test (1.97.1)\n", False),
+        (".github/workflows/x.yml", "jobs:\n  a:\n    steps:\n      - run: rustup show && cargo --version\n", True),
+        (".github/workflows/x.yml", "jobs:\n  a:\n    steps:\n      - uses: EmbarkStudios/cargo-deny-action@v1\n", True),
+        (".github/workflows/x.yml", "jobs:\n  a:\n    name: cargo build + test (1.97.1)\n    steps:\n      - run: true\n", False),
+        (".github/workflows/x.yml", "jobs:\n  a:\n    steps:\n      - run: |\n          bazel build //x \\\n            && cargo test\n", True),
+        (".github/workflows/x.yml", "jobs:\n  a:\n    steps:\n      - run: |\n          # cargo test is gone\n          bazel test //x\n", False),
+        (".github/workflows/x.yml", "x: &anchor 1\n", True),
         ("sdk/typescript/package.json", '{"scripts": {"b": "napi build --platform"}}', True),
         ("sdk/typescript/package.json", '{"scripts": {"b": "node scripts/build-native.mjs"}}', False),
         ("sdk/python/pyproject.toml", '[build-system]\nbuild-backend = "maturin"\n', True),

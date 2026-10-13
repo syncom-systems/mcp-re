@@ -132,6 +132,9 @@ stage_static() {
     && python3 scripts/proxy_flag_doc_gate.py \
     && python3 scripts/conformance_claims_gate.py --selftest \
     && python3 scripts/conformance_claims_gate.py \
+    `# The one reader every workflow gate reads through, before the gates that use it.` \
+    && python3 scripts/workflow_reader.py --selftest \
+    && python3 scripts/workflow_reader.py \
     && python3 scripts/verification_trigger_gate.py --selftest \
     && python3 scripts/verification_trigger_gate.py \
     `# The Python support claim may not exceed the Python evidence: requires-python and` \

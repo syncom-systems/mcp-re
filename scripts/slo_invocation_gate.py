@@ -31,6 +31,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from workflow_reader import parse, shell_commands
+
 REPO = Path(__file__).resolve().parent.parent
 
 # Every tracked surface that can carry a runnable invocation: docs people copy from,
@@ -64,6 +66,23 @@ def _is_archive(path: Path, root: Path) -> bool:
     return "archive" in path.relative_to(root).parts
 
 
+def invocation_lines(path: Path, root: Path) -> list[tuple[int, str, bool]]:
+    """`(line, text, is_prose)` for every candidate invocation `path` holds.
+
+    A workflow's commands and a shell script's commands come from the workflow reader: a
+    command continued across lines is one, and a comment or a usage line is none, so a
+    warning there cannot read as an invocation and needs no exemption. A document is read
+    line by line, and its lines are prose that may quote a command to warn about it.
+    """
+    text = path.read_text(errors="replace")
+    rel = path.relative_to(root)
+    if rel.parts[:2] == (".github", "workflows"):
+        return [(c.line, c.code, False) for c in parse(text, str(rel)).commands() if not c.prints]
+    if path.suffix == ".sh":
+        return [(c.line, c.code, False) for c in shell_commands(text) if not c.prints]
+    return [(n, line, True) for n, line in enumerate(text.splitlines(), 1)]
+
+
 def scan(root: Path) -> list[str]:
     """Return one finding per broken bench invocation."""
     findings: list[str] = []
@@ -72,15 +91,13 @@ def scan(root: Path) -> list[str]:
             if not path.is_file() or _is_archive(path, root):
                 continue
             rel = path.relative_to(root)
-            for lineno, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
+            for lineno, line, prose in invocation_lines(path, root):
                 if not INVOCATION.search(line):
                     continue
                 # This gate's OWN prose names the forbidden flag in order to explain
-                # it; so do the runbooks' warning paragraphs. Only flag a line that is
-                # a live invocation carrying the flag, which the regex above already
-                # requires — but a line that merely quotes `-- --ignored` next to the
-                # word NEVER/NOT is a warning, not a command.
-                if re.search(r"\b(NEVER|NOT|never use|forbidden)\b", line):
+                # it; so do the runbooks' warning paragraphs. A document line that quotes
+                # `-- --ignored` next to the word NEVER/NOT is a warning, not a command.
+                if prose and re.search(r"\b(NEVER|NOT|never use|forbidden)\b", line):
                     continue
                 if "--ignored" in line:
                     findings.append(
@@ -106,6 +123,8 @@ def selftest() -> int:
         (root / "docs").mkdir()
         bad = root / "docs" / "bad.md"
         lane = root / "docs" / "lane.sh"
+        (root / ".github" / "workflows").mkdir(parents=True)
+        flow = root / ".github" / "workflows" / "w.yml"
         label = f"//mcp-re-proxy:{BENCH}"
 
         def expect(name: str, text: str, path: Path, want: int) -> bool:
@@ -140,6 +159,15 @@ def selftest() -> int:
             ("the correct variable form",
              'bazel run -c opt "$' + f'BENCH" -- {BENCH} --exact --nocapture\n', lane, 0),
             ("the correct image form", f"{BENCH} {BENCH} --exact --nocapture\n", bad, 0),
+            # A script's command continued across lines is one command.
+            ("--ignored on a continued line",
+             f"bazel run -c opt {label} \\\n  -- --ignored\n", lane, 1),
+            # A script's comment is not an invocation, NEVER or not.
+            ("a comment in a script", f"# bazel run {label} -- --ignored\n", lane, 0),
+            ("--ignored in a workflow step",
+             f"jobs:\n  a:\n    steps:\n      - run: bazel run {label} -- --ignored\n", flow, 1),
+            ("a workflow comment is not an invocation",
+             f"jobs:\n  a:\n    steps:\n      # bazel run {label} -- --ignored\n      - run: true\n", flow, 0),
         ]
         if not all(expect(*c) for c in cases):
             return 1

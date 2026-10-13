@@ -47,7 +47,9 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", "scripts"))
 import rust_gate  # noqa: E402
+import workflow_reader  # noqa: E402
 import size_debt  # noqa: E402
 
 RATCHET = "scripts/clippy_ratchet_gate.py"
@@ -85,12 +87,9 @@ CI_EXCLUDED = {
     ("scripts/workspace_lints_gate.py", "--probe"),
 }
 
-#: A gate is either a Python file run as `python3 <path>`, or a `tools/verification`
-#: executable run directly (`tools/verification/rust-targets --check`); every executable
-#: there is a Python script, so both forms run under this interpreter.
-_CI_INVOCATION = re.compile(r"(?:python3\s+|^[ \t-]*(?:run:[ \t]+)?(?:\./)?(?=tools/verification/))"
-                            r"((?:scripts|tools)/[A-Za-z0-9_./-]+)((?:[ \t]+--[a-z-]+)*)[ \t]*$",
-                            re.M)
+#: A flag that takes no value; an invocation carrying any other argument is the workflow's to
+#: parameterize.
+_BARE_FLAG = re.compile(r"^--[a-z-]+$")
 
 
 def _structural_suites() -> set[str]:
@@ -124,14 +123,29 @@ def verification_suites(work_dir: str, root: str = VERIFICATION_SUITES,
 def ci_gates(workflow: str = CI_WORKFLOW) -> list[tuple[str, ...]]:
     """Every Python gate invocation in `workflow` that takes only bare flags, in file
     order and once each. An invocation whose flag takes a value (`--base <sha>`) is the
-    workflow's to parameterize and is left out, and so is anything in CI_EXCLUDED."""
+    workflow's to parameterize and is left out, and so is anything in CI_EXCLUDED.
+
+    A gate is a Python file run as `python3 <path>`, or a `tools/verification` executable
+    run directly (`tools/verification/rust-targets --check`); every executable there is a
+    Python script, so both forms run under this interpreter. The workflow is read through
+    `scripts/workflow_reader.py`, so a commented-out invocation is not one, and a gate in a
+    `&&` chain or on a continued line is."""
     if not os.path.isfile(workflow):
         return []
+    with open(workflow, encoding="utf-8") as fh:
+        commands = workflow_reader.parse(fh.read(), workflow).commands()
     seen: list[tuple[str, ...]] = []
-    for m in _CI_INVOCATION.finditer(open(workflow, encoding="utf-8").read()):
-        cmd = (m.group(1), *m.group(2).split())
-        if cmd not in seen and cmd not in CI_EXCLUDED:
-            seen.append(cmd)
+    for command in commands:
+        for invocation in command.invocations():
+            python = invocation.interpreter in ("python3", "python")
+            direct = invocation.interpreter is None and invocation.program.startswith("tools/verification/")
+            if not (python and invocation.program.startswith(("scripts/", "tools/")) or direct):
+                continue
+            if not all(_BARE_FLAG.match(arg) for arg in invocation.args):
+                continue
+            cmd = (invocation.program, *invocation.args)
+            if cmd not in seen and cmd not in CI_EXCLUDED:
+                seen.append(cmd)
     return seen
 
 

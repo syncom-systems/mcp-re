@@ -64,10 +64,11 @@ def test_a_suite_structural_already_runs_is_not_run_twice():
 
 
 def _workflow(body: str) -> str:
+    """A one-job workflow whose job is `body`, written as it would sit under the job key."""
     root = tempfile.mkdtemp()
     path = os.path.join(root, "ci.yml")
     with open(path, "w", encoding="utf-8") as fh:
-        fh.write(body)
+        fh.write("jobs:\n  a:\n" + "".join("    " + line + "\n" for line in body.splitlines()))
     return path
 
 
@@ -81,6 +82,9 @@ def test_ci_gates_reads_bare_flag_invocations_and_leaves_valued_ones_to_the_work
         "  - run: |\n"
         "      python3 tools/verification/check-views\n"
         "      python3 scripts/a_gate.py\n"
+        "      # python3 scripts/commented_gate.py\n"
+        "      true \\\n"
+        "        && python3 scripts/chained_gate.py --selftest\n"
         "  - run: tools/verification/rust-targets --check\n"
         "  - run: |\n"
         "      ./tools/verification/check-views --selftest\n"
@@ -90,6 +94,7 @@ def test_ci_gates_reads_bare_flag_invocations_and_leaves_valued_ones_to_the_work
         ("scripts/a_gate.py",),
         ("scripts/a_gate.py", "--selftest"),
         ("tools/verification/check-views",),
+        ("scripts/chained_gate.py", "--selftest"),
         ("tools/verification/rust-targets", "--check"),
         ("tools/verification/check-views", "--selftest"),
     ], batch_gate.ci_gates(wf)
@@ -105,7 +110,7 @@ def test_control_a_red_merge_path_gate_is_named():
     for name, rc in (("green.py", 0), ("red.py", 1)):
         with open(os.path.join(root, name), "w", encoding="utf-8") as fh:
             fh.write("print('verdict')\nraise SystemExit(%d)\n" % rc)
-    wf = _workflow("  - run: python3 scripts/green.py\n  - run: python3 scripts/red.py\n")
+    wf = _workflow("steps:\n  - run: python3 scripts/green.py\n  - run: python3 scripts/red.py\n")
     cwd = os.getcwd()
     os.chdir(root)
     try:

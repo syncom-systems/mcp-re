@@ -116,13 +116,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 WORKFLOWS = REPO / ".github" / "workflows"
+
+from workflow_reader import named_paths, read  # noqa: E402
 
 sys.path.insert(0, str(REPO / "tools" / "verification"))
 
@@ -143,30 +144,6 @@ FAILING_CONCLUSIONS = {"failure", "timed_out", "action_required", "startup_failu
 #: lane's requirement, which is why the mapping cannot be read off lane scripts alone.
 UMBRELLA = "tools/verification/verify"
 
-#: A script invocation inside a workflow, in the forms the workflows actually use.
-INVOCATION = re.compile(r"(?:^|[\s`\"'./])((?:scripts|tools)/[A-Za-z0-9_./-]+)")
-
-#: A top-level job key (2-space indent) and a job's `name:` (4-space indent).
-JOB_KEY = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
-JOB_NAME = re.compile(r"^    name:\s*(.+?)\s*$", re.M)
-
-#: A whole-line YAML comment.
-#:
-#: COUNT INVOCATIONS, NOT MENTIONS — and this gate was counting mentions. These workflows
-#: are heavily commented, and the comments name scripts constantly, because explaining why a
-#: step exists means naming what it runs. A comment in `ci.yml` reading "`tools/verification/verify
-#: --manifests` fails on the same fact" made the CARGO job look like it invoked the umbrella,
-#: which made every lane resolve to that job. The lane was still satisfied by a real job too,
-#: so no wrong verdict shipped — but the attribution was false, and an attribution that can
-#: be false by writing prose is one a job could acquire without running anything.
-#:
-#: The residual limit, stated rather than left to be discovered: a TRAILING comment on a
-#: command line is still scanned, because distinguishing one from a `#` inside a quoted shell
-#: argument needs a YAML parser this layer does not have. Whole-line comments are the shape
-#: the workflows actually use for prose, and the shape that produced the defect.
-COMMENT_LINE = re.compile(r"^\s*#")
-
-
 class Undecidable(Exception):
     """The gate cannot answer. Never the same thing as NOT_READY, and never merged on."""
 
@@ -183,36 +160,26 @@ def workflow_jobs() -> list[tuple[str, str, set[str]]]:
     """`(workflow, check name, scripts that job invokes)` for every job in every workflow.
 
     The check name is the job's `name:`, because that is the string GitHub reports and
-    therefore the only one a readiness query can match on. A job without one would be
-    reported under its key; none of the jobs this gate resolves is in that shape, and a
-    lane whose job cannot be named fails loudly below rather than resolving to nothing.
+    therefore the only one a readiness query can match on; a job without one is reported
+    under its key. A lane whose job cannot be named fails loudly below rather than
+    resolving to nothing.
+
+    COUNT INVOCATIONS, NOT MENTIONS. The scripts are read from the job's commands, which the
+    workflow reader gives without comments, trailing comments or usage lines. These
+    workflows are heavily commented, and explaining why a step exists means naming what it
+    runs: a comment in `ci.yml` reading "`tools/verification/verify --manifests` fails on the
+    same fact" once made the CARGO job look like it invoked the umbrella.
     """
     jobs: list[tuple[str, str, set[str]]] = []
     for path in sorted(WORKFLOWS.glob("*.yml")):
-        text = path.read_text(encoding="utf-8")
-        lines = text.splitlines()
-        starts: list[tuple[int, str]] = []
-        in_jobs = False
-        for i, line in enumerate(lines):
-            if line.startswith("jobs:"):
-                in_jobs = True
-                continue
-            if in_jobs and line and not line.startswith(" ") and not line.startswith("#"):
-                in_jobs = False
-            if in_jobs:
-                key = JOB_KEY.match(line)
-                if key:
-                    starts.append((i, key.group(1)))
-        for n, (start, key) in enumerate(starts):
-            end = starts[n + 1][0] if n + 1 < len(starts) else len(lines)
-            body = "\n".join(lines[start:end])
-            named = JOB_NAME.search(body)
-            name = named.group(1).strip("\"'") if named else key
-            # Prose that NAMES a script is not a job that RUNS it. See `COMMENT_LINE`.
-            runnable = "\n".join(
-                line for line in lines[start:end] if not COMMENT_LINE.match(line)
-            )
-            jobs.append((path.name, name, set(INVOCATION.findall(runnable))))
+        for job in read(path).jobs.values():
+            invoked = {
+                script
+                for command in job.commands()
+                if not command.prints
+                for script in named_paths(command.code)
+            }
+            jobs.append((path.name, job.name, invoked))
     return jobs
 
 

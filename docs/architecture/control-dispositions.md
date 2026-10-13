@@ -176,6 +176,8 @@ against the unit whose proposition it establishes.
 
 **Added 2026-10-11:** `scripts/hosted_negative_controls.py` — applies one hostile edit per control to a disposable CI checkout (a tampered prover digest, a falsified proof, an aggregate over no records) and requires the production lane to refuse. It protects the machinery that reports verdicts, not a property of the shipped proxy.
 
+**Added 2026-10-13:** `scripts/workflow_reader.py` — the one reader of the workflows and of the shell commands they and the scripts run, which `merge_path_gate.py`, `verification_trigger_gate.py`, `merge_readiness_gate.py` and the other workflow gates read through. Its selftest refuses each syntax case those gates once misread. It decides what a workflow says, never whether a change is admissible.
+
 ## ND-004 — build-system, toolchain and runner wiring
 
 **Covers:** `bazel_gazelle_gate.py`, `bazel_srcs_gate.py`, `test_target_gate.py`,
