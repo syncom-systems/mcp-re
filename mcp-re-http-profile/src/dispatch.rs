@@ -38,8 +38,6 @@
 
 use mcp_re_core::McpReError;
 use mcp_re_core::ReplayCache;
-use mcp_re_core::ReplayCacheError;
-use mcp_re_core::ReplayDecision;
 
 use crate::error::HttpProfileError;
 use crate::replay::HttpReplayKey;
@@ -92,14 +90,6 @@ impl DispatchError {
     }
 }
 
-impl From<ReplayCacheError> for DispatchError {
-    fn from(_: ReplayCacheError) -> DispatchError {
-        // Every operational cache failure fails closed identically; the detail
-        // string is a diagnostic, never a wire token.
-        DispatchError::ReplayCacheUnavailable
-    }
-}
-
 /// Drive replay and MRTR continuation for a verified full-profile request.
 ///
 /// `verified` MUST come from [`verify_request_full`](crate::verify_request_full)
@@ -126,16 +116,12 @@ pub fn dispatch_request(
     let prepared = admitted.prepare(verified, continuation_ctx)?;
 
     // 4. Replay admission LAST — the only side-effecting step. Freshness is read through
-    //    the verified product's own projection, the way the async sibling reads it.
-    match prepared
+    //    the verified product's own projection, the way the async sibling reads it, and
+    //    the store's answer is read by the preparation it was asked about.
+    let answer = prepared
         .replay_key()
-        .check_and_insert(replay, verified.expires())?
-    {
-        ReplayDecision::Fresh => {}
-        ReplayDecision::Replay => return Err(DispatchError::ReplayDetected),
-    }
-
-    Ok(prepared.into_admitted_outcome())
+        .check_and_insert(replay, verified.expires());
+    prepared.admit(answer)
 }
 
 /// Dispatch steps 2–3 — everything EXCEPT the one side-effecting replay admission
@@ -342,15 +328,6 @@ mod tests {
             DispatchError::NonSharedReplayTier.wire_code(),
             DispatchError::ReplayCacheUnavailable.wire_code()
         );
-    }
-
-    #[test]
-    fn an_operational_store_failure_fails_closed_and_never_admits() {
-        let refusal: DispatchError = mcp_re_core::ReplayCacheError::Unavailable {
-            details: "connection refused".into(),
-        }
-        .into();
-        assert_eq!(refusal, DispatchError::ReplayCacheUnavailable);
     }
 
     #[test]

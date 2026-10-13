@@ -11,14 +11,12 @@
 //!     response signing → verify_response_full end-to-end. The response leg here is
 //!     signed by the pre-052 ROOT emitter, so what this proves is the DISPATCH path,
 //!     not the shipped emission mode — the proxy emits `sign_delegated_response_full`;
-//!  4. beneath the tier gate, the dispatcher's core is_single_process_reference
-//!     refusal still fires (defense in depth) even with an acceptable declared tier.
+//!  4. beneath the tier gate, the profile seam's store-class
+//!     refusal (the store's own durability self-report) still fires (defense in depth)
+//!     even with an acceptable declared tier.
 
-use mcp_re_core::InMemoryReplayCache;
-use mcp_re_core::MaxClockSkew;
-use mcp_re_core::ReplayCache;
-use mcp_re_core::ReplayCacheError;
-use mcp_re_core::ReplayDecision;
+use std::sync::Arc;
+
 use mcp_re_core::ReplayDurabilityClass;
 use mcp_re_core::SigningKey;
 
@@ -39,7 +37,13 @@ use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
-use mcp_re_proxy::http_profile_dispatch::dispatch_request_with_tier_gate;
+use mcp_re_proxy::async_replay::AsyncAtomicReplayStore;
+use mcp_re_proxy::async_replay::AsyncReplayTier;
+use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
+use mcp_re_proxy::async_replay::ReplayDecisionFuture;
+use mcp_re_proxy::async_replay::ReplayInsert;
+use mcp_re_proxy::config_state::FreshnessWindow;
+use mcp_re_proxy::http_profile_dispatch::dispatch_request_with_async_tier;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchError;
 use mcp_re_proxy::replay_tier::ReplayDurabilityTier;
@@ -48,9 +52,6 @@ const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const SERVER_SEED: [u8; 32] = [22u8; 32];
 const NOW: i64 = 1_700_000_100;
 
-fn no_skew() -> MaxClockSkew {
-    MaxClockSkew::new(0).expect("0 s is inside the bound")
-}
 const CREATED: i64 = 1_700_000_000;
 const EXPIRES: i64 = 1_700_000_300;
 const TARGET: &str = "https://mcp.example.com/mcp?route=a";
@@ -155,28 +156,45 @@ fn signed_and_verified(nonce: &str) -> (HttpRequest, VerifiedMcpRequest) {
     (req, verified)
 }
 
-/// A test-only replay cache that self-declares the `Durable` class — a shared /
-/// production tier, so the dispatcher's core single-process gate does NOT fire.
-struct DurableTestCache(InMemoryReplayCache);
+/// The in-memory async store, self-declaring the `Durable` class — a shared / production
+/// tier, so the store-class gate beneath the deployment tier gate does NOT fire.
+struct DurableTestStore(InMemoryAsyncAtomicReplayStore);
 
-impl ReplayCache for DurableTestCache {
-    fn check_and_insert(
-        &self,
-        signer: &str,
-        audience: &str,
-        nonce: &str,
-        expires_at_unix: i64,
-    ) -> Result<ReplayDecision, ReplayCacheError> {
-        self.0
-            .check_and_insert(signer, audience, nonce, expires_at_unix)
+impl AsyncAtomicReplayStore for DurableTestStore {
+    fn atomic_insert_if_absent<'a>(&'a self, insert: ReplayInsert<'a>) -> ReplayDecisionFuture<'a> {
+        self.0.atomic_insert_if_absent(insert)
     }
     fn durability_class(&self) -> ReplayDurabilityClass {
         ReplayDurabilityClass::Durable
     }
 }
 
-fn durable_cache() -> DurableTestCache {
-    DurableTestCache(InMemoryReplayCache::new(no_skew()))
+fn tier_over(store: Arc<dyn AsyncAtomicReplayStore>) -> AsyncReplayTier {
+    AsyncReplayTier::new(
+        store,
+        FreshnessWindow::new(0).expect("0 s is inside the bound"),
+    )
+}
+
+fn durable_tier() -> AsyncReplayTier {
+    tier_over(Arc::new(DurableTestStore(InMemoryAsyncAtomicReplayStore::new())))
+}
+
+/// The in-memory async store as it declares itself: the single-process reference class.
+fn single_process_tier() -> AsyncReplayTier {
+    tier_over(Arc::new(InMemoryAsyncAtomicReplayStore::new()))
+}
+
+/// The serving path's dispatch, driven to completion.
+fn dispatch(
+    verified: &VerifiedMcpRequest,
+    tier: &AsyncReplayTier,
+    cfg: &ProxyDispatchConfig,
+) -> Result<mcp_re_http_profile::DispatchOutcome, ProxyDispatchError> {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(dispatch_request_with_async_tier(verified, tier, None, cfg, NOW))
 }
 
 // --- AT1: fleet-strict refuses a sub-minimum declared tier -------------------
@@ -184,12 +202,12 @@ fn durable_cache() -> DurableTestCache {
 #[test]
 fn fleet_strict_refuses_redis_async_tier() {
     let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
-    let cache = durable_cache(); // durable cache: the core gate would pass...
+    let tier = durable_tier(); // durable store: the store-class gate would pass...
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
         tier: Some(ReplayDurabilityTier::AsyncReplicatedBounded), // ...but the tier is sub-minimum
     };
-    let err = dispatch_request_with_tier_gate(&verified, &cache, None, &cfg)
+    let err = dispatch(&verified, &tier, &cfg)
         .expect_err("fleet-strict must refuse a redis-async tier");
     assert_eq!(
         err,
@@ -201,12 +219,12 @@ fn fleet_strict_refuses_redis_async_tier() {
 #[test]
 fn fleet_strict_refuses_single_store_fail_closed_tier() {
     let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
-    let cache = durable_cache();
+    let tier = durable_tier();
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
         tier: Some(ReplayDurabilityTier::SingleStoreFailClosed),
     };
-    let err = dispatch_request_with_tier_gate(&verified, &cache, None, &cfg)
+    let err = dispatch(&verified, &tier, &cfg)
         .expect_err("fleet-strict must refuse a single-store-fail-closed tier");
     assert_eq!(
         err,
@@ -218,12 +236,12 @@ fn fleet_strict_refuses_single_store_fail_closed_tier() {
 #[test]
 fn fleet_strict_refuses_undeclared_tier() {
     let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
-    let cache = durable_cache();
+    let tier = durable_tier();
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
         tier: None,
     };
-    let err = dispatch_request_with_tier_gate(&verified, &cache, None, &cfg)
+    let err = dispatch(&verified, &tier, &cfg)
         .expect_err("fleet-strict with no declared tier must fail closed");
     assert_eq!(err, ProxyDispatchError::NoDeclaredReplayTier);
     assert_eq!(err.wire_code(), "mcp-re.replay_cache_unavailable");
@@ -234,7 +252,7 @@ fn fleet_strict_refuses_undeclared_tier() {
 #[test]
 fn fleet_strict_admits_redis_wait_quorum_tier() {
     let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
-    let cache = durable_cache();
+    let tier = durable_tier();
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
         tier: Some(ReplayDurabilityTier::QuorumAcknowledged {
@@ -242,7 +260,7 @@ fn fleet_strict_admits_redis_wait_quorum_tier() {
             timeout_ms: 500,
         }),
     };
-    let outcome = dispatch_request_with_tier_gate(&verified, &cache, None, &cfg)
+    let outcome = dispatch(&verified, &tier, &cfg)
         .expect("redis-wait-quorum meets the strict-production minimum");
     assert!(!outcome.continuation_verified());
 }
@@ -250,12 +268,12 @@ fn fleet_strict_admits_redis_wait_quorum_tier() {
 #[test]
 fn fleet_strict_admits_linearizable_tier() {
     let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
-    let cache = durable_cache();
+    let tier = durable_tier();
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
         tier: Some(ReplayDurabilityTier::Linearizable),
     };
-    dispatch_request_with_tier_gate(&verified, &cache, None, &cfg)
+    dispatch(&verified, &tier, &cfg)
         .expect("linearizable meets the strict-production minimum");
 }
 
@@ -269,9 +287,9 @@ fn core_single_process_gate_fires_beneath_an_acceptable_tier() {
         fleet_strict: true,
         tier: Some(ReplayDurabilityTier::Linearizable),
     };
-    // ...but the ACTUAL wired cache self-declares the single-process reference class.
-    let single_process = InMemoryReplayCache::new(no_skew());
-    let err = dispatch_request_with_tier_gate(&verified, &single_process, None, &cfg)
+    // ...but the ACTUAL wired store self-declares the single-process reference class.
+    let single_process = single_process_tier();
+    let err = dispatch(&verified, &single_process, &cfg)
         .expect_err("the core single-process gate must still fire beneath the tier gate");
     assert_eq!(
         err,
@@ -282,16 +300,16 @@ fn core_single_process_gate_fires_beneath_an_acceptable_tier() {
 
 #[test]
 fn non_fleet_strict_skips_the_tier_gate_but_keeps_core_admission() {
-    // Without fleet-strict, a sub-minimum tier and a single-process cache are BOTH
+    // Without fleet-strict, a sub-minimum tier and a single-process store are BOTH
     // acceptable (the deployment made no strict claim); the request still admits.
     let (_req, verified) = signed_and_verified(&mcp_re_test_paths::unique_test_nonce());
-    let single_process = InMemoryReplayCache::new(no_skew());
+    let single_process = single_process_tier();
     let cfg = ProxyDispatchConfig {
         fleet_strict: false,
         tier: Some(ReplayDurabilityTier::AsyncReplicatedBounded),
     };
-    dispatch_request_with_tier_gate(&verified, &single_process, None, &cfg)
-        .expect("non-strict admits regardless of tier / cache class");
+    dispatch(&verified, &single_process, &cfg)
+        .expect("non-strict admits regardless of tier / store class");
 }
 
 // --- AT3: full verify → adapter dispatch → sign → verify_response end-to-end --
@@ -317,8 +335,8 @@ fn http_profile_request_flows_verify_dispatch_serve_end_to_end() {
         .expect("verify request");
 
     // 2. Dispatch through the ADAPTER under fleet-strict with an acceptable tier and
-    //    a durable cache — the replay key is admitted (Fresh).
-    let cache = durable_cache();
+    //    a durable store — the replay key is admitted (Fresh).
+    let tier = durable_tier();
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
         tier: Some(ReplayDurabilityTier::QuorumAcknowledged {
@@ -326,7 +344,7 @@ fn http_profile_request_flows_verify_dispatch_serve_end_to_end() {
             timeout_ms: 500,
         }),
     };
-    let outcome = dispatch_request_with_tier_gate(&verified_request, &cache, None, &cfg)
+    let outcome = dispatch(&verified_request, &tier, &cfg)
         .expect("verified request admitted through the adapter");
     assert!(
         !outcome.continuation_verified(),
@@ -334,7 +352,7 @@ fn http_profile_request_flows_verify_dispatch_serve_end_to_end() {
     );
 
     // A replay of the identical request is now rejected beneath the (passing) tier gate.
-    let replay = dispatch_request_with_tier_gate(&verified_request, &cache, None, &cfg)
+    let replay = dispatch(&verified_request, &tier, &cfg)
         .expect_err("second dispatch of the same five-tuple is a replay");
     assert_eq!(
         replay,

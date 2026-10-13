@@ -2886,31 +2886,22 @@ conjunct = "A store that does not answer the atomic admission refuses the exchan
 # The fail-open this exists to exclude, and the reason admission is the LAST step: there is
 # nothing after it to undo. Reading a store error as freshness serves a replayed request as a
 # fresh one on exactly the deployments whose infrastructure is already in trouble.
-path = "mcp-re-http-profile/src/dispatch.rs"
-# RE-ADJUDICATED: the key is now reached through the sealed product's projection and the
-# freshness through the verified product's own accessor. The conjunct and the weakening are
-# unchanged — an unanswered store read as `Fresh`.
+path = "mcp-re-http-profile/src/dispatch/outcome.rs"
+# RE-ADJUDICATED: the store's answer is now read in one place, `PreparedDispatch::admit`,
+# for the sync dispatcher and the async serving path alike, so the weakening moved there
+# and both paths' controls see it. The conjunct and the weakening are unchanged — an
+# unanswered store read as `Fresh`.
 anchor = """
-    match prepared
-        .replay_key()
-        .check_and_insert(replay, verified.expires())?
-    {
-        ReplayDecision::Fresh => {}
-        ReplayDecision::Replay => return Err(DispatchError::ReplayDetected),
-    }
+        match answer {
+            Ok(ReplayDecision::Fresh) => Ok(DispatchOutcome {
 """
 weakening = """
-    match prepared
-        .replay_key()
-        .check_and_insert(replay, verified.expires())
-        .unwrap_or(ReplayDecision::Fresh)
-    {
-        ReplayDecision::Fresh => {}
-        ReplayDecision::Replay => return Err(DispatchError::ReplayDetected),
-    }
+        match answer.or(Ok::<_, ReplayCacheError>(ReplayDecision::Fresh)) {
+            Ok(ReplayDecision::Fresh) => Ok(DispatchOutcome {
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::a_store_that_cannot_establish_the_state_refuses_rather_than_dispatching",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#dispatch::outcome::tests::a_store_that_did_not_answer_is_an_outage_and_never_a_replay",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::the_serving_path_refuses_a_store_that_cannot_establish_the_state",
 ]
 
 [[probe]]
@@ -2918,11 +2909,8 @@ id = "M139-the-serving-paths-declared-tier-gate-is-load-bearing"
 unit = "proxy.replay_admission_gate"
 theorem = "THM-0092"
 conjunct = "A fleet-strict deployment whose declared replay tier is undeclared or below the strict-production minimum is refused before the store is touched"
-# One gate, consulted by both entry points, so this weakening deletes it for the serving
-# path too — which is the whole reason it is one function. The controls named below drive
-# `dispatch_request_with_async_tier`, the dispatch `answering_commitment` calls: a probe
-# satisfied only by the sync entry point's controls would leave the production arm
-# unmeasured while reading as protected.
+# The controls named below drive `dispatch_request_with_async_tier`, the dispatch
+# `answering_commitment` calls, so the probe measures the production arm.
 path = "mcp-re-proxy/src/http_profile_dispatch.rs"
 anchor = """
         match &self.tier {
@@ -2955,8 +2943,8 @@ id = "M140-a-single-process-async-store-is-refused-under-fleet-strict"
 unit = "proxy.replay_admission_gate"
 theorem = "THM-0092"
 conjunct = "A store that self-reports the single-process reference class is refused under fleet-strict however strong the declared tier is"
-# The serving path's own copy of the rule the sync path inherits from `dispatch_request`.
-# There is no async `dispatch_request` to fall through to, so deleting this arm leaves a
+# The serving path's own call of the rule the profile crate's sync `dispatch_request` runs
+# inside itself. There is no async `dispatch_request` to fall through to, so deleting this arm leaves a
 # fleet-strict deployment admitting against a store that says it cannot prevent a
 # cross-node replay — and nothing beneath it refuses.
 # RE-ADJUDICATED, and the probe got STRONGER rather than merely moving. The old weakening
