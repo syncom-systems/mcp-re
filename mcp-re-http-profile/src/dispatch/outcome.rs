@@ -36,7 +36,11 @@
 //! a branchable tag, because no consumer decides anything from it; the moment one needs to,
 //! that is a new decision with an owner, not a field read.
 
+use mcp_re_core::ReplayCacheError;
+use mcp_re_core::ReplayDecision;
+
 use super::replay_posture::PostureDecision;
+use super::DispatchError;
 use super::ReplayTierAdmitted;
 use crate::replay::HttpReplayKey;
 use crate::replay::ReplayKey;
@@ -47,8 +51,8 @@ use crate::replay::ReplayKey;
 ///
 /// What it is NOT is an admission. The nonce is spent by whoever holds the store — the
 /// sync dispatcher against a `&dyn mcp_re_core::ReplayCache`, the async data plane against
-/// its awaited tier — so the one side-effecting step cannot live here.
-/// [`Self::into_admitted_outcome`] is where that caller states it happened.
+/// its awaited tier — so the one side-effecting step cannot live here. Its answer is read
+/// here, by [`Self::admit`].
 ///
 /// The representation is private, so the proved `continuation_verified` cannot be supplied
 /// by anyone who did not prepare a dispatch. The literal names every field, so the only
@@ -121,17 +125,21 @@ impl PreparedDispatch {
         self.posture.description()
     }
 
-    /// The completed outcome — called by the caller whose replay admission answered
-    /// `Fresh`.
-    ///
-    /// This seam cannot check that claim: it does not hold the store, and the two serving
-    /// paths admit against different objects. What it does own is that nobody who never
-    /// prepared a dispatch can reach this function at all.
-    pub fn into_admitted_outcome(self) -> DispatchOutcome {
-        DispatchOutcome {
-            replay_key: self.replay_key,
-            continuation_verified: self.continuation_verified,
-            posture: self.posture,
+    /// The replay store's answer for [`Self::replay_key`], read once for both serving
+    /// paths: `Fresh` becomes the outcome, `Replay` is [`DispatchError::ReplayDetected`],
+    /// and an error is an outage, [`DispatchError::ReplayCacheUnavailable`], never a replay.
+    pub fn admit(
+        self,
+        answer: Result<ReplayDecision, ReplayCacheError>,
+    ) -> Result<DispatchOutcome, DispatchError> {
+        match answer {
+            Ok(ReplayDecision::Fresh) => Ok(DispatchOutcome {
+                replay_key: self.replay_key,
+                continuation_verified: self.continuation_verified,
+                posture: self.posture,
+            }),
+            Ok(ReplayDecision::Replay) => Err(DispatchError::ReplayDetected),
+            Err(_) => Err(DispatchError::ReplayCacheUnavailable),
         }
     }
 }
@@ -140,8 +148,9 @@ impl PreparedDispatch {
 /// continuation was present and verified, and the posture the store class was decided
 /// under.
 ///
-/// Every inhabitant came from a [`PreparedDispatch`], which came from a posture decision.
-/// A struct literal is not an inhabitant (E0451; structural probe S34):
+/// Every inhabitant came from a [`PreparedDispatch`] whose replay store answered `Fresh`,
+/// and that preparation came from a posture decision. A struct literal is not an
+/// inhabitant (E0451; structural probe S34):
 ///
 /// ```compile_fail
 /// use mcp_re_http_profile::DispatchOutcome;
@@ -208,27 +217,52 @@ mod tests {
         }
     }
 
+    fn fresh(p: PreparedDispatch) -> DispatchOutcome {
+        p.admit(Ok(ReplayDecision::Fresh))
+            .expect("a fresh admission is an outcome")
+    }
+
     #[test]
     fn the_admitted_outcome_carries_the_preparation_unchanged() {
         // The product is evidence ABOUT a preparation, so a conversion that quietly reset
         // a field would be the same defect as the public literal, one level down.
-        let outcome = prepared(PostureDecision::StoreClassAdmitted, true).into_admitted_outcome();
+        let outcome = fresh(prepared(PostureDecision::StoreClassAdmitted, true));
         assert_eq!(outcome.replay_key(), &key());
         assert!(outcome.continuation_verified());
     }
 
     #[test]
+    fn a_replay_answer_is_refused_as_a_replay() {
+        let refusal = prepared(PostureDecision::StoreClassAdmitted, false)
+            .admit(Ok(ReplayDecision::Replay))
+            .expect_err("an already-admitted key must not become an outcome");
+        assert_eq!(refusal, DispatchError::ReplayDetected);
+    }
+
+    #[test]
+    fn a_store_that_did_not_answer_is_an_outage_and_never_a_replay() {
+        // "Already served" and "nothing was established" are opposite advice to a caller,
+        // so the two refusals must stay distinct, and neither may admit.
+        let refusal = prepared(PostureDecision::StoreClassAdmitted, false)
+            .admit(Err(ReplayCacheError::Unavailable {
+                details: "connection refused".into(),
+            }))
+            .expect_err("an unanswered admission must not become an outcome");
+        assert_eq!(refusal, DispatchError::ReplayCacheUnavailable);
+        assert_ne!(refusal, DispatchError::ReplayDetected);
+    }
+
+    #[test]
     fn a_first_leg_preparation_reports_no_continuation() {
         // The positive control for the flag: it is not a constant true.
-        let outcome =
-            prepared(PostureDecision::StoreClassNotRequired, false).into_admitted_outcome();
+        let outcome = fresh(prepared(PostureDecision::StoreClassNotRequired, false));
         assert!(!outcome.continuation_verified());
     }
 
     #[test]
     fn the_outcome_states_which_posture_admitted_it() {
-        let strict = prepared(PostureDecision::StoreClassAdmitted, false).into_admitted_outcome();
-        let lax = prepared(PostureDecision::StoreClassNotRequired, false).into_admitted_outcome();
+        let strict = fresh(prepared(PostureDecision::StoreClassAdmitted, false));
+        let lax = fresh(prepared(PostureDecision::StoreClassNotRequired, false));
         assert_ne!(strict.admitting_posture(), lax.admitting_posture());
         assert!(strict.admitting_posture().contains("fleet-strict"));
         assert!(lax.admitting_posture().contains("not required"));
@@ -242,7 +276,7 @@ mod tests {
         let key_before = p.replay_key().clone();
         let flag_before = p.continuation_verified();
         let posture_before = p.admitting_posture();
-        let after = p.into_admitted_outcome();
+        let after = fresh(p);
         assert_eq!(&key_before, after.replay_key());
         assert_eq!(flag_before, after.continuation_verified());
         assert_eq!(posture_before, after.admitting_posture());

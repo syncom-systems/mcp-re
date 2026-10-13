@@ -12123,7 +12123,7 @@ recorded = "2026-09-29"
 [[disposition]]
 id = "CD-20037"
 project = "mcp-re-http-profile"
-control = "src/lib.rs#dispatch::tests::an_operational_store_failure_fails_closed_and_never_admits"
+control = "src/lib.rs#dispatch::outcome::tests::a_store_that_did_not_answer_is_an_outage_and_never_a_replay"
 decision = "new-proposition"
 proposition = "NP-205"
 recorded = "2026-09-29"
@@ -15133,6 +15133,14 @@ control = "gate#scripts/hosted_negative_controls.py"
 decision = "not-evidence"
 reason_family = "ND-003"
 recorded = "2026-10-11"
+
+[[disposition]]
+id = "CD-20421"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#dispatch::outcome::tests::a_replay_answer_is_refused_as_a_replay"
+decision = "new-proposition"
+proposition = "NP-205"
+recorded = "2026-10-13"
 
 [[disposition]]
 id = "CD-20430"
