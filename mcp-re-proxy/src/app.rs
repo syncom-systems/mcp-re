@@ -15,14 +15,12 @@ use crate::async_serve::ServedHttpRequest;
 use crate::clock::now_unix;
 use crate::config_snapshot;
 use crate::config_state::validation::ValidatedDeployment;
-use crate::config_state::ChannelBindingState;
+use crate::config_state::ChannelBindingEffects;
 use crate::deployment_request::DeploymentRequest;
 use crate::http_inner::HttpInnerPool;
 use crate::key_source::ResponseSigner;
 use crate::startup_posture::PostureLog;
 use crate::startup_posture::Seam;
-use crate::transport::IdentityPolicy;
-use crate::transport::TransportBinding;
 use crate::HttpProfileProxy;
 use crate::ServerOptions;
 use mcp_re_http_profile::AudienceTuple;
@@ -148,39 +146,6 @@ pub fn run_request(config: DeploymentRequest, shutdown: Arc<AtomicBool>) -> Resu
 fn drained(outcome: Result<(), String>) -> Result<(), String> {
     crate::audit_sink::drain::at_shutdown();
     outcome
-}
-
-/// What a recognised [`ChannelBindingState`] installs on the serving path.
-///
-/// One value, because the two halves are one decision: the policy that compares the
-/// verified request signer with the channel identity, and the certificate field that
-/// identity is read from. Splitting them across two derivations is what lets them
-/// disagree.
-struct ChannelBindingEffects {
-    binding: TransportBinding,
-    identity_policy: IdentityPolicy,
-}
-
-/// Project the recognised channel-binding state onto the serving path.
-///
-/// The state is the authority: `config_state::transport` decides whether a deployment is
-/// channel-bound and how, and this is the only place that answer becomes an effect. A
-/// request the owner refuses to classify — a binding kind no deployment can be in —
-/// reaches no state, so there is nothing here to derive from and no exact-match policy
-/// can be installed over a binding the owner rejected.
-///
-/// Every state in the model binds exactly, so the policy does not vary; what the state
-/// carries is which SAN the identity comes from. A second binding mode would appear here
-/// as a second arm, not as a second reading of the request.
-fn channel_binding_effects(state: ChannelBindingState) -> ChannelBindingEffects {
-    let identity_policy = match state {
-        ChannelBindingState::ExactUriSan => IdentityPolicy::UriSan,
-        ChannelBindingState::ExactDnsSan => IdentityPolicy::DnsSan,
-    };
-    ChannelBindingEffects {
-        binding: TransportBinding::exact_match(),
-        identity_policy,
-    }
 }
 
 /// The serving path proper. Reachable only with a [`crate::config_state::validation::ValidatedDeployment`], which
@@ -364,12 +329,14 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     .into_parts();
     posture.declare(Seam::Authorization, authorization_state);
 
-    // Mode-A transport binding and the certificate field the connection seam reads the
-    // identity from, both derived from the ONE state `config_state::transport` recognised.
+    // Mode-A transport binding, the certificate field the identity is read from and where
+    // the connection seam reads it, all projected from the ONE state `config_state::transport`
+    // recognised.
     let ChannelBindingEffects {
         binding,
         identity_policy,
-    } = channel_binding_effects(config.state().channel_binding());
+        peer_identity_provenance,
+    } = config.state().channel_binding().serving_effects();
     // ADR-MCPRE-051 §4: the AUTHORITATIVE async replay tier. The atomic
     // insert-if-absent is AWAITED on the per-core request path without blocking a
     // runtime worker. Shared selects a durable networked store — etcd (CP/linearizable)
@@ -441,12 +408,6 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
              rotation, not by the trust store or a CRL); zero-window revocation NOT claimed"
         );
     }
-
-    // Which field the connection seam reads the client's identity from. Decided purely,
-    // from configuration alone, in `startup_plan` — the three modes are mutually
-    // exclusive and `parse_args` already refused the combinations.
-    let peer_identity_provenance =
-        crate::startup_plan::peer_identity_provenance(config.state().channel_binding());
 
     // #4030 ONLINE OCSP client-cert revocation. Attached to `ServerOptions` below rather
     // than to the PEP, because revocation is decided during the TLS handshake.
@@ -963,7 +924,7 @@ mod tests {
             assert!(refusals.is_empty(), "{source:?} refused: {refusals:?}");
             assert_eq!(state, Some(expected_state));
 
-            let effects = super::channel_binding_effects(expected_state);
+            let effects = expected_state.serving_effects();
             assert_eq!(
                 effects.identity_policy, expected_policy,
                 "{expected_state:?} must read the identity from its own SAN"
