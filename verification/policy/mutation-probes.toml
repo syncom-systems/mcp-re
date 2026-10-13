@@ -8949,13 +8949,13 @@ theorem = "THM-0077"
 conjunct = "the issuer kid in the minted credential is the one that was PLANNED, not one the signing plan re-derived from configuration"
 path = "mcp-re-proxy/src/startup_plan.rs"
 anchor = "                issuer_kid: response_kid,\n"
-weakening = "                issuer_kid: {\n                    let _ = &response_kid;\n                    response_issuer_kid(config)\n                },\n"
+weakening = "                issuer_kid: {\n                    let _ = &response_kid;\n                    config.state().delegated_signing().issuer_kid().to_string()\n                },\n"
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_issuer_kid_in_the_credential_is_the_one_that_was_planned",
 ]
 note = """
 THE WEAKENING RESTORES THE DEFECT VERBATIM, which is why it is the falsifier for this unit.
-The kid was once derived twice — by `response_issuer_kid`, whose value the startup transcript
+The kid was once derived twice — by the planner, whose value the startup transcript
 prints and which the trust plane excludes from the request-signer set, and again inside the
 delegated wiring, which is the one that reached the credential. Both spelled
 `--delegated-issuer-kid` falling back to `--server-key-id`, so they agreed; nothing made them.
@@ -9997,11 +9997,11 @@ theorem = "THM-0077"
 conjunct = "Every security capability held by the serving runtime is derived from validated semantic owner state"
 path = "mcp-re-proxy/src/signing_plane/mod.rs"
 anchor = """
-            minting.custody.trust_epoch = watch.epoch().map_err(|_| {
+            minting = plan.minting_under(watch.epoch().map_err(|_| {
 """
 weakening = """
-            minting.custody.trust_epoch = watch.epoch().or_else(|_| {
-                Ok::<_, epoch_watch::EpochRefusal>(plan.custody.trust_epoch.clone())
+            minting = plan.minting_under(watch.epoch().or_else(|_| {
+                Ok::<_, epoch_watch::EpochRefusal>(plan.custody().trust_epoch.clone())
             }).map_err(|_| {
 """
 expect_red = [

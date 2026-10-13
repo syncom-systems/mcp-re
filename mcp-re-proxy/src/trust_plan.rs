@@ -81,9 +81,12 @@ impl TrustPlan {
     /// with the signing plane, and a value derived inside one consumer is a value the other
     /// consumer must re-derive.
     ///
-    /// The one producer, and it takes a `ValidatedDeployment` — so both owned facts come
-    /// from one deployment, and no caller can supply them separately.
-    pub fn from_validated(
+    /// It takes a `ValidatedDeployment`, so both owned facts come from one deployment, and
+    /// no caller can supply them separately. `pub(crate)`: in production the one caller is
+    /// `startup_plan::response_authority_plans`, which pairs the kid and the epoch with the
+    /// signing plan's; the in-crate tests of the trust plane and its owners call it to hand
+    /// the plan values no deployment produces.
+    pub(crate) fn from_validated(
         config: &ValidatedDeployment,
         response_kid: String,
         epoch: TrustEpochPlan,
@@ -293,7 +296,9 @@ mod tests {
     fn the_shared_values_are_inputs_the_trust_plan_cannot_re_derive() {
         let config = push_networked();
         assert_ne!(
-            crate::startup_plan::response_issuer_kid(&config),
+            crate::startup_plan::response_authority_plans(&config)
+                .0
+                .response_kid(),
             "decided-above",
             "the fixture must not coincide with what a re-derivation would produce"
         );

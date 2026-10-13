@@ -12070,7 +12070,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.startup_plan_provenance"
 class = "V0"
-description = "A STARTUP PLAN CARRIES THE DECISION IT WAS HANDED, NOT ONE IT RE-DERIVED: the signing plan carries the trust epoch it was GIVEN, the continuation plan carries its own endpoint verbatim, the channel plan carries the classified custody and the credential window, the epoch plan normalises the key ONCE, the issuer kid in the minted credential is the one that was planned — falling back to the server key id only where the resolution reads it — the audience scope defaults to the response audience and is overridable, both consumers of the epoch hold ONE decision, each CRL posture is projected as its own variant, and the paths accessor answers which FILES rather than which posture. Says nothing about what planning REFUSES, which is `proxy.startup_plan_legality`'s, and nothing about whether any named endpoint can be reached, which is materialization's."
+description = "A STARTUP PLAN CARRIES THE DECISION IT WAS HANDED, NOT ONE IT RE-DERIVED: the trust plan and the signing plan come from ONE producer that reads the issuer kid and the trust epoch once, and the signing plan cannot be given an epoch the trust plan does not hold, the continuation plan carries its own endpoint verbatim, the channel plan carries the classified custody and the credential window, the epoch plan normalises the key ONCE, the issuer kid in the minted credential is the one that was planned — falling back to the server key id only where the resolution reads it — the audience scope defaults to the response audience and is overridable, both consumers of the epoch hold ONE decision, each CRL posture is projected as its own variant, and the paths accessor answers which FILES rather than which posture. Says nothing about what planning REFUSES, which is `proxy.startup_plan_legality`'s, and nothing about whether any named endpoint can be reached, which is materialization's."
 paths = ["mcp-re-proxy/src/startup_plan.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -12089,7 +12089,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_issuer_kid_falls_back_to_the_server_key_id",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_issuer_kid_in_the_credential_is_the_one_that_was_planned",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_paths_accessor_answers_which_files_not_which_posture",
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_signing_plan_carries_the_epoch_it_was_given_not_one_it_found",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_signing_plan_cannot_be_given_a_different_epoch",
 ]
 
 [[unit]]
