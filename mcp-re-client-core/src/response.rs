@@ -366,7 +366,9 @@ mod delegated_tests {
     use mcp_re_core::SigningKey;
     use mcp_re_http_profile::build_delegated_rejection;
     use mcp_re_http_profile::build_delegated_rejection_preflight;
+    use mcp_re_http_profile::custody::ActiveDelegatedKey;
     use mcp_re_http_profile::custody::DelegatedKeyWindow;
+    use mcp_re_http_profile::custody::SigningWindow;
     use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_for_negative_test;
     use mcp_re_http_profile::ActorIdentity;
     use mcp_re_http_profile::AudienceTuple;
@@ -1423,20 +1425,24 @@ mod delegated_tests {
 
         // The receipt is signed AT `late`, so its RFC 9421 freshness window is current.
         let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
-        // Signed with the key the custody minted (the factory's first seed): a window opens
-        // over no expired credential, so this deliberately stale signature is built from
-        // parts the verifier's clamp is then asked to refuse.
+        // Signed with the key the custody minted (the factory's first seed): a product window
+        // opens over no expired credential, so this deliberately stale signature is made
+        // under a window the test states, which the verifier's clamp is then asked to refuse.
         let stale_key = SigningKey::from_seed_bytes(&[101u8; 32]);
-        let resp = mcp_re_http_profile::rejection::build_delegated_rejection_with_owned_key(
+        let resp = build_delegated_rejection(
             signed.request(),
             &reason,
             409,
-            snap.server_signer(),
-            snap.credential(),
-            &stale_key,
-            snap.delegated_kid(),
-            late,
-            late + 300,
+            &SigningWindow::stated(
+                ActiveDelegatedKey::stated(
+                    stale_key,
+                    snap.server_signer().clone(),
+                    snap.credential(),
+                    snap.delegated_kid(),
+                ),
+                late,
+                late + 300,
+            ),
         )
         .expect("server signs a fresh receipt off a stale credential");
 

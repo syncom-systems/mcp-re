@@ -594,8 +594,9 @@ falsifier that can go red in that lane (Ruling 9 option 1). The control then reg
 ## ND-016 — a test-support helper's own self-test
 
 **Covers:** `mcp-re-test-paths` `lib#tests::a_test_nonce_is_22_base64url_characters`,
-`lib#tests::test_nonces_are_distinct_across_threads`.
-**Recorded:** 2026-10-11, CodeQL hard-coded-value cleanup.
+`lib#tests::test_nonces_are_distinct_across_threads`; `mcp-re-http-profile`
+`lib#custody::active_key::stated::tests::a_stated_key_carries_what_the_caller_stated`.
+**Recorded:** 2026-10-11, CodeQL hard-coded-value cleanup; the third on 2026-10-13 (MCPRE-211).
 
 Two controls on `mcp_re_test_paths::unique_test_nonce`, the helper tests use where the property
 under test does not depend on a nonce's value: the output is 22 Base64URL characters, and 1,600
@@ -608,6 +609,10 @@ test fixture broke, not that a security fact is false.
 
 **What would move a control out.** A claim that the production nonce path shares this
 construction. It does not: the production nonce is `SystemNonceSource` over the OS CSPRNG.
+
+The third is the same shape on `ActiveDelegatedKey::stated`, the test-flavor producer the
+delegated-signing batteries use to sign what a verifier must refuse. It is compiled only under
+`test` or `pre_052_fixtures`; no product build has it, so no product theorem can rest on it.
 
 ## NP-001 — the SDK runtime support claim
 
@@ -4164,7 +4169,7 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 ## NP-204 — a delegated snapshot and its lifecycle audit name this issuance's own identity and credential id
 
 **Controls:** `mcp-re-http-profile` `lib#custody::active_key::tests::an_identity_naming_another_keyid_is_refused`; `mcp-re-http-profile` `lib#custody::active_key::tests::an_identity_the_request_did_not_name_is_refused`; `mcp-re-http-profile` `lib#custody::active_key::tests::the_credential_id_is_read_out_of_the_credential`; `mcp-re-http-profile` `lib#custody::tests::a_reissue_retires_the_predecessor_under_its_own_credential_id_and_window`.
-**Carrier:** `mcp-re-http-profile/src/custody/active_key.rs`.
+**Carrier:** `mcp-re-http-profile/src/custody/active_key/mod.rs`.
 **Statement.** *A published ActiveDelegatedKey signs under the server-signer identity the root signed, whose keyid is the credential's own delegated_kid. Its revocation identifier is the credential's own jti. A reissue records the retired predecessor under that predecessor's own jti, window and kid.*
 **If false.** Either a node publishes a snapshot whose response identity every verifier rejects, found only at the next request, or the lifecycle log names a retirement under an identifier that does not revoke the retired credential.
 **Likely owner:** http_profile.delegated_signing_custody: both carriers are in its paths, but its description covers only lifecycle clauses (root untouched, overlap rotation, epoch advance, window, fail-closed). Amending the description would let these four register beside the M97/M98 siblings.

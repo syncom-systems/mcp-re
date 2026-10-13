@@ -8,9 +8,9 @@
 
 use mcp_re_core::SigningKey;
 
-use crate::block::ActorIdentity;
 use crate::block::HttpResponseEvidenceBlock;
 use crate::body::insert_meta_block;
+use crate::custody::DelegatedSigner;
 use crate::digest::content_digest_sha256;
 use crate::error::HttpProfileError;
 use crate::evidence::UnboundRequestDiagnostic;
@@ -89,48 +89,29 @@ pub(crate) fn local_sig(key: &SigningKey, base: &[u8]) -> Result<Vec<u8>, HttpPr
     mcp_re_core::b64url_decode(&key.sign(base)).map_err(|_| HttpProfileError::InvalidSignature)
 }
 
-/// A delegated response names its signer in the block and signs under `delegated_kid`;
-/// the two must be the same key, or a verifier would be told one signer and shown
-/// another's signature. Checked before the body is touched.
-fn require_signer_is_delegated_key(
-    server_signer: &ActorIdentity,
-    delegated_kid: &str,
-) -> Result<(), HttpProfileError> {
-    if server_signer.keyid == delegated_kid {
-        Ok(())
-    } else {
-        Err(HttpProfileError::DelegationKeyMismatch)
-    }
-}
-
 /// Full-profile response signing for the DELEGATED-key path (ADR-MCPRE-052 §2,
-/// MCPRE-122). The response evidence block
-/// carries the inline `server_delegation` credential (protected by
-/// `content-digest`) and the response is signed by the DELEGATED key
-/// (`delegated_kid` == the block's `server_signer.keyid`). The root is NOT on this
-/// path: it signed only the credential, off the hot path at issuance/rotation.
+/// MCPRE-122). The response evidence block carries the inline `server_delegation`
+/// credential (protected by `content-digest`) and the response is signed by the DELEGATED
+/// key, under the credential's `delegated_kid`, which is the block's `server_signer.keyid`.
+/// The root is NOT on this path: it signed only the credential, off the hot path at
+/// issuance/rotation.
 ///
 /// Refuses before signing unless `request` carries a request evidence block that
-/// validates: a full-profile response binds to that block's request, and unless
-/// `delegated_kid` is the block's `server_signer.keyid`.
-#[allow(clippy::too_many_arguments)]
-pub fn sign_delegated_response_full_with_owned_key(
+/// validates: a full-profile response binds to that block's request.
+///
+/// Crate-private: [`crate::custody::sign_delegated_response_full`] is the public path, and
+/// `signer` is read from one [`SigningWindow`](crate::custody::SigningWindow).
+pub(crate) fn emit_delegated_response_full(
     response: &mut HttpResponse,
     request: &HttpRequest,
-    server_signer: &ActorIdentity,
-    server_delegation: &str,
-    delegated_key: &SigningKey,
-    delegated_kid: &str,
-    created: i64,
-    expires: i64,
+    signer: &DelegatedSigner<'_>,
 ) -> Result<Vec<u8>, HttpProfileError> {
-    require_signer_is_delegated_key(server_signer, delegated_kid)?;
     request_block::require_valid(request)?;
     let request_evidence = crate::verify::bound_request::request_evidence_of(request)?;
     let block = HttpResponseEvidenceBlock {
         profile: PROFILE_TAG.to_owned(),
-        server_signer: server_signer.clone(),
-        server_delegation: Some(server_delegation.to_owned()),
+        server_signer: signer.server_signer().clone(),
+        server_delegation: Some(signer.credential().to_owned()),
         request_evidence: request_evidence.to_digest(),
     };
     response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
@@ -141,43 +122,43 @@ pub fn sign_delegated_response_full_with_owned_key(
     sign_bound_response(
         response,
         request,
-        |base| local_sig(delegated_key, base),
-        delegated_kid,
-        created,
-        expires,
+        |base| local_sig(signer.key(), base),
+        signer.kid(),
+        signer.created(),
+        signer.expires(),
     )
 }
 
 /// Full-profile response signing for the DELEGATED-key path with NO request
 /// binding (ADR-MCPRE-052; the preflight-unbound rejection case, MCPRE-122). Like
-/// [`sign_delegated_response_full_with_owned_key`], a delegated-key sibling of
+/// [`emit_delegated_response_full`], a delegated-key sibling of
 /// [`sign_response_unbound`]: the response evidence block carries the inline
 /// `server_delegation` credential and the response is signed by the DELEGATED key,
 /// but the signature covers only the response components (`@status`,
 /// `content-digest`, `content-type`) — no `;req`. `request_evidence_diagnostic` is
 /// recorded in the block for diagnostics ONLY; an unbound response is verified
 /// response-only and this handle is never treated as a trusted request binding.
-/// Refuses unless `delegated_kid` is the block's `server_signer.keyid`.
-#[allow(clippy::too_many_arguments)]
-pub fn sign_delegated_response_unbound_with_owned_key(
+///
+/// Crate-private: [`crate::custody::sign_delegated_response_unbound`] is the public path.
+pub(crate) fn emit_delegated_response_unbound(
     response: &mut HttpResponse,
-    server_signer: &ActorIdentity,
-    server_delegation: &str,
     request_evidence_diagnostic: &UnboundRequestDiagnostic,
-    delegated_key: &SigningKey,
-    delegated_kid: &str,
-    created: i64,
-    expires: i64,
+    signer: &DelegatedSigner<'_>,
 ) -> Result<(), HttpProfileError> {
-    require_signer_is_delegated_key(server_signer, delegated_kid)?;
     let block = HttpResponseEvidenceBlock {
         profile: PROFILE_TAG.to_owned(),
-        server_signer: server_signer.clone(),
-        server_delegation: Some(server_delegation.to_owned()),
+        server_signer: signer.server_signer().clone(),
+        server_delegation: Some(signer.credential().to_owned()),
         request_evidence: request_evidence_diagnostic.to_digest(),
     };
     response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
-    sign_response_unbound(response, delegated_key, delegated_kid, created, expires)
+    sign_response_unbound(
+        response,
+        signer.key(),
+        signer.kid(),
+        signer.created(),
+        signer.expires(),
+    )
 }
 
 /// Sign `response` in place with an EXTERNAL signer (Cloud KMS / HSM custody),
@@ -308,17 +289,14 @@ pub(crate) fn base64_standard_decode(s: &str) -> Result<Vec<u8>, HttpProfileErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block::ActorIdentity;
+    use crate::custody::ActiveDelegatedKey;
+    use crate::custody::SigningWindow;
 
     const KID: &str = "delegated-kid-1";
 
     fn signed(preloaded: &[(&str, &str)]) -> HttpResponse {
-        let key = SigningKey::from_seed_bytes(&[0x11; 32]);
-        let signer = ActorIdentity {
-            role: "server".to_owned(),
-            trust_domain: "example.test".to_owned(),
-            subject: "srv-1".to_owned(),
-            keyid: KID.to_owned(),
-        };
+        let window = stated_window();
         let evidence = UnboundRequestDiagnostic::absent();
         let mut headers = vec![("Content-Type".to_owned(), "application/json".to_owned())];
         headers.extend(
@@ -331,17 +309,8 @@ mod tests {
             headers,
             body: br#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_vec(),
         };
-        sign_delegated_response_unbound_with_owned_key(
-            &mut response,
-            &signer,
-            "credential",
-            &evidence,
-            &key,
-            KID,
-            1_700_000_000,
-            1_700_000_300,
-        )
-        .expect("emission succeeds");
+        emit_delegated_response_unbound(&mut response, &evidence, &window.signer())
+            .expect("emission succeeds");
         response
     }
 
@@ -377,7 +346,27 @@ mod tests {
         );
     }
 
-    fn bound_signer_inputs() -> (HttpRequest, HttpResponse, ActorIdentity, SigningKey) {
+    /// A window over a key and identity the test states: `server_signer.keyid` is `KID`.
+    fn stated_window() -> SigningWindow {
+        let signer = ActorIdentity {
+            role: "server".to_owned(),
+            trust_domain: "example.test".to_owned(),
+            subject: "srv-1".to_owned(),
+            keyid: KID.to_owned(),
+        };
+        SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                SigningKey::from_seed_bytes(&[0x11; 32]),
+                signer,
+                "credential",
+                KID,
+            ),
+            1_700_000_000,
+            1_700_000_300,
+        )
+    }
+
+    fn bound_signer_inputs() -> (HttpRequest, HttpResponse, SigningWindow) {
         let request = HttpRequest {
             method: "POST".to_owned(),
             target_uri: "https://mcp.example.test/mcp".to_owned(),
@@ -391,23 +380,12 @@ mod tests {
             headers: vec![("Content-Type".to_owned(), "application/json".to_owned())],
             body: br#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_vec(),
         };
-        let signer = ActorIdentity {
-            role: "server".to_owned(),
-            trust_domain: "example.test".to_owned(),
-            subject: "srv-1".to_owned(),
-            keyid: KID.to_owned(),
-        };
-        (
-            request,
-            response,
-            signer,
-            SigningKey::from_seed_bytes(&[0x11; 32]),
-        )
+        (request, response, stated_window())
     }
 
     #[test]
     fn a_bound_response_advertises_the_handle_of_the_request_it_answers() {
-        let (mut request, mut response, signer, key) = bound_signer_inputs();
+        let (mut request, mut response, window) = bound_signer_inputs();
         let handle = sign_request(
             &mut request,
             &SigningKey::from_seed_bytes(&[0x22; 32]),
@@ -417,17 +395,8 @@ mod tests {
             &mcp_re_test_paths::unique_test_nonce(),
         )
         .expect("request signs");
-        sign_delegated_response_full_with_owned_key(
-            &mut response,
-            &request,
-            &signer,
-            "credential",
-            &key,
-            KID,
-            1_700_000_000,
-            1_700_000_300,
-        )
-        .expect("response signs");
+        emit_delegated_response_full(&mut response, &request, &window.signer())
+            .expect("response signs");
         let body: serde_json::Value = serde_json::from_slice(&response.body).expect("body is JSON");
         assert_eq!(
             body["_meta"][RESPONSE_EVIDENCE_BLOCK_KEY]["request_evidence"]["digest_value"],
@@ -437,68 +406,16 @@ mod tests {
 
     #[test]
     fn an_unsigned_request_cannot_be_answered_with_a_bound_response() {
-        let (request, mut response, signer, key) = bound_signer_inputs();
+        let (request, mut response, window) = bound_signer_inputs();
         let before = response.clone();
-        let err = sign_delegated_response_full_with_owned_key(
-            &mut response,
-            &request,
-            &signer,
-            "credential",
-            &key,
-            KID,
-            1_700_000_000,
-            1_700_000_300,
-        )
-        .expect_err("a request with no signature has no handle");
+        let err = emit_delegated_response_full(&mut response, &request, &window.signer())
+            .expect_err("a request with no signature has no handle");
         assert_eq!(
             err,
             HttpProfileError::MissingEvidence("request signature-input")
         );
         assert_eq!(response.body, before.body);
         assert_eq!(response.headers, before.headers);
-    }
-
-    #[test]
-    fn a_delegated_response_is_refused_when_the_signer_names_another_key() {
-        let (mut request, mut response, mut signer, key) = bound_signer_inputs();
-        sign_request(
-            &mut request,
-            &SigningKey::from_seed_bytes(&[0x22; 32]),
-            "client-key-1",
-            1_700_000_000,
-            1_700_000_300,
-            &mcp_re_test_paths::unique_test_nonce(),
-        )
-        .expect("request signs");
-        signer.keyid = "another-kid".to_owned();
-        let before = response.clone();
-        let bound = sign_delegated_response_full_with_owned_key(
-            &mut response,
-            &request,
-            &signer,
-            "credential",
-            &key,
-            KID,
-            1_700_000_000,
-            1_700_000_300,
-        );
-        assert_eq!(bound, Err(HttpProfileError::DelegationKeyMismatch));
-        let unbound = sign_delegated_response_unbound_with_owned_key(
-            &mut response,
-            &signer,
-            "credential",
-            &UnboundRequestDiagnostic::absent(),
-            &key,
-            KID,
-            1_700_000_000,
-            1_700_000_300,
-        );
-        assert_eq!(unbound, Err(HttpProfileError::DelegationKeyMismatch));
-        assert_eq!(
-            response.body, before.body,
-            "nothing is written before the refusal"
-        );
-        assert!(!has_signature(&response.headers));
     }
 
     fn has_signature(headers: &[(String, String)]) -> bool {
@@ -569,7 +486,7 @@ mod tests {
     /// request whose block is absent or corrupted, and the response is left as it was.
     #[test]
     fn a_full_response_is_not_signed_over_an_absent_or_invalid_request_block() {
-        let (base_request, response, signer, key) = bound_signer_inputs();
+        let (base_request, response, window) = bound_signer_inputs();
         let corrupted = insert_meta_block(
             br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#,
             crate::ids::REQUEST_EVIDENCE_BLOCK_KEY,
@@ -592,17 +509,8 @@ mod tests {
                 ..base_request.clone()
             };
             let mut r = response.clone();
-            let err = sign_delegated_response_full_with_owned_key(
-                &mut r,
-                &request,
-                &signer,
-                "credential",
-                &key,
-                KID,
-                1_700_000_000,
-                1_700_000_300,
-            )
-            .expect_err("refused");
+            let err = emit_delegated_response_full(&mut r, &request, &window.signer())
+                .expect_err("refused");
             assert_eq!(err, expected);
             assert_eq!(r.body, response.body);
             assert!(!has_signature(&r.headers));
@@ -613,7 +521,8 @@ mod tests {
     /// carried block does not validate.
     #[test]
     fn the_bound_floor_signer_refuses_a_request_carrying_an_invalid_block() {
-        let (mut request, response, _, key) = bound_signer_inputs();
+        let (mut request, response, window) = bound_signer_inputs();
+        let key = window.signer().key();
         request.body = insert_meta_block(
             br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#,
             crate::ids::REQUEST_EVIDENCE_BLOCK_KEY,
@@ -621,7 +530,7 @@ mod tests {
         )
         .expect("insert");
         let mut r = response.clone();
-        let err = sign_response_with_signer(&mut r, &request, |b| local_sig(&key, b), KID, 1, 2)
+        let err = sign_response_with_signer(&mut r, &request, |b| local_sig(key, b), KID, 1, 2)
             .expect_err("refused");
         assert_eq!(
             err,

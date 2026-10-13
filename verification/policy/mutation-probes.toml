@@ -2432,7 +2432,7 @@ conjunct = "nbf/exp are read out of the published credential, never taken from t
 # still in place — which is the point of the probe. Before the fix this proposition had no
 # falsifier: both values came from one argument, so any control over them passed over every
 # implementation.
-path = "mcp-re-http-profile/src/custody/active_key.rs"
+path = "mcp-re-http-profile/src/custody/active_key/mod.rs"
 anchor = """
             jti: claims.jti,
             nbf: claims.nbf,
@@ -2458,7 +2458,7 @@ conjunct = "the credential a snapshot carries attests the key that snapshot hold
 # returning a well-formed credential for a stale key — publishes a snapshot whose RFC 9421
 # `keyid` names a key this process does not hold, and every response it signs is rejected
 # fleet-wide, discovered at the next request rather than at the issuance.
-path = "mcp-re-http-profile/src/custody/active_key.rs"
+path = "mcp-re-http-profile/src/custody/active_key/mod.rs"
 anchor = """
         if delegated_key_of(&claims)?.to_bytes() != key.public_key().to_bytes() {
             return Err(HttpProfileError::DelegationCredentialInvalid);
@@ -2482,7 +2482,7 @@ conjunct = "every claim except the window comes back exactly as the issuance ask
 # attests the right key — a credential scoped to another deployment, minted under a stale
 # trust epoch, or authorising a different key use. The verifiers would refuse it, which is
 # the point: the failure would be discovered at the next request instead of at issuance.
-path = "mcp-re-http-profile/src/custody/active_key.rs"
+path = "mcp-re-http-profile/src/custody/active_key/mod.rs"
 anchor = """
         if claims != as_requested {
             return Err(HttpProfileError::DelegationCredentialInvalid);
@@ -11697,7 +11697,7 @@ expect_red = [
 id = "M463-the-root-may-clamp-the-window-never-extend-it"
 unit = "http_profile.delegated_signing_custody"
 conjunct = "an adopted credential's window lies inside the one requested and is open at the instant it was requested"
-path = "mcp-re-http-profile/src/custody/active_key.rs"
+path = "mcp-re-http-profile/src/custody/active_key/mod.rs"
 anchor = """
         if claims.exp > requested_claims.exp || claims.exp <= requested_claims.nbf {
 """
@@ -11938,7 +11938,7 @@ conjunct = "an adopted credential verifies under the root the custody was built 
 # The weakening is the custody as it stood before Ruling 19 B4b: the issuer seam's answer
 # taken on its word. The header test goes red with it because the root check is also what
 # pins the header — `typ`, `alg`, and a `kid` that is the requested root's.
-path = "mcp-re-http-profile/src/custody/active_key.rs"
+path = "mcp-re-http-profile/src/custody/active_key/mod.rs"
 anchor = """
         crate::delegation::root_signed(&credential, &requested.0.kid, root)
             .map_err(|_| IssuanceRefusal::RootKeyMismatch)?;
@@ -12160,7 +12160,7 @@ expect_red = [
 id = "M490-a-root-signing-under-another-key-is-not-recorded-as-an-outage"
 unit = "http_profile.delegated_signing_custody"
 conjunct = "a credential the configured root key did not sign is refused with the root-key-mismatch cause, distinct from an unavailable root"
-path = "mcp-re-http-profile/src/custody/active_key.rs"
+path = "mcp-re-http-profile/src/custody/active_key/mod.rs"
 anchor = """
             .map_err(|_| IssuanceRefusal::RootKeyMismatch)?;
 """
@@ -13099,18 +13099,18 @@ The idle bound closes connections gracefully; counting a serving connection as i
 id = "M541-http-profile-a-delegated-signer-signs-under-a-key-its-block-does-not-name"
 unit = "http_profile.response_emission_binding"
 conjunct = "a delegated response is signed only under the keyid its block names as the server signer"
-path = "mcp-re-http-profile/src/sign.rs"
+path = "mcp-re-http-profile/src/custody/delegated_signer.rs"
 anchor = """
-    if server_signer.keyid == delegated_kid {
+        self.window.key().delegated_kid()
 """
 weakening = """
-    if true {
+        self.window.key().server_signer().subject.as_str()
 """
 expect_red = [
-  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_delegated_response_is_refused_when_the_signer_names_another_key",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::delegated_signer::tests::every_part_is_read_from_the_one_window",
 ]
 note = """
-A signer that told a verifier one key in the block and signed under another would leave only the verifier to notice.
+The block names `server_signer` and the signature is made under `kid()`; both are read from one window's ActiveDelegatedKey, whose construction makes the identity's keyid the credential's delegated_kid. An emitter that read its keyid from anywhere else would sign under a key the block does not name.
 """
 
 [[probe]]
