@@ -31,6 +31,7 @@ sys.path.insert(0, str(HERE))
 
 import _census  # noqa: E402
 import _controls  # noqa: E402
+from _load_tool import load_tool  # noqa: E402
 
 CONTROLS = _controls.all_controls()
 INDEX = {(control.project, control.identity): control for control in CONTROLS}
@@ -321,12 +322,11 @@ def test_the_register_and_the_registry_agree_in_both_directions():
     next live one* is a defect this repository has already met in another register.
     """
     import re
-    import tomllib
-
-    from _controls import POLICY, REPO_ROOT
+    import _registries
+    from _controls import REPO_ROOT
 
     register = REPO_ROOT / "docs" / "architecture" / "control-dispositions.md"
-    raw = tomllib.loads((POLICY / "control-dispositions.toml").read_text())
+    raw = _registries.document("control-dispositions")
     declared = {entry["id"] for entry in raw.get("proposition", [])} | {
         row["reason_family"] for row in raw.get("disposition", []) if row.get("reason_family")
     }
@@ -389,11 +389,9 @@ def test_each_record_states_the_number_of_controls_the_registry_holds():
     inventing a claim for it is not this control's business.
     """
     import collections
-    import tomllib
+    import _registries
 
-    from _controls import POLICY
-
-    raw = tomllib.loads((POLICY / "control-dispositions.toml").read_text())
+    raw = _registries.document("control-dispositions")
     rows = collections.Counter(
         row["proposition"]
         for row in raw.get("disposition", [])
@@ -438,13 +436,12 @@ def test_a_records_heading_and_its_registry_title_are_one_fact():
     title is a sentence, and neither spelling is the defect.
     """
     import re
-    import tomllib
-
-    from _controls import POLICY, REPO_ROOT
+    import _registries
+    from _controls import REPO_ROOT
 
     register = REPO_ROOT / "docs" / "architecture" / "control-dispositions.md"
     headings = dict(re.findall(r"^## (NP-\d+) — (.+)$", register.read_text(), re.M))
-    raw = tomllib.loads((POLICY / "control-dispositions.toml").read_text())
+    raw = _registries.document("control-dispositions")
     assert headings, "no headings parsed; the register went dark"
 
     def flatten(text: str) -> str:
@@ -637,18 +634,24 @@ def test_a_resolved_proposition_is_exempt_from_the_citation_check_and_a_broken_o
 
 def _load_census_tool():
     """The `control-census` executable as a module — it has no `.py` suffix."""
-    import importlib.machinery
-    import importlib.util
+    return load_tool("control-census", "control_census")
 
-    loader = importlib.machinery.SourceFileLoader(
-        "control_census", str(HERE / "control-census")
-    )
-    spec = importlib.util.spec_from_loader("control_census", loader)
-    if spec is None:  # pragma: no cover - the file is in the tree beside this one
-        raise RuntimeError(f"no import spec for {HERE / 'control-census'}")
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
+
+def test_an_id_carried_by_two_records_is_refused():
+    """An id is how a disposition or a proposition is cited. Two records under one id are
+    two decisions a citation cannot tell apart, and parallel changes took eight disposition
+    ids twice before this check existed."""
+    censor = _load_census_tool()
+    row = REPORT.dispositions[0]
+    twice = _census.Census(controls=[], claims=list(REPORT.claims), stale=[], dispositions=[row, row])
+    entry = _census.propositions()[0]
+    censor.propositions = lambda: [entry, entry]
+    problems = censor.failures(twice)
+    assert f"disposition id {row.id} is carried by 2 records; give every record but the first a fresh id" in problems, problems
+    assert any(p.startswith(f"proposition id {entry['id']} is carried by 2") for p in problems), problems
+    once = _census.Census(controls=[], claims=list(REPORT.claims), stale=[], dispositions=[row])
+    censor.propositions = lambda: [entry]
+    assert not [p for p in censor.failures(once) if "is carried by" in p]
 
 
 def test_a_doctest_carries_its_fence_mode():

@@ -305,19 +305,14 @@ def load_corrections(root: Path, repo_root: Path | None = None) -> dict[str, lis
                 raise CorrectionError(defect)
             if str(record["packet"]).startswith("docs/security/owner-approvals-"):
                 if ledger is None:
-                    import tomllib
-
+                    import _registries
                     from _approvals import ApprovalError, load_ledger
 
                     try:
                         ledger = load_ledger(repo_root)
                     except ApprovalError as exc:
                         raise CorrectionError(f"owner-approval ledger: {exc}") from exc
-                    theorems = tomllib.loads(
-                        (repo_root / "verification/policy/theorems.toml").read_text(
-                            encoding="utf-8"
-                        )
-                    )
+                    theorems = _registries.document("theorems", repo_root)
                 defect = _ledger_defect(record, ledger, theorems, path.name)
                 if defect:
                     raise CorrectionError(defect)

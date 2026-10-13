@@ -16,13 +16,15 @@ needing to be re-scoped by hand.
 
 Run:  python3 tools/verification/review-packet > verification/reviews/packets/<name>.md
 """
-import tomllib, textwrap, sys
+import textwrap, sys
 from pathlib import Path
 
-P = Path("verification/policy")
-TH = tomllib.load(open(P/"theorems.toml","rb"))
-VE = tomllib.load(open(P/"verification.toml","rb"))
-AS = tomllib.load(open(P/"assumptions.toml","rb"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _registries  # noqa: E402
+
+TH = _registries.document("theorems", required=True)
+VE = _registries.document("verification", required=True)
+AS = _registries.document("assumptions", required=True)
 
 thms = {t["id"]: t for t in TH["theorem"]}
 roots = TH["root_theorems"]

@@ -25,14 +25,15 @@ from types import ModuleType
 HERE = Path(__file__).resolve().parent
 
 
-def load_tool(script: str, module_name: str | None = None) -> ModuleType:
-    """The tool named by `script` (relative to `tools/verification/`), as a module.
+def load_tool(script: str, module_name: str | None = None, directory: Path = HERE) -> ModuleType:
+    """The tool named by `script` (relative to `directory`, by default this one), as a module.
 
     Registered under `module_name` before execution, because a module that is not in
-    `sys.modules` while its own body runs cannot resolve its own namespace.
+    `sys.modules` while its own body runs cannot resolve its own namespace. `directory` is
+    for a caller measuring another tree, such as a gate's selftest fixture.
     """
     name = module_name or script.replace("-", "_")
-    loader = SourceFileLoader(name, str(HERE / script))
+    loader = SourceFileLoader(name, str(directory / script))
     spec = importlib.util.spec_from_loader(name, loader)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module

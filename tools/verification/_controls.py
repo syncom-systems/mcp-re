@@ -62,14 +62,12 @@ from dataclasses import dataclass
 import json
 import re
 import subprocess
-import tomllib
 from functools import lru_cache
 from pathlib import Path
 
 from _ecosystems import REPO_ROOT
+import _registries
 import _rust_targets
-
-POLICY = REPO_ROOT / "verification" / "policy"
 
 #: Every control kind this module enumerates, with the ecosystem/lane each belongs to.
 #: A census reports coverage per kind, so an ecosystem that stops being discoverable shows
@@ -709,13 +707,6 @@ def _projects(manifest: str) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
-def _registry(name: str, table: str) -> list[dict]:
-    path = POLICY / name
-    if not path.is_file():
-        return []
-    return tomllib.loads(path.read_text()).get(table, [])
-
-
 def probe_controls() -> list[Control]:
     """`structural://` and `mutation://` probes, and `measured://` measurements.
 
@@ -724,33 +715,33 @@ def probe_controls() -> list[Control]:
     `unit` field rather than through a symbol list.
     """
     out: list[Control] = []
-    for probe in _registry("structural-probes.toml", "probe"):
+    for probe in _registries.rows("structural-probes", "probe"):
         out.append(
             Control(
                 project="",
                 identity=f"structural#{probe['id']}",
                 kind="structural",
-                carrier="verification/policy/structural-probes.toml",
+                carrier=_registries.relative("structural-probes"),
                 line=0,
             )
         )
-    for probe in _registry("mutation-probes.toml", "probe"):
+    for probe in _registries.rows("mutation-probes", "probe"):
         out.append(
             Control(
                 project="",
                 identity=f"mutation#{probe['id']}",
                 kind="mutation",
-                carrier="verification/policy/mutation-probes.toml",
+                carrier=_registries.relative("mutation-probes"),
                 line=0,
             )
         )
-    for measurement in _registry("measurements.toml", "measurement"):
+    for measurement in _registries.rows("measurements", "measurement"):
         out.append(
             Control(
                 project="",
                 identity=f"measurement#{measurement['id']}",
                 kind="measurement",
-                carrier="verification/policy/measurements.toml",
+                carrier=_registries.relative("measurements"),
                 line=0,
             )
         )

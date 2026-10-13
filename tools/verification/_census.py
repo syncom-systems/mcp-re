@@ -42,9 +42,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-import tomllib
 
-from _controls import Control, KINDS, POLICY, _registry, all_controls
+import _registries
+from _controls import Control, KINDS, all_controls
 from _ecosystems import test_project_for
 import _rust_targets
 
@@ -107,7 +107,7 @@ class Disposition:
 
 
 def units() -> list[dict]:
-    return tomllib.loads((POLICY / "verification.toml").read_text())["unit"]
+    return _registries.document("verification", required=True)["unit"]
 
 
 def theorems() -> list[dict]:
@@ -120,8 +120,7 @@ def theorems() -> list[dict]:
     fine, which is the reverse of what a measurement is for. `verify --manifests` owns the
     validation of this file and already runs on the merge path.
     """
-    path = POLICY / "theorems.toml"
-    return tomllib.loads(path.read_text()).get("theorem", []) if path.is_file() else []
+    return _registries.rows("theorems", "theorem")
 
 
 def _resolve(index: dict[str, Control], selector: str) -> Control | None:
@@ -214,11 +213,11 @@ def _registry_claims(index: dict[str, Control]) -> list[Claim]:
     """Probes and measurements claim their unit directly, by the record's `unit` field."""
     out: list[Claim] = []
     for name, table, scheme in (
-        ("structural-probes.toml", "probe", "structural"),
-        ("mutation-probes.toml", "probe", "mutation"),
-        ("measurements.toml", "measurement", "measurement"),
+        ("structural-probes", "probe", "structural"),
+        ("mutation-probes", "probe", "mutation"),
+        ("measurements", "measurement", "measurement"),
     ):
-        for entry in _registry(name, table):
+        for entry in _registries.rows(name, table):
             identity = f"{scheme}#{entry['id']}"
             control = index.get(identity)
             owner = entry.get("unit")
@@ -288,15 +287,11 @@ PROPOSITION_KEYS = frozenset(
 
 
 def raw_registry() -> dict:
-    path = POLICY / "control-dispositions.toml"
-    return tomllib.loads(path.read_text()) if path.is_file() else {}
+    return _registries.document("control-dispositions")
 
 
 def dispositions() -> list[Disposition]:
-    path = POLICY / "control-dispositions.toml"
-    if not path.is_file():
-        return []
-    raw = tomllib.loads(path.read_text())
+    raw = raw_registry()
     return [
         Disposition(
             id=row["id"],
@@ -314,10 +309,7 @@ def dispositions() -> list[Disposition]:
 
 
 def propositions() -> list[dict]:
-    path = POLICY / "control-dispositions.toml"
-    if not path.is_file():
-        return []
-    return tomllib.loads(path.read_text()).get("proposition", [])
+    return _registries.rows("control-dispositions", "proposition")
 
 
 @dataclass(frozen=True)

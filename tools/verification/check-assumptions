@@ -72,6 +72,7 @@ from _manifest import (  # noqa: E402
     load_verification,
 )
 from _premise import has_come_true, is_live  # noqa: E402
+from _registries import stale_sites  # noqa: E402
 
 VERIFICATION_DIR = REPO_ROOT / "verification"
 
@@ -149,14 +150,11 @@ def registered_by_unit() -> dict[str, set[tuple[str, str]]]:
     return out
 
 
-def registered_sites() -> dict[str, set[str]]:
-    """Every site each assumption registers — for detecting entries that name no seam."""
-    doc = load_assumptions()
-    return {
-        entry["id"]: {str(site) for site in entry.get("sites", [])}
-        for entry in doc.get("assumption", [])
-        if entry.get("sites")
-    }
+def live_sites(hits=None) -> set[str]:
+    """Every seam site the tree declares: each escape-hatch hit's item, and each declared
+    item a `none:` premise registers."""
+    found = scan() if hits is None else hits
+    return {hit[5] for hit in found if hit[5]} | declared_seam_sites()
 
 
 def declared_seam_sites() -> set[str]:
@@ -516,12 +514,7 @@ def main() -> int:
     # from the ITEM, so it survives formatting — but not a rename or a deletion, and an entry
     # left pointing at a seam that no longer exists reads as trust the tree no longer needs.
     # Refusing it is what keeps the registry a measurement rather than a memory.
-    live_sites = {hit[5] for hit in hits if hit[5]} | declared_seam_sites()
-    stale = {
-        asm_id: sorted(sites - live_sites)
-        for asm_id, sites in registered_sites().items()
-        if sites - live_sites
-    }
+    stale = stale_sites(load_assumptions().get("assumption", []), live_sites(hits))
 
     if not hits:
         print("check-assumptions: PASS — no proof escape hatch in scope")

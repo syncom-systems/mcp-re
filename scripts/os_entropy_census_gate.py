@@ -33,7 +33,6 @@ from __future__ import annotations
 import re
 import sys
 import tempfile
-import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -42,7 +41,10 @@ sys.path.insert(0, str(REPO / "scripts"))
 from bazel_srcs_gate import strip_noncode  # noqa: E402
 from module_size_gate import production_source, rust_sources  # noqa: E402
 
-BOUNDARIES = Path("verification") / "policy" / "trust-boundaries.toml"
+sys.path.insert(0, str(REPO / "tools" / "verification"))
+import _registries  # noqa: E402
+
+BOUNDARIES = _registries.relative("trust-boundaries")
 BOUNDARY_ID = "boundary.os_entropy"
 ACQUISITION = re.compile(r"\bgetrandom\b")
 
@@ -61,8 +63,7 @@ def registered_sites(root: Path) -> set[str]:
     """The paths `boundary.os_entropy` registers. A missing boundary is an error, not an
     empty registration: an empty set would make every site an UNREGISTERED finding and
     hide the real cause."""
-    data = tomllib.loads((root / BOUNDARIES).read_text(encoding="utf-8"))
-    for boundary in data.get("boundary", []):
+    for boundary in _registries.rows("trust-boundaries", "boundary", root):
         if boundary.get("id") == BOUNDARY_ID:
             return set(boundary.get("paths", []))
     raise SystemExit(f"os-entropy census gate: {BOUNDARIES} declares no {BOUNDARY_ID}")

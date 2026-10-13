@@ -65,6 +65,7 @@ from _census import (  # noqa: E402
 )
 from _census import theorems as theorem_rows  # noqa: E402
 from _controls import KINDS, REPO_ROOT  # noqa: E402
+from _registries import duplicate_ids  # noqa: E402
 
 #: ADR-MCPRE-068 §4.1's severity vocabulary. A proposition's consequence is compared against
 #: other propositions' and against the units it would become, so a word outside the
@@ -88,7 +89,7 @@ def _record(anchor: str) -> str | None:
 
 
 def failures(report) -> list[str]:
-    out: list[str] = []
+    out = duplicate_ids([row.id for row in report.dispositions], "disposition")
     for unit, project, selector in report.stale:
         out.append(f"stale selector: {unit} ({project}) names no control: {selector}")
     for row in report.orphan_dispositions:
@@ -107,6 +108,7 @@ def failures(report) -> list[str]:
             out.append(f"{row.id}: new-proposition with no proposition id")
         out.extend(_scope_failures(row, record))
     entries = propositions()
+    out.extend(duplicate_ids([str(entry["id"]) for entry in entries], "proposition"))
     known = {entry["id"] for entry in entries}
     for row in report.dispositions:
         if row.proposition and row.proposition not in known:

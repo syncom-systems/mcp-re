@@ -27,10 +27,11 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, ".claude", "skills", "security-remediate", "scripts"))
+sys.path.insert(0, os.path.join(ROOT, "tools", "verification"))
 import ledger  # noqa: E402
+import _registries  # noqa: E402
 
 LEDGER = os.path.join(ROOT, "docs", "security", "finding-ledger.jsonl")
-ASSUMPTIONS = os.path.join(ROOT, ledger.ASSUMPTIONS_TOML)
 
 
 def problems(rows: list[dict], assumptions: set | None) -> list[str]:
@@ -97,9 +98,12 @@ def main() -> int:
     if "--selftest" in sys.argv:
         return selftest()
     rows = _read(LEDGER)
-    assumptions = ledger.registered_assumptions(ASSUMPTIONS)
+    registry = _registries.path("assumptions")
+    assumptions = (
+        {a["id"] for a in _registries.rows("assumptions", "assumption")} if registry.is_file() else None
+    )
     if assumptions is None:
-        print(f"finding-ledger gate: FAIL — {ledger.ASSUMPTIONS_TOML} is missing, so no premise "
+        print(f"finding-ledger gate: FAIL — {_registries.relative('assumptions')} is missing, so no premise "
               f"can be checked")
         return 1
     found = problems(rows, assumptions)

@@ -531,6 +531,17 @@ jobs:
           # the length of a campaign is a gate nobody can act on. `--closure` states the
           # release criterion and is run at closure, by the campaign that owes it.
 
+      # MCPRE-189. Every reference from one policy registry into another, or into the
+      # tree, checked once: a mutation probe's unit, theorem, expected controls and every
+      # site it weakens; a structural probe's unit and documented case; a measurement's
+      # unit; an assumption's scoped units and boundaries and every seam site it registers.
+      # It also holds the reader rule — no gate or tool spells a registry's path — which is
+      # what makes one check enough. ~2s.
+      - name: Policy-registry references (MCPRE-189)
+        run: |
+          tools/verification/check-registries --selftest
+          tools/verification/check-registries
+
       # The assurance platform's own self-tests — the verdict algebra, the invalidation
       # rules, the measured-input closure, the escape-hatch detector, the theorem loader
       # and review model, the test and Verus lane adapters, and the views generator. They

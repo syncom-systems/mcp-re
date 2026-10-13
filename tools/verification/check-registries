@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""The policy-registry reference gate.
+
+Every reference from one registry in `verification/policy/` into another, or into the
+tree, is checked here once, on the merge path:
+
+  * a mutation probe's unit, its theorem resting on that unit, the controls it expects
+    red, and every site it weakens resolving to exactly one place;
+  * a structural probe's unit and its documented case;
+  * a measurement's unit;
+  * an assumption's scoped units and boundaries, and every seam site it registers.
+
+It also holds the reader rule: no production gate or tool spells a registry's path, so
+every read goes through `_registries`, which is what makes this one check enough.
+
+    tools/verification/check-registries              the gate
+    tools/verification/check-registries --paths      every repo file a registry names, and who
+    tools/verification/check-registries --selftest   each refusal, injected into a fixture
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+from _registries import (  # noqa: E402
+    ManifestError,
+    Registries,
+    load,
+    named_paths,
+    reader_problems,
+    reference_problems,
+    source_problems,
+)
+
+
+def gate() -> int:
+    try:
+        reg = load()
+    except ManifestError as exc:
+        print(f"check-registries: FAIL — {exc}")
+        return 1
+    problems = reference_problems(reg) + reader_problems()
+    sites = sum(1 + len(p.get("also", [])) for p in reg.mutation_probes)
+    registered = sum(len(a.get("sites", [])) for a in reg.assumptions)
+    # A reference gate over an empty population passes everything, so the population is
+    # part of the verdict.
+    if not reg.mutation_probes or not sites or not registered or not reg.units:
+        problems.append(
+            f"the measured population is empty ({len(reg.units)} unit(s), {sites} probe "
+            f"site(s), {registered} assumption site(s)); a gate over nothing checks nothing"
+        )
+    for problem in problems:
+        print(f"  {problem}")
+    if problems:
+        print(f"check-registries: FAIL — {len(problems)} problem(s)")
+        return 1
+    print(
+        f"check-registries: OK — {len(reg.mutation_probes)} mutation probe(s) over {sites} "
+        f"site(s), {len(reg.structural_probes)} structural probe(s), "
+        f"{len(reg.measurements)} measurement(s), {registered} assumption site(s), every "
+        f"reference resolves; {len(named_paths(reg))} repo file(s) named; no reader around "
+        f"_registries"
+    )
+    return 0
+
+
+# ---------------------------------------------------------------------------- selftest
+
+_SOURCE = "fn guard() {\n    check_one();\n    check_two();\n}\nfn x() {}\nfn twice() { dup(); dup(); }\n"
+
+
+def _fixture() -> Registries:
+    unit = {"id": "u.one", "paths": ["a/src/lib.rs"], "tested_symbols": ["//a:t#ctl"],
+            "gate_controls": ["scripts/g.py"]}
+    return Registries(
+        units={"u.one": unit},
+        theorems=[{"id": "THM-0001", "owner": "u.one", "supported_by": ["unit://u.one"]}],
+        assumptions=[{"id": "ASM-0001", "scope": ["unit://u.one", "boundary://b.one"],
+                      "sites": ["a/src/lib.rs#x"]}],
+        boundaries=frozenset({"b.one"}),
+        mutation_probes=[{
+            "id": "M1", "unit": "u.one", "theorem": "THM-0001", "conjunct": "c",
+            "path": "a/src/lib.rs", "anchor": "check_one();", "weakening": "",
+            "expect_red": ["//a:t#ctl", "gate#scripts/g.py"],
+            "also": [{"path": "a/src/lib.rs", "anchor": "check_two();", "weakening": ""}],
+        }],
+        structural_probes=[{
+            "id": "S1", "unit": "u.one", "kind": "crate-boundary-compile-fail",
+            "doc_path": "a/src/lib.rs", "doc_item": "Guard",
+        }],
+        measurements=[{"id": "X1", "unit": "u.one"}],
+        live_sites=frozenset({"a/src/lib.rs#x"}),
+    )
+
+
+def _with(reg: Registries, **changes) -> Registries:
+    fields = {name: getattr(reg, name) for name in Registries.__dataclass_fields__}
+    fields.update(changes)
+    return Registries(**fields)
+
+
+def _probe(reg: Registries, **changes) -> list[dict]:
+    return [dict(reg.mutation_probes[0], **changes)]
+
+
+def selftest() -> int:
+    failed = 0
+
+    def case(label: str, problems: list[str], expected: str | None) -> None:
+        nonlocal failed
+        ok = not problems if expected is None else any(expected in p for p in problems)
+        print(f"  {'ok  ' if ok else 'FAIL'}  {label}")
+        if not ok:
+            failed += 1
+            print(f"        got {problems}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "a" / "src").mkdir(parents=True)
+        (root / "a" / "src" / "lib.rs").write_text(
+            "/// ```compile_fail\n/// ```\npub struct Guard;\n" + _SOURCE, encoding="utf-8"
+        )
+        reg = _fixture()
+        also = reg.mutation_probes[0]["also"]
+        cases = [
+            ("a registry whose every reference resolves", reg, None),
+            ("a probe file that does not exist",
+             _with(reg, mutation_probes=_probe(reg, path="a/src/gone.rs")), "gone.rs does not exist"),
+            ("an anchor matching no site",
+             _with(reg, mutation_probes=_probe(reg, anchor="check_zero();")), "matches 0 site(s)"),
+            ("an anchor matching two sites",
+             _with(reg, mutation_probes=_probe(reg, anchor="dup();")), "matches 2 site(s)"),
+            ("an `also` site that stopped resolving",
+             _with(reg, mutation_probes=_probe(reg, also=[dict(also[0], anchor="check_gone();")])),
+             "matches 0 site(s)"),
+            ("an `also` site that only resolves against the unweakened file",
+             _with(reg, mutation_probes=_probe(reg, also=[dict(also[0], anchor="check_one();")])),
+             "matches 0 site(s)"),
+            ("a probe on an undeclared unit",
+             _with(reg, mutation_probes=_probe(reg, unit="u.gone")), "unit 'u.gone' is not declared"),
+            ("a probe naming a theorem that does not rest on its unit",
+             _with(reg, mutation_probes=_probe(reg, theorem="THM-0002")), "does not rest on"),
+            ("a probe expecting a control the unit does not declare",
+             _with(reg, mutation_probes=_probe(reg, expect_red=["//a:t#other"])), "does not declare"),
+            ("an assumption site that names no seam",
+             _with(reg, live_sites=frozenset()), "a/src/lib.rs#x names no seam"),
+            ("an assumption scoped to an undeclared unit",
+             _with(reg, assumptions=[dict(reg.assumptions[0], scope=["unit://u.gone", "boundary://b.one"])]),
+             "names a unit no [[unit]] declares"),
+            ("an assumption scoped to an undeclared boundary",
+             _with(reg, boundaries=frozenset()), "names a boundary"),
+            ("a measurement on an undeclared unit",
+             _with(reg, measurements=[{"id": "X1", "unit": "u.gone"}]), "measurement X1: unit 'u.gone'"),
+            ("a structural probe on an undeclared unit",
+             _with(reg, structural_probes=[dict(reg.structural_probes[0], unit="u.gone")]),
+             "structural probe S1: unit 'u.gone'"),
+            ("a structural probe whose documented case is gone",
+             _with(reg, structural_probes=[dict(reg.structural_probes[0], doc_item="Gone")]),
+             "does not declare"),
+        ]
+        for label, fixture, expected in cases:
+            case(label, reference_problems(fixture, root), expected)
+        paths = named_paths(_with(reg, units={}))
+        ok = paths.get("a/src/lib.rs") == frozenset(
+            {"mutation-probe:M1", "structural-probe:S1", "assumption:ASM-0001"}
+        )
+        print(f"  {'ok  ' if ok else 'FAIL'}  every path a registry names carries the records naming it")
+        failed += not ok
+
+    readers = [
+        ("a policy directory built as a path", 'POLICY = REPO / "verification" / "policy"\n', True),
+        ("a registry built as a path", 'R = ROOT / "verification" / "policy" / "mutation-probes.toml"\n', True),
+        ("a registry named as a string", 'UNITS = "verification/policy/verification.toml"\n', True),
+        ("a registry read at a commit", 'git("show", f"{sha}:verification/policy/theorems.toml")\n', True),
+        ("the policy directory as a Path", 'P = Path("verification/policy")\n', True),
+        ("the toolchain lock, which installers read", 'L = REPO / "verification" / "policy" / "toolchains.lock.toml"\n', False),
+        ("a changed-path classifier", 'hit = c.startswith(("verification/policy/", "config/"))\n', False),
+        ("prose naming a registry", 'msg = "register it in verification/policy/assumptions.toml first"\n', False),
+        ("a docstring", '"""Reads verification/policy/theorems.toml."""\n', False),
+    ]
+    for label, source, flagged in readers:
+        got = source_problems(source, "probe.py")
+        ok = bool(got) is flagged
+        print(f"  {'ok  ' if ok else 'FAIL'}  reader rule: {label}")
+        if not ok:
+            failed += 1
+            print(f"        got {got}")
+
+    if failed:
+        print(f"check-registries: SELFTEST FAILED ({failed})")
+        return 1
+    print("check-registries: selftest passed")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if "--selftest" in argv:
+        return selftest()
+    if "--paths" in argv:
+        print(json.dumps({p: sorted(o) for p, o in named_paths(load()).items()}, indent=1))
+        return 0
+    return gate()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

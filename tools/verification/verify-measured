@@ -52,6 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
+import _registries  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
     ManifestError,
@@ -68,7 +69,7 @@ from _unit_selection import (  # noqa: E402
     selection_error,
 )
 
-REGISTRY = REPO_ROOT / "verification" / "policy" / "measurements.toml"
+REGISTRY = _registries.path("measurements")
 
 SCHEME = "measured://"
 

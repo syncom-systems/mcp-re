@@ -25,6 +25,7 @@ before any verification toolchain exists — which is exactly the state they are
 | `verify-structural` | ADR-MCPRE-068 `structural://`: injects a hostile construction into a scratch copy and requires the compiler to REFUSE it with a declared error code; a probe declaring a `relaxation` must also COMPILE once the owner's boundary is opened, so the refusal is attributable to that boundary | works; the registry is `verification/policy/structural-probes.toml` |
 | `verify-measured` | ADR-MCPRE-068 `measured://`: executes a measurement protocol and requires its apparatus to demonstrate it can still MOVE | works; registry empty until Phase 0D, liveness in `test_measured_lane.py` |
 | `check-assumptions` | the proof escape-hatch gate | works |
+| `check-registries` | every reference between the policy registries and into the tree — a probe's unit, theorem, controls and sites; an assumption's scope and seam sites — and the rule that no gate or tool reads a registry around `_registries.py`; `--paths` lists every repo file a registry names | works; on the merge path in `ci.yml` |
 | `fingerprint` | deterministic `ReviewFingerprint` per unit | works, partial components |
 | `evidence-graph` | declared units and typed edges | works; freshness is Phase 4 |
 | `verify-verus` | whole-crate Verus verification for the declared scope: each crate's `verus_verify` target, the pinned prover as a Bazel action | works; Verus is pinned and resolved |
@@ -48,7 +49,10 @@ what it measures can report a battery it has just made pass. The reason the dime
 at all is measured: THM-0094's read bound rests on stdlib `HTTPResponse.read1` behaviour, and
 the battery had been running on one unpinned interpreter while the package claimed `>=3.10`.
 
-`_manifest.py` is the shared loader. Its validation is strict: an unknown key is a
+`_registries.py` is the one reader of `verification/policy/` and the one check of the
+references between its registries; every typed loader reads through it. `_manifest.py` is
+the shared loader of the unit, assumption, boundary and toolchain registries, and
+`_mutation.py` of the mutation probes. Validation is strict: an unknown key is a
 failure, not an ignored field, because a mistyped security declaration must not read as an
 absent one. `_theorems.py` loads `verification/policy/theorems.toml` — the `THM-NNNN`
 security claims — under the same rule, and `verify --manifests` validates it with the

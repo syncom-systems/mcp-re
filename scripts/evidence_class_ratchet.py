@@ -42,13 +42,15 @@ Run:  python3 scripts/evidence_class_ratchet.py
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-MANIFEST = "verification/policy/verification.toml"
+sys.path.insert(0, str(REPO / "tools" / "verification"))
+import _registries  # noqa: E402
+
+MANIFEST = _registries.relative("verification")
 RECORDS = REPO / "config" / "evidence-class-transitions.toml"
 
 _RECORD_KEYS = {"unit", "from_evidence_class", "to_evidence_class", "ref", "note"}
@@ -73,14 +75,11 @@ def base_manifest(base: str) -> dict | None:
     demand a transition record for all 127. The caller reports it and stops rather than
     inventing a comparison.
     """
-    proc = subprocess.run(
-        ["git", "show", f"{base}:{MANIFEST}"],
-        cwd=REPO,
-        capture_output=True,
-    )
-    if proc.returncode != 0:
+    try:
+        text = _registries.text_at("verification", base, REPO)
+    except _registries.ManifestError:
         return None
-    return tomllib.loads(proc.stdout.decode("utf-8"))
+    return None if text is None else _registries.parse(text, f"{base}:{MANIFEST}")
 
 
 def load_records(path: Path = RECORDS) -> list[dict]:
@@ -249,8 +248,7 @@ def main() -> int:
             f"'no unit had a class' would demand a transition record for every unit."
         )
         return 0
-    with (REPO / MANIFEST).open("rb") as handle:
-        head = tomllib.load(handle)
+    head = _registries.document("verification", REPO, required=True)
 
     before, after = classes(base), classes(head)
     if not after:

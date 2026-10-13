@@ -96,6 +96,7 @@ REGISTRY_REL = "config/assurance-obligation-debt.toml"
 REGISTRY = REPO / REGISTRY_REL
 
 sys.path.insert(0, str(REPO / "tools" / "verification"))
+import _registries  # noqa: E402
 
 STATUSES = ("unreviewed", "reviewed-action-required", "reviewed-exception")
 REVIEWED = STATUSES[1:]
@@ -119,7 +120,7 @@ _OPTIONAL = {"review_ref", "succeeds", "decomposition_ref"}
 #: Read at the base revision rather than here, because that is the tree the predecessor's
 #: obligation was measured over. A successor could otherwise be given the predecessor's
 #: paths in the same commit that widens them.
-UNITS_REL = "verification/policy/verification.toml"
+UNITS_REL = _registries.relative("verification")
 
 
 def owing() -> dict[str, dict]:
@@ -218,12 +219,13 @@ def base_unit_paths(base: str, repo: Path = REPO) -> dict[str, set[str]] | None:
     trivially NOT a subset and a legitimate succession fails — or, with the test inverted,
     every one passes. Neither is a fact about the tree.
     """
-    proc = subprocess.run(
-        ["git", "show", f"{base}:{UNITS_REL}"], cwd=repo, capture_output=True
-    )
-    if proc.returncode != 0:
+    try:
+        text = _registries.text_at("verification", base, repo)
+    except _registries.ManifestError:
         return None
-    doc = tomllib.loads(proc.stdout.decode("utf-8"))
+    if text is None:
+        return None
+    doc = _registries.parse(text, f"{base}:{UNITS_REL}")
     return {unit["id"]: set(unit.get("paths", [])) for unit in doc.get("unit", [])}
 
 

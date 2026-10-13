@@ -33,20 +33,19 @@ import argparse
 import json
 import re
 import sys
-import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _evidence_class import SEVERITIES  # noqa: E402
-from _manifest import POLICY_DIR as POLICY  # noqa: E402
+import _registries  # noqa: E402
 
 
 def load() -> tuple[dict, dict, list[str], list[dict]]:
-    units = {u["id"]: u for u in tomllib.loads((POLICY / "verification.toml").read_text())["unit"]}
-    tdoc = tomllib.loads((POLICY / "theorems.toml").read_text())
+    units = {u["id"]: u for u in _registries.document("verification", required=True)["unit"]}
+    tdoc = _registries.document("theorems", required=True)
     thms = {t["id"]: t for t in tdoc["theorem"]}
-    asms = tomllib.loads((POLICY / "assumptions.toml").read_text()).get("assumption", [])
+    asms = _registries.rows("assumptions", "assumption")
     return units, thms, list(tdoc["root_theorems"]), asms
 
 
@@ -82,8 +81,7 @@ def probe_coverage(units: dict) -> dict:
     same defect as a claim resting on a falsifier that does not run, seen from the other
     side.
     """
-    doc = tomllib.loads((POLICY / "mutation-probes.toml").read_text())
-    probes = doc.get("probe", [])
+    probes = _registries.rows("mutation-probes", "probe")
     attacked = {str(p["unit"]) for p in probes if p.get("unit")}
     claiming = {uid for uid in units if has(units, uid, "mutation://")}
     return {
