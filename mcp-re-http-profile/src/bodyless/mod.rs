@@ -150,35 +150,13 @@ fn emit(
     })
 }
 
-/// Derive the REQUEST-role evidence handle from the request itself.
-///
-/// This is the per-instance coordinate a bodyless 202 covers (C019b). It is the SAME
-/// derivation the bodied path binds through — a labeled SHA-256 over the request's own
-/// RFC 9421 signature base — so the two response shapes carry identical binding
-/// strength rather than the 202 being silently weaker.
-///
-/// It is canonical and independently recomputable: the verifier rebuilds the base from
-/// the request's own `Signature-Input` (its covered components and its
-/// `@signature-params`, which carry the nonce) and re-derives the digest. Nothing is
-/// taken from the acknowledgement's own claims, and nothing couples to the TEXTUAL
-/// `Signature-Input` value — RFC 9421 §7.3.7 makes covering the request's `Signature`
-/// NOT RECOMMENDED, and this reaches the same instance identity without doing so.
-fn request_evidence_of(request: &HttpRequest) -> Result<RequestRoleEvidence, HttpProfileError> {
-    let parsed =
-        parse_signature_input_for(&request.headers, REQUEST_LABEL, "request signature-input")?;
-    let base = signature_base(
-        &parsed.components,
-        &parsed.params,
-        &SourceMessage::Request(request),
-    )?;
-    Ok(RequestRoleEvidence::from_signature_base(&base))
-}
-
 /// The covered request-evidence header value for `request`.
 fn request_evidence_header(request: &HttpRequest) -> Result<(String, String), HttpProfileError> {
     Ok((
         MCP_RE_REQUEST_EVIDENCE_HEADER.to_owned(),
-        request_evidence_of(request)?.digest_value().to_owned(),
+        RequestRoleEvidence::of_signed_request(request)?
+            .digest_value()
+            .to_owned(),
     ))
 }
 
@@ -196,7 +174,7 @@ fn check_request_evidence(
     let claimed = single_header(response_headers, MCP_RE_REQUEST_EVIDENCE_HEADER)?.ok_or(
         HttpProfileError::MissingEvidence("response request-evidence"),
     )?;
-    let derived = request_evidence_of(request)?;
+    let derived = RequestRoleEvidence::of_signed_request(request)?;
     if claimed != derived.digest_value() {
         // The existing "this response does not bind to that request" verdict — no new
         // wire token for what is the same class of failure.
@@ -219,14 +197,14 @@ fn check_request_evidence(
 ///
 /// Refuses before signing if the notification carries a request evidence block that does
 /// not validate, as every `;req`-bound signer does.
-pub fn sign_delegated_accepted_202_with_owned_key(
+///
+/// Crate-private: [`crate::custody::sign_delegated_accepted_202`] is the public path, and
+/// `signer` is read from one [`SigningWindow`](crate::custody::SigningWindow).
+pub(crate) fn emit_delegated_accepted_202(
     request: &HttpRequest,
-    server_delegation: &str,
-    delegated_key: &mcp_re_core::SigningKey,
-    delegated_kid: &str,
-    created: i64,
-    expires: i64,
+    signer: &crate::custody::DelegatedSigner<'_>,
 ) -> Result<HttpResponse, HttpProfileError> {
+    let server_delegation = signer.credential();
     crate::sign::validate_carried_request_block(&request.body)?;
     if server_delegation.len() > crate::ids::MAX_DELEGATION_HEADER_LEN {
         return Err(HttpProfileError::MalformedEvidence(
@@ -257,7 +235,7 @@ pub fn sign_delegated_accepted_202_with_owned_key(
             .iter()
             .map(|n| CoveredComponent::req(n)),
     );
-    let params = params_for(delegated_kid, created, expires, None);
+    let params = params_for(signer.kid(), signer.created(), signer.expires(), None);
     let base = signature_base(
         &components,
         &params,
@@ -272,7 +250,7 @@ pub fn sign_delegated_accepted_202_with_owned_key(
         &components,
         &params,
         &base,
-        delegated_key,
+        signer.key(),
     )?;
     Ok(response)
 }
@@ -388,4 +366,37 @@ pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
     // shape was exempt.
     policy.mcp_transport().enforce_bodyless(request)?;
     Ok((actor, RequestRoleEvidence::from_signature_base(&base)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One signed request, fed to the bodyless acknowledgement's header projection and to
+    /// the bound-response derivation, yields one handle, and it is the signer's.
+    #[test]
+    fn the_acknowledgement_and_the_bound_response_derive_one_handle() {
+        let mut request = HttpRequest {
+            method: "POST".to_owned(),
+            target_uri: "https://mcp.example.com/mcp".to_owned(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
+        let signed = sign_bodyless_request(
+            &mut request,
+            &mcp_re_core::SigningKey::from_seed_bytes(&[13u8; 32]),
+            "client-key-1",
+            1_700_000_000,
+            1_700_000_300,
+            &mcp_re_test_paths::unique_test_nonce(),
+        )
+        .expect("the fixture request signs");
+        let (name, acknowledged) =
+            request_evidence_header(&request).expect("the acknowledgement header derives");
+        let bound = RequestRoleEvidence::of_signed_request(&request)
+            .expect("the bound-response handle derives");
+        assert_eq!(name, MCP_RE_REQUEST_EVIDENCE_HEADER);
+        assert_eq!(acknowledged, bound.digest_value());
+        assert_eq!(bound, signed);
+    }
 }

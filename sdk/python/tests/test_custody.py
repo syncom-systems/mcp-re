@@ -152,6 +152,21 @@ class TestDeviceFailsClosed:
         with pytest.raises(SignerUnavailable):
             signer.sign_request(**ARGS)
 
+    def test_the_native_seam_does_not_report_a_device_failure_as_a_wire_code(self):
+        """A direct caller of the native module learns the device failed, not a peer.
+
+        A callback that raises means nothing was signed and nothing was sent, so no
+        `mcp-re.*` code describes it; the native error says so in its type.
+        """
+        from mcp_re_sdk import _core
+
+        with pytest.raises(ValueError) as ei:
+            _core.sign_request_with_signer(self._raise, KEY_ID, **ARGS)
+        assert "mcp-re.invalid_signature" not in str(ei.value)
+        assert getattr(ei.value, "wire_code", None) is None
+        assert isinstance(ei.value, _core.SigningDeviceFailure)
+        assert isinstance(ei.value.__cause__, RuntimeError)
+
     def test_a_core_failure_is_not_blamed_on_the_device(self):
         """The guard must not swallow genuine protocol errors.
 
