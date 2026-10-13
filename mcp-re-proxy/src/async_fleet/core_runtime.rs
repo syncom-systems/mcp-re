@@ -19,12 +19,12 @@
 //! and an event loop, so a core the operating system declines must not leave the fleet
 //! reporting a successful bind with one fewer server behind it.
 
-use super::shard_depth::DelegatedTlsDepthRefusal;
-use super::shard_depth::ShardDepth;
+use std::num::NonZeroUsize;
+
 use crate::config_state::PrivateKeyExposure;
 
 /// Worker threads a core is given when the TLS handshake signature can block and the
-/// operator stated no depth of their own.
+/// resolved depth is a single worker.
 ///
 /// Sized so a handful of concurrent stalled handshakes still leaves the core serving.
 /// It is not a throughput knob: on the exported-key path the runtime stays
@@ -95,24 +95,21 @@ impl CorePool {
     /// this core was actually built with rather than of a constant that never saw the depth:
     /// a two-worker core admits one handshake, not two.
     ///
-    /// FOUR CASES, and the depth's PROVENANCE decides between two of them. A depth of 1 is
-    /// where an operator's request and the host's answer to `auto` mean different things,
-    /// and [`ShardDepth`] is what keeps them apart:
+    /// THREE CASES:
     ///
     /// | custody | depth | outcome |
     /// |---|---|---|
-    /// | exported key | stated 1 | the share-nothing current-thread runtime, as asked |
-    /// | delegated | **stated 1** | **refused** — [`DelegatedTlsDepthRefusal`] |
-    /// | delegated | derived (auto) | the safe depth is derived: `DELEGATED_TLS_WORKERS_PER_CORE` |
-    /// | delegated | stated >= 2 | honoured exactly, and the bound follows the built depth |
+    /// | exported key | 1 | the share-nothing current-thread runtime |
+    /// | delegated | 1 | the safe depth: `DELEGATED_TLS_WORKERS_PER_CORE` |
+    /// | either | >= 2 | honoured exactly, and under delegated custody the bound follows it |
     ///
-    /// The refusal is the case with no safe shape. Serving a stated 1 under a blocking
-    /// signer exposes the measured starvation; raising it to a pool serves a topology the
-    /// operator was explicit about not wanting. Overriding a DERIVED 1 is neither — it
-    /// fills in for a number nobody chose, which is what `auto` asks for.
-    ///
-    /// There is no acknowledgement flag. A deployment that wants the single-threaded
-    /// runtime changes its custody, and one that wants delegated custody states a depth.
+    /// A blocking signature is never served on a current-thread runtime, whatever depth
+    /// arrives. An OPERATOR who stated a single worker under delegated custody never reaches
+    /// this function: layer A refuses that pair (relation X10 in
+    /// [`crate::config_state::cross_machine`]), because serving it as asked exposes the
+    /// starvation and widening it serves a topology the operator was explicit about not
+    /// wanting. A depth of 1 that does arrive here under delegated custody is the host's
+    /// answer to `auto`, and raising it fills in for a number nobody chose.
     ///
     /// The share-nothing default is unchanged for the exported-key path, where signing is
     /// in-memory and never blocks. A configured pool depth gives the shard a work-stealing
@@ -122,16 +119,8 @@ impl CorePool {
     /// The custody is the served snapshot's
     /// ([`ServerConfigSnapshot::key_exposure`](crate::config_snapshot::ServerConfigSnapshot::key_exposure)),
     /// so the shape is decided by the key the handshakes will actually sign with.
-    pub fn for_core(
-        workers_per_shard: ShardDepth,
-        key_exposure: PrivateKeyExposure,
-    ) -> Result<Self, DelegatedTlsDepthRefusal> {
+    pub fn for_core(workers_per_shard: NonZeroUsize, key_exposure: PrivateKeyExposure) -> Self {
         let tls_signing_may_block = key_exposure == PrivateKeyExposure::NonExporting;
-        let stated_single_thread =
-            workers_per_shard.is_operator_stated() && workers_per_shard.get() <= 1;
-        if tls_signing_may_block && stated_single_thread {
-            return Err(DelegatedTlsDepthRefusal);
-        }
         let workers = if workers_per_shard.get() > 1 {
             Some(workers_per_shard.get())
         } else if tls_signing_may_block {
@@ -140,7 +129,7 @@ impl CorePool {
             None
         };
         // `saturating_sub` is the honest algebra AND the true one: the leftover worker is
-        // what is being computed, and on this arm `depth >= 2` (a stated depth reaches it
+        // what is being computed, and on this arm `depth >= 2` (a resolved depth reaches it
         // only when it exceeds 1, and the override is 4), so nothing saturates.
         let handshakes = match workers {
             Some(depth) if tls_signing_may_block => Some(
@@ -150,10 +139,24 @@ impl CorePool {
             ),
             _ => None,
         };
-        Ok(CorePool {
+        CorePool {
             workers,
             handshakes,
-        })
+        }
+    }
+
+    /// The startup line for a core shaped around a blocking handshake signer; `None` where
+    /// the signature is in-memory and the core runs the share-nothing default.
+    pub(super) fn startup_line(&self) -> Option<String> {
+        let workers = self.workers?;
+        let handshakes = self.handshakes?;
+        Some(format!(
+            "mcp-re-proxy: TLS custody = DELEGATED: the handshake signature is a blocking \
+             KMS/PKCS#11 call inside rustls' synchronous signer, so each core serves on a \
+             pool of {workers} workers admitting {handshakes} concurrent handshake \
+             signature(s) rather than the single-threaded share-nothing default. A stalled \
+             signer then costs one worker instead of a whole core."
+        ))
     }
 
     /// The pool depth this core runs; `None` for the share-nothing current-thread runtime.
@@ -206,70 +209,40 @@ mod tests {
         }
     }
 
-    fn pool(depth: ShardDepth, may_block: bool) -> CorePool {
-        CorePool::for_core(depth, custody(may_block)).expect("a shape this deployment has")
+    fn depth(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).expect("a test depth is at least one worker")
+    }
+
+    fn pool(workers: usize, may_block: bool) -> CorePool {
+        CorePool::for_core(depth(workers), custody(may_block))
     }
 
     // ------------------------------------------------------------------
-    // Owner Ruling 7 — the four cases, one control each.
+    // The three cases, one control each.
     // ------------------------------------------------------------------
 
-    /// CASE 1 — exported key + stated 1. The operator asked for the single-threaded
-    /// share-nothing runtime and the signature is in-memory, so there is nothing to
-    /// protect them from: they get exactly what they asked for.
+    /// CASE 1 — exported key on one worker. The signature is in-memory, so there is nothing
+    /// to protect the core from: it gets the share-nothing current-thread runtime.
     #[test]
     fn a_share_nothing_core_has_no_pool_and_no_handshake_bound() {
-        let pool = pool(ShardDepth::stated(1), false);
+        let pool = pool(1, false);
         assert_eq!(pool.worker_threads(), None);
         assert_eq!(pool.handshake_bound().permits(), None);
+        assert_eq!(pool.startup_line(), None);
     }
 
-    /// CASE 2 — delegated custody + stated 1. THE REFUSAL. Serving it exposes the measured
-    /// unauthenticated handshake starvation, and widening it silently substitutes a
-    /// topology for the one the operator was most explicit about.
-    ///
-    /// LOAD-BEARING: this is the case the whole slice exists for. Before it, the stated 1
-    /// was overridden to four workers and nothing told the operator.
+    /// CASE 2 — delegated custody on one worker. A blocking signature on a current-thread
+    /// runtime freezes the core, so the safe depth is used. Only a host-derived 1 reaches
+    /// this case in production — an operator-stated 1 under delegated custody is refused
+    /// at configuration — and a single-cpu host derives exactly that.
     #[test]
-    fn delegated_custody_with_a_stated_single_thread_is_refused() {
-        assert!(matches!(
-            CorePool::for_core(ShardDepth::stated(1), custody(true)),
-            Err(DelegatedTlsDepthRefusal)
-        ));
-        // A stated 0 is the same request written the other way and is refused identically:
-        // the resolver never produces it, and a caller that hand-built one must not find a
-        // gap where the refusal is not.
-        assert!(matches!(
-            CorePool::for_core(ShardDepth::stated(0), custody(true)),
-            Err(DelegatedTlsDepthRefusal)
-        ));
+    fn delegated_custody_on_one_worker_gets_the_safe_depth() {
+        let pool = pool(1, true);
+        assert_eq!(pool.worker_threads(), Some(DELEGATED_TLS_WORKERS_PER_CORE));
+        assert!(pool.handshake_bound().permits().is_some());
     }
 
-    /// CASE 3 — delegated custody + a DERIVED depth. `auto` is the operator declining to
-    /// choose, so filling in the safe depth is answering the question they asked rather
-    /// than overriding one they answered. A single-cpu host derives 1, which is exactly
-    /// where this matters.
-    #[test]
-    fn delegated_custody_over_a_derived_depth_derives_the_safe_one() {
-        for derived in 1..=16 {
-            let pool = pool(ShardDepth::derived(derived), true);
-            let built = pool
-                .worker_threads()
-                .expect("a blocking signature is never served on a current-thread runtime");
-            assert!(built >= 2, "derived={derived}: built a pool of {built}");
-            assert!(
-                pool.handshake_bound().permits().is_some(),
-                "derived={derived}: a pool without a bound is not a bound"
-            );
-        }
-        // The specific case the refusal's sibling covers: a host that can only derive 1.
-        assert_eq!(
-            pool(ShardDepth::derived(1), true).worker_threads(),
-            Some(DELEGATED_TLS_WORKERS_PER_CORE)
-        );
-    }
-
-    /// CASE 4 — delegated custody + a stated depth of 2 or more. Honoured EXACTLY, and the
+    /// CASE 3 — delegated custody + a depth of 2 or more. Honoured EXACTLY, and the
     /// handshake admission is derived from that depth rather than from a constant.
     ///
     /// R12-648 is the defect inside this case: a two-worker core admitted two concurrent
@@ -277,45 +250,36 @@ mod tests {
     /// credential. A constant cannot see the depth, so it cannot leave a worker spare.
     #[test]
     fn the_bound_follows_the_built_depth_and_is_capped_by_the_ceiling() {
-        for stated in 2..=64 {
-            let pool = pool(ShardDepth::stated(stated), true);
+        for workers in 2..=64 {
+            let pool = pool(workers, true);
             assert_eq!(
                 pool.worker_threads(),
-                Some(stated),
-                "an operator's depth is used as stated"
+                Some(workers),
+                "a resolved depth of two or more is used as resolved"
             );
             let permits = pool
                 .handshake_bound()
                 .permits()
                 .expect("a blocking signature is always bounded");
             assert!(
-                permits < stated,
-                "stated={stated}: {permits} handshakes on {stated} workers leaves none \
+                permits < workers,
+                "workers={workers}: {permits} handshakes on {workers} workers leaves none \
                  for the accept loop"
             );
             assert!(
                 permits >= 1,
-                "stated={stated}: a bound of zero refuses everything"
+                "workers={workers}: a bound of zero refuses everything"
             );
         }
         // The ceiling, from both sides: two workers admit ONE, and past the ceiling the
         // bound stops rising — more workers is not more blocking work.
+        assert_eq!(pool(2, true).handshake_bound().permits(), Some(1));
         assert_eq!(
-            pool(ShardDepth::stated(2), true)
-                .handshake_bound()
-                .permits(),
-            Some(1)
-        );
-        assert_eq!(
-            pool(ShardDepth::stated(3), true)
-                .handshake_bound()
-                .permits(),
+            pool(3, true).handshake_bound().permits(),
             Some(DELEGATED_TLS_HANDSHAKES_PER_CORE)
         );
         assert_eq!(
-            pool(ShardDepth::stated(64), true)
-                .handshake_bound()
-                .permits(),
+            pool(64, true).handshake_bound().permits(),
             Some(DELEGATED_TLS_HANDSHAKES_PER_CORE)
         );
     }
@@ -328,40 +292,39 @@ mod tests {
     /// would cost throughput to defend against a signature that cannot block.
     #[test]
     fn a_pool_without_delegated_tls_bounds_no_handshakes() {
-        let pool = pool(ShardDepth::stated(8), false);
+        let pool = pool(8, false);
         assert_eq!(pool.worker_threads(), Some(8));
         assert_eq!(pool.handshake_bound().permits(), None);
     }
 
-    /// THE REFUSAL FIRES ON THE PAIR, not on either half. An exported key with a stated 1
-    /// is admitted and a delegated custody with a derived 1 is admitted; only their
-    /// conjunction is refused — which is what keeps this from being a depth policy that
-    /// happens to mention custody.
-    #[test]
-    fn neither_half_of_the_refused_pair_refuses_on_its_own() {
-        assert!(CorePool::for_core(ShardDepth::stated(1), custody(false)).is_ok());
-        assert!(CorePool::for_core(ShardDepth::derived(1), custody(true)).is_ok());
-        assert!(CorePool::for_core(ShardDepth::stated(1), custody(true)).is_err());
-    }
-
-    /// A delegated-TLS core that IS admitted always gets a pool and always gets a bound —
+    /// A delegated-TLS core always gets a pool and always gets a bound, at every depth —
     /// an override that failed to fire would leave a current-thread runtime one signature
     /// can freeze, and a pool without a bound is not a bound.
     #[test]
     fn a_delegated_tls_core_is_always_pooled_and_always_bounded() {
-        let admitted = (0..=16)
-            .map(ShardDepth::derived)
-            .chain((2..=16).map(ShardDepth::stated));
-        for depth in admitted {
-            let pool = pool(depth, true);
+        for workers in 1..=16 {
+            let pool = pool(workers, true);
             assert!(
                 pool.worker_threads().is_some(),
-                "{depth:?}: a blocking signature on a current-thread runtime freezes the core"
+                "{workers}: a blocking signature on a current-thread runtime freezes the core"
             );
             assert!(
                 pool.handshake_bound().permits().is_some(),
-                "{depth:?}: a pool without a bound is not a bound"
+                "{workers}: a pool without a bound is not a bound"
             );
         }
+    }
+
+    /// The fleet's startup line states the shape it built: the pool and the bound it was
+    /// actually given, not a restatement of the rule that chose them.
+    #[test]
+    fn the_startup_line_names_the_built_pool_and_bound() {
+        let line = pool(3, true)
+            .startup_line()
+            .expect("a delegated-TLS core announces its pool");
+        assert!(line.contains("DELEGATED"), "{line}");
+        assert!(line.contains("pool of 3 workers"), "{line}");
+        assert!(line.contains("admitting 2 concurrent"), "{line}");
+        assert_eq!(pool(8, false).startup_line(), None);
     }
 }

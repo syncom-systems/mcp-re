@@ -48,7 +48,7 @@ pub(crate) fn raised_to_fleet_ceiling(
 #[cfg(test)]
 mod tests {
     use super::raised_to_fleet_ceiling;
-    use crate::async_fleet::{ResolvedTopology, ShardDepth};
+    use crate::async_fleet::ResolvedTopology;
     use crate::config_state::InFlightLimitBasis;
     use crate::http_inner::{HttpInnerPool, DEFAULT_MAX_IN_FLIGHT};
 
@@ -66,7 +66,7 @@ mod tests {
 
     /// A four-core deployment, independent of the host's CPU count.
     fn four_cores() -> ResolvedTopology {
-        ResolvedTopology::for_test(4, ShardDepth::stated(1))
+        ResolvedTopology::for_test(4, 1)
     }
 
     #[test]

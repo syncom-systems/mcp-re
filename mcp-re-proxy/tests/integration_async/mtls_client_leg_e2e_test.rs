@@ -366,10 +366,9 @@ fn spawn_server(server_ca: &Ca, client_ca: &Ca) -> RunningServer {
             // The handshake bound comes from the pool that built this runtime (2 workers),
             // never from a constant that never saw the depth.
             let handshake_bound = mcp_re_proxy::async_fleet::CorePool::for_core(
-                mcp_re_proxy::async_fleet::ShardDepth::stated(2),
+                std::num::NonZeroUsize::new(2).expect("a non-zero depth"),
                 snapshot.key_exposure(),
             )
-            .expect("a stated depth above one is a shape every custody has")
             .handshake_bound();
             async_serve::serve(
                 listener,

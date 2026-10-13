@@ -57,20 +57,18 @@ use std::thread::JoinHandle;
 
 use crate::async_serve::serve;
 use crate::async_serve::AsyncRequestHandler;
+use crate::config_snapshot::ServerConfigSnapshot;
 use crate::config_state::InFlightLimitBasis;
 use crate::tls::ServerOptions;
 
 mod core_runtime;
 mod resolved_topology;
 mod reuseport;
-mod shard_depth;
 
 pub use core_runtime::CorePool;
 pub use core_runtime::HandshakeBound;
 pub use resolved_topology::ResolvedTopology;
 use reuseport::reuseport_listener;
-pub use shard_depth::DelegatedTlsDepthRefusal;
-pub use shard_depth::ShardDepth;
 
 /// The `listen(2)` backlog for each per-core `SO_REUSEPORT` listener. A generous
 /// default: the kernel bounds it to `net.core.somaxconn` anyway, and admission
@@ -140,6 +138,11 @@ impl Fleet {
     }
 }
 
+/// One core's shape: the resolved depth, under the custody of the snapshot's signing key.
+fn core_pool(topology: &ResolvedTopology, config: &ServerConfigSnapshot) -> CorePool {
+    CorePool::for_core(topology.depth(), config.key_exposure())
+}
+
 /// Start a per-core serving fleet.
 ///
 /// Binds one `SO_REUSEPORT` listener per resolved shard on one shared port,
@@ -175,15 +178,11 @@ where
     // global semaphore.
     let options = with_per_core_ceiling(options, cfg.in_flight.per_core_ceiling(shards));
 
-    // The per-core runtime shape and the blocking-handshake bound that shape supports,
-    // decided once from the resolved depth and this deployment's signing custody. Every
-    // core of a fleet is the same shape, so the decision is taken here and not per core.
-    // BEFORE THE FIRST BIND and before any runtime is built (Owner Ruling 7). That
-    // `serve_fleet` fails only before a listener exists is what `materialized_runtime` reads
-    // to decide which lifecycle events happened, so a refusal after this line would not just
-    // be worse advice — it would be a false event.
-    let pool = CorePool::for_core(cfg.topology.depth(), config.key_exposure())
-        .map_err(|refusal| std::io::Error::new(std::io::ErrorKind::InvalidInput, refusal))?;
+    // Every core of a fleet is the same shape, so it is decided once, and stated.
+    let pool = core_pool(&cfg.topology, &config);
+    if let Some(line) = pool.startup_line() {
+        eprintln!("{line}");
+    }
     let handshake_bound = pool.handshake_bound();
 
     // Bind the first listener to resolve the concrete port (cfg.addr may be `:0`),
@@ -372,14 +371,14 @@ fn online_cpu_count() -> usize {
 }
 
 #[cfg(test)]
-mod refusal_order_tests {
+mod snapshot_custody_tests {
     use super::*;
     use rustls::crypto::ring;
     use rustls::pki_types::PrivateKeyDer;
     use rustls::pki_types::PrivatePkcs8KeyDer;
 
-    /// A self-signed server-only config built in-process. The fleet never reaches a
-    /// handshake in these tests — it exists because `serve_fleet` takes a snapshot.
+    /// A self-signed server-only config built in-process. Nothing here performs a
+    /// handshake — it exists because the core's shape is read from a snapshot.
     fn dummy_snapshot(
         key_exposure: crate::config_state::PrivateKeyExposure,
     ) -> Arc<crate::config_snapshot::ServerConfigSnapshot> {
@@ -400,88 +399,32 @@ mod refusal_order_tests {
         ))
     }
 
-    /// An address no host can bind, so a run that reaches the listener loop FAILS THERE
-    /// with an OS error. That is what makes the ordering observable: the two failures are
-    /// distinguishable, and only one of them can come first.
-    const UNBINDABLE: &str = "240.0.0.1:1";
-
-    /// Serve one shard at `workers_per_shard` (`0` = auto) through the production resolver,
-    /// so whose depth it is comes from `ResolvedTopology` exactly as at startup.
-    fn start(workers_per_shard: usize, tls_signing_may_block: bool) -> std::io::Error {
+    /// One shard of one worker, the depth a single-cpu host derives.
+    fn single_worker() -> ResolvedTopology {
         let mut request = crate::config_state::test_support::legal_config();
         request.cores = 1;
-        request.workers_per_shard = workers_per_shard;
-        let topology =
-            ResolvedTopology::resolve(crate::config_state::topology::classify(&request).1);
-        let options = Arc::new(ServerOptions::new(
-            crate::config_state::ClientCredentialWindow::new(
-                std::time::Duration::from_secs(3600),
-                std::time::Duration::from_secs(300),
-            )
-            .expect("a legal credential window"),
-        ));
-        let custody = if tls_signing_may_block {
-            crate::config_state::PrivateKeyExposure::NonExporting
-        } else {
-            crate::config_state::PrivateKeyExposure::ProcessReadable
-        };
-        serve_fleet(
-            FleetConfig {
-                addr: UNBINDABLE.parse().expect("a literal address"),
-                topology,
-                listen_backlog: DEFAULT_LISTEN_BACKLOG,
-                in_flight: InFlightLimitBasis::PerCore {
-                    requests: std::num::NonZeroUsize::MIN,
-                },
-            },
-            dummy_snapshot(custody),
-            options,
-            |_core| {
-                Arc::new(|_req: crate::async_serve::ServedHttpRequest| -> crate::async_serve::HandlerResponseFuture {
-                    unreachable!("no connection is ever accepted in these tests")
-                })
-            },
-            Arc::new(AtomicBool::new(true)),
-        )
-        .err()
-        .expect("an unbindable address never serves")
+        request.workers_per_shard = 1;
+        ResolvedTopology::resolve(crate::config_state::topology::classify(&request).1)
     }
 
-    /// OWNER RULING 7, END TO END: the refused pair is refused BEFORE the serving fleet is
-    /// established.
-    ///
-    /// LOAD-BEARING, and the reason the address is unbindable: if the listener loop ran
-    /// first this call would still fail, just for the other reason. Asserting only that it
-    /// fails would pass on the defect. What is asserted is WHICH failure came back —
-    /// `InvalidInput` naming the flag, not the OS refusing the address.
+    /// THE SERVED SNAPSHOT'S CUSTODY decides the core's shape. The same one-worker topology
+    /// is a share-nothing core over an exported key and a bounded pool over a delegated
+    /// one, so a delegated snapshot is never served on a runtime shaped for an in-memory key.
     #[test]
-    fn the_delegated_tls_depth_refusal_precedes_the_first_bind() {
-        let refusal = start(1, true);
-        assert_eq!(
-            refusal.kind(),
-            std::io::ErrorKind::InvalidInput,
-            "a configuration refusal, not an OS failure: {refusal}"
+    fn the_core_shape_follows_the_served_snapshots_custody() {
+        let delegated = core_pool(
+            &single_worker(),
+            &dummy_snapshot(crate::config_state::PrivateKeyExposure::NonExporting),
         );
-        let text = refusal.to_string();
-        assert!(text.contains("--workers-per-shard"), "{text}");
-        assert!(text.contains("DELEGATED"), "{text}");
-    }
+        assert!(delegated.handshake_bound().permits().is_some());
+        assert!(delegated.startup_line().is_some());
 
-    /// THE CONTROL THAT MAKES THE ONE ABOVE MEAN SOMETHING: the same unbindable address
-    /// under an ADMITTED configuration gets the OS failure, because the run reaches the
-    /// listener loop. Without this, a `serve_fleet` that refused every configuration would
-    /// satisfy the test above.
-    #[test]
-    fn an_admitted_configuration_reaches_the_listener_and_fails_there() {
-        for (workers, may_block) in [(1, false), (2, true), (0, true)] {
-            let failure = start(workers, may_block);
-            assert_ne!(
-                failure.kind(),
-                std::io::ErrorKind::InvalidInput,
-                "{workers}/{may_block}: this configuration has a safe shape and must reach \
-                 the bind: {failure}"
-            );
-        }
+        let exported = core_pool(
+            &single_worker(),
+            &dummy_snapshot(crate::config_state::PrivateKeyExposure::ProcessReadable),
+        );
+        assert!(exported.handshake_bound().permits().is_none());
+        assert!(exported.startup_line().is_none());
     }
 }
 

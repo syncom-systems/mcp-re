@@ -149,10 +149,9 @@ mod tests {
         // its accept loop, its established connections and its in-flight requests.
         let options = ServerOptions::new(window());
         let pool = crate::async_fleet::CorePool::for_core(
-            crate::async_fleet::ShardDepth::stated(2),
+            std::num::NonZeroUsize::MIN.saturating_add(1),
             crate::config_state::PrivateKeyExposure::NonExporting,
-        )
-        .expect("a stated depth of two is a shape delegated custody has");
+        );
         let admission = CoreAdmission::for_core(&options, pool.handshake_bound());
         let handshakes = admission
             .handshakes
@@ -168,10 +167,9 @@ mod tests {
         // no control, and the bound is not free — it costs a handshake round of
         // concurrency wherever it applies.
         let pool = crate::async_fleet::CorePool::for_core(
-            crate::async_fleet::ShardDepth::stated(2),
+            std::num::NonZeroUsize::MIN.saturating_add(1),
             crate::config_state::PrivateKeyExposure::ProcessReadable,
-        )
-        .expect("an exported key admits every depth");
+        );
         let admission = CoreAdmission::for_core(&options, pool.handshake_bound());
         assert!(
             admission.handshakes.is_none(),
