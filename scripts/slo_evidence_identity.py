@@ -534,8 +534,8 @@ def class_defects() -> list[str]:
 def trigger_defects(text: str | None = None) -> list[str]:
     """Declared surface inputs the SLO workflow's `paths:` filters do not cover.
 
-    The GitHub path-matching semantics come from `verification_trigger_gate.py` rather than
-    from a second copy here: `**` crosses a separator and `*` does not, and two
+    The workflow and GitHub's path-matching semantics are read by `workflow_reader.py`
+    rather than a second copy here: `**` crosses a separator and `*` does not, and two
     implementations of that rule are two chances to accept a filter narrower than GitHub
     actually applies. Imported inside the function so that the ordinary identity commands
     stay dependency-free.
@@ -547,11 +547,17 @@ def trigger_defects(text: str | None = None) -> list[str]:
             ]
         text = WORKFLOW.read_text(encoding="utf-8")
     sys.path.insert(0, str(REPO / "scripts"))
-    from verification_trigger_gate import glob_matches, trigger_paths  # noqa: PLC0415
+    from workflow_reader import glob_matches, parse  # noqa: PLC0415
 
-    triggers = trigger_paths(text)
+    read = parse(text).triggers
+    triggers = {name: list(trigger.paths or ()) for name, trigger in read.items()}
     inputs = [str(path.relative_to(REPO)) for path in declared_inputs()]
-    found: list[str] = []
+    found: list[str] = [
+        f"{name}: filters with `paths-ignore:`, which names what does NOT start the lane; "
+        "coverage of the declared surface cannot be read from it"
+        for name, trigger in sorted(read.items())
+        if trigger.paths_ignore is not None
+    ]
 
     # Every FILTERED trigger must cover the surface. A trigger that is absent is not a
     # defect — the lane is dispatched, and `--decide` answers by content what a filter
@@ -667,7 +673,7 @@ def selftest() -> int:
     # coverage check that passes on every input it is handed reports OK for having compared
     # nothing. Run against the real matcher with a filter that covers one input only.
     sys.path.insert(0, str(REPO / "scripts"))
-    from verification_trigger_gate import glob_matches  # noqa: PLC0415
+    from workflow_reader import glob_matches  # noqa: PLC0415
 
     assert glob_matches("mcp-re-proxy/src/**", "mcp-re-proxy/src/app.rs"), "`**` stopped matching"
     assert not glob_matches("mcp-re-proxy/*", "mcp-re-proxy/src/app.rs"), "`*` crossed a separator"

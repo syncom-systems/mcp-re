@@ -45,65 +45,45 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-#: Workflows whose jobs may target the self-hosted runner. Read from the tree rather than
-#: listed, so a new workflow is covered the day it is added.
-WORKFLOW_DIR = Path(".github") / "workflows"
+from workflow_reader import workflows  # noqa: E402
 
-#: The runner label set that identifies the machine this contract is about. A GitHub-hosted
+#: The runner label that identifies the machine this contract is about. A GitHub-hosted
 #: Linux runner has no keychain and a working default socket, so `docker login` there is
-#: correct and must not be flagged; no workflow here does one any more, and the pattern
-#: stays scoped so that adding a GitHub-hosted job that legitimately logs in does not
-#: trip a contract about this Mac.
-SELF_HOSTED = re.compile(r"runs-on:\s*\[\s*self-hosted[^\]]*\]")
+#: correct and must not be flagged; no workflow here does one any more, and the rule stays
+#: scoped so that adding a GitHub-hosted job that legitimately logs in does not trip a
+#: contract about this Mac.
+SELF_HOSTED = "self-hosted"
 
-_JOB = re.compile(r"^  (?P<name>[A-Za-z0-9_-]+):\s*$")
-#: `docker login` ANYWHERE on an executable line. The first form of this pattern anchored
-#: at the start of the line and so matched only a block scalar's body — a mutation probe
-#: against the real workflow then walked straight past `run: docker login …` on one line.
-#: A gate whose rule is narrower than the thing it forbids is a gate that reports nothing.
+#: `docker login` anywhere in a command. The first form of this rule anchored at the start
+#: of a line and so matched only a block scalar's body — a mutation probe against the real
+#: workflow then walked straight past `run: docker login …` on one line. A gate whose rule
+#: is narrower than the thing it forbids is a gate that reports nothing.
 _DOCKER_LOGIN = re.compile(r"\bdocker\s+login\b")
-
-
-def jobs(text: str) -> dict[str, list[str]]:
-    """Each top-level job's body, by name. Two-space indent is the workflow's own shape."""
-    out: dict[str, list[str]] = {}
-    current = ""
-    for line in text.splitlines():
-        match = _JOB.match(line)
-        if match and not line.startswith("    "):
-            current = match.group("name")
-            out[current] = []
-        elif current:
-            out[current].append(line)
-    return out
+#: The action that runs the same login for a step.
+_LOGIN_ACTION = "docker/login-action"
 
 
 def findings(root: Path) -> list[str]:
     """Every self-hosted job that breaks the contract, with the reason."""
     out: list[str] = []
-    for path in sorted((root / WORKFLOW_DIR).glob("*.yml")):
-        text = path.read_text(encoding="utf-8")
-        for name, body_lines in jobs(text).items():
-            body = "\n".join(body_lines)
-            if not SELF_HOSTED.search(body):
+    for workflow in workflows(root):
+        for name, job in workflow.jobs.items():
+            if SELF_HOSTED not in job.runs_on:
                 continue
-
-            # Comments explain WHY the contract exists and must not trip it. Only an
-            # executable line counts — the same distinction `slo_invocation_gate` draws
+            # Comments explain WHY the contract exists and must not trip it: the reader
+            # gives commands without them, the same distinction `slo_invocation_gate` draws
             # between an invocation and a paragraph warning about one.
-            code = [
-                line
-                for line in body_lines
-                if not line.lstrip().startswith("#") and line.strip()
-            ]
-            if any(_DOCKER_LOGIN.search(line) for line in code):
+            logs_in = any(
+                _DOCKER_LOGIN.search(command.executed) for command in job.commands()
+            ) or any((step.uses or "").startswith(_LOGIN_ACTION) for step in job.steps)
+            if logs_in:
                 out.append(
-                    f"{path.relative_to(root)}: job `{name}` runs on a self-hosted runner "
-                    f"and calls `docker login`. It cannot persist a credential there — the "
-                    f"macOS keychain refuses a background service (-25308) — and an "
-                    f"isolated DOCKER_CONFIG does not avoid it, because the CLI detects "
-                    f"`osxkeychain` whenever the helper is on PATH. The extraction image is "
-                    f"built where it is consumed and needs no registry at all."
+                    f"{Path(workflow.path).relative_to(root)}: job `{name}` runs on a "
+                    f"self-hosted runner and calls `docker login`. It cannot persist a "
+                    f"credential there — the macOS keychain refuses a background service "
+                    f"(-25308) — and an isolated DOCKER_CONFIG does not avoid it, because the "
+                    f"CLI detects `osxkeychain` whenever the helper is on PATH. The extraction "
+                    f"image is built where it is consumed and needs no registry at all."
                 )
     return out
 
@@ -129,8 +109,8 @@ def selftest() -> int:
     """
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        (root / WORKFLOW_DIR).mkdir(parents=True)
-        target = root / WORKFLOW_DIR / "probe.yml"
+        (root / ".github" / "workflows").mkdir(parents=True)
+        target = root / ".github" / "workflows" / "probe.yml"
 
         target.write_text(_workflow(login=True), encoding="utf-8")
         got = findings(root)
@@ -158,6 +138,36 @@ def selftest() -> int:
         )
         if len(findings(root)) != 1:
             print("SELFTEST FAILED: an inline `run: docker login` was not caught")
+            return 1
+
+        # The action form of the same login.
+        target.write_text(
+            "jobs:\n  extraction:\n    runs-on: [self-hosted, macOS, ARM64]\n    steps:\n"
+            "      - uses: docker/login-action@v3\n",
+            encoding="utf-8",
+        )
+        if len(findings(root)) != 1:
+            print("SELFTEST FAILED: a docker/login-action step was not caught")
+            return 1
+
+        # A login fed by a pipe from `echo`: the command prints AND logs in.
+        target.write_text(
+            "jobs:\n  extraction:\n    runs-on: [self-hosted, macOS, ARM64]\n    steps:\n"
+            "      - name: piped\n        run: echo \"$T\" | docker login ghcr.io -u u --password-stdin\n",
+            encoding="utf-8",
+        )
+        if len(findings(root)) != 1:
+            print("SELFTEST FAILED: a `docker login` piped from `echo` was not caught")
+            return 1
+
+        # A usage line that names the login runs nothing.
+        target.write_text(
+            "jobs:\n  extraction:\n    runs-on: [self-hosted, macOS, ARM64]\n    steps:\n"
+            "      - name: usage\n        run: echo \"never docker login here\"\n",
+            encoding="utf-8",
+        )
+        if findings(root):
+            print("SELFTEST FAILED: an `echo` naming docker login was read as a call")
             return 1
 
         # A comment explaining the contract is not a breach of it.

@@ -894,6 +894,14 @@ decision = "not-evidence"
 reason_family = "ND-003"
 recorded = "2026-09-19"
 
+[[disposition]]
+id = "CD-20431"
+project = ""
+control = "gate#scripts/workflow_reader.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-10-13"
+
 # --- ND-004 ---
 
 [[disposition]]

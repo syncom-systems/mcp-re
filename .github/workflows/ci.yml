@@ -431,6 +431,11 @@ jobs:
       # ratchets above do — the merge path is what has to enforce it.
       - name: Verification trigger gate (fingerprint closure ⊆ workflow trigger set)
         run: |
+          # The one reader every workflow gate reads through: its syntax cases first, then
+          # every workflow in the tree, so a construct it cannot read fails here by name
+          # rather than as a gate that measured less than it claims.
+          python3 scripts/workflow_reader.py --selftest
+          python3 scripts/workflow_reader.py
           python3 scripts/verification_trigger_gate.py --selftest
           python3 scripts/verification_trigger_gate.py
           # The Python support claim may not exceed the Python evidence — #746. Here as

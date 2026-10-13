@@ -36,9 +36,10 @@ Run:  python3 scripts/release_assurance_gate.py
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
+
+from workflow_reader import WorkflowSyntaxError, parse
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -74,47 +75,19 @@ BACKING: dict[str, str] = {
 MARKER_BEGIN = "<!-- release-assurance:begin -->"
 MARKER_END = "<!-- release-assurance:end -->"
 
-#: A reference in COMMAND POSITION inside a workflow's `run:` text: first word of a command,
-#: after any leading environment assignments and any interpreter that runs it.
-RUNNERS = {"python3", "python", "bash", "sh", "exec", "time", "."}
-ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-
-#: YAML scaffolding in front of a command: the sequence dash, and `run:` — the ONLY key
-#: whose value is a shell command. Stripped rather than ignored, because the alternative is
-#: a gate that reads `- run: <command>` as a command named `-`.
-#:
-#: No other key is stripped, and that is the load-bearing half. `- name:` and `- uses:` take
-#: VALUES, not commands: a step named after the tool, or an action whose input happens to be
-#: the path, must read as a mention. Stripping every `key:` made `- name: <path>` a caller.
-YAML_LEAD = re.compile(r"^-$|^run:$")
-
-
 def invoked(text: str, target: str) -> bool:
-    """Does this text CALL `target`, rather than mention it?
+    """Does this workflow CALL `target`, rather than mention it?
 
-    Comment lines are dropped first. In YAML that is load-bearing in both directions: a
-    `# ...` line inside a `run:` block is a shell comment, and a `#` line outside one is a
-    YAML comment. Neither runs anything.
+    A call is `target` run by a step: as the program of a command segment, or as the script
+    an interpreter runs, after any environment assignments. The workflow reader gives the
+    commands of `run:` steps only, without comments: a step's `name:`, an action's `with:`
+    input and a comment are VALUES or prose, and naming the path there runs nothing.
     """
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        for segment in re.split(r"&&|\|\||[;|]", line):
-            words = segment.strip().split()
-            while words and (
-                ASSIGNMENT.match(words[0])
-                or words[0] in RUNNERS
-                or YAML_LEAD.match(words[0])
-                or words[0] in {"|", ">"}
-            ):
-                words.pop(0)
-            if not words:
-                continue
-            candidate = words[0].lstrip("./") if words[0].startswith("./") else words[0]
-            if candidate == target:
-                return True
-    return False
+    return any(
+        invocation.program == target
+        for command in parse(text).commands()
+        for invocation in command.invocations()
+    )
 
 
 def render(record: dict) -> str:
@@ -155,7 +128,11 @@ def invocation_problems(read: dict[str, str]) -> list[str]:
             f"{WORKFLOW} does not exist. The canonical command `{CANONICAL}` would then "
             "have no caller, which is the state this gate exists to make impossible."
         ]
-    if not invoked(text, CANONICAL):
+    try:
+        called = invoked(text, CANONICAL)
+    except WorkflowSyntaxError as exc:
+        return [f"{WORKFLOW} cannot be read, so its caller cannot be established: {exc}"]
+    if not called:
         return [
             f"{WORKFLOW} does not invoke `{CANONICAL}` in command position. It may name it "
             "in a comment or a step name; a mention is not a caller, and this gate's own "
@@ -229,18 +206,28 @@ def load_record(path: Path) -> dict | None:
 
 def selftest() -> int:
     """The mutation probe. Each control is shown to FAIL on the thing it forbids."""
-    good = "      - run: python3 tools/verification/release-assurance\n"
+    def workflow(steps: str) -> str:
+        return "jobs:\n  release-assurance:\n    steps:\n" + steps
+
+    good = workflow("      - run: python3 tools/verification/release-assurance\n")
     assert not invocation_problems({str(WORKFLOW): good})
     assert invocation_problems({}), "an absent workflow must fail"
     assert invocation_problems(
-        {str(WORKFLOW): "      # runs tools/verification/release-assurance\n"}
+        {str(WORKFLOW): workflow("      # runs tools/verification/release-assurance\n      - run: true\n")}
     ), "a comment naming the command is not a caller"
     assert invocation_problems(
-        {str(WORKFLOW): "      - name: tools/verification/release-assurance\n"}
+        {str(WORKFLOW): workflow("      - name: tools/verification/release-assurance\n        run: true\n")}
     ), "a step NAME is not a caller"
+    assert invocation_problems(
+        {str(WORKFLOW): workflow('      - run: echo "next: tools/verification/release-assurance"\n')}
+    ), "a usage line is not a caller"
     assert not invocation_problems(
-        {str(WORKFLOW): "      - run: FOO=1 python3 ./tools/verification/release-assurance --out x\n"}
+        {str(WORKFLOW): workflow("      - run: FOO=1 python3 ./tools/verification/release-assurance --out x\n")}
     ), "assignments and an interpreter may precede the command"
+    assert not invocation_problems(
+        {str(WORKFLOW): workflow("      - run: |\n          python3 tools/verification/release-assurance \\\n            --target x\n")}
+    ), "a continued command is one call"
+    assert invocation_problems({str(WORKFLOW): "x: &anchor 1\n"}), "an unreadable workflow must fail"
 
     record = {
         "kind": "release-assurance",

@@ -37,6 +37,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from workflow_reader import Command, parse, shell_commands
+
 REPO = Path(__file__).resolve().parent.parent
 TABLE = Path("verification") / "generated" / "rust-targets.json"
 TEST_KINDS = ("rust_test", "rust_doc_test")
@@ -51,34 +53,22 @@ BAZEL_TEST = re.compile(r"\bbazel\s+test\b")
 LABEL = re.compile(r"(?<![\w$])(//[A-Za-z0-9_./-]*:[A-Za-z0-9_.+-]+)")
 MODULE_FILTER = re.compile(r"--test_arg=([a-z][a-z0-9_]*)::")
 MOD_DECL = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([a-z0-9_]+)\s*[;{]", re.M)
-# A run of lines belonging to one command: YAML folds with `>-`/`|`, and shells continue
-# with a trailing backslash, so the command and its label can be lines apart. Blank lines,
-# comments and a new `- name:` end the run.
-BLOCK_BREAK = re.compile(r"^\s*(?:-\s+name:|#|$)")
-# A line that prints a command — a usage message — names it without running it.
-PRINTS = re.compile(r"^\s*(?:echo|printf)\b")
 
 
 def load_targets(root: Path) -> dict[str, dict]:
     return json.loads((root / TABLE).read_text())["targets"]
 
 
-def blocks(text: str) -> list[tuple[int, str]]:
-    """(first line number, text) for each run of lines forming one command."""
-    out: list[tuple[int, str]] = []
-    start, buffer = 0, []
-    for number, line in enumerate(text.splitlines(), start=1):
-        if BLOCK_BREAK.match(line):
-            if buffer:
-                out.append((start, "\n".join(buffer)))
-                buffer = []
-            continue
-        if not buffer:
-            start = number
-        buffer.append(line)
-    if buffer:
-        out.append((start, "\n".join(buffer)))
-    return out
+def commands(path: Path) -> list[Command]:
+    """The commands a workflow's steps or a shell script run.
+
+    From the workflow reader, so a command and its label lines apart — a `>-` fold, a
+    trailing `\\` — are one command, and a comment or a usage line (`echo "usage: … bazel
+    test …"`) is none.
+    """
+    text = path.read_text(encoding="utf-8")
+    found = parse(text, str(path)).commands() if path.suffix == ".yml" else shell_commands(text)
+    return [command for command in found if command.executed_segments()]
 
 
 def root_modules(root: Path, row: dict) -> set[str]:
@@ -93,8 +83,8 @@ def check(root: Path, targets: dict[str, dict]) -> tuple[list[str], int]:
     for pattern in SCAN_GLOBS:
         for path in sorted(root.glob(pattern)):
             rel = path.relative_to(root)
-            for number, block in blocks(path.read_text(encoding="utf-8")):
-                block = "\n".join(line for line in block.splitlines() if not PRINTS.match(line))
+            for command, block in ((c, seg) for c in commands(path) for seg in c.executed_segments()):
+                number = command.line
                 if not BAZEL_TEST.search(block):
                     continue
                 labels = [lbl for lbl in LABEL.findall(block) if not lbl.startswith("//...")]
@@ -118,6 +108,13 @@ def check(root: Path, targets: dict[str, dict]) -> tuple[list[str], int]:
     return failures, named
 
 
+def _step(run: str) -> str:
+    """A one-step workflow around `run`, a step's `run:` value with or without its key."""
+    body = run if run.lstrip().startswith("run:") else f"run: {run}"
+    lines = [line.strip() if i == 0 else line for i, line in enumerate(body.splitlines())]
+    return "jobs:\n  a:\n    steps:\n      - " + "\n".join(lines) + "\n"
+
+
 def selftest() -> int:
     failed = False
     with tempfile.TemporaryDirectory() as tmp:
@@ -134,8 +131,13 @@ def selftest() -> int:
             ("a library is not a test target", "run: bazel test //pkg:a_library\n", "not a test target"),
             (
                 "a label split from its command across folded lines",
-                "        run: >-\n          scripts/run_test_lane.sh bazel test --test_output=all\n"
+                "run: >-\n          scripts/run_test_lane.sh bazel test --test_output=all\n"
                 "          //pkg:ghost_test\n",
+                "not a test target",
+            ),
+            (
+                "a label split from its command by a continuation",
+                "run: |\n          bazel test --test_output=all \\\n            //pkg:ghost_test\n",
                 "not a test target",
             ),
             ("a variable is not a static claim", 'run: bazel test "$BENCH"\n', ""),
@@ -143,7 +145,7 @@ def selftest() -> int:
             ("the whole graph is not a label", "run: bazel test //... --test_output=errors\n", ""),
             (
                 "a usage example in a comment is not an invocation",
-                "# run_test_lane.sh bazel test //pkg:ghost_test\n",
+                "run: |\n          # run_test_lane.sh bazel test //pkg:ghost_test\n          true\n",
                 "",
             ),
             (
@@ -162,6 +164,21 @@ def selftest() -> int:
                 "",
             ),
             (
+                "a label of a neighbouring segment is not the test lane's",
+                "run: bazel build //pkg:ghost && bazel test //pkg:real_test\n",
+                "",
+            ),
+            (
+                "a filter of a neighbouring segment is not the test lane's",
+                "run: bazel test //pkg:real_test && scripts/x.sh --test_arg=ghost_mod::\n",
+                "",
+            ),
+            (
+                "a test lane after a neighbouring segment is still read",
+                "run: true && bazel test //pkg:ghost_test\n",
+                "not a test target",
+            ),
+            (
                 "a filter naming no module selects nothing",
                 "run: bazel test //pkg:real_test --test_arg=ghost_mod::\n",
                 "names no module",
@@ -169,8 +186,15 @@ def selftest() -> int:
         ]
         workflows = root / ".github" / "workflows"
         workflows.mkdir(parents=True)
+        (root / "scripts").mkdir()
         for label, content, expected in cases:
-            (workflows / "ci.yml").write_text(content, encoding="utf-8")
+            # A case is a step's `run:` value, or a shell script when it is a usage line.
+            if content.startswith("  echo"):
+                (workflows / "ci.yml").write_text("jobs: {}\n", encoding="utf-8")
+                (root / "scripts" / "lane.sh").write_text(content, encoding="utf-8")
+            else:
+                (root / "scripts" / "lane.sh").write_text("", encoding="utf-8")
+                (workflows / "ci.yml").write_text(_step(content), encoding="utf-8")
             failures = check(root, targets)[0]
             ok = not failures if not expected else any(expected in f for f in failures)
             print(f"  {'ok  ' if ok else 'FAIL'}  {label}")

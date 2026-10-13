@@ -108,12 +108,10 @@ import re
 import sys
 from pathlib import Path
 
+from workflow_reader import Command, Workflow, named_paths, parse, shell_commands, workflows
+
 REPO = Path(__file__).resolve().parent.parent
 LOCAL_GATE = REPO / "scripts" / "local_gate.sh"
-WORKFLOWS = REPO / ".github" / "workflows"
-
-#: An invocation of a repository script, in either of the two forms the gate script uses.
-INVOCATION = re.compile(r"(?:^|[\s`\"'./])((?:scripts|tools)/[A-Za-z0-9_./-]+?\.(?:py|sh))")
 
 #: A fetch that TRUNCATES the object graph rather than extending it.
 #:
@@ -127,25 +125,6 @@ INVOCATION = re.compile(r"(?:^|[\s`\"'./])((?:scripts|tools)/[A-Za-z0-9_./-]+?\.
 #: the full history on purpose and something later reads it. A job that never had the
 #: history is free to fetch what it needs.
 SHALLOW_FETCH = re.compile(r"git fetch\b[^\n]*(--depth[= ]|--shallow-since|--shallow-exclude)")
-
-#: The checkout option that says "this job needs the whole graph".
-FULL_HISTORY = re.compile(r"fetch-depth:\s*0\b")
-
-#: A path run AS A PROGRAM: at the start of a command, or after a shell operator, or as the
-#: whole of a `run:` step — and NOT preceded by an interpreter.
-#:
-#: Extensionless too, which is the half `INVOCATION` cannot see: the verification lanes and
-#: the census are executables named `verify-tests`, `evidence-class-census`, and a pattern
-#: anchored on `.py`/`.sh` matches none of them.
-COMMAND_POSITION = re.compile(
-    r"(?:^|&&|\|\||;|\brun:|\bthen\b)\s*\.?/?((?:scripts|tools)/[A-Za-z0-9_./-]+)",
-    re.M,
-)
-
-#: What an interpreter invocation looks like. A path handed to one of these is an ARGUMENT,
-#: and an argument needs no execute bit — demanding one would make the gate ask for a
-#: property the invocation does not use.
-INTERPRETED = re.compile(r"\b(?:python3?|bash|sh|zsh|source|uv|node)\s+\S*$")
 
 #: Scripts that are deliberately local, each with the reason. The exemption list IS part of
 #: what this gate measured, so it is printed on every run and checked for dead entries: an
@@ -193,12 +172,36 @@ EXEMPT: dict[str, str] = {
 }
 
 
+def scripts_in(commands: list[Command]) -> set[str]:
+    """The `.py`/`.sh` repository scripts these commands invoke, in any argument position.
+
+    Commands, not text: the reader has dropped comments and usage lines, so a script a
+    comment explains is not a script a step runs.
+    """
+    return {
+        path
+        for command in commands
+        for path in named_paths(command.executed)
+        if path.endswith((".py", ".sh"))
+    }
+
+
 def invoked_by(path: Path) -> set[str]:
-    return set(INVOCATION.findall(path.read_text(encoding="utf-8")))
+    return scripts_in(shell_commands(path.read_text(encoding="utf-8")))
 
 
-#: A `paths:` key under `on:` — the marker of a workflow that does not run on every PR.
-PATH_FILTER = re.compile(r"^\s+paths:", re.M)
+def pull_request_reach(workflow: Workflow) -> str | None:
+    """`"every"` when this workflow starts on every pull request, `"filtered"` when on only
+    some, `None` when on none.
+
+    The merge path is the pull request. A workflow started only by a push to `main`, a
+    schedule or a dispatch runs after the change it would refuse has merged, or never, so a
+    control it names is on no merge path at all — however unfiltered its triggers are.
+    """
+    trigger = workflow.triggers.get("pull_request")
+    if trigger is None:
+        return None
+    return "filtered" if trigger.filtered else "every"
 
 
 def workflow_coverage() -> tuple[set[str], set[str]]:
@@ -217,12 +220,13 @@ def workflow_coverage() -> tuple[set[str], set[str]]:
     unconditional workflow, and was invisible here because `mutation-probe.yml` mentions it.
     """
     unconditional: set[str] = set()
-    filtered: set[str] = set()
-    for workflow in sorted(WORKFLOWS.glob("*.yml")):
-        text = workflow.read_text(encoding="utf-8")
-        target = filtered if PATH_FILTER.search(text) else unconditional
-        target |= set(INVOCATION.findall(text))
-    return unconditional, filtered - unconditional
+    only_filtered: set[str] = set()
+    for workflow in workflows(REPO):
+        reach = pull_request_reach(workflow)
+        if reach is not None:
+            target = unconditional if reach == "every" else only_filtered
+            target |= scripts_in(workflow.commands())
+    return unconditional, only_filtered - unconditional
 
 
 #: The assurance platform's own self-tests. They are what establishes that a `verify`
@@ -301,22 +305,17 @@ def entry_points(root: Path) -> set[str]:
     }
 
 
-#: A repository path NAMED anywhere in a file, extension or not.
-#:
-#: Distinct from both matchers above, and the distinction is the finding. `INVOCATION` is
-#: anchored on `.py`/`.sh`, so it cannot see `verify-tests`; `COMMAND_POSITION` answers a
-#: different question — *is this run as a program*, which is about the execute bit and
-#: deliberately excludes an interpreted invocation. Neither answers *does a workflow name
-#: this control*, which is the coverage question, and for an extensionless entry point the
-#: answer used to be unobtainable.
-NAMED_PATH = re.compile(r"(?:^|[\s`\"'./(])((?:scripts|tools)/[A-Za-z0-9_./-]+)")
+def names_in(commands: list[Command]) -> set[str]:
+    """Every `tools/verification/` entry point these commands name, extension or not.
 
-
-def names_in(text: str) -> set[str]:
-    """Every `tools/verification/` entry point this text names."""
+    Distinct from `scripts_in`, which is anchored on `.py`/`.sh` and so cannot see
+    `verify-tests`, and from `command_position_paths`, which asks whether a path runs AS
+    A PROGRAM. Neither answers *does a workflow name this control*.
+    """
     return {
         path
-        for path in NAMED_PATH.findall(text)
+        for command in commands
+        for path in named_paths(command.executed)
         if path.startswith(f"{ENTRY_ROOT}/")
     }
 
@@ -324,12 +323,13 @@ def names_in(text: str) -> set[str]:
 def workflow_entry_coverage(root: Path) -> tuple[set[str], set[str]]:
     """`(entry points named by an UNCONDITIONAL workflow, named only by a filtered one)`."""
     unconditional: set[str] = set()
-    filtered: set[str] = set()
-    for workflow in sorted((root / ".github" / "workflows").glob("*.yml")):
-        text = workflow.read_text(encoding="utf-8")
-        target = filtered if PATH_FILTER.search(text) else unconditional
-        target |= names_in(text)
-    return unconditional, filtered - unconditional
+    only_filtered: set[str] = set()
+    for workflow in workflows(root):
+        reach = pull_request_reach(workflow)
+        if reach is not None:
+            target = unconditional if reach == "every" else only_filtered
+            target |= names_in(workflow.commands())
+    return unconditional, only_filtered - unconditional
 
 
 def dispatched_entry_points(root: Path) -> tuple[set[str], str | None]:
@@ -406,6 +406,15 @@ EXEMPT_ENTRY: dict[str, str] = {
     # test_scoped_verification.py, which the unconditional ci.yml runs.
     f"{ENTRY_ROOT}/select-units": "scopes the filtered verification workflows; pinned by test_scoped_verification.py in ci.yml",
     f"{ENTRY_ROOT}/review-packet": "a derived review packet; a document, not a decision",
+    # The lane dispatcher. It runs in verification.yml and nowhere else on a pull request,
+    # and that workflow's path filter is not a guess: verification_trigger_gate.py, which IS
+    # unconditional, holds it to every unit's fingerprint read set. So the dispatcher runs on
+    # exactly the changes that move a unit, and its scope IS that filter.
+    f"{ENTRY_ROOT}/verify": "the lane dispatcher; runs in verification.yml, whose filter verification_trigger_gate.py holds to every fingerprint input",
+    # A BUILDER. It builds, loads and names the pinned extraction image the formal lanes run
+    # in, from the dispatched extraction-image.yml and local_gate.sh stage 3; the lanes that
+    # decide something run inside the image it produces.
+    f"{ENTRY_ROOT}/extraction-image": "builds and names the pinned extraction image; the lanes that decide run inside it",
 }
 
 
@@ -447,34 +456,44 @@ def entry_point_defects(
     return found
 
 
-def command_position_paths(text: str) -> set[str]:
-    """Every repository path this text runs AS A PROGRAM.
+def command_position_paths(commands: list[Command]) -> set[str]:
+    """Every repository path these commands run AS A PROGRAM.
 
-    The preceding characters decide it: a path after `python3` is an argument, and one at
-    the head of a command is a program. Matched per line and re-checked against the text
-    before it, because the two forms are otherwise indistinguishable by shape alone.
+    A path handed to an interpreter (`python3 x.py`, `bash x.sh`, `. x.sh`) is an
+    ARGUMENT, and an argument needs no execute bit; demanding one would make the gate ask
+    for a property the invocation does not use. A path at the head of a command segment is
+    a program, and needs one; so does a `./`-qualified path handed to a program that runs
+    it.
     """
     found: set[str] = set()
-    for match in COMMAND_POSITION.finditer(text):
-        before = text[: match.start(1)].rsplit("\n", 1)[-1]
-        if INTERPRETED.search(before):
-            continue
-        found.add(match.group(1))
+    for command in commands:
+        for invocation in command.invocations():
+            if invocation.interpreter is None and invocation.program.startswith(("scripts/", "tools/")):
+                found.add(invocation.program)
+            # A `./`-qualified path handed to another program is one that program runs:
+            # `docker run … "$image" ./tools/verification/regenerate-lean`, `xargs ./x`.
+            found |= {
+                arg[2:]
+                for arg in (a.strip("\"'") for a in invocation.args)
+                if arg.startswith(("./scripts/", "./tools/"))
+            }
     return found
 
 
-def truncating_fetches(text: str) -> list[str]:
-    """Shallow fetches inside a workflow whose checkout asked for the full history.
+def truncating_fetches(workflow: Workflow) -> list[str]:
+    """Shallow fetches in a job whose checkout asked for the full history.
 
-    Text-level and job-agnostic on purpose: the two facts are a `fetch-depth: 0` and a
-    `--depth` fetch in the same file, and a parser that tried to attribute each to a job
-    would be a YAML parser this gate does not have. A workflow with several jobs, only one
-    of which is deep, is a false positive worth having — the fix is the same either way,
-    and the alternative is the check nobody can be sure ran.
+    Per job: the two facts are a `fetch-depth: 0` on one of the job's steps and a `--depth`
+    fetch among its commands. Another job's shallow fetch does not truncate this job's
+    clone.
     """
-    if not FULL_HISTORY.search(text):
-        return []
-    return [line.strip() for line in text.splitlines() if SHALLOW_FETCH.search(line)]
+    return [
+        command.text
+        for job in workflow.jobs.values()
+        if any(step.with_.get("fetch-depth") == "0" for step in job.steps)
+        for command in job.commands()
+        if SHALLOW_FETCH.search(command.text)
+    ]
 
 
 def not_executable(paths: set[str]) -> list[str]:
@@ -563,39 +582,55 @@ def selftest() -> int:
         print(f"SELFTEST FAIL: refused a covered self-test: {covered_suite}", file=sys.stderr)
         return 1
     # A filtered workflow must not count as coverage, and an unfiltered one must.
-    if PATH_FILTER.search("on:\n  pull_request:\n    branches: [main]\n"):
-        print("SELFTEST FAIL: PATH_FILTER matched a workflow with no paths key", file=sys.stderr)
-        return 1
-    if not PATH_FILTER.search("on:\n  pull_request:\n    paths:\n      - 'src/**'\n"):
-        print("SELFTEST FAIL: PATH_FILTER missed a paths key", file=sys.stderr)
-        return 1
+    for text, expect, why in [
+        ("on:\n  pull_request:\n    branches: [main]\n", "every", "a pull_request trigger with no paths key"),
+        ("on:\n  pull_request:\n    paths:\n      - 'src/**'\n", "filtered", "a paths key"),
+        ("on:\n  push:\n    branches: [main]\n  workflow_dispatch:\n", None, "a workflow no pull request starts"),
+        ("on:\n  push:\n    paths:\n      - 'src/**'\n  pull_request:\n", "every", "a filter on push only"),
+    ]:
+        if pull_request_reach(parse(text)) != expect:
+            print(f"SELFTEST FAIL: {why} read as {pull_request_reach(parse(text))!r}", file=sys.stderr)
+            return 1
 
     # The extractor is half the gate: a pattern that stopped matching would report an empty
     # scope as a clean tree, which is the failure this repository has already shipped once.
-    if "tools/verification/verify" in INVOCATION.findall("python3 tools/verification/verify"):
+    if "tools/verification/verify" in scripts_in(shell_commands("python3 tools/verification/verify")):
         print("SELFTEST FAIL: the extractor matched an extensionless path", file=sys.stderr)
         return 1
-    for line, expect in [
-        ("    && python3 scripts/module_size_gate.py \\", "scripts/module_size_gate.py"),
-        ("    && ./scripts/verification_runner_preflight.sh \\", "scripts/verification_runner_preflight.sh"),
-        ("      run: python3 tools/verification/test_views.py", "tools/verification/test_views.py"),
+    for text, expect in [
+        ("true \\\n    && python3 scripts/module_size_gate.py \\\n    --x", "scripts/module_size_gate.py"),
+        ("true \\\n    && ./scripts/verification_runner_preflight.sh \\\n    --x", "scripts/verification_runner_preflight.sh"),
+        ("python3 tools/verification/test_views.py", "tools/verification/test_views.py"),
     ]:
-        if expect not in INVOCATION.findall(line):
-            print(f"SELFTEST FAIL: the extractor missed {expect} in {line!r}", file=sys.stderr)
+        if expect not in scripts_in(shell_commands(text)):
+            print(f"SELFTEST FAIL: the extractor missed {expect} in {text!r}", file=sys.stderr)
+            return 1
+    # COUNT INVOCATIONS, NOT MENTIONS. A script a comment explains, or a usage line names,
+    # is not one a workflow runs, and reading either as coverage is a control enforced by
+    # prose.
+    for text, why in [
+        ("# python3 scripts/a_gate.py is why this step exists\ntrue", "a comment"),
+        ('echo "usage: python3 scripts/a_gate.py"', "a usage line"),
+    ]:
+        if scripts_in(shell_commands(text)):
+            print(f"SELFTEST FAIL: {why} counted as an invocation", file=sys.stderr)
             return 1
     # The command-position extractor, which is the half that found an unstageable mode.
     # Both directions, because either mistake is silent: a pattern that matched an
     # interpreted path would demand an execute bit nothing uses, and one that missed a
     # program would report a control as runnable that cannot start.
     for text, expect, why in [
-        ("    && tools/verification/evidence-class-census --selftest \\", True, "a program after &&"),
-        ("      run: tools/verification/verify-mutations", True, "a program as a run: step"),
+        ("true \\\n    && tools/verification/evidence-class-census --selftest", True, "a program after &&"),
+        ("jobs:\n  a:\n    steps:\n      - run: tools/verification/verify-mutations\n", True, "a program as a run: step"),
         ("  scripts/run_gate.sh --selftest", True, "a program at the head of a line"),
-        ("    && python3 tools/verification/test_views.py \\", False, "an argument to python3"),
+        ("true \\\n    && python3 tools/verification/test_views.py", False, "an argument to python3"),
         ("    . scripts/lib/sat_replay_fleet.sh || exit 1", False, "a sourced shim"),
-        ("      run: bash scripts/demo-local.sh", False, "an argument to bash"),
+        ("jobs:\n  a:\n    steps:\n      - run: bash scripts/demo-local.sh\n", False, "an argument to bash"),
+        ('docker run --rm "$image" \\\n  ./tools/verification/regenerate-lean', True, "a program another program runs"),
+        ('image="$(python3 tools/verification/extraction-image load)"', False, "an argument to python3 inside a substitution"),
     ]:
-        matched = bool(command_position_paths(text))
+        commands = parse(text).commands() if text.startswith("jobs:") else shell_commands(text)
+        matched = bool(command_position_paths(commands))
         if matched is not expect:
             print(
                 f"SELFTEST FAIL: command-position extractor {'missed' if expect else 'matched'} "
@@ -624,8 +659,11 @@ def selftest() -> int:
          False, "a shallow fetch where no step asked for the whole graph"),
         ("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v7\n        with:\n          fetch-depth: 0\n      - run: git fetch --shallow-since=2026-01-01 origin main\n",
          True, "the other shallowing form"),
+        ("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v7\n        with:\n          fetch-depth: 0\n"
+         "  b:\n    steps:\n      - uses: actions/checkout@v7\n      - run: git fetch --depth=1 origin main\n",
+         False, "a shallow fetch in a job that never took the whole graph, beside one that did"),
     ]:
-        found = bool(truncating_fetches(text))
+        found = bool(truncating_fetches(parse(text)))
         if found is not expect:
             print(
                 f"SELFTEST FAIL: shallow-fetch rule {'missed' if expect else 'flagged'} {why}",
@@ -710,8 +748,8 @@ def selftest() -> int:
         print(f"SELFTEST FAIL: this tree's verify LANES table could not be read: {problem}", file=sys.stderr)
         return 1
     # The coverage matcher must see an EXTENSIONLESS entry point, which is the shape
-    # `INVOCATION` is structurally unable to match and the reason this half exists.
-    if names_in("      run: ./tools/verification/verify-tests") != {f"{ENTRY_ROOT}/verify-tests"}:
+    # `scripts_in` is structurally unable to match and the reason this half exists.
+    if names_in(shell_commands("./tools/verification/verify-tests")) != {f"{ENTRY_ROOT}/verify-tests"}:
         print("SELFTEST FAIL: the coverage matcher cannot see an extensionless entry point", file=sys.stderr)
         return 1
 
@@ -742,18 +780,17 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    runnable = command_position_paths(LOCAL_GATE.read_text(encoding="utf-8"))
+    runnable = command_position_paths(shell_commands(LOCAL_GATE.read_text(encoding="utf-8")))
     truncating: list[str] = []
-    for workflow in sorted(WORKFLOWS.glob("*.yml")):
-        text = workflow.read_text(encoding="utf-8")
-        runnable |= command_position_paths(text)
+    for workflow in workflows(REPO):
+        runnable |= command_position_paths(workflow.commands())
         truncating += [
-            f"{workflow.name}: `{line}` SHALLOWS a clone this workflow took at "
+            f"{Path(workflow.path).name}: `{line}` SHALLOWS a clone its job took at "
             f"`fetch-depth: 0`. A shallow fetch truncates the object graph rather than "
             f"extending it, so every later step that asks an ancestry question measures a "
             f"history that is no longer there. Drop the depth flag, or read the ref the "
             f"deep checkout already provides."
-            for line in truncating_fetches(text)
+            for line in truncating_fetches(workflow)
         ]
     found = list(truncating)
     found += [
