@@ -8434,6 +8434,7 @@ tested_symbols = [
   # store refusal, not the degraded route, with degraded mode opted in.
   "//mcp-re-proxy:proxy_ext_unit_test#admission_enforcer::tests::a_key_of_another_type_is_refused_at_the_store_and_never_degraded",
   "//mcp-re-proxy:proxy_unit_test#admission_enforcer::enforcement::tests::the_two_postures_are_distinct",
+  "//mcp-re-proxy:proxy_unit_test#admission_enforcer::enforcement::tests::each_configured_posture_is_its_own_enforcement",
   # WHY the gate refused, as a coordinate beside the facet. The wire code of an admission
   # refusal is frozen and nearly uniform, so a forged record, an absent one and a revoked
   # workload are one 403 to the client; the durable record is the only place the difference
@@ -8482,7 +8483,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.admission_configuration_state"
 class = "V0"
-description = "WHAT ADMISSION CONFIGURATION THIS DEPLOYMENT RECOGNISES: every legal form is classified and accepted, an enforcing state carries every value it cannot verify without, and a configuration that names no authority is refused rather than served as OFF. That the enforcing view a consumer reads was projected from one classified state, rather than assembled by the reader, is a compile-time fact and belongs to `proxy.admission_configuration_state_sole_producer`."
+description = "WHAT ADMISSION CONFIGURATION THIS DEPLOYMENT RECOGNISES: every legal form is classified and accepted, an enforcing state carries every value it cannot verify without, and a configuration that names no authority is refused rather than served as OFF. The enforcing view projects the PEP's §5.2 budget from the classified availability, so the degraded opt-in and P arrive as one cell. That the enforcing view a consumer reads was projected from one classified state, rather than assembled by the reader, is a compile-time fact and belongs to `proxy.admission_configuration_state_sole_producer`."
 paths = ["mcp-re-proxy/src/config_state/admission.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -8505,6 +8506,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::a_degraded_window_past_the_ceiling_names_no_state_and_the_ceiling_does",
   "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::an_enforcing_state_names_every_value_it_cannot_verify_without",
   "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::an_authority_key_that_cannot_verify_anything_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::a_fail_closed_gate_projects_no_degraded_window",
+  "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::a_bounded_degraded_gate_projects_its_window_and_the_opt_in",
 ]
 
 

@@ -15,6 +15,16 @@ pub enum AdmissionEnforcement {
     Required,
 }
 
+/// The configured posture, as what an evidence-free call means at the gate.
+impl From<crate::config_state::AdmissionPosture> for AdmissionEnforcement {
+    fn from(posture: crate::config_state::AdmissionPosture) -> Self {
+        match posture {
+            crate::config_state::AdmissionPosture::Optional => Self::Optional,
+            crate::config_state::AdmissionPosture::Required => Self::Required,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -27,6 +37,21 @@ mod tests {
         assert_ne!(
             AdmissionEnforcement::Optional,
             AdmissionEnforcement::Required
+        );
+    }
+
+    /// A deployment configured `Required` refuses an evidence-free call; one configured
+    /// `Optional` serves it. Swapping the arms would invert the gate.
+    #[test]
+    fn each_configured_posture_is_its_own_enforcement() {
+        use crate::config_state::AdmissionPosture;
+        assert_eq!(
+            AdmissionEnforcement::from(AdmissionPosture::Required),
+            AdmissionEnforcement::Required
+        );
+        assert_eq!(
+            AdmissionEnforcement::from(AdmissionPosture::Optional),
+            AdmissionEnforcement::Optional
         );
     }
 }
