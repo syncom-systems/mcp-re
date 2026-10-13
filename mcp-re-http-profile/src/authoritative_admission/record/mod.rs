@@ -70,11 +70,15 @@ pub use currentness::AdmissionStateCurrentness;
 pub use verified::verify_admission_state_record;
 pub use verified::CurrentAdmissionState;
 
-use mcp_re_core::b64url_encode;
 use serde::Deserialize;
 use serde::Serialize;
 
 use crate::admission::AdmissionStatus;
+use crate::delegation::jose::ClaimWindow;
+use crate::delegation::jose::CompactJws;
+use crate::delegation::jose::IssueDefect;
+use crate::delegation::jose::ProtectedHeader;
+use crate::delegation::jose::RootSignedClaims;
 use crate::error::HttpProfileError;
 
 /// The JWS `typ` of an authoritative admission RECORD.
@@ -85,27 +89,7 @@ use crate::error::HttpProfileError;
 pub const ADMISSION_STATE_TYP: &str = "mcp-re-admission-state+jws";
 
 /// The JWS `alg` — EdDSA, as everywhere in this profile.
-pub const ADMISSION_STATE_ALG: &str = "EdDSA";
-
-/// Ed25519 signatures are 64 raw octets.
-///
-/// Checked on the ISSUING side, because the signer is an external seam: a KMS or HSM that
-/// returned a DER-wrapped or truncated signature would otherwise be published as a record
-/// no verifier can read, and the symptom would be a fleet-wide admission outage rather than
-/// the signer misconfiguration it is. The delegation credential's issuer already holds this
-/// line; the admission artifacts did not.
-const ED25519_SIGNATURE_LEN: usize = 64;
-
-/// The JWS protected header of an authoritative admission record.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AdmissionStateHeader {
-    pub(crate) typ: String,
-    pub(crate) alg: String,
-    /// The admission authority's root key id — resolved through the trust seam, never
-    /// trusted because it is named here.
-    pub(crate) kid: String,
-}
+pub const ADMISSION_STATE_ALG: &str = crate::delegation::jose::ALG_EDDSA;
 
 /// What the admission authority currently holds for one workload, as signed claims.
 ///
@@ -144,6 +128,19 @@ pub struct AdmissionStateClaims {
     pub issuer_kid: String,
 }
 
+impl RootSignedClaims for AdmissionStateClaims {
+    fn issuer_kid(&self) -> &str {
+        &self.issuer_kid
+    }
+    fn window(&self) -> ClaimWindow {
+        ClaimWindow {
+            iat: self.iat,
+            nbf: self.nbf,
+            exp: self.exp,
+        }
+    }
+}
+
 /// Publish-side: sign an authoritative admission record as a compact JWS.
 ///
 /// `sign_root` is the same external-signer seam the admission assertion and the delegation
@@ -153,27 +150,14 @@ pub fn issue_admission_state_record(
     claims: &AdmissionStateClaims,
     sign_root: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
 ) -> Result<String, HttpProfileError> {
-    let header = AdmissionStateHeader {
-        typ: ADMISSION_STATE_TYP.to_owned(),
-        alg: ADMISSION_STATE_ALG.to_owned(),
-        kid: claims.issuer_kid.clone(),
-    };
-    let h = b64url_encode(
-        &serde_json::to_vec(&header)
-            .map_err(|_| HttpProfileError::MalformedEvidence("admission state header"))?,
-    );
-    let p = b64url_encode(
-        &serde_json::to_vec(claims)
-            .map_err(|_| HttpProfileError::MalformedEvidence("admission state claims"))?,
-    );
-    let signing_input = format!("{h}.{p}");
-    let sig = sign_root(signing_input.as_bytes())?;
-    if sig.len() != ED25519_SIGNATURE_LEN {
-        return Err(HttpProfileError::MalformedEvidence(
-            "admission state signature length",
-        ));
-    }
-    Ok(format!("{h}.{p}.{}", b64url_encode(&sig)))
+    let header = ProtectedHeader::eddsa(ADMISSION_STATE_TYP, &claims.issuer_kid);
+    CompactJws::issue(&header, claims, sign_root).map_err(|defect| match defect {
+        IssueDefect::Unformable => HttpProfileError::MalformedEvidence("admission state"),
+        IssueDefect::SignatureLength => {
+            HttpProfileError::MalformedEvidence("admission state signature length")
+        }
+        IssueDefect::Signer(e) => e,
+    })
 }
 
 #[cfg(test)]

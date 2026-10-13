@@ -16,78 +16,74 @@
 //! on, so every later step reads values the root has signed rather than values an attacker
 //! chose.
 
-use mcp_re_core::McpReError;
 use mcp_re_core::VerificationKey;
 
 use crate::error::HttpProfileError;
 
 use super::bounded_skew;
-use super::decode_json;
-use super::split_compact_jws;
-use super::verify_ed25519_with;
+use super::jose::ClaimWindow;
+use super::jose::CompactJws;
+use super::jose::JwsDefect;
+use super::jose::RootSignedClaims;
+use super::jose::RootVerified;
 use super::DelegationClaims;
-use super::DelegationHeader;
 use super::DelegationVerifyParams;
 use super::VerifiedDelegation;
-use super::DELEGATION_ALG;
 use super::DELEGATION_TYP;
 use super::JWK_CRV_ED25519;
 use super::JWK_KTY_OKP;
 use super::KEY_USE_RESPONSE_SIGNING;
 
-/// Steps 2–3: the credential is internally consistent, and a trusted ROOT signed it.
-///
-/// `typ` and `alg` are pinned before anything is decoded — any algorithm other than EdDSA,
-/// `none` included, is refused. The issuer must resolve to a trusted root anchor that the
-/// header `kid` also names; `cnf` must not attest that root's own key, since a credential
-/// delegating to its issuer is not a delegation and refuses as a bad signature does.
-pub(super) fn check_root_signature(
-    segments: (&str, &str, &str),
-    header: &DelegationHeader,
-    claims: &DelegationClaims,
-    resolve_root: impl Fn(&str) -> Option<VerificationKey>,
-) -> Result<(), HttpProfileError> {
-    let (header_seg, payload_seg, sig_seg) = segments;
-    if header.typ != DELEGATION_TYP || header.alg != DELEGATION_ALG {
-        return Err(HttpProfileError::DelegationCredentialInvalid);
+impl RootSignedClaims for DelegationClaims {
+    fn issuer_kid(&self) -> &str {
+        &self.issuer_kid
     }
-    let root_key =
-        resolve_root(&claims.issuer_kid).ok_or(HttpProfileError::DelegationIssuerUntrusted)?;
-    if header.kid != claims.issuer_kid || claims.cnf.jwk.x == root_key.to_b64url() {
-        return Err(HttpProfileError::DelegationCredentialInvalid);
+    fn window(&self) -> ClaimWindow {
+        ClaimWindow {
+            iat: self.iat,
+            nbf: self.nbf,
+            exp: self.exp,
+        }
     }
-    let signing_input = format!("{header_seg}.{payload_seg}");
-    verify_ed25519_with(
-        signing_input.as_bytes(),
-        sig_seg,
-        &root_key,
-        McpReError::DelegationCredentialInvalid,
-    )
-    .map_err(|_| HttpProfileError::DelegationCredentialInvalid)
 }
 
-/// Step 4: `nbf ≤ now ≤ exp`, widened by the BOUNDED skew on both edges.
+/// Steps 2–3: the credential is internally consistent, and a trusted ROOT signed it.
+///
+/// The codec pins `typ` and `alg` before anything is decoded — any algorithm other than
+/// EdDSA, `none` included, is refused — and requires the issuer to resolve to a trusted
+/// root anchor that the header `kid` also names. On top of that, `cnf` must not attest
+/// that root's own key: a credential delegating to its issuer is not a delegation, and
+/// refuses as a bad signature does.
+pub(super) fn check_root_signature(
+    jws: &CompactJws<'_>,
+    resolve_root: impl FnOnce(&str) -> Option<VerificationKey>,
+) -> Result<DelegationClaims, HttpProfileError> {
+    let RootVerified { claims, root } = jws
+        .verify_root::<DelegationClaims>(DELEGATION_TYP, resolve_root)
+        .map_err(|defect| match defect {
+            JwsDefect::IssuerUntrusted => HttpProfileError::DelegationIssuerUntrusted,
+            _ => HttpProfileError::DelegationCredentialInvalid,
+        })?;
+    if claims.cnf.jwk.x == root.to_b64url() {
+        return Err(HttpProfileError::DelegationCredentialInvalid);
+    }
+    Ok(claims)
+}
+
+/// Step 4: `now` is inside the credential's claim window, widened by the BOUNDED skew.
 ///
 /// The skew is clamped before it is applied, by the same cap the RFC 9421 signature gate
 /// uses, so a misconfigured tolerance cannot widen the credential-acceptance window past it.
+/// Every way of being outside — not yet valid, expired, a degenerate window, an issuance
+/// dated ahead of the verifier — is the one refusal.
 fn check_freshness(
     claims: &DelegationClaims,
     params: &DelegationVerifyParams<'_>,
 ) -> Result<(), HttpProfileError> {
-    let skew = bounded_skew(params.max_clock_skew);
-    // Class R. `nbf`/`exp` are peer bytes and `now` is the local clock, so this is where
-    // an implausible clock and a hostile claim meet. An edge that cannot be computed is
-    // not a window to decide inside of, and freshness that cannot be established takes the
-    // same verdict as freshness that has lapsed.
-    let (Some(earliest), Some(latest)) =
-        (params.now.checked_add(skew), params.now.checked_sub(skew))
-    else {
-        return Err(HttpProfileError::DelegationCredentialExpired);
-    };
-    if earliest < claims.nbf || latest > claims.exp {
-        return Err(HttpProfileError::DelegationCredentialExpired);
-    }
-    Ok(())
+    claims
+        .window()
+        .check(params.now, bounded_skew(params.max_clock_skew))
+        .map_err(|_| HttpProfileError::DelegationCredentialExpired)
 }
 
 /// Step 5: the credential was issued for THIS service, for THIS purpose.
@@ -177,10 +173,9 @@ pub fn verify_delegation_credential(
     resolve_root: impl Fn(&str) -> Option<VerificationKey>,
     is_revoked: impl Fn(&str) -> bool,
 ) -> Result<VerifiedDelegation, HttpProfileError> {
-    let segments = split_compact_jws(compact_jws)?;
-    let header: DelegationHeader = decode_json(segments.0)?;
-    let claims: DelegationClaims = decode_json(segments.1)?;
-    check_root_signature(segments, &header, &claims, resolve_root)?;
+    let jws = CompactJws::split(compact_jws)
+        .map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
+    let claims = check_root_signature(&jws, resolve_root)?;
     // Every step below reads values the root has signed.
     check_freshness(&claims, params)?;
     check_scope(&claims, params)?;
@@ -199,6 +194,8 @@ pub fn verify_delegation_credential(
 
 #[cfg(test)]
 mod tests {
+    use super::super::DelegationHeader;
+    use super::super::DELEGATION_ALG;
     use super::*;
     use mcp_re_core::SigningKey;
 

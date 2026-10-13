@@ -86,6 +86,7 @@ not an omission to hide.
 | http_profile.evidence_role_construction_boundary | V0 | _none_ | 0 |
 | http_profile.fleet_strict_store_class | V0 | _none_ | 0 |
 | http_profile.freshness_window | V1 | THM-0001 | 7 |
+| http_profile.jose_statement | V0 | _none_ | 0 |
 | http_profile.keyid | V0 | THM-0055 | 0 |
 | http_profile.keyid_selector | V0 | THM-0050 | 1 |
 | http_profile.mcp_transport_contract | V0 | _none_ | 0 |

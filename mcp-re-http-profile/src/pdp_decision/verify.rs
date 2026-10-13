@@ -7,16 +7,15 @@
 //! issued, for this profile and this enforcement point, still valid* — exactly the division
 //! [`crate::admission::verify_admission_assertion`] draws against `check_admission`.
 
-use mcp_re_core::b64url_decode;
-use mcp_re_core::verify_ed25519_with;
-use mcp_re_core::McpReError;
 use mcp_re_core::VerificationKey;
-use serde::Deserialize;
 
 use super::claims::PdpDecisionClaims;
-use super::claims::PdpDecisionHeader;
-use super::claims::PDP_DECISION_ALG;
 use super::claims::PDP_DECISION_TYP;
+use crate::delegation::jose::CompactJws;
+use crate::delegation::jose::JwsDefect;
+use crate::delegation::jose::RootSignedClaims;
+use crate::delegation::jose::RootVerified;
+use crate::delegation::jose::WindowDefect;
 
 /// Why a decision is not usable evidence.
 ///
@@ -81,28 +80,9 @@ pub fn verify_authorization_decision(
     now: i64,
     resolve_issuer: impl Fn(&str) -> Option<VerificationKey>,
 ) -> Result<PdpDecisionClaims, PdpDecisionRefusal> {
-    let (h_seg, p_seg, s_seg) = split_compact(compact_jws)?;
-    let header: PdpDecisionHeader = decode_json(h_seg)?;
-    if header.typ != PDP_DECISION_TYP || header.alg != PDP_DECISION_ALG {
-        return Err(PdpDecisionRefusal::Malformed("typ/alg"));
-    }
-    let claims: PdpDecisionClaims = decode_json(p_seg)?;
-    if header.kid != claims.issuer_kid {
-        return Err(PdpDecisionRefusal::Malformed(
-            "header kid disagrees with claims",
-        ));
-    }
-
-    // Issuer -> trusted authority root. A kid never introduces trust.
-    let root = resolve_issuer(&claims.issuer_kid).ok_or(PdpDecisionRefusal::IssuerUntrusted)?;
-    let signing_input = format!("{h_seg}.{p_seg}");
-    verify_ed25519_with(
-        signing_input.as_bytes(),
-        &s_seg_to_b64url(s_seg)?,
-        &root,
-        McpReError::InvalidSignature,
-    )
-    .map_err(|_| PdpDecisionRefusal::SignatureInvalid)?;
+    let RootVerified { claims, .. } = CompactJws::split(compact_jws)
+        .and_then(|jws| jws.verify_root::<PdpDecisionClaims>(PDP_DECISION_TYP, resolve_issuer))
+        .map_err(refuse_decision)?;
 
     if claims.mcp_re_profile != expected_profile {
         return Err(PdpDecisionRefusal::ProfileMismatch);
@@ -111,25 +91,16 @@ pub fn verify_authorization_decision(
         return Err(PdpDecisionRefusal::AudienceMismatch);
     }
 
-    // These operands come straight out of a JWS payload, so `now - claims.iat` with an
-    // extreme `iat` wraps in a release build — silently passing the staleness cap the
-    // expression exists to enforce — and panics on the serving path in any build with
-    // overflow checks. The window-edge comparisons saturate; the age against the cap is
-    // compared exactly, because a saturating age clamps at the cap.
-    let skew = freshness.max_clock_skew;
-    if claims.nbf.saturating_sub(skew) > now
-        || claims.exp.saturating_add(skew) <= now
-        || claims.exp <= claims.nbf
-    {
-        return Err(PdpDecisionRefusal::Expired);
-    }
-    // A decision issued in the future is refused outright rather than floored at age zero:
-    // `iat` is an independent claim from `[nbf, exp]`, and the age computation below is
-    // `now - iat` under saturation, so a future issuance would pass the cap it exists to
-    // enforce.
-    if claims.iat.saturating_sub(skew) > now {
-        return Err(PdpDecisionRefusal::IssuedInTheFuture);
-    }
+    // The claim window first; a future issuance keeps its own refusal because it is the
+    // one input that would floor the age computation below at zero. The age against the
+    // cap is then compared exactly, because a saturating age clamps at the cap.
+    claims
+        .window()
+        .check(now, freshness.max_clock_skew)
+        .map_err(|defect| match defect {
+            WindowDefect::IssuedInTheFuture => PdpDecisionRefusal::IssuedInTheFuture,
+            WindowDefect::Degenerate | WindowDefect::Outside => PdpDecisionRefusal::Expired,
+        })?;
     if decision_age_exceeded(freshness, now, claims.iat) {
         return Err(PdpDecisionRefusal::Stale);
     }
@@ -149,26 +120,21 @@ fn decision_age_exceeded(freshness: &PdpDecisionFreshness, now: i64, iat: i64) -
         > (freshness.max_decision_age as i128) + (freshness.max_clock_skew as i128)
 }
 
-fn split_compact(jws: &str) -> Result<(&str, &str, &str), PdpDecisionRefusal> {
-    let mut it = jws.split('.');
-    match (it.next(), it.next(), it.next(), it.next()) {
-        (Some(h), Some(p), Some(s), None) if !h.is_empty() && !p.is_empty() && !s.is_empty() => {
-            Ok((h, p, s))
+/// The decision's refusal vocabulary over the codec's defects. Every defect in the
+/// document's own shape is `Malformed` naming the part; trust and signature keep their own
+/// variants because they are different things for an operator to do.
+fn refuse_decision(defect: JwsDefect) -> PdpDecisionRefusal {
+    match defect {
+        JwsDefect::Shape => PdpDecisionRefusal::Malformed("compact jws shape"),
+        JwsDefect::Base64Url => PdpDecisionRefusal::Malformed("base64url"),
+        JwsDefect::Json => PdpDecisionRefusal::Malformed("json"),
+        JwsDefect::MediaType => PdpDecisionRefusal::Malformed("typ/alg"),
+        JwsDefect::KidDisagrees => {
+            PdpDecisionRefusal::Malformed("header kid disagrees with claims")
         }
-        _ => Err(PdpDecisionRefusal::Malformed("compact jws shape")),
+        JwsDefect::IssuerUntrusted => PdpDecisionRefusal::IssuerUntrusted,
+        JwsDefect::SignatureInvalid => PdpDecisionRefusal::SignatureInvalid,
     }
-}
-
-fn decode_json<T: for<'de> Deserialize<'de>>(seg: &str) -> Result<T, PdpDecisionRefusal> {
-    let bytes = b64url_decode(seg).map_err(|_| PdpDecisionRefusal::Malformed("base64url"))?;
-    serde_json::from_slice(&bytes).map_err(|_| PdpDecisionRefusal::Malformed("json"))
-}
-
-/// The signature segment, validated as base64url and handed on in the form the core verifier
-/// expects.
-fn s_seg_to_b64url(s_seg: &str) -> Result<String, PdpDecisionRefusal> {
-    b64url_decode(s_seg).map_err(|_| PdpDecisionRefusal::Malformed("signature segment"))?;
-    Ok(s_seg.to_owned())
 }
 
 #[cfg(test)]

@@ -13,19 +13,14 @@
 //! every verifier then refuses.
 
 use mcp_re_core::b64url_decode;
-use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
 
+use super::jose::CompactJws;
+use super::jose::IssueDefect;
 use crate::error::HttpProfileError;
 
 use super::DelegationClaims;
 use super::DelegationHeader;
-
-/// Bytes in a raw Ed25519 signature (RFC 8032 / RFC 8037 `EdDSA`). The external
-/// root-signer seam MUST return exactly this — a KMS/HSM that hands back a
-/// DER-wrapped or truncated signature is a contract violation, caught here rather
-/// than emitted as a malformed credential (mirrors the response-signer seam).
-const ED25519_SIGNATURE_LEN: usize = 64;
 
 /// Issue (mint) a compact JWS delegation credential using an EXTERNAL root signer
 /// — the Cloud KMS / HSM custody seam (ADR-MCPS-028), where the ADR-MCPRE-052 §2
@@ -47,17 +42,14 @@ pub fn issue_delegation_credential_with_signer(
     claims: &DelegationClaims,
     sign_root: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
 ) -> Result<String, HttpProfileError> {
-    // Propagated: this function already returns the verdict for a credential it cannot
-    // form, and a header or claim set that will not serialize is one more instance of it.
-    let unformable = |_| HttpProfileError::DelegationCredentialInvalid;
-    let h = b64url_encode(&serde_json::to_vec(header).map_err(unformable)?);
-    let p = b64url_encode(&serde_json::to_vec(claims).map_err(unformable)?);
-    let signing_input = format!("{h}.{p}");
-    let sig = sign_root(signing_input.as_bytes())?;
-    if sig.len() != ED25519_SIGNATURE_LEN {
-        return Err(HttpProfileError::DelegationCredentialInvalid);
-    }
-    Ok(format!("{h}.{p}.{}", b64url_encode(&sig)))
+    // A credential this function cannot form gets the verdict a verifier would give it; a
+    // signer's own refusal is propagated as it stands.
+    CompactJws::issue(header, claims, sign_root).map_err(|defect| match defect {
+        IssueDefect::Unformable | IssueDefect::SignatureLength => {
+            HttpProfileError::DelegationCredentialInvalid
+        }
+        IssueDefect::Signer(e) => e,
+    })
 }
 
 /// Issue (mint) a compact JWS delegation credential with an IN-PROCESS root key
