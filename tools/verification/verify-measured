@@ -61,7 +61,7 @@ from _manifest import (  # noqa: E402
     load_toolchains,
     load_verification,
 )
-from _measured import apparatus_problem, extract, load_measurements  # noqa: E402
+from _measured import apparatus_problem, declaration_problems, extract, load_measurements  # noqa: E402
 from _unit_selection import (  # noqa: E402
     add_unit_argument,
     basis,
@@ -177,22 +177,10 @@ def main() -> int:
         sorted(uid for uid, unit in units.items() if claims(unit, "measured")) if official else []
     )
     registered = {m["unit"] for m in measurements}
-    orphaned = [uid for uid in declaring if uid not in registered]
-    if orphaned:
-        return _fail(
-            f"unit(s) {orphaned} declare {SCHEME} evidence but no measurement is registered "
-            f"for them. A declared evidence class nothing measures is unmeasured evidence."
-        )
-    drift = [
-        f"unit {uid} declares measurement_artifact "
-        f"{units[uid].get('measurement_artifact')!r} but its registered measurement writes "
-        f"{artifact!r}"
-        for uid in declaring
-        for artifact in [next(m["artifact"] for m in measurements if m["unit"] == uid)]
-        if units[uid].get("measurement_artifact") != artifact
-    ]
-    if drift:
-        return _fail("; ".join(drift))
+    if official:
+        drift = declaration_problems(units, measurements)
+        if drift:
+            return _fail("; ".join(drift))
 
     total = len(measurements)
     if args.unit:

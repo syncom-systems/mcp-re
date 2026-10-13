@@ -193,10 +193,10 @@ def _declaring_unit(**overrides) -> dict:
         "evidence": ["measured://fixture/corpus"],
         "evidence_class": "measured",
         "direct_consequence_severity": "medium",
-        "measurement_protocol": "the fixture protocol",
-        "measurement_scope": "the fixture corpus",
+        "measurement_protocol": [sys.executable, "-c", STABLE],
+        "measurement_scope": "a fixture apparatus, for testing the lane rather than a product claim",
         "measurement_artifact": "fixture.txt",
-        "measurement_control": "the fixture control",
+        "measurement_control": {"kind": "sensitivity", "argv": [sys.executable, "-c", LIVE_CONTROL]},
     }
     unit.update(overrides)
     return unit
@@ -214,18 +214,28 @@ def test_a_selection_that_resolves_to_nothing_FAILS_while_a_unit_declares():
 
 
 def test_an_artifact_the_unit_does_not_claim_is_refused():
-    """The unit's `measurement_artifact` and the registry's are ONE fact. Two spellings of
-    it would let a unit cite a result no lane produced."""
+    """The unit's `measurement_artifact` is checked against the registry's: a unit citing a
+    result its registered measurement does not write cites a result no lane produced."""
     measurement = _measurement(unit="fixture.measured_owner", artifact="somewhere-else.txt")
     status, output = _main_with([measurement], [_declaring_unit()], [])
     assert status != 0 and "measurement_artifact" in output, output
 
 
+def test_the_fixture_declaration_agrees_with_its_row():
+    """The positive control for the refusal above: only the artifact differs there."""
+    from _measured import declaration_problems
+
+    unit = _declaring_unit()
+    assert declaration_problems({unit["id"]: unit}, [_measurement(unit=unit["id"])]) == []
+
+
 def test_a_selector_that_matches_nothing_is_a_FAIL_even_with_no_declaring_unit():
     """The same rule as the structural lane's: a selector matching nothing has measured
-    nothing, whatever the registry holds."""
+    nothing, whatever the registry holds. The registry is a substituted one, so the estate's
+    declarations are not judged and a measurement whose unit declares nothing is admitted."""
     unit = {"id": FIXTURE_UNIT, "class": "V0", "evidence": ["test://fixture"]}
-    status, output = _main_with([_measurement()], [unit], ["--measurement", "NOPE"])
+    argv = ["--registry", "fixture-measurements.toml", "--measurement", "NOPE"]
+    status, output = _main_with([_measurement()], [unit], argv)
     assert status != 0 and "selected NO registered measurement" in output, output
 
 
@@ -313,12 +323,12 @@ def test_every_declaring_unit_has_a_measurement_and_every_measurement_a_declarin
 
 def test_a_measured_unit_declares_the_four_fields_and_no_battery():
     """Ruling 4's four elements are what a measured proposition owes INSTEAD of a mutation
-    falsifier, and the artifact the unit cites is the one its measurement writes — one fact,
-    not two spellings of it. The battery goes with the class: a `tested_symbols` list no
-    declared lane selects reads as coverage."""
+    falsifier, and each of the four the unit declares agrees with the measurement it names.
+    The battery goes with the class: a `tested_symbols` list no declared lane selects reads
+    as coverage."""
     from _evidence_class import MEASUREMENT_KEYS
+    from _measured import declaration_problems
 
-    measurements = {m["unit"]: m for m in load_measurements(REGISTRY)}
     for unit_id, unit in UNITS.items():
         if unit.get("evidence_class") != "measured":
             continue
@@ -326,7 +336,7 @@ def test_a_measured_unit_declares_the_four_fields_and_no_battery():
             assert str(unit.get(key, "")).strip(), f"{unit_id}: {key}"
         assert not unit.get("tested_symbols"), unit_id
         assert not any(str(e).startswith("test://") for e in unit.get("evidence", [])), unit_id
-        assert unit["measurement_artifact"] == measurements[unit_id]["artifact"]
+    assert declaration_problems(UNITS, load_measurements(REGISTRY)) == []
 
 
 def test_the_registered_measurement_runs_and_its_apparatus_moves():
