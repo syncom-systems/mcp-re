@@ -20,8 +20,6 @@
 //! Nothing here decides precedence. `legality_violations` calls each of these at the
 //! position its clauses already occupied.
 
-use std::time::Duration;
-
 use crate::deployment_request::{AuthzKind, DeploymentRequest, OnlineRevocationEvidenceRequest};
 
 /// The `--target-uri` shape the request-target reconstruction check depends on, as a pure
@@ -307,93 +305,6 @@ pub(super) fn inner_plane_structure_violations(config: &DeploymentRequest) -> Ve
     out
 }
 
-/// The concurrent-connection ceiling is not zero.
-///
-/// **Why layer A enforces it.** A limit of zero disables the control it bounds, which is a security posture whatever tier it sits in.
-///
-/// **Why no narrower owner.** `ServerLimits` is a materialized runtime type, not a layer-A machine; no owner classifies its quantities into states.
-pub(super) fn connection_ceiling_violations(config: &DeploymentRequest) -> Vec<String> {
-    let mut out = Vec::new();
-    if config.limits.max_concurrent_connections == 0 {
-        out.push(
-            "--max-connections 0 accepts no connection at all: there is no \"unlimited\" \
-             spelling, because an unbounded connection count is attacker-controlled \
-             buffering ahead of the verify gate. Set a positive ceiling"
-                .to_string(),
-        );
-    }
-    out
-}
-
-/// The drain window is positive, representable, and covers the request deadline.
-///
-/// **Why layer A enforces it.** Same class as the ceiling above: a bound of zero is the absence of the bound.
-///
-/// **Why no narrower owner.** Same absent owner as the ceiling.
-pub(super) fn drain_window_violations(config: &DeploymentRequest) -> Vec<String> {
-    let grace = config.limits.drain_grace;
-    let mut out = Vec::new();
-    if grace.is_zero() {
-        out.push(
-            "--drain-grace-secs 0 abandons every in-flight request on SIGTERM: the drain \
-             window is what lets an admitted request finish before the listener goes away, \
-             and the k8s invariant request_deadline <= drain_grace < \
-             terminationGracePeriodSeconds cannot hold with a zero window. Set a positive \
-             window (default 30s)"
-                .to_string(),
-        );
-        return out;
-    }
-    if grace > DRAIN_GRACE_CEILING {
-        out.push(
-            "--drain-grace-secs exceeds the 86400s ceiling: the drain deadline is not \
-             representable, so the drain declines to wait and abandons every in-flight \
-             request on SIGTERM. Set a window of at most 86400s"
-                .to_string(),
-        );
-    }
-    if let Some(deadline) = config.limits.request_deadline {
-        if grace < deadline {
-            out.push(
-                "--drain-grace-secs is shorter than --request-deadline-secs: the k8s \
-                 invariant request_deadline <= drain_grace requires the window to cover the \
-                 deadline, otherwise a request the deadline still allows is abandoned on \
-                 SIGTERM"
-                    .to_string(),
-            );
-        }
-    }
-    out
-}
-
-/// The same one-day ceiling the parser puts on every timeout. `CoreAdmission::drain` declines to
-/// wait at all when `Instant::now().checked_add(grace)` fails, so an unrepresentable window
-/// abandons every in-flight request just as a zero one does.
-const DRAIN_GRACE_CEILING: Duration = Duration::from_secs(86_400);
-
-/// The read, write and request-deadline timeouts are all set.
-///
-/// **Why layer A enforces it.** They are the slow-loris defense; a disabled one removes it for every connection.
-///
-/// **Why no narrower owner.** Same absent owner as the two limits above — the `ServerLimits` quantities have no layer-A machine.
-pub(super) fn slow_loris_timeout_violations(config: &DeploymentRequest) -> Vec<String> {
-    let mut out = Vec::new();
-    for (value, flag) in [
-        (config.limits.read_timeout, "--read-timeout-secs"),
-        (config.limits.write_timeout, "--write-timeout-secs"),
-        (config.limits.request_deadline, "--request-deadline-secs"),
-    ] {
-        if value.is_none() {
-            out.push(format!(
-                "{flag} 0 disables a slow-loris defense: a peer that trickles bytes then \
-                 holds a serve slot indefinitely, up to --max-connections, with no \
-                 fail-closed drop. Set a bounded value (default 30s)"
-            ));
-        }
-    }
-    out
-}
-
 /// Every ownerless obligation in this file, by name.
 ///
 /// Hand-maintained lists drift, so this one is CHECKED against the file it describes
@@ -412,47 +323,12 @@ pub(super) const INVENTORY: &[&str] = &[
     "target_uri_violations",
     "inner_plane_presence_violations",
     "inner_plane_structure_violations",
-    "connection_ceiling_violations",
-    "drain_window_violations",
-    "slow_loris_timeout_violations",
 ];
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_drain_window_shorter_than_the_request_deadline_is_refused() {
-        let mut config = crate::config_state::test_support::legal_config();
-        config.limits.request_deadline = Some(Duration::from_secs(60));
-        config.limits.drain_grace = Duration::from_secs(30);
-        let refusals = drain_window_violations(&config);
-        assert_eq!(refusals.len(), 1, "got: {refusals:?}");
-        assert!(refusals[0].contains("--request-deadline-secs"));
-        config.limits.drain_grace = Duration::from_secs(60);
-        assert!(drain_window_violations(&config).is_empty());
-    }
-
-    #[test]
-    fn an_unrepresentable_drain_window_is_refused() {
-        let mut config = crate::config_state::test_support::legal_config();
-        config.limits.drain_grace = Duration::from_secs(u64::MAX);
-        let refusals = drain_window_violations(&config);
-        assert!(
-            refusals.iter().any(|r| r.contains("ceiling")),
-            "got: {refusals:?}"
-        );
-        config.limits.request_deadline = Some(Duration::from_secs(86_400));
-        config.limits.drain_grace = Duration::from_secs(86_400);
-        assert!(drain_window_violations(&config).is_empty());
-    }
-
-    /// THM-0013 evidence, half one: no build honours `--client-ocsp require`.
-    ///
-    /// Asserted on the predicate the validation boundary consults, and over BOTH modes, so
-    /// the claim is the biconditional the theorem states rather than "one refusal exists".
-    /// The result is feature-independent by construction: nothing here reads a `cfg`, which
-    /// is the point — a deployment cannot buy online OCSP by rebuilding with the backend.
     #[test]
     fn no_build_admits_the_online_ocsp_mode() {
         let refusal = online_ocsp_refusal(&OnlineRevocationEvidenceRequest::Required(

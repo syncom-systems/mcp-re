@@ -169,6 +169,7 @@ attestations this view cannot see.
 | unit://proxy.client_revocation_currency | source, contracts or evidence | THM-0131 | _no consumer_ |
 | unit://proxy.client_revocation_index_verdict | source, contracts or evidence | THM-0032 | _no consumer_ |
 | unit://proxy.client_revocation_snapshot | source, contracts or evidence | THM-0032 | _no consumer_ |
+| unit://proxy.connection_bounds | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.continuation_capacity | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.continuation_consume_contract | source, contracts or evidence | THM-0093 | _no consumer_ |
 | unit://proxy.continuation_control_subject_boundary | source, contracts or evidence | THM-0077 | _no consumer_ |

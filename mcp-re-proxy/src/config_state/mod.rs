@@ -60,6 +60,7 @@ pub mod authorization;
 pub mod channel_credential_custody;
 pub mod channel_key_material;
 pub mod client_credential_window;
+pub mod connection_bounds;
 pub mod continuation_control;
 pub(crate) mod coordinate;
 pub mod credential_currency_bound;
@@ -86,6 +87,7 @@ pub use authorization::{AuthorizationState, EnforcedAuthorization};
 pub use channel_credential_custody::ChannelCredentialCustodyState;
 pub use channel_key_material::ChannelKeyMaterial;
 pub use client_credential_window::ClientCredentialWindow;
+pub use connection_bounds::ConnectionBounds;
 pub use continuation_control::ContinuationControlState;
 pub use credential_currency_bound::{credential_currency_bound, CredentialCurrencyBound};
 pub use custody::{AwsCredentialMode, CustodyMaterial, CustodyState, PrivateKeyExposure};
@@ -131,6 +133,7 @@ struct RecognisedStates {
     audit: AuditState,
     channel_binding: ChannelBindingState,
     client_credential_window: ClientCredentialWindow,
+    connection_bounds: ConnectionBounds,
     continuation_control: ContinuationControlState,
     crl_revocation: CrlRevocationState,
     custody: CustodyState,
@@ -206,10 +209,6 @@ impl DeploymentConfigState {
         &self.states.replay
     }
 
-    /// Which basis the admission limit is expressed in, with the default already applied.
-    ///
-    /// A resolved fact rather than a posture: the control is on in both variants, and the
-    /// two differ only in the altitude the operator stated it at.
     /// The accepted temporal uncertainty, and what each mechanism derives from it.
     ///
     /// One fact with two consumers: the RFC 9421 acceptance window and the replay retention
@@ -218,8 +217,17 @@ impl DeploymentConfigState {
         self.states.freshness
     }
 
+    /// Which basis the admission limit is expressed in, with the default already applied.
+    ///
+    /// A resolved fact rather than a posture: the control is on in both variants, and the
+    /// two differ only in the altitude the operator stated it at.
     pub fn in_flight_limit(&self) -> InFlightLimitBasis {
         self.states.in_flight_limit
+    }
+
+    /// The five bounds on one connection's life, every one of them in force.
+    pub fn connection_bounds(&self) -> ConnectionBounds {
+        self.states.connection_bounds
     }
 
     /// Whether the MCP transport/version contract is asserted, and for which versions.
@@ -739,6 +747,11 @@ mod tests {
             )
             .0
             .expect("the legal fixture names a bounded credential window"),
+            connection_bounds: connection_bounds::classify_and_validate(
+                &test_support::legal_config(),
+            )
+            .0
+            .expect("the legal fixture names bounded connections"),
             trust_document: trust_document::classify_and_validate(&test_support::legal_config())
                 .0
                 .expect("the legal fixture names a trust document"),

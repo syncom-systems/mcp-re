@@ -187,7 +187,7 @@ pub async fn serve<H: AsyncRequestHandler>(
     handshake_bound: HandshakeBound,
 ) {
     let connections = Arc::new(tokio::sync::Semaphore::new(
-        options.limits.max_concurrent_connections,
+        options.connection_bounds.max_connections().get(),
     ));
     // Every bound this core admits against, taken once. Per-core, so the request path
     // stays lock-free ACROSS cores (ADR-MCPRE-051 §1 share-nothing).
@@ -240,7 +240,8 @@ pub async fn serve<H: AsyncRequestHandler>(
     // admit no more — and waits for them. When `serve` returns the caller drops the runtime,
     // which aborts only what the grace left behind: no connection is cut while a reply it
     // started is still being written, and no kept-alive connection goes on admitting requests.
-    admission.drain(options.limits.drain_grace).await;
+    let grace = options.connection_bounds.drain_grace();
+    admission.drain(grace).await;
 }
 
 /// Is the received request-target inconsistent with the configured `@target-uri`?

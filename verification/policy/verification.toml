@@ -12156,6 +12156,35 @@ tested_symbols = [
 ]
 
 [[unit]]
+id = "proxy.connection_bounds"
+class = "V0"
+description = "EVERY BOUND ON A CONNECTION'S LIFE IS IN FORCE: the read, write and request-deadline timeouts, the connection ceiling and the drain window resolve to values that cannot be absent or zero, a disabled one is refused BY THE FLAG THE OPERATOR TYPED, a drain window that is zero or beyond the one-day ceiling is refused, a DEPLOYMENT's drain window covers its request deadline, and the refusals arrive ceiling, then drain window, then timeouts. Says nothing about whether the serving path honours each bound once it holds them — that is the drain and connection controls' side of the seam."
+paths = [
+  "mcp-re-proxy/src/config_state/connection_bounds/mod.rs",
+  "mcp-re-proxy/src/config_state/connection_bounds/refusal.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/connection_bounds/every_bound_in_force",
+  "mutation://proxy/connection_bounds/no_bound_is_off",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::the_default_limits_resolve_to_the_default_bounds",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::a_resolved_bound_is_the_value_the_request_stated",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::a_zero_connection_ceiling_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::each_disabled_timeout_is_refused_by_its_own_flag",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::a_deployment_whose_drain_window_misses_the_request_deadline_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::a_zero_drain_window_is_refused_once",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::an_unrepresentable_drain_window_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::the_refusals_arrive_ceiling_then_drain_then_timeouts",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::the_classifier_resolves_the_request_limits",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::refusal::tests::a_legal_request_raises_no_refusal",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::refusal::tests::the_cover_rule_applies_only_where_it_is_required",
+]
+
+[[unit]]
 id = "proxy.in_flight_limit_basis"
 class = "V0"
 description = "WHICH ADMISSION-LIMIT BASIS SURVIVED, AND WHAT SILENCE RESOLVES TO: saying nothing resolves to the BOUNDED fail-safe per-core default rather than to no ceiling, an absent limit is DISTINGUISHABLE from one that happens to equal the default, a stated basis is carried through unchanged rather than normalised, and exactly one of the two projections answers for every basis so the gate is never handed the both-set input nothing should produce. Says nothing about the per-core number a fleet total becomes — that needs the resolved core count and is `proxy.startup_plan_pool_ceiling`'s side of the seam."

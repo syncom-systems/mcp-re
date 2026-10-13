@@ -27,7 +27,7 @@ use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
 use crate::tls::ServerOptions;
 
 use super::core_admission::CoreAdmission;
-use super::http_limits::{http_builder, idle_bound};
+use super::http_limits::http_builder;
 use super::open_connection::OpenConnection;
 use super::request::handle_request;
 use super::AsyncRequestHandler;
@@ -80,8 +80,8 @@ where
 {
     // Read before `options` moves into the service closure below.
     let max_connection_age = options.client_credential_window.connection_age();
-    let drain_grace = options.limits.drain_grace;
-    let idle = idle_bound(&options);
+    let drain_grace = options.connection_bounds.drain_grace();
+    let idle = options.connection_bounds.idle_bound();
     let builder = http_builder(&options);
     let activity = Arc::new(ConnectionActivity::default());
 
@@ -128,12 +128,7 @@ where
     tokio::pin!(conn);
     let age = tokio::time::sleep(max_connection_age);
     tokio::pin!(age);
-    let idle = async {
-        match idle {
-            Some(bound) => activity.idle_for(bound).await,
-            None => std::future::pending().await,
-        }
-    };
+    let idle = activity.idle_for(idle);
     tokio::select! {
         _ = conn.as_mut() => return Ok(()),
         () = &mut age => {}
@@ -158,9 +153,10 @@ async fn establish_tls(
     options: &ServerOptions,
     admission: &CoreAdmission,
 ) -> std::io::Result<tokio_rustls::server::TlsStream<tokio::net::TcpStream>> {
-    let _handshake = match (&admission.handshakes, options.limits.request_deadline) {
-        (None, _) => None,
-        (Some(semaphore), Some(deadline)) => Some(
+    let deadline = options.connection_bounds.request_deadline();
+    let _handshake = match &admission.handshakes {
+        None => None,
+        Some(semaphore) => Some(
             tokio::time::timeout(deadline, Arc::clone(semaphore).acquire_owned())
                 .await
                 .map_err(|_| {
@@ -171,21 +167,12 @@ async fn establish_tls(
                 })?
                 .map_err(|_| std::io::Error::other("TLS handshake admission closed"))?,
         ),
-        (Some(semaphore), None) => Some(
-            Arc::clone(semaphore)
-                .acquire_owned()
-                .await
-                .map_err(|_| std::io::Error::other("TLS handshake admission closed"))?,
-        ),
     };
-    let tls = match options.limits.request_deadline {
-        Some(deadline) => tokio::time::timeout(deadline, acceptor.accept(tcp))
-            .await
-            .map_err(|_| {
-                std::io::Error::new(std::io::ErrorKind::TimedOut, "TLS handshake deadline")
-            })??,
-        None => acceptor.accept(tcp).await?,
-    };
+    let tls = tokio::time::timeout(deadline, acceptor.accept(tcp))
+        .await
+        .map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::TimedOut, "TLS handshake deadline")
+        })??;
     // The permit is released HERE, not at the end of the connection: the bound is on
     // handshakes in progress, and an established connection costs no further device
     // signatures.
@@ -222,10 +209,13 @@ mod tests {
             .expect("runtime");
         runtime.block_on(async {
             let options = Arc::new(ServerOptions {
-                limits: ServerLimits {
-                    drain_grace: Duration::from_millis(200),
-                    ..ServerLimits::default()
-                },
+                connection_bounds: crate::config_state::ConnectionBounds::from_limits(
+                    &ServerLimits {
+                        drain_grace: Duration::from_millis(200),
+                        ..ServerLimits::default()
+                    },
+                )
+                .expect("bounds in force"),
                 ..ServerOptions::new(
                     ClientCredentialWindow::new(
                         Duration::from_secs(3600),

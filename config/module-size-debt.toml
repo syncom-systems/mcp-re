@@ -267,9 +267,12 @@ path = "mcp-re-proxy/src/app.rs"
 # destructures a four-field gate: 775 (measured at 6f2000c) -> 770.
 # MCPRE-197: the root resolves the shard topology once and hands the fleet the owners' values
 # whole, so it no longer projects the basis into `ServerLimits` or the topology into `0 = auto`:
-# 770 (measured at 75fae5e) -> 760. `baseline_sha` names that parent.
-baseline_prod_loc = 760
-baseline_sha = "75fae5e"
+# 770 (measured at 75fae5e) -> 760.
+# MCPRE-204: the connection-bounds owner hands the root a read timeout that is always present,
+# so the root no longer re-proves it: 760 (measured at 9734fe2) -> 759. `baseline_sha` names
+# that parent.
+baseline_prod_loc = 759
+baseline_sha = "9734fe2"
 status = "reviewed-exception"
 review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 
@@ -541,8 +544,10 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/config_state/validation/mod.rs"
-baseline_prod_loc = 474
-baseline_sha = "d1fc5fa"
+# MCPRE-204: the three residue calls become one owner's splice: 366 (measured at 9734fe2) ->
+# 354. `baseline_sha` names that parent.
+baseline_prod_loc = 354
+baseline_sha = "9734fe2"
 status = "unreviewed"
 
 [[debt]]
@@ -665,12 +670,13 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/config_state/validation/residue.rs"
-baseline_prod_loc = 405
-baseline_sha = "99ff012"
+# MCPRE-204: the connection ceiling, drain-window and slow-loris rules leave for their owner,
+# `config_state::connection_bounds`: 405 (measured at 9734fe2) -> 316. `baseline_sha` names
+# that parent.
+baseline_prod_loc = 316
+baseline_sha = "9734fe2"
 status = "reviewed-exception"
 review_ref = "EX-017 in docs/architecture/review-dispositions.md"
-growth_from_prod_loc = 378
-growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-http-profile/src/rejection/mod.rs"

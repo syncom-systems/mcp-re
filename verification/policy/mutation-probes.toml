@@ -13708,3 +13708,71 @@ weakening = """
 expect_red = [
   "//sdk/python:native_binding_test#tests::an_issuer_field_is_named_by_its_python_keyword",
 ]
+
+[[probe]]
+id = "M592-proxy-a-disabled-timeout-is-refused-by-its-flag"
+unit = "proxy.connection_bounds"
+theorem = "THM-0077"
+conjunct = "a disabled read, write or request-deadline timeout is refused at the configuration boundary by the flag the operator typed"
+path = "mcp-re-proxy/src/config_state/connection_bounds/refusal.rs"
+anchor = """
+    .filter(|(value, _)| value.is_none())
+"""
+weakening = """
+    .filter(|(value, _)| value.is_none() && false)
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::each_disabled_timeout_is_refused_by_its_own_flag",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::the_refusals_arrive_ceiling_then_drain_then_timeouts",
+]
+note = """
+THE SLOW-LORIS DEFENSE WOULD GO SILENTLY. With no refusal raised, the owner still declines to
+build bounds from an absent timeout, so the deployment fails with an unattributed error rather
+than one naming the flag; the two tests that read the refusal text are what notice.
+"""
+
+[[probe]]
+id = "M593-proxy-a-zero-connection-ceiling-is-refused"
+unit = "proxy.connection_bounds"
+theorem = "THM-0077"
+conjunct = "a connection ceiling of zero is refused rather than read as unlimited or as no connection"
+path = "mcp-re-proxy/src/config_state/connection_bounds/refusal.rs"
+anchor = """
+    if limits.max_concurrent_connections != 0 {
+        return Vec::new();
+    }
+"""
+weakening = """
+    if limits.max_concurrent_connections != 0 || true {
+        return Vec::new();
+    }
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::a_zero_connection_ceiling_is_refused",
+]
+note = """
+A ceiling of zero has no "unlimited" spelling: the weakening drops the refusal, and the refused
+test sees an empty list where the owner should name `--max-connections`.
+"""
+
+[[probe]]
+id = "M594-proxy-a-deployment-drain-window-covers-its-deadline"
+unit = "proxy.connection_bounds"
+theorem = "THM-0077"
+conjunct = "a deployment whose drain window is shorter than its request deadline is refused (request_deadline <= drain_grace)"
+path = "mcp-re-proxy/src/config_state/connection_bounds/refusal.rs"
+anchor = """
+    if cover == Cover::Required
+"""
+weakening = """
+    if cover == Cover::NotRequired
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::a_deployment_whose_drain_window_misses_the_request_deadline_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::refusal::tests::the_cover_rule_applies_only_where_it_is_required",
+]
+note = """
+The k8s invariant would move to the producer that does not owe it: a deployment could then hold
+a window that abandons a request its deadline still allows on SIGTERM, while a directly built
+`ServerOptions` would be refused for a pair the drain bounds on its own.
+"""

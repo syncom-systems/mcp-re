@@ -27,6 +27,7 @@ use std::time::Instant;
 use mcp_re_proxy::async_serve;
 use mcp_re_proxy::communication_assurance::AuthenticatedChannelPeer;
 use mcp_re_proxy::config_state::ClientCredentialWindow;
+use mcp_re_proxy::config_state::ConnectionBounds;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::ServerLimits;
 use mcp_re_proxy::ServerOptions;
@@ -346,11 +347,12 @@ where
 
 fn options_with_drain(grace: Duration, request_deadline: Duration) -> ServerOptions {
     ServerOptions {
-        limits: ServerLimits {
+        connection_bounds: ConnectionBounds::from_limits(&ServerLimits {
             drain_grace: grace,
             request_deadline: Some(request_deadline),
             ..ServerLimits::default()
-        },
+        })
+        .expect("bounds in force"),
         ..ServerOptions::new(window())
     }
 }

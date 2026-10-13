@@ -81,6 +81,9 @@ impl MachineStates {
             client_credential_window: r
                 .client_credential_window
                 .ok_or_else(|| unrecognised("client-credential-window"))?,
+            connection_bounds: r
+                .connection_bounds
+                .ok_or_else(|| unrecognised("connection-bounds"))?,
             continuation_control: r
                 .continuation_control
                 .ok_or_else(|| unrecognised("continuation-control"))?,
