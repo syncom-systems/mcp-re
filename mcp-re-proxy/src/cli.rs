@@ -151,7 +151,7 @@ impl Flags {
         let (response_signing, channel_key) = self.signing_source.finish()?;
         let channel = self.channel.finish(
             channel_key,
-            Some(crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME),
+            Some(crate::config_state::client_credential_window::MAX_CLIENT_CERT_LIFETIME),
         )?;
         let audit = self.audit.finish();
         Ok(DeploymentRequest {

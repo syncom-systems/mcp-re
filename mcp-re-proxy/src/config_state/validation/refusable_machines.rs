@@ -100,7 +100,7 @@ pub(super) fn classify_refusable(config: &DeploymentRequest) -> (RefusableStates
     let admission = m::admission::classify_and_validate(config);
     let authorization = m::authorization::classify_and_validate(config);
     let channel_binding = m::transport::classify_and_validate_binding(config);
-    let crl_revocation = m::transport::classify_and_validate_crl(config);
+    let crl_revocation = m::crl_revocation::classify_and_validate_crl(config);
     let freshness = m::freshness::classify_and_validate(config);
     let connection_bounds = m::connection_bounds::classify_and_validate(config);
     let mcp_transport_contract = m::mcp_transport_contract::classify_and_validate(config);

@@ -36,18 +36,9 @@ PROJECT="sdk/python"
 
 command -v uv >/dev/null || { echo "prepare_python_matrix: uv is not on PATH." >&2; exit 1; }
 
-readarray -t RUNTIMES < <(python3 - <<'PY'
-import sys, tomllib
-doc = tomllib.load(open("verification/policy/toolchains.lock.toml", "rb"))
-entry = doc.get("python")
-if not isinstance(entry, dict) or entry.get("state") != "resolved":
-    sys.exit("prepare_python_matrix: [python] is not a resolved pin.")
-versions = [str(v) for v in entry.get("interpreters", [])]
-if not versions:
-    sys.exit("prepare_python_matrix: [python] names no interpreter.")
-print("\n".join(sorted(versions)))
-PY
-)
+readarray -t RUNTIMES < <(python3 tools/verification/_toolchains.py interpreters python)
+# A process substitution's exit status is lost, so an empty read is the refusal.
+[ "${#RUNTIMES[@]}" -gt 0 ] || { echo "prepare_python_matrix: the lock pins no usable [python] runtime." >&2; exit 1; }
 
 echo "prepare_python_matrix: ${#RUNTIMES[@]} pinned interpreter(s): ${RUNTIMES[*]}"
 

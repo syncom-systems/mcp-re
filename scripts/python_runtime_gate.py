@@ -45,8 +45,12 @@ import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "tools" / "verification"))
+
+import _toolchains  # noqa: E402
+
 PYPROJECT = REPO_ROOT / "sdk" / "python" / "pyproject.toml"
-LOCK = REPO_ROOT / "verification" / "policy" / "toolchains.lock.toml"
+ECOSYSTEM = "python"
 DOCKER_DIR = REPO_ROOT / "deploy" / "docker"
 
 #: `FROM <image> AS <stage>` — the stage name is optional, because an unnamed final stage
@@ -118,25 +122,9 @@ def check(specifier: str | None, entry) -> tuple[str | None, str]:
     if unreadable is not None:
         return unreadable, ""
 
-    if not isinstance(entry, dict):
-        return "toolchains.lock.toml has no [python] runtime pin", ""
-    if entry.get("state") != "resolved":
-        return "[python] is unresolved, so no interpreter identity backs the claim", ""
-    pinned: dict[tuple[int, int], str] = {}
-    for version in entry.get("interpreters", []):
-        parts = str(version).split(".")
-        if len(parts) != 3 or not all(part.isdigit() for part in parts):
-            return (
-                f"[python].interpreters entry {version!r} is not an exact major.minor.patch "
-                f"version. A minor alone lets two different patches record one identity"
-            ), ""
-        key = (int(parts[0]), int(parts[1]))
-        if key in pinned:
-            return (
-                f"[python].interpreters names {key[0]}.{key[1]} twice ({pinned[key]}, "
-                f"{version}); one minor is measured on one interpreter"
-            ), ""
-        pinned[key] = str(version)
+    pinned, malformed = _toolchains.interpreters(entry, ECOSYSTEM)
+    if malformed is not None:
+        return malformed, ""
 
     missing = [f"{major}.{minor}" for major, minor in claimed if (major, minor) not in pinned]
     extra = [
@@ -288,9 +276,10 @@ WHEEL_SELFTEST_CASES = (
 )
 
 
-#: Every way the two facts can diverge, each paired with the positive case it must not
-#: reject. A gate that refuses everything measures as little as one that refuses nothing.
-SELFTEST_CASES = (
+#: The ways the support claim itself can be wrong or disagree with a well-formed pin, each
+#: paired with the positive case it must not reject. A gate that refuses everything measures
+#: as little as one that refuses nothing.
+CLAIM_CASES = (
     (
         "an unbounded support claim",
         ">=3.10",
@@ -309,36 +298,14 @@ SELFTEST_CASES = (
         {"state": "resolved", "interpreters": ["3.10.20", "3.11.15", "3.12.13"]},
         True,
     ),
-    (
-        "a minor pinned without a patch version",
-        ">=3.10,<3.12",
-        {"state": "resolved", "interpreters": ["3.10.20", "3.11"]},
-        True,
-    ),
-    (
-        "one minor pinned twice",
-        ">=3.10,<3.12",
-        {"state": "resolved", "interpreters": ["3.10.20", "3.11.15", "3.11.9"]},
-        True,
-    ),
-    (
-        "an unresolved runtime pin",
-        ">=3.10,<3.12",
-        {"state": "unresolved"},
-        True,
-    ),
-    (
-        "no runtime pin at all",
-        ">=3.10,<3.12",
-        None,
-        True,
-    ),
-    (
-        "the claim and the pin agreeing exactly",
-        ">=3.10,<3.12",
-        {"state": "resolved", "interpreters": ["3.10.20", "3.11.15"]},
-        False,
-    ),
+)
+
+#: The pin-shape cases the Node runtime gate runs too, from `_toolchains`, against a claim
+#: the well-formed pin satisfies exactly.
+PIN_CLAIM = ">=3.10,<3.12"
+SELFTEST_CASES = CLAIM_CASES + tuple(
+    (name, PIN_CLAIM, entry, must_refuse)
+    for name, entry, must_refuse in _toolchains.pin_shape_cases(ECOSYSTEM, ["3.10.20", "3.11.15"])
 )
 
 
@@ -429,17 +396,13 @@ def main(argv: list[str]) -> int:
     if "--selftest" in argv:
         return selftest()
     project = tomllib.load(PYPROJECT.open("rb"))["project"]
-    entry = tomllib.load(LOCK.open("rb")).get("python")
+    entry = _toolchains.load().get(ECOSYSTEM)
     refusal, summary = check(project.get("requires-python"), entry)
     if refusal is not None:
         return fail(refusal)
 
-    # Only reached once the claim and the pin agree, so `pinned` below is the checked set
-    # rather than a second reading of the registry.
-    pinned = {}
-    for version in entry["interpreters"]:
-        major, minor, _ = str(version).split(".")
-        pinned[(int(major), int(minor))] = str(version)
+    # Only reached once the claim and the pin agree, so `pinned` is the set `check` accepted.
+    pinned, _ = _toolchains.interpreters(entry, ECOSYSTEM)
     dockerfiles = {
         path.relative_to(REPO_ROOT).as_posix(): path.read_text(encoding="utf-8")
         for path in sorted(DOCKER_DIR.glob("Dockerfile*"))

@@ -248,6 +248,7 @@ _PROXY_LIB_SRCS = [
     "src/deployment_request/peer_identity/mod.rs",
     "src/cli/revocation_flags.rs",
     "src/config_state/credential_currency_bound.rs",
+    "src/config_state/crl_revocation.rs",
     "src/deployment_request/revocation/mod.rs",
     "src/deployment_request/revocation/online_evidence.rs",
     "src/deployment_request/revocation/revocation_list.rs",

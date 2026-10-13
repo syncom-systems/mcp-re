@@ -15,14 +15,10 @@ registry edit therefore came with a remembered rule: run every suite.
 So reading is owned once. `parse`, `read`, `document`, `rows`, `text`, `text_at` and
 `blob_at` are the only code that turns a policy registry's bytes into data. The typed
 loaders (`_manifest.load_verification`, `_theorems.load_theorems`, `_mutation.load_probes`,
-`_structural.load_probes`, `_measured.load_measurements`) read through them and add their
-own schema, and `reader_problems` refuses a reader around this module. The references
-between registries are checked by `_registry_refs`, which sits above the typed loaders;
-`check-registries` runs both on the merge path.
-
-`toolchains.lock.toml` is read here and is outside the reader rule. It is a pin file that
-installers read before any of this tooling can run, and it names nothing another registry
-references.
+`_structural.load_probes`, `_measured.load_measurements`, `_toolchains.load`) read through
+them and add their own schema, and `reader_problems` refuses a reader around this module.
+The references between registries are checked by `_registry_refs`, which sits above the
+typed loaders; `check-registries` runs both on the merge path.
 
 Stdlib only, and it imports nothing from this package: every typed loader imports it.
 """
@@ -52,9 +48,8 @@ REGISTRIES = {
     "toolchains": "toolchains.lock.toml",
 }
 
-#: The registries `reader_problems` holds to this module. See the module docstring for the
-#: one that is not.
-GUARDED = frozenset(name for name in REGISTRIES if name != "toolchains")
+#: The registries `reader_problems` holds to this module: every one it reads.
+GUARDED = frozenset(REGISTRIES)
 
 
 class ManifestError(Exception):

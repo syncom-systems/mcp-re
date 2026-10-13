@@ -10,6 +10,8 @@ the proof possible, and did the producer's contract change while its source did"
 Phase 4 derives state. Freshness is computed from the attestation store by `_graph`, never
 asserted: a unit with no attestation is UNKNOWN, which is dirty, and there is no path
 through this command from "could not establish" to FRESH.
+
+`--selftest` checks the shared-trust-root view and the UNKNOWN rule over fixture rows.
 """
 
 from __future__ import annotations
@@ -30,11 +32,62 @@ from _manifest import (  # noqa: E402
     load_toolchains,
     load_trust_boundaries,
     load_verification,
-    unresolved_pins,
 )
+from _toolchains import unresolved_pins  # noqa: E402
+
+
+def trusts_assumption(units: list[dict], assumptions: list[dict]) -> dict[str, list[str]]:
+    """For each assumption, the units whose scope names it (ADR-MCPRE-059 TRUSTS_ASSUMPTION).
+
+    Reported per assumption rather than per unit so that a shared trust root is visible as
+    one node several theorems stand on, instead of disappearing behind their separate green
+    badges. Without this view, N units trusting one un-`ensures`d seam read as N independent
+    security results; they are not.
+    """
+    return {
+        entry["id"]: sorted(
+            unit["id"] for unit in units if f"unit://{unit['id']}" in entry.get("scope", [])
+        )
+        for entry in sorted(assumptions, key=lambda row: row["id"])
+    }
+
+
+def selftest() -> int:
+    """The two derived facts this report shows, over fixture rows.
+
+    A shared trust root is reported as one assumption naming every unit that stands on it,
+    and a unit with no attestation is never FRESH.
+    """
+    units = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+    assumptions = [
+        {"id": "ASM-2", "scope": ["unit://c"]},
+        {"id": "ASM-1", "scope": ["unit://a", "unit://b"]},
+    ]
+    failures = 0
+
+    def case(label: str, ok: bool, got: object) -> None:
+        nonlocal failures
+        print(f"  {'ok  ' if ok else 'FAIL'}  {label}: {got}")
+        failures += not ok
+
+    trusts = trusts_assumption(units, assumptions)
+    case("a shared trust root names every unit on it", trusts["ASM-1"] == ["a", "b"], trusts)
+    case("a unit outside an assumption's scope is not on it", trusts["ASM-2"] == ["c"], trusts)
+    case("assumptions are reported in id order", list(trusts) == ["ASM-1", "ASM-2"], list(trusts))
+    derived = evaluate(units, [], {u["id"]: {} for u in units}, {})
+    states = {uid: state for uid, (state, _) in derived["states"].items()}
+    case("a unit with no attestation is not FRESH", "FRESH" not in states.values(), states)
+
+    if failures:
+        print(f"evidence-graph selftest: FAIL ({failures})")
+        return 1
+    print("evidence-graph selftest: PASS")
+    return 0
 
 
 def main() -> int:
+    if "--selftest" in sys.argv:
+        return selftest()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     parser.add_argument(
@@ -87,21 +140,7 @@ def main() -> int:
             for edge in edges
         ],
         "assumptions": len(assumptions.get("assumption", [])),
-        # ADR-MCPRE-059 TRUSTS_ASSUMPTION, materialized. Reported per assumption rather
-        # than per unit so that a shared trust root is visible as one node several
-        # theorems stand on, instead of disappearing behind their separate green badges.
-        # Without this view, N units trusting one un-`ensures`d seam read as N independent
-        # security results; they are not.
-        "trusts_assumption": {
-            entry["id"]: sorted(
-                unit["id"]
-                for unit in units
-                if f"unit://{unit['id']}" in entry.get("scope", [])
-            )
-            for entry in sorted(
-                assumptions.get("assumption", []), key=lambda row: row["id"]
-            )
-        },
+        "trusts_assumption": trusts_assumption(units, assumptions.get("assumption", [])),
         "trust_boundaries": [entry["id"] for entry in boundaries.get("boundary", [])],
         "unresolved_toolchain_pins": unresolved,
         "review_closure": derived["review_closure"],
