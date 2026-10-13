@@ -3006,7 +3006,7 @@ THM-0031, falsifier `M341`.
 ## NP-124 — a control-plane runtime exists only where it is needed, and outlives no owner
 
 **Controls:** `mcp-re-proxy/src/control_runtime.rs`.
-**Statement.** *A deployment that needs no control-plane client starts NO runtime; a single contributor is enough and no contributor is not; every consumer receives a handle to the SAME runtime; a runtime built before a later failure does not escape it; and dropping the owner stops work a surviving handle had started.*
+**Statement.** *A deployment that needs no control-plane client starts NO runtime; the first request for access whose build succeeds starts one and the provision owns it, and concurrent first requests share that one; every consumer receives a handle to the SAME runtime; a runtime built before a later failure does not escape it; and dropping the owner stops work a surviving handle had started.*
 **If false.** A runtime outlives the failure that should have torn it down, or a surviving handle keeps work going after its owner is gone. NP-003 is the same rule for threads; this is it for the runtime that owns them.
 **Likely owner:** none.
 **Severity:** `high`.

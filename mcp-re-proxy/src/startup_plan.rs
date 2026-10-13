@@ -392,39 +392,6 @@ impl ChannelEstablishmentPlan {
 /// establish refuses startup rather than degrading to `Disabled`.
 pub use crate::config_state::continuation_control::ContinuationControlPlan;
 
-/// Whether the §7 admission-currency gate will be wired (MCPRE-493).
-///
-/// Its Redis endpoint is its OWN; it has nothing to do with which replay tier was
-/// chosen. Deriving it from replay once made admission unimplementable on the
-/// CP/linearizable tier, and the natural resolution was to turn the control off.
-pub fn admission_needs_control_runtime(config: &ValidatedDeployment) -> bool {
-    cfg!(feature = "redis_replay") && config.state().admission().is_enforced()
-}
-
-/// Aggregate the control-runtime requirement across EVERY capability that can need it.
-///
-/// No single consumer owns this decision; each declares, the aggregate decides.
-///
-/// The `cfg!` guards yield a compile-time `false` without `redis_replay`, and the
-/// predicates beside them touch only configuration types present in every build — no
-/// Redis-only symbol appears here. `cfg!` does not remove code from compilation the way
-/// `#[cfg]` does, so a future contributor that names a feature-gated type would fail to
-/// build in the default lane rather than being silently excluded. Keep them that way.
-pub fn control_runtime_requirement(
-    config: &ValidatedDeployment,
-    replay: &ReplayPlan,
-) -> crate::control_runtime::ControlRuntimeRequirement {
-    crate::control_runtime::ControlRuntimeRequirement::any([
-        replay.needs_control_runtime(),
-        config
-            .state()
-            .continuation_control()
-            .continuation_plan()
-            .needs_control_runtime(),
-        admission_needs_control_runtime(config),
-    ])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -708,25 +675,24 @@ mod tests {
         assert_eq!(response_issuer_kid(&validated), "root-kms-1");
     }
 
-    // ---- control-runtime requirement -------------------------------------------
+    // ---- control-runtime selections ---------------------------------------------
     //
-    // Each contributor is asserted on its own, then the aggregation separately. A test
-    // that only exercised the aggregate boolean could not tell which consumer had
-    // stopped declaring its requirement — and the historical defect was exactly one
-    // consumer's need being inferred from another's.
-
-    /// The feature lane is the only one where any of these can be true, because every
-    /// Redis-dependent capability refuses outright in a build without the backend.
-    const REDIS: bool = cfg!(feature = "redis_replay");
+    // A capability needs the control runtime exactly when its owner selected a networked
+    // store, and its networked arm asks for the runtime itself. Each selection is asserted
+    // on its own: the historical defect was one consumer's need being inferred from
+    // another's.
 
     #[test]
-    fn only_the_redis_replay_tier_declares_a_need() {
-        let redis = plan_for(SHARED_REDIS);
-        assert_eq!(redis.needs_control_runtime(), REDIS);
-
-        let etcd = plan_for(SHARED_LINEARIZABLE);
+    fn only_the_redis_replay_tier_selects_a_networked_store() {
+        assert!(matches!(
+            plan_for(SHARED_REDIS).store(),
+            PlannedStore::Redis { .. }
+        ));
         assert!(
-            !etcd.needs_control_runtime(),
+            matches!(
+                plan_for(SHARED_LINEARIZABLE).store(),
+                PlannedStore::Etcd { .. }
+            ),
             "the etcd store drives its own requests"
         );
     }
@@ -738,7 +704,7 @@ mod tests {
     /// under one tier and the continuation store under another. The configuration it
     /// described is now refused, and the capability it wanted is expressed directly.
     #[test]
-    fn continuation_declares_on_its_own_locator_not_the_replay_tier() {
+    fn continuation_selects_on_its_own_locator_not_the_replay_tier() {
         // The negative control for the split: a CP replay store AND a shared continuation
         // store, which the alias made impossible to state without overloading a field.
         let both = parse(&[
@@ -756,16 +722,15 @@ mod tests {
                 .state()
                 .continuation_control()
                 .continuation_plan()
-                .needs_control_runtime(),
-            REDIS
+                .shared_store(),
+            Some("redis://127.0.0.1:6379")
         );
         assert!(
-            !validated
-                .state()
-                .replay()
-                .materialization_plan()
-                .needs_control_runtime(),
-            "the tier is etcd, so replay itself declares nothing"
+            matches!(
+                validated.state().replay().materialization_plan().store(),
+                PlannedStore::Etcd { .. }
+            ),
+            "the tier is etcd, so replay itself selects no networked store"
         );
 
         // And the converse: the replay store's locator no longer reaches continuation.
@@ -779,18 +744,13 @@ mod tests {
                 .shared_store(),
             None
         );
-        assert!(!validated
-            .state()
-            .continuation_control()
-            .continuation_plan()
-            .needs_control_runtime());
     }
 
     /// The projected endpoint is the continuation store's own locator, character for
     /// character (CF-12).
     ///
-    /// `needs_control_runtime` only reports the variant, so it stays true for an endpoint
-    /// that is empty or that names the replay store. Two Redis instances configured at
+    /// Whether a store was selected says nothing about WHICH, so that alone stays true for
+    /// an endpoint that is empty or that names the replay store. Two Redis instances configured at
     /// once separate the two: continuations planned against the replay store would be
     /// written where no answer leg reads them, and every cross-replica approval would fail
     /// closed.
@@ -1154,51 +1114,27 @@ mod tests {
         config
     }
 
-    /// Admission's endpoint is its own. Declaring it independently is what stopped it
-    /// being unimplementable on the CP/linearizable tier.
+    /// Admission's endpoint is its own. Selecting it independently of replay is what stopped
+    /// it being unimplementable on the CP/linearizable tier: the gate is enforced on a tier
+    /// whose replay store needs no control runtime.
     #[test]
-    fn admission_declares_independently_of_replay() {
+    fn admission_selects_independently_of_replay() {
         let off = ValidatedDeployment::try_from(parse(SHARED_LINEARIZABLE).expect("parse"))
             .expect("validates");
-        assert!(!admission_needs_control_runtime(&off));
+        assert!(off.state().admission().enforced().is_none());
 
         let on = with_admission(parse(SHARED_LINEARIZABLE).expect("parse"));
         let on = ValidatedDeployment::try_from(on).expect("validates");
-        assert_eq!(admission_needs_control_runtime(&on), REDIS);
+        assert!(on.state().admission().enforced().is_some());
         assert!(
-            !on.state()
-                .replay()
-                .materialization_plan()
-                .needs_control_runtime(),
+            matches!(
+                on.state().replay().materialization_plan().store(),
+                PlannedStore::Etcd { .. }
+            ),
             "admission must not need the replay tier to have asked first"
         );
     }
 
-    /// The aggregation itself: any contributor is enough, none means none.
-    #[test]
-    fn the_requirement_is_the_or_of_every_contributor() {
-        use crate::control_runtime::ControlRuntimeRequirement as Req;
-
-        // Admission alone, on a tier that declares nothing.
-        let admission_only = with_admission(parse(SHARED_LINEARIZABLE).expect("parse"));
-        let admission_only = ValidatedDeployment::try_from(admission_only).expect("validates");
-        let plan = admission_only.state().replay().materialization_plan();
-        assert_eq!(
-            control_runtime_requirement(&admission_only, &plan).is_required(),
-            REDIS,
-            "one contributor is enough"
-        );
-
-        // Nothing networked at all.
-        let none = ValidatedDeployment::try_from(parse(SHARED_LINEARIZABLE).expect("parse"))
-            .expect("validates");
-        let plan = none.state().replay().materialization_plan();
-        assert_eq!(
-            control_runtime_requirement(&none, &plan),
-            Req::NotRequired,
-            "no contributor declared a need, so no substrate is built"
-        );
-    }
     /// The sentinel `now_unix()` produces for a pre-epoch `SystemTime` error, and the
     /// unset-clock reading it stands in for, must both be faults. A predicate that only
     /// caught literal 0 would pass a host reading a few days past the epoch.

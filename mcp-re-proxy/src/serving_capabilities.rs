@@ -295,7 +295,7 @@ pub(crate) struct AdmissionGate {
 pub(crate) fn admission_currency(
     state: &crate::config_state::AdmissionState,
     max_clock_skew: i64,
-    control: Option<&crate::control_runtime::ControlRuntime>,
+    control: &crate::control_runtime::ControlRuntimeProvision,
 ) -> Result<Established<AdmissionGate>, String> {
     use crate::config_state::{AdmissionAvailability, AdmissionPosture};
     // The state names the posture AND carries what that posture cannot exist without, so
@@ -326,10 +326,8 @@ pub(crate) fn admission_currency(
     // replay tier the deployment chose. Coupling it to the replay control runtime made
     // admission unimplementable on the CP/linearizable tier — the operator supplied
     // `--admission-redis-url`, was told the flag was missing, and the natural resolution
-    // was to turn a security control off.
-    let handle = control
-        .ok_or("internal error: the plan declared the admission source needs the control runtime")?
-        .handle();
+    // was to turn a security control off. The enforced gate asks for the runtime itself.
+    let handle = control.handle()?;
     // ONE resolver for both admission artifacts. The authority that admits a workload is
     // the authority that says whether it still is, so the assertion and the authoritative
     // record are verified under the same configured key — a second resolver here would be a
@@ -392,7 +390,7 @@ pub(crate) fn admission_currency(
 pub(crate) fn admission_currency(
     state: &crate::config_state::AdmissionState,
     _max_clock_skew: i64,
-    _control: Option<&crate::control_runtime::ControlRuntime>,
+    _control: &crate::control_runtime::ControlRuntimeProvision,
 ) -> Result<Established<AdmissionGate>, String> {
     if state.is_enforced() {
         return Err(

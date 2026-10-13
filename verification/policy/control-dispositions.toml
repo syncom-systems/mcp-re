@@ -7547,14 +7547,6 @@ proposition = "NP-124"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-17019"
-project = "mcp-re-proxy"
-control = "src/lib.rs#control_runtime::tests::a_single_contributor_is_enough_and_no_contributor_is_not"
-decision = "new-proposition"
-proposition = "NP-124"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-17020"
 project = "mcp-re-proxy"
 control = "src/lib.rs#control_runtime::tests::dropping_the_owner_stops_work_a_surviving_handle_had_started"
@@ -15156,4 +15148,20 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#capability_materialization::key_source::channel_credential::tests::a_delegated_signer_under_requested_exported_custody_refuses"
 decision = "new-proposition"
 proposition = "NP-177"
+recorded = "2026-10-13"
+
+[[disposition]]
+id = "CD-20440"
+project = "mcp-re-proxy"
+control = "src/lib.rs#control_runtime::tests::the_first_request_starts_the_runtime_and_the_provision_owns_it"
+decision = "new-proposition"
+proposition = "NP-124"
+recorded = "2026-10-13"
+
+[[disposition]]
+id = "CD-20441"
+project = "mcp-re-proxy"
+control = "src/lib.rs#control_runtime::tests::concurrent_first_requests_share_the_one_runtime_the_provision_owns"
+decision = "new-proposition"
+proposition = "NP-124"
 recorded = "2026-10-13"

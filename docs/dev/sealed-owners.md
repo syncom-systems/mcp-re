@@ -50,9 +50,9 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | owner | module | projections |
 |---|---|---|
 | `ReplayState` | `config_state/replay.rs` | `materialization_plan()`, `durability_tier()`, `required_feature()` |
-| `ReplayPlan` | `config_state/replay.rs` | `store() -> PlannedStore<'_>`, `tier()`, `needs_control_runtime()` |
+| `ReplayPlan` | `config_state/replay.rs` | `store() -> PlannedStore<'_>`, `tier()` |
 | `ContinuationControlState` | `config_state/continuation_control.rs` | `continuation_plan()`, `is_shared()` |
-| `ContinuationControlPlan` | `config_state/continuation_control.rs` | `shared_store() -> Option<&str>`, `needs_control_runtime()` |
+| `ContinuationControlPlan` | `config_state/continuation_control.rs` | `shared_store() -> Option<&str>`, `shared()` |
 | `AdmissionState` | `config_state/admission.rs` | `enforced() -> Option<EnforcedAdmission<'_>>`, `is_enforced()` |
 | `RetentionState` | `config_state/evidence.rs` | `directory() -> Option<&str>`, `is_on()` |
 | `McpTransportContractState` | `config_state/mcp_transport_contract.rs` | `versions() -> &[String]` (non-empty: `classify_and_validate` produces no state for a refused set) |
@@ -82,6 +82,14 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `VerifiedDelegatedMcpResponse` | http-profile `verified_response/delegated_bound.rs` | `signature_facts()`, `request_evidence_agreement()`, `delegation_issuer_kid()` |
 | `CryptographicFloorVerifiedUnboundResponse` | http-profile `verified_response/unbound.rs` | `resolved_server_actor()`, `response_signature_base_digest()`, `signature_facts()` |
 | `VerifiedDelegatedUnboundResponse` | http-profile `verified_response/unbound.rs` | `signature_facts()`, `delegation_issuer_kid()` |
+
+Whether a capability needs the shared control runtime is not a separate projection. It
+needs one exactly when its owner's projection selects a networked store —
+`ReplayPlan::store()` naming Redis, `ContinuationControlPlan::shared()` naming a store,
+`AdmissionState::enforced()` naming a gate — and the arm that projection selects asks
+`ControlRuntimeProvision::handle()` for access. The planner once restated admission's
+selection as a boolean beside the other two owners' booleans, and each consumer then
+re-checked a runtime the aggregate was supposed to have supplied.
 
 A plan produced by an owner lives **with that owner**, not in `startup_plan.rs`.
 `startup_plan` re-exports it. The plan is the owner's projection of its own validated

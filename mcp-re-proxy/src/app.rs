@@ -410,19 +410,8 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     // ONE process-lifetime control runtime for every networked control-plane client:
     // the redis replay ConnectionManager's reconnect task, the admission source and the
     // MRTR continuation store. Distinct from the per-core serving runtimes and held
-    // alive for the whole serve.
-    //
-    // Whether it exists is decided by the PLANS, aggregated across every capability that
-    // can need one — not by whichever seam reaches for it first. Deriving it from replay
-    // once made admission unimplementable on the CP/linearizable tier.
-    // JOINS THE OWNER WHERE IT IS ACQUIRED (r12 R12-635). It used to stay a local until
-    // the end of the assembly, so each of the seven fallible expressions between here and
-    // there reclaimed it by reverse-declaration-order unwinding — the mechanism the doc
-    // beside it says the guarantee does NOT rest on, and which happened to be correct only
-    // because the replay tier was declared after it and therefore dropped first.
-    building.install_control(crate::control_runtime::ControlRuntime::start(
-        crate::startup_plan::control_runtime_requirement(config, &replay_plan),
-    )?)?;
+    // alive for the whole serve. The builder owns it from `begin`: the first networked
+    // arm to ask starts it, and that arm's owner selected the store that needs it.
     // The redis store's reconnect machinery binds to the runtime it is CREATED in, so the
     // substrate must outlive every USE of the tier — discharged by draining the fleet
     // before anything is reclaimed, not by drop order. See `replay_plane`.

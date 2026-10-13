@@ -112,13 +112,6 @@ impl ContinuationControlPlan {
             .as_ref()
             .map(|(endpoint, capacity)| (endpoint.locator(), *capacity))
     }
-
-    /// Whether establishing this plan needs the shared control runtime.
-    ///
-    /// One contributor to the aggregate — never the decision itself.
-    pub fn needs_control_runtime(&self) -> bool {
-        cfg!(feature = "redis_replay") && self.store.is_some()
-    }
 }
 
 /// Whether `locator` opens with an RFC 3986 scheme followed by `://`.
