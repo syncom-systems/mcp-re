@@ -370,8 +370,13 @@ jobs:
       # the gate on this Linux runner is the first time those sites have been measured at
       # all — the first green run here is the real baseline, and a difference on this
       # runner is a MEASUREMENT that was missing, not necessarily a regression.
+      #
+      # Five ratchets read their register and its `origin/main` baseline through
+      # `_ratchet.py`, which keeps "git could not answer" apart from "no register at the
+      # base"; its selftest runs first, before any gate that relies on that distinction.
       - name: Module-size ratchet (ADR-MCPRE-061 §5.1)
         run: |
+          python3 tools/verification/_ratchet.py --selftest
           python3 scripts/module_size_gate.py --selftest
           python3 scripts/module_size_gate.py
 

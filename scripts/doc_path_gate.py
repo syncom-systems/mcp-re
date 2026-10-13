@@ -68,11 +68,24 @@ import re
 import subprocess
 import sys
 import tempfile
-import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 REGISTRY = REPO / "config" / "doc-path-debt.toml"
+
+sys.path.insert(0, str(REPO / "tools" / "verification"))
+import _ratchet  # noqa: E402
+
+#: The register's shape. `_ratchet` checks it, the `review_ref` rule included;
+#: `load_registry` adds the one field rule that is this registry's own.
+SCHEMA = _ratchet.Schema(
+    table="debt",
+    key="path",
+    required=frozenset({"path", "dead_tokens", "status"}),
+    fields=frozenset({"path", "dead_tokens", "status", "review_ref"}),
+    statuses=("unreviewed", "reviewed-action-required", "reviewed-exception"),
+    reviewed=frozenset({"reviewed-action-required", "reviewed-exception"}),
+)
 
 # Each names a category of DATED RECORD, for which a dead path is correct — an audit is
 # not falsified by a later deletion — except `.claude/**`, which is vendored third-party
@@ -278,33 +291,24 @@ def scanned_count(root: Path, repo_files: set[str] | None = None) -> int:
     return sum(1 for rel in files if in_scope(rel) and (root / rel).is_file())
 
 
-def load_registry(path: Path) -> tuple[dict[str, dict], list[str]]:
-    if not path.exists():
+def load_registry(path: Path, root: Path = REPO) -> tuple[dict[str, dict], list[str]]:
+    """The register at `path` under `root`, and every way it departs from its schema.
+
+    An absent register is a failure here, not an empty one: this gate's register is the
+    whole of its baseline, so with no file there is nothing it could have compared.
+    """
+    register = _ratchet.Register(path.relative_to(root).as_posix(), SCHEMA, root)
+    if not register.exists():
         return {}, [f"{path} does not exist"]
-    data = tomllib.loads(path.read_text())
-    rows: dict[str, dict] = {}
-    errors: list[str] = []
-    for row in data.get("debt", []):
-        rel = row.get("path", "")
-        status = row.get("status", "")
-        if status not in ("unreviewed", "reviewed-action-required", "reviewed-exception"):
-            errors.append(f"{rel}: unknown status {status!r}")
-        if status.startswith("reviewed"):
-            ref = row.get("review_ref", "")
-            if not ref:
-                errors.append(f"{rel}: {status} without a review_ref")
-            else:
-                record, named = ref.split()[0], ref.split()[-1]
-                doc = REPO / named
-                if not doc.exists():
-                    errors.append(f"{rel}: review_ref names {named}, which does not exist")
-                elif record not in doc.read_text():
-                    errors.append(
-                        f"{rel}: review_ref names {record}, which {named} does not contain"
-                    )
-        elif "review_ref" in row:
-            errors.append(f"{rel}: unreviewed rows carry no review_ref")
-        rows[rel] = row
+    try:
+        rows = register.current()
+    except _ratchet.RegisterError as exc:
+        return {}, [str(exc)]
+    errors = register.problems(rows) + [
+        f"{rel}: unreviewed rows carry no review_ref"
+        for rel, row in sorted(rows.items())
+        if row.get("status") == "unreviewed" and "review_ref" in row
+    ]
     return rows, errors
 
 
@@ -323,7 +327,7 @@ def emit_registry(measured: dict[str, list[str]]) -> str:
 
 def verdict(root: Path, registry: Path = REGISTRY) -> int:
     measured = measure(root)
-    rows, errors = load_registry(registry)
+    rows, errors = load_registry(registry, root)
     for rel, hits in sorted(measured.items()):
         row = rows.get(rel)
         if row is None:

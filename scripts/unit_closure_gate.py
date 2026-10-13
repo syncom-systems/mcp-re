@@ -100,19 +100,16 @@ import sys
 import tempfile
 from pathlib import Path
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
-    import tomli as tomllib  # type: ignore[no-redef]
-
 REPO = Path(__file__).resolve().parent.parent
-REGISTER = REPO / "config" / "unit-closure-exclusions.toml"
+REGISTER_REL = "config/unit-closure-exclusions.toml"
+REGISTER = REPO / REGISTER_REL
 
 sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "tools" / "verification"))
 
 # Module resolution is IMPORTED, not re-written: `_module_tree` is the one owner of which
 # file a `mod` names, and a second copy would be a second opinion about what a module is.
+import _ratchet  # noqa: E402
 from _module_tree import children, is_mod_rs_name  # noqa: E402
 from _rust_source import production_view  # noqa: E402
 
@@ -152,6 +149,21 @@ PERMITTED_TRANSITIONS = {
     ("reviewed-out-of-cone", "reviewed-out-of-cone"),
     ("reviewed-out-of-cone", "reviewed-attached"),
 }
+
+#: The register's shape. `_ratchet` checks it; `validate_register` adds the one field rule
+#: that is this gate's own.
+SCHEMA = _ratchet.Schema(
+    table="exclusion",
+    key="path",
+    required=frozenset({"path", "rule", "baseline_sha", "status"}),
+    fields=frozenset(ENTRY_FIELDS),
+    statuses=tuple(sorted(STATUSES)),
+    reviewed=frozenset(REVIEWED),
+)
+
+
+def exclusions(root: Path = REPO) -> _ratchet.Register:
+    return _ratchet.Register(REGISTER_REL, SCHEMA, root)
 
 
 # --------------------------------------------------------------------------------------
@@ -325,60 +337,22 @@ def expansion_disagreements(root: Path, units) -> list[str]:
 # the register
 
 
-def load_register(path: Path) -> dict[str, dict]:
-    if not path.exists():
-        return {}
-    data = tomllib.loads(path.read_text())
-    return {entry["path"]: entry for entry in data.get("exclusion", [])}
-
-
-def referenced_documents(review_ref: str) -> list[str]:
-    """The repo-relative document paths a `review_ref` names."""
-    return re.findall(r"\S+\.md", review_ref)
-
-
 def permitted_transition(old: str, new: str) -> bool:
     """Whether a disposition may move from `old` to `new`. Total, so the selftest can
     assert the relation rather than re-implement it."""
     return (old, new) in PERMITTED_TRANSITIONS
 
 
-def validate_register(register: dict[str, dict], root: Path | None = None) -> list[str]:
-    problems: list[str] = []
+def validate_register(register: dict[str, dict], root: Path = REPO) -> list[str]:
+    """The register's schema, and the rule only this register has: `reviewed-out-of-cone`
+    carries the `reason` no unit's claim reaches the file."""
+    problems = exclusions(root).problems(register)
     for rel, entry in sorted(register.items()):
-        for field in ("path", "rule", "baseline_sha", "status"):
-            if field not in entry:
-                problems.append(f"{rel}: exclusion entry is missing `{field}`")
-        status = entry.get("status")
-        if status is not None and status not in STATUSES:
-            problems.append(f"{rel}: status `{status}` is not one of {sorted(STATUSES)}")
-        if status in REVIEWED and not entry.get("review_ref"):
-            problems.append(
-                f"{rel}: status is `{status}` but no `review_ref` names the record that "
-                f"adjudicated it"
-            )
-        if status == "reviewed-out-of-cone" and not entry.get("reason"):
+        if entry.get("status") == "reviewed-out-of-cone" and not entry.get("reason"):
             problems.append(
                 f"{rel}: `reviewed-out-of-cone` without a `reason` — the whole content of "
                 f"that disposition is why no unit's claim reaches this file"
             )
-        unknown = sorted(set(entry) - ENTRY_FIELDS)
-        if unknown:
-            problems.append(f"{rel}: unknown exclusion field(s) {unknown}")
-        ref = entry.get("review_ref")
-        if ref and root is not None:
-            named = referenced_documents(ref)
-            if not named:
-                problems.append(
-                    f"{rel}: `review_ref` names no document — cite the record's file so the "
-                    f"claim can be read"
-                )
-            for doc in named:
-                if not (root / doc).exists():
-                    problems.append(
-                        f"{rel}: `review_ref` names {doc}, which does not exist — a "
-                        f"completed review must point at a record, not at a memory of one"
-                    )
     return problems
 
 
@@ -409,10 +383,7 @@ def check_register(findings: dict[str, str], register: dict[str, dict]) -> list[
 
 def check_transitions(previous: dict[str, dict], current: dict[str, dict]) -> list[str]:
     problems = []
-    for rel, entry in sorted(current.items()):
-        before = previous.get(rel)
-        if before is None:
-            continue
+    for rel, before, entry in _ratchet.transitions(previous, current):
         old, new = before.get("status"), entry.get("status")
         if old not in STATUSES or new not in STATUSES:
             continue
@@ -435,48 +406,27 @@ def check_new_debt(register: dict[str, dict], new_paths: set[str]) -> list[str]:
     ]
 
 
-def introduced_paths(ref: str = "origin/main") -> tuple[set[str] | None, str]:
-    """Rust files this branch ADDS relative to `ref`, and a sentence naming the comparison.
+def introduced_paths(previous: dict[str, dict], ref: str = _ratchet.BASE) -> set[str] | None:
+    """Rust files this branch ADDS relative to `ref`; None when git cannot answer.
 
-    A rename carries its answer with it only when the old path had one; otherwise the new
-    name is as new as an addition, and UC-3 treats it that way. Returns `(None, why)` when
-    the ref cannot be read: a check that quietly no-ops when it cannot find its baseline is
-    the "green that measured nothing" failure applied to this gate, so the caller PRINTS
-    the sentence.
+    A rename carries its answer with it only when the old path had one in `previous`, the
+    register at `ref`; otherwise the new name is as new as an addition, and UC-3 treats it
+    that way. None is a refusal, not an empty set: an empty set would admit every entry.
     """
-    try:
-        out = subprocess.run(
-            ["git", "diff", "--name-status", "-M", f"{ref}...HEAD"],
-            cwd=REPO, capture_output=True, text=True, check=True,
-        ).stdout
-    except Exception as exc:  # noqa: BLE001 - any git failure is the same answer here
-        return None, f"not evaluated: no baseline at {ref} ({type(exc).__name__})"
-
-    previous, _ = previous_register(ref)
-    known = set(previous or {})
+    proc = subprocess.run(
+        ["git", "diff", "--name-status", "-M", f"{ref}...HEAD"],
+        cwd=REPO, capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return None
     added: set[str] = set()
-    for line in out.splitlines():
+    for line in proc.stdout.splitlines():
         parts = line.split("\t")
         if parts[0].startswith("A") and len(parts) == 2:
             added.add(parts[1])
-        elif parts[0].startswith("R") and len(parts) == 3 and parts[1] not in known:
+        elif parts[0].startswith("R") and len(parts) == 3 and parts[1] not in previous:
             added.add(parts[2])
-    return added, f"against {ref}"
-
-
-def previous_register(ref: str = "origin/main") -> tuple[dict[str, dict] | None, str]:
-    """The register as of `ref`, and a sentence saying which it is."""
-    try:
-        out = subprocess.run(
-            ["git", "show", f"{ref}:config/unit-closure-exclusions.toml"],
-            cwd=REPO, capture_output=True, text=True, check=True,
-        ).stdout
-    except Exception as exc:  # noqa: BLE001
-        return None, f"no baseline register at {ref} ({type(exc).__name__})"
-    return (
-        {entry["path"]: entry for entry in tomllib.loads(out).get("exclusion", [])},
-        f"against {ref}",
-    )
+    return added
 
 
 def empty_scope_is_failure(units: int, walked: int) -> bool:
@@ -613,9 +563,10 @@ def selftest() -> int:  # noqa: C901 - a control per property, each one named
     )
     case("P6 resolved entry must be removed", p, "must be removed, not left standing")
 
-    # P7 — a reviewed entry must point at a record that exists.
-    p, _, _ = _run(SPLIT, [_unit("u.sp", "c/src/sp/mod.rs")], entry)
-    case("P7 review_ref must resolve", p, "does not exist")
+    # P7 — `reviewed-out-of-cone` is its reason; without one the disposition says nothing.
+    reasonless = {k: {f: v for f, v in e.items() if f != "reason"} for k, e in entry.items()}
+    p, _, _ = _run({**SPLIT, "docs/d.md": "REV-1"}, [_unit("u.sp", "c/src/sp/mod.rs")], reasonless)
+    case("P7 out-of-cone needs a reason", p, "without a `reason`")
 
     # P8 — nothing returns to `unreviewed`.
     for old, new, want in (
@@ -692,8 +643,8 @@ def selftest() -> int:  # noqa: C901 - a control per property, each one named
         return 1
     print(
         "unit-closure gate selftest: PASS (the split and rename escapes, the deciding "
-        "parent and the namespace exemption, an entry's scope, the ratchet, review_ref "
-        "resolution, the disposition lifecycle, UC-3, non-code `mod`, both module forms, "
+        "parent and the namespace exemption, an entry's scope, the ratchet, the "
+        "out-of-cone reason, the disposition lifecycle, UC-3, non-code `mod`, both module forms, "
         "the empty-scope refusal, and the signing_plane escape replayed in-tree)"
     )
     return 0
@@ -712,7 +663,7 @@ def _in_tree_probe() -> bool:
         {"id": u["id"], "paths": [p for p in u["paths"] if p not in escaped]}
         for u in load_verification()["unit"]
     ]
-    register = {k: v for k, v in load_register(REGISTER).items() if k not in escaped}
+    register = {k: v for k, v in exclusions().current().items() if k not in escaped}
     findings, walked = flag(REPO, units)
     problems = check_register(findings, register)
     missing = [rel for rel in escaped if not any(rel in p for p in problems)]
@@ -739,7 +690,7 @@ def emit_register() -> int:
         ["git", "rev-parse", "--short", "HEAD"],
         cwd=REPO, capture_output=True, text=True, check=True,
     ).stdout.strip()
-    existing = load_register(REGISTER)
+    existing = exclusions().current()
     findings, _ = flag(REPO, load_verification()["unit"])
     print(
         f"# Unit-closure exclusions — files the module tree reaches from a measured unit\n"
@@ -776,7 +727,12 @@ def main() -> int:
         print(f"unit-closure gate: FAIL — {exc}", file=sys.stderr)
         return 1
 
-    register = load_register(REGISTER)
+    reg = exclusions()
+    try:
+        register = reg.current()
+    except _ratchet.RegisterError as exc:
+        print(f"unit-closure gate: FAIL — {exc}", file=sys.stderr)
+        return 1
     findings, walked = flag(REPO, units)
 
     if empty_scope_is_failure(len(units), walked):
@@ -787,15 +743,25 @@ def main() -> int:
         )
         return 1
 
-    new_paths, uc3_note = introduced_paths()
-    previous, baseline_note = previous_register()
     problems = (
         expansion_disagreements(REPO, units)
         + validate_register(register, REPO)
         + check_register(findings, register)
-        + (check_transitions(previous, register) if previous is not None else [])
-        + (check_new_debt(register, new_paths) if new_paths is not None else [])
     )
+    baseline = reg.at(_ratchet.BASE)
+    if isinstance(baseline, _ratchet.Unreadable):
+        problems.append(_ratchet.unreadable_problem(REGISTER_REL, _ratchet.BASE, baseline))
+    else:
+        previous = baseline.entries if isinstance(baseline, _ratchet.Present) else {}
+        problems += check_transitions(previous, register)
+        new_paths = introduced_paths(previous)
+        if new_paths is None:
+            problems.append(
+                f"UC-3: baseline unreadable — `git diff {_ratchet.BASE}...HEAD` failed, so no "
+                f"path could be told apart as new. Fetch {_ratchet.BASE} and re-run"
+            )
+        else:
+            problems += check_new_debt(register, new_paths)
 
     if problems:
         print(f"unit-closure gate: FAIL — {len(problems)} problem(s)", file=sys.stderr)
@@ -819,7 +785,7 @@ def main() -> int:
         f"closure — {with_status('unreviewed')} unreviewed, "
         f"{with_status('reviewed-attached')} reviewed-attached, "
         f"{with_status('reviewed-out-of-cone')} reviewed-out-of-cone. No unanswered "
-        f"neighbour. Dispositions checked {baseline_note}; UC-3 {uc3_note}."
+        f"neighbour. Dispositions and UC-3 checked against {_ratchet.BASE}."
     )
     return 0
 

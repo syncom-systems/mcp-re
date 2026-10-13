@@ -53,13 +53,20 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover
-    import tomli as tomllib  # type: ignore[no-redef]
-
 REPO = Path(__file__).resolve().parent.parent
-REGISTRY = REPO / "config" / "clippy-debt.toml"
+REGISTRY_REL = "config/clippy-debt.toml"
+REGISTRY = REPO / REGISTRY_REL
+
+sys.path.insert(0, str(REPO / "tools" / "verification"))
+import _ratchet  # noqa: E402
+
+#: The register's shape: one count per crate and lint, keyed `crate::lint`.
+SCHEMA = _ratchet.Schema(
+    table="debt",
+    key=lambda entry: f"{entry['crate']}::{entry['lint']}",
+    required=frozenset({"crate", "lint", "count"}),
+    fields=frozenset({"crate", "lint", "count"}),
+)
 
 # The ADR-MCPRE-061 §6 thresholds, kept OUT of the repository's `/.clippy.toml`.
 # `clippy::excessive_nesting` is warn-by-default with a default threshold of 5, so a value
@@ -208,14 +215,20 @@ def measure(root: Path) -> tuple[Counter, int]:
     return counts, len(diagnostics)
 
 
-def load_registry(path: Path) -> dict[str, int]:
-    if not path.exists():
-        return {}
-    data = tomllib.loads(path.read_text())
-    out: dict[str, int] = {}
-    for entry in data.get("debt", []):
-        out[f"{entry['crate']}::{entry['lint']}"] = int(entry["count"])
-    return out
+def load_registry(register: _ratchet.Register) -> tuple[dict[str, int], list[str]]:
+    """`{crate::lint: count}`, and every way the register departs from its schema."""
+    try:
+        entries = register.current()
+    except _ratchet.RegisterError as exc:
+        return {}, [str(exc)]
+    problems = register.problems(entries)
+    counts: dict[str, int] = {}
+    for key, entry in entries.items():
+        if isinstance(entry.get("count"), int):
+            counts[key] = entry["count"]
+        else:
+            problems.append(f"{key}: `count` is {entry.get('count')!r}, not an integer")
+    return counts, problems
 
 
 def compare(counts: Counter, baseline: dict[str, int]) -> list[str]:
@@ -569,7 +582,12 @@ def main() -> int:
             print(f"  - {p}")
         return 1
 
-    baseline = load_registry(REGISTRY)
+    baseline, schema_problems = load_registry(_ratchet.Register(REGISTRY_REL, SCHEMA, REPO))
+    if schema_problems:
+        print(f"clippy-ratchet gate: FAIL — {len(schema_problems)} register problem(s)")
+        for p in schema_problems:
+            print(f"  - {p}")
+        return 1
     counts, messages = measure(REPO)
     if messages == 0:
         print("clippy-ratchet gate: FAIL — clippy produced no messages at all. A lane that "
