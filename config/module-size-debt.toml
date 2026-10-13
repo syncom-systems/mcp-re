@@ -334,9 +334,11 @@ status = "unreviewed"
 path = "sdk/python/src/lib.rs"
 # MCPRE-198: the binding marshals into `mcp-re-binding-core`, which holds the signing inputs,
 # the root anchor, the verify preamble and the verdict projection both bindings restated:
-# 767 (measured at 6f2000c) -> 686. `baseline_sha` names that parent.
-baseline_prod_loc = 686
-baseline_sha = "6f2000c"
+# 767 (measured at 6f2000c) -> 686.
+# MCPRE-199: a refusal crosses into Python typed, and the refusal channel and device seam
+# are `refusal.rs`'s: 686 (measured at c198ef0) -> 683. `baseline_sha` names that parent.
+baseline_prod_loc = 683
+baseline_sha = "c198ef0"
 status = "unreviewed"
 
 [[debt]]
@@ -368,9 +370,11 @@ growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
 path = "sdk/typescript/src/lib.rs"
 # MCPRE-198: the binding marshals into `mcp-re-binding-core`, which holds the signing inputs,
 # the root anchor, the verify preamble and the verdict projection both bindings restated:
-# 727 (measured at 6f2000c) -> 649. `baseline_sha` names that parent.
-baseline_prod_loc = 649
-baseline_sha = "6f2000c"
+# 727 (measured at 6f2000c) -> 649.
+# MCPRE-199: a refusal crosses into JavaScript typed, and the refusal channel and device
+# seam are `refusal.rs`'s: 649 (measured at c198ef0) -> 645. `baseline_sha` names that parent.
+baseline_prod_loc = 645
+baseline_sha = "c198ef0"
 status = "unreviewed"
 
 # MCPRE-175 gave the local listener an owner subtree. `serve.rs` mixed the accept loop with

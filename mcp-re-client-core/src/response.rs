@@ -753,7 +753,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason::new("mcp-re.request_signature_invalid", "bad request");
+        let reason = RejectionReason::new("mcp-re.invalid_signature", "bad request");
         let resp = build_delegated_rejection_preflight(
             Some(signed.request()),
             &reason,
@@ -777,7 +777,7 @@ mod delegated_tests {
         assert_eq!(
             out.outcome(),
             &DelegatedOutcome::Rejection {
-                wire_code: Some("mcp-re.request_signature_invalid".into()),
+                wire_code: Some("mcp-re.invalid_signature".into()),
                 execution: ExecutionContract::default(),
             }
         );
@@ -821,7 +821,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason::new("mcp-re.request_signature_invalid", "bad request");
+        let reason = RejectionReason::new("mcp-re.invalid_signature", "bad request");
         // The receipt the server genuinely emitted for the ATTACKER's request.
         let spliced = build_delegated_rejection_preflight(
             Some(theirs.request()),
@@ -881,7 +881,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason::new("mcp-re.request_signature_invalid", "bad request");
+        let reason = RejectionReason::new("mcp-re.invalid_signature", "bad request");
         let generic = build_delegated_rejection_preflight(
             None,
             &reason,
@@ -916,8 +916,9 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason::new("mcp-re.upstream_unavailable", "backend already ran")
-            .with_execution(mcp_re_http_profile::ExecutionDisposition::PossiblyExecuted);
+        let reason =
+            RejectionReason::new("mcp-re.inner_dispatch_indeterminate", "backend already ran")
+                .with_execution(mcp_re_http_profile::ExecutionDisposition::PossiblyExecuted);
         let resp = build_delegated_rejection(
             signed.request(),
             &reason,
@@ -1122,7 +1123,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason::new("mcp-re.request_signature_invalid", "x");
+        let reason = RejectionReason::new("mcp-re.invalid_signature", "x");
         // Build an UNBOUND signature but stamp a success status onto it.
         let mut resp = build_delegated_rejection_preflight(
             Some(signed.request()),

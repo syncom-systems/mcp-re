@@ -18,6 +18,7 @@ import {
   signPreimage,
   type SignRequestArgs,
 } from "../src/index.js";
+import { SIGNING_DEVICE_FAILURE, signRequestWithSigner } from "../native/binding.js";
 
 const SEED = Buffer.from(Array.from({ length: 32 }, (_, i) => i));
 const OTHER_SEED = Buffer.from(Array.from({ length: 32 }, () => 7));
@@ -148,6 +149,40 @@ describe("a device that cannot sign fails closed", () => {
   it("never emits unsigned evidence when the device misbehaves", () => {
     const signer = Signer.nonExporting(SIGNER_ID, KEY_ID, () => Buffer.alloc(0));
     expect(() => signer.signRequest(ARGS)).toThrow();
+  });
+
+  it("the native seam does not report a device failure as a wire code", () => {
+    // A callback that throws means nothing was signed and nothing was sent, so no
+    // `mcp-re.*` code describes it; the native error says so in its `code`.
+    try {
+      signRequestWithSigner(
+        () => {
+          throw new Error("HSM unavailable");
+        },
+        KEY_ID,
+        ARGS.idJson,
+        ARGS.method,
+        ARGS.paramsJson,
+        ARGS.targetUri,
+        ARGS.audienceId,
+        null,
+        ARGS.dpopToken,
+        ARGS.nonce,
+        ARGS.created,
+        ARGS.expires,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+      );
+      throw new Error("expected the native call to throw");
+    } catch (e) {
+      expect((e as Error).message).not.toMatch(/mcp-re\.invalid_signature/);
+      expect((e as { code?: string }).code).toBe(SIGNING_DEVICE_FAILURE);
+      expect(((e as Error).cause as Error).message).toBe("HSM unavailable");
+    }
   });
 
   it("does not blame the device for a core failure", () => {

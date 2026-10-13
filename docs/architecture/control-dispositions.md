@@ -974,7 +974,7 @@ inherits that: the lane is the prepared interpreter, never a bare `pytest`.
 
 ## NP-015 — a device that cannot sign emits no evidence (Python)
 
-**Controls:** `sdk/python/tests/test_custody.py::TestDeviceFailsClosed` (7).
+**Controls:** `sdk/python/tests/test_custody.py::TestDeviceFailsClosed` (8).
 **Carrier:** `sdk/python/python/mcp_re_sdk/custody.py`'s device signer.
 **Statement.** *A signing device that throws, returns a non-`bytes` value, or returns a
 signature of the wrong length raises `SignerUnavailable` and emits no evidence; the
@@ -987,12 +987,12 @@ the custody path instead of the transport path.
 **Likely owner:** `sdk_python.signer_policy`, and this is why it is a proposition rather
 than a registration: **`sdk_typescript.signer_policy` says "a device that cannot sign fails
 closed rather than emitting unsigned evidence" and `sdk_python.signer_policy` does not.**
-The Python statement stops at the policy check and the rendering refusal. Seven controls are
+The Python statement stops at the policy check and the rendering refusal. Eight controls are
 written, they pass in the measured lane, and the unit above them makes no claim they support.
 **Root relationship.** Under THM-0094. A second asymmetry between the two SDK roots, found
 the same way as NP-014 and recorded separately from it because it is a different clause.
 **Severity:** `high`, matching its TypeScript twin.
-**Note on shape.** One of the seven is parametrised over signature lengths, and pytest's
+**Note on shape.** One of the eight is parametrised over signature lengths, and pytest's
 generated ids for it embed raw bytes. That is a registration-mechanics problem for whoever
 ratifies this, not a reason the proposition is absent, and it is recorded here so the
 ratification meets it deliberately.

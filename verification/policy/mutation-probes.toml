@@ -5466,21 +5466,25 @@ theorem = "THM-0094"
 conjunct = "a condition this SDK originated is reported under the SDK's own prefix, never as a frozen mcp-re.* token the peer did not send"
 path = "sdk/python/python/mcp_re_sdk/transport.py"
 anchor = """
-    return token if _WIRE_CODE.match(token) else None
+            # condition", so it can never be read as something the peer said.
+            message = _error_message(request.id, f"mcp-re-sdk: {type(e).__name__}: {e}")
 """
 weakening = """
-    return token
+            # condition", so it can never be read as something the peer said.
+            message = _error_message(request.id, str(e))
 """
 expect_red = [
   "pytest#tests/test_transport.py::test_a_value_error_that_is_not_a_token_is_labelled_a_local_condition",
+  "pytest#tests/test_transport.py::test_a_value_error_that_merely_says_a_token_is_a_local_condition",
 ]
 note = """
-THE `None` RETURN IS THE CARRIER, not a null-guard. Every caller spells the delivery as
-`_peer_wire_code(...) or "mcp-re-sdk: ..."`, so the ONLY thing separating a local condition
-from a peer verdict is this predicate refusing to call a reset connection, a TLS error or a
-caller-raised timeout a token. Under the weakening the SDK's own failures occupy the field
-that otherwise only ever holds something the peer said, and a caller branching on the frozen
-taxonomy (REQ-14/POL-6) acts on a verdict no peer issued.
+THE PREFIX IS THE CARRIER. A core refusal arrives as the binding's `WireRefusal`, whose
+`.wire_code` is delivered as the token; every other `ValueError` reaching an exchange is the
+SDK's or the caller's own condition and is delivered under `mcp-re-sdk:`. Under the weakening
+a reset connection, a TLS error or a caller-raised timeout occupies the field that otherwise
+only ever holds something the peer said, and a `ValueError` whose text merely spells a token
+is read as one, so a caller branching on the frozen taxonomy (REQ-14/POL-6) acts on a verdict
+no peer issued.
 """
 
 [[probe]]
@@ -5490,21 +5494,22 @@ theorem = "THM-0095"
 conjunct = "a condition this SDK originated is reported under the SDK's own prefix, never as a frozen mcp-re.* token the peer did not send"
 path = "sdk/typescript/src/transport.ts"
 anchor = """
-  return /^mcp-re\\.[a-z0-9_]+$/.test(token) ? token : null;
+  return typeof code === "string" && code.startsWith("mcp-re.") ? code : null;
 """
 weakening = """
-  return token;
+  return (e as Error).message;
 """
 expect_red = [
   "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > still labels a genuine local failure as one",
+  "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > does not read a wire code out of a message that merely says one",
   "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > delivers a network error under the local prefix, not as something the peer said",
 ]
 note = """
-The TypeScript instance of M199, with the same `?? \"mcp-re-sdk: ...\"` spelling at both of
-its call sites. The sibling control -- delivering a CORE failure as its frozen token -- is
-deliberately NOT expected red: it stays green under the weakening, because the weakening
-only widens what counts as a token. A probe that expected it would be measuring the wrong
-direction.
+The TypeScript instance of M199. A core refusal carries its frozen token in the thrown
+error's `code`, which `coreWireCode` reads; the weakening reads the message instead, so a
+local failure's text is delivered in the wire-code field. The sibling control -- delivering a
+CORE failure as its frozen token -- is deliberately NOT expected red: a core refusal's
+message is its token, so it stays green under the weakening.
 """
 
 [[probe]]
@@ -13707,4 +13712,21 @@ weakening = """
 """
 expect_red = [
   "//sdk/python:native_binding_test#tests::an_issuer_field_is_named_by_its_python_keyword",
+]
+
+[[probe]]
+id = "M595-a-device-failure-is-never-reported-as-a-wire-code"
+unit = "sdk_binding_core.adapter"
+theorem = "THM-0094"
+conjunct = "a local signing failure is never reported as a wire code the peer did not send"
+note = "Under device custody nothing is signed or sent when the device fails, so the binding core reports a typed device failure carrying the host's error. The weakening reports a failed device as `mcp-re.invalid_signature`, the reading that tells a caller a peer rejected a signature that never existed; the device-failure test must go red."
+path = "sdk/binding-core/src/sign.rs"
+anchor = """
+        (Err(_), Some(e), _) => Err(SignError::Device(DeviceFailure::Failed(e))),
+"""
+weakening = """
+        (Err(_), Some(_), _) => Err(SignError::Refused(BindingError::Wire("mcp-re.invalid_signature"))),
+"""
+expect_red = [
+  "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_device_that_fails_is_a_device_failure_carrying_the_host_error",
 ]

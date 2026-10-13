@@ -5324,10 +5324,11 @@ tested_symbols = [
   # Letting an exchange's exception escape would cancel every OTHER in-flight exchange, so
   # one flaky connection ends the session — a remotely triggerable session kill.
   "pytest#tests/test_transport.py::test_one_exchanges_network_error_does_not_take_down_the_session",
-  # ADR-MCPRE-069 `register`: the binding spells a core failure `"mcp-re: mcp-re.<token>"`,
-  # and what the taxonomy pins is the TOKEN. Four controls over that translation, claimed
-  # by nothing.
-  "pytest#tests/test_transport.py::test_the_bindings_prefixed_spelling_is_delivered_as_the_bare_token",
+  # ADR-MCPRE-069 `register`: the binding raises a core refusal as `WireRefusal` with the
+  # frozen token in `.wire_code`, and what the taxonomy pins is that TOKEN, read from the
+  # typed field and never from prose.
+  "pytest#tests/test_transport.py::test_a_core_refusal_is_delivered_as_its_wire_code",
+  "pytest#tests/test_transport.py::test_a_value_error_that_merely_says_a_token_is_a_local_condition",
   "pytest#tests/test_transport.py::test_a_value_error_that_is_not_a_token_is_labelled_a_local_condition",
   "pytest#tests/test_transport.py::test_a_notifications_wire_code_is_the_bare_token_too",
   "pytest#tests/test_transport.py::test_the_cores_own_fail_closed_error_is_delivered_rather_than_hanging",
@@ -5787,9 +5788,10 @@ tested_symbols = [
 [[unit]]
 id = "sdk_binding_core.adapter"
 class = "V0"
-description = "THE SDK BINDING CORE HANDS THE CALLER'S VALUES TO THE AUDITED CORE AND REPORTS ITS VERDICT WITHOUT RESTATING IT, ONCE FOR BOTH BINDINGS. Signing reads the call in one refusal order (id, params, provider bindings, then the DPoP credential and the continuation, whose refusals are `mcp-re-client-core`'s) and, under device custody, refuses a device that fails as `mcp-re.invalid_signature`, the HTTP profile's signer seam refusing an answer that is not 64 octets, so a device signature is byte-identical to the software one. Verification builds the pinned root anchor from the issuer values the caller supplied — an empty or whitespace issuer field is refused by name before any evidence is read, a retired root is judged at the caller's `now` through the core's own `TrustedIssuerSet` — builds the delegation policy and denylist from the caller's values, hands the request the caller TRANSMITTED to the core unchanged, and projects the verified outcome field for field: success or rejection, bound or unbound, and the four execution-contract members verbatim, an absent one staying absent. Every refusal the core makes is reported under its wire code. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about either host's marshalling (sdk_python.native_binding, sdk_typescript.native_binding, ASM-0087, ASM-0088), or about what either SDK does with the verdict."
+description = "THE SDK BINDING CORE HANDS THE CALLER'S VALUES TO THE AUDITED CORE AND REPORTS ITS VERDICT WITHOUT RESTATING IT, ONCE FOR BOTH BINDINGS. Signing reads the call in one refusal order (id, params, provider bindings, then the DPoP credential and the continuation, whose refusals are `mcp-re-client-core`'s) and, under device custody, reports a device that fails or answers anything but a 64-octet signature (the HTTP profile's signer seam refusing that answer) as a typed device failure carrying the host's own error, never as a wire code, since nothing was signed or sent; a refusal the device did not cause stays a refusal, and a device signature is byte-identical to the software one. Verification builds the pinned root anchor from the issuer values the caller supplied — an empty or whitespace issuer field is refused by name before any evidence is read, a retired root is judged at the caller's `now` through the core's own `TrustedIssuerSet` — builds the delegation policy and denylist from the caller's values, hands the request the caller TRANSMITTED to the core unchanged, and projects the verified outcome field for field: success or rejection, bound or unbound, and the four execution-contract members verbatim, an absent one staying absent. Every refusal the core makes is reported under its wire code, in a typed field. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about either host's marshalling (sdk_python.native_binding, sdk_typescript.native_binding, ASM-0087, ASM-0088), or about what either SDK does with the verdict."
 paths = [
   "sdk/binding-core/src/lib.rs",
+  "sdk/binding-core/src/device.rs",
   "sdk/binding-core/src/error.rs",
   "sdk/binding-core/src/pinned_issuer.rs",
   "sdk/binding-core/src/sign.rs",
@@ -5806,13 +5808,16 @@ evidence = [
   "mutation://sdk_binding_core/adapter/sign_anchor_and_projection",
 ]
 tested_symbols = [
-  "//sdk/binding-core:mcp_re_binding_core_test#error::tests::a_wire_refusal_renders_its_frozen_token_after_the_prefix",
+  "//sdk/binding-core:mcp_re_binding_core_test#device::tests::a_malformed_answer_names_its_length_and_a_failed_call_is_worded_by_the_host",
+  "//sdk/binding-core:mcp_re_binding_core_test#error::tests::a_wire_refusal_carries_its_frozen_token_and_says_only_that",
   "//sdk/binding-core:mcp_re_binding_core_test#error::tests::a_local_refusal_renders_its_reason_verbatim_and_a_field_by_the_host_name",
   "//sdk/binding-core:mcp_re_binding_core_test#pinned_issuer::tests::an_empty_issuer_field_is_refused_by_name",
   "//sdk/binding-core:mcp_re_binding_core_test#pinned_issuer::tests::an_empty_field_is_named_before_an_unreadable_key",
   "//sdk/binding-core:mcp_re_binding_core_test#pinned_issuer::tests::a_retired_root_resolves_through_its_deadline_and_not_after",
   "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_device_signature_is_byte_identical_to_the_software_one",
-  "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_device_that_fails_or_answers_anything_but_64_octets_fails_closed",
+  "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_device_that_fails_is_a_device_failure_carrying_the_host_error",
+  "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_device_answer_that_is_not_64_octets_is_a_malformed_device_answer",
+  "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_refusal_the_device_did_not_cause_is_not_blamed_on_it",
   "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_seed_that_is_not_32_bytes_is_refused",
   "//sdk/binding-core:mcp_re_binding_core_test#sign_args::tests::a_request_reads_its_id_and_a_notification_has_none",
   "//sdk/binding-core:mcp_re_binding_core_test#sign_args::tests::the_arguments_are_refused_in_order_with_the_messages_the_hosts_raise",
@@ -5832,8 +5837,8 @@ tested_symbols = [
 [[unit]]
 id = "sdk_python.native_binding"
 class = "V0"
-description = "THE PYTHON SDK'S NATIVE BINDING HANDS THE CALLER'S VALUES TO THE BINDING CORE UNCHANGED AND RAISES WHAT IT REPORTS. Each `#[pyfunction]` builds the core's signing or verification arguments from the keyword arguments it is handed — the five continuation keywords each reaching its own handle — passes the transmitted request bytes through untouched, and returns the core's verdict field for field; a refusal is raised as a `ValueError` carrying the core's message, an empty issuer field named by its Python keyword. The anchor, policy, device check and projection are sdk_binding_core.adapter's. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the interpreter, about PyO3's delivery of arguments and return value beyond the premise ASM-0088 states, or about what the Python layer does with the verdict (the sdk_python.* units)."
-paths = ["sdk/python/src/lib.rs"]
+description = "THE PYTHON SDK'S NATIVE BINDING HANDS THE CALLER'S VALUES TO THE BINDING CORE UNCHANGED AND RAISES WHAT IT REPORTS. Each `#[pyfunction]` builds the core's signing or verification arguments from the keyword arguments it is handed — the five continuation keywords each reaching its own handle — passes the transmitted request bytes through untouched, and returns the core's verdict field for field; a wire refusal is raised as `WireRefusal` with the frozen token in `.wire_code`, a device failure as `SigningDeviceFailure` with no wire code and the device's own exception as `__cause__`, and any other refusal as a `ValueError` carrying the core's message, an empty issuer field named by its Python keyword. The anchor, policy, device failure and projection are sdk_binding_core.adapter's. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the interpreter, about PyO3's delivery of arguments and return value beyond the premise ASM-0088 states, or about what the Python layer does with the verdict (the sdk_python.* units)."
+paths = ["sdk/python/src/lib.rs", "sdk/python/src/refusal.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -5844,6 +5849,7 @@ evidence = [
 tested_symbols = [
   "//sdk/python:native_binding_test#tests::an_issuer_field_is_named_by_its_python_keyword",
   "//sdk/python:native_binding_test#tests::the_five_continuation_keywords_reach_their_own_handles",
+  "//sdk/python:native_binding_test#refusal::tests::a_device_answer_that_is_not_bytes_is_named_by_its_python_type",
 ]
 
 # THE TYPESCRIPT SDK'S NATIVE BINDING IS SHIPPED CODE ON THE PATH FROM A VERIFIED RESULT TO THE
@@ -5854,8 +5860,8 @@ tested_symbols = [
 [[unit]]
 id = "sdk_typescript.native_binding"
 class = "V0"
-description = "THE TYPESCRIPT SDK'S NATIVE BINDING HANDS THE CALLER'S VALUES TO THE BINDING CORE AND THROWS WHAT IT REPORTS. Each `#[napi]` function builds the core's signing or verification arguments from the values it is handed, refusing a time or skew that is not a whole in-range number of seconds instead of saturating it, passes the transmitted request bytes through untouched, and returns the core's verdict field for field; a refusal is thrown carrying the core's message, an empty issuer field named by its TypeScript key. The anchor, policy, device check and projection are sdk_binding_core.adapter's. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the Node runtime, about napi's delivery of arguments and return value beyond the premise ASM-0087 states, or about what the TypeScript layer does with the verdict (the sdk_typescript.* units)."
-paths = ["sdk/typescript/src/lib.rs"]
+description = "THE TYPESCRIPT SDK'S NATIVE BINDING HANDS THE CALLER'S VALUES TO THE BINDING CORE AND THROWS WHAT IT REPORTS. Each `#[napi]` function builds the core's signing or verification arguments from the values it is handed, refusing a time or skew that is not a whole in-range number of seconds instead of saturating it, passes the transmitted request bytes through untouched, and returns the core's verdict field for field; a refusal is thrown with its kind in the error's `code` — the frozen token for a wire refusal, `SigningDeviceFailure` for a device that could not sign (what the device threw as its `cause`), `InvalidArg` otherwise — and the core's message, an empty issuer field named by its TypeScript key. The anchor, policy, device failure and projection are sdk_binding_core.adapter's. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the Node runtime, about napi's delivery of arguments and return value beyond the premise ASM-0087 states, or about what the TypeScript layer does with the verdict (the sdk_typescript.* units)."
+paths = ["sdk/typescript/src/lib.rs", "sdk/typescript/src/refusal.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -5866,6 +5872,7 @@ evidence = [
 tested_symbols = [
   "//sdk/typescript:native_binding_test#tests::a_time_that_is_not_whole_seconds_is_refused",
   "//sdk/typescript:native_binding_test#tests::an_issuer_field_is_named_by_its_typescript_key",
+  "//sdk/typescript:native_binding_test#refusal::tests::a_refusal_is_thrown_with_its_kind_in_the_code",
 ]
 
 # THE WHOLE RECORDED-SESSION BATTERY WAS UNREGISTERED. `transport_replay.test.ts` refuses
@@ -5943,6 +5950,7 @@ evidence = [
 tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > delivers a core failure as its frozen token, not as a local SDK error",
   "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > still labels a genuine local failure as one",
+  "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > does not read a wire code out of a message that merely says one",
   # ADR-MCPRE-069 `register`
   "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > delivers a wire failure as a JSON-RPC error carrying the frozen code",
   # ADR-MCPRE-069 `register`
@@ -5955,7 +5963,7 @@ tested_symbols = [
   # ADR-MCPRE-069 `register`
   "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > re-throws a non-Error, which is a defect rather than a protocol outcome",
   # ADR-MCPRE-069 `register`
-  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > reports the ack failure as the frozen token, not the binding's prefixed spelling",
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > reports the ack failure as the frozen token",
 ]
 
 # REBUILDING rather than editing is the proposition: the union schema accepts a request arm,
@@ -6288,6 +6296,7 @@ tested_symbols = [
   "vitest#test/custody.test.ts > a device that cannot sign fails closed > raises SignerUnavailable for a non-Buffer return",
   # ADR-MCPRE-069 `register`
   "vitest#test/custody.test.ts > a device that cannot sign fails closed > never emits unsigned evidence when the device misbehaves",
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > the native seam does not report a device failure as a wire code",
   # ADR-MCPRE-069 `register`
   "vitest#test/custody.test.ts > a device that cannot sign fails closed > does not blame the device for a core failure",
   # ADR-MCPRE-069 `register`
