@@ -12,13 +12,16 @@ use crate::config_state::CrlRevocationState;
 
 /// A startup reading the CRL freshness refusal may compare against.
 ///
-/// Possession means: either this deployment enforces no client CRL, or the reading is not
-/// a host-clock fault. Nothing is `Stale` against a clock reading zero, so with CRLs
-/// configured a faulted reading would declare an arbitrarily expired CRL fresh while the
-/// revocation-posture transcript still advertised it as enforced.
+/// Possession means: either the reading is not a host-clock fault, or it was checked
+/// under a posture that enforces no client CRL — and the reference remembers which, so a
+/// reference checked without CRLs cannot be spent on a plan that loads them
+/// ([`CrlReference::for_paths`]). Nothing is `Stale` against a clock reading zero, so with
+/// CRLs configured a faulted reading would declare an arbitrarily expired CRL fresh while
+/// the revocation-posture transcript still advertised it as enforced.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CrlReference {
     unix: i64,
+    checked_with_crls: bool,
 }
 
 impl CrlReference {
@@ -46,12 +49,24 @@ impl CrlReference {
         }
         Ok(CrlReference {
             unix: reading.unix_seconds(),
+            checked_with_crls: crl.is_enforced(),
         })
     }
 
-    /// The reference as whole Unix seconds, for the CRL loader's `nextUpdate` comparison.
-    pub(super) fn unix_seconds(&self) -> i64 {
-        self.unix
+    /// The reference as whole Unix seconds for loading `crl_paths`, or a refusal when the
+    /// loader reads any CRL and this reference was checked under a posture that reads none:
+    /// such a reference may hold a faulted reading the fault check never had cause to
+    /// refuse.
+    pub(super) fn for_paths(&self, crl_paths: &[String]) -> Result<i64, String> {
+        if !crl_paths.is_empty() && !self.checked_with_crls {
+            return Err(
+                "mcp-re-proxy refuses to start: the CRL freshness reference was checked \
+                 against a posture with no client CRL, but the TLS plane is loading CRLs; \
+                 the reference and the plan must come from one deployment"
+                    .to_string(),
+            );
+        }
+        Ok(self.unix)
     }
 }
 
@@ -100,6 +115,30 @@ mod tests {
             &crl_posture(&["/a.crl", "/b.crl", "/c.crl"]),
         )
         .expect("a sane clock must not be refused however many CRLs are configured");
-        assert_eq!(sane.unix_seconds(), EPOCH_CLOCK_FAULT_THRESHOLD_SECS);
+        assert_eq!(
+            sane.for_paths(&["/a.crl".to_string()]),
+            Ok(EPOCH_CLOCK_FAULT_THRESHOLD_SECS)
+        );
+    }
+
+    /// A reference checked under a posture with no CRL cannot be spent on a plan that loads
+    /// CRLs: with a faulted reading it would hand the loader a zero instant the fault check
+    /// never refused.
+    ///
+    /// The broken implementation this catches: a reference that keeps only the instant, so
+    /// any `CrlReference` serves any plan.
+    #[test]
+    fn a_reference_checked_without_crls_does_not_serve_a_plan_that_loads_them() {
+        let unchecked = CrlReference::of(&StartupReading::at(0), &crl_posture(&[]))
+            .expect("no CRL posture tolerates a faulted clock");
+        let refusal = unchecked
+            .for_paths(&["/a.crl".to_string()])
+            .expect_err("a plan that loads CRLs must refuse a reference checked without them");
+        assert!(refusal.contains("CRL"), "{refusal}");
+        assert_eq!(
+            unchecked.for_paths(&[]),
+            Ok(0),
+            "the same reference still serves a plan that loads no CRL"
+        );
     }
 }

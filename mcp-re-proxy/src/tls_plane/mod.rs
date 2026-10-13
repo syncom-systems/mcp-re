@@ -218,7 +218,7 @@ impl TlsPlane {
     ///
     /// `crl_reference` is the instant the stale-CRL refusal compares against, and holding
     /// one is the proof that the startup reading may serve as it (see
-    /// [`CrlReference::of`]).
+    /// [`CrlReference::of`]); [`CrlReference::for_paths`] refuses one checked without CRLs.
     ///
     /// `credential` is MOVED in — the reload worker rebuilds the verifier from the same
     /// immutable key material, so nothing outside this plane may keep a second copy. The
@@ -233,7 +233,7 @@ impl TlsPlane {
         let (material, server_chain, client_ca) = credential.into_parts();
         let established = material.exposure();
         let crl_paths = plan.client_revocation.paths();
-        let crls = load_and_check_crls(crl_paths, &client_ca, crl_reference.unix_seconds())?;
+        let crls = load_and_check_crls(crl_paths, &client_ca, crl_reference.for_paths(crl_paths)?)?;
         // Cloned because the initial build below consumes the original; the reload
         // re-reads only the CRLs, never this.
         let reload_chain = server_chain.clone();

@@ -1957,6 +1957,7 @@ raw; this is about what it does with the one that decides the listener.
 ## NP-065 — a faulted deployment clock refuses exactly where it would disable a refusal
 
 **Controls:** `mcp-re-proxy/src/tls_plane/crl_reference.rs::a_faulted_clock_refuses_only_when_it_disables_the_crl_refusal`,
+`::a_reference_checked_without_crls_does_not_serve_a_plan_that_loads_them`,
 `mcp-re-proxy/src/clock.rs::an_epoch_or_pre_epoch_clock_reading_is_a_fault`,
 `::a_plausible_deployment_clock_is_not_a_fault`.
 **Statement.** *An epoch or pre-epoch clock reading is a fault and a plausible one is not;

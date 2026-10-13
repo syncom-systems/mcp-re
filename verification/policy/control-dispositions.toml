@@ -4038,6 +4038,14 @@ proposition = "NP-065"
 recorded = "2026-09-19"
 
 [[disposition]]
+id = "CD-20487"
+project = "mcp-re-proxy"
+control = "src/lib.rs#tls_plane::crl_reference::tests::a_reference_checked_without_crls_does_not_serve_a_plan_that_loads_them"
+decision = "new-proposition"
+proposition = "NP-065"
+recorded = "2026-10-13"
+
+[[disposition]]
 id = "CD-10006"
 project = "mcp-re-proxy"
 control = "src/lib.rs#app::tests::a_record_enqueued_immediately_before_teardown_still_reaches_stderr"
