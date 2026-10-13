@@ -564,10 +564,10 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/config_state/validation/mod.rs"
-# MCPRE-204: the three residue calls become one owner's splice: 366 (measured at 9734fe2) ->
-# 354. `baseline_sha` names that parent.
-baseline_prod_loc = 354
-baseline_sha = "9734fe2"
+# MCPRE-204: the three residue calls become one owner's splice. With MCPRE-203's X10 clause
+# already spliced on main: 374 (measured at 0ba3db2) -> 362. `baseline_sha` names that parent.
+baseline_prod_loc = 362
+baseline_sha = "0ba3db2"
 status = "unreviewed"
 
 [[debt]]
