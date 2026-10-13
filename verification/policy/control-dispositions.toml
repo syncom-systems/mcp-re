@@ -1752,6 +1752,14 @@ proposition = "NP-015"
 recorded = "2026-09-19"
 
 [[disposition]]
+id = "CD-20482"
+project = "sdk/python"
+control = "pytest#tests/test_custody.py::TestDeviceFailsClosed::test_the_native_seam_does_not_report_a_device_failure_as_a_wire_code"
+decision = "new-proposition"
+proposition = "NP-015"
+recorded = "2026-10-13"
+
+[[disposition]]
 id = "CD-2008"
 project = "sdk/python"
 control = "pytest#tests/test_custody.py::TestNonExportingIsByteIdentical::test_the_device_is_the_sole_holder_of_the_key"

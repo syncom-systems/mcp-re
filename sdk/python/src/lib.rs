@@ -11,13 +11,19 @@
 //! callback, so the private key never enters the SDK (non-exporting custody).
 //!
 //! This file marshals Python values into `mcp-re-binding-core` and its results back; the
-//! signing inputs, the device check, the root anchor, the verify preamble and the verdict
-//! are that crate's, shared with the N-API binding.
+//! signing inputs, the typed device failure, the root anchor, the verify preamble and the
+//! verdict are that crate's, shared with the N-API binding.
+//!
+//! A refusal crosses into Python typed, never as prose to parse: [`WireRefusal`] carries
+//! the frozen `mcp-re.*` token in `.wire_code`, [`SigningDeviceFailure`] says the device
+//! could not sign and has no wire code, with the device's own exception as `__cause__`,
+//! and any other refusal of the caller's arguments is a plain `ValueError`.
+
+mod refusal;
 
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-use mcp_re_binding_core::BindingError;
 use mcp_re_binding_core::Call;
 use mcp_re_binding_core::ContinuationArgs;
 use mcp_re_binding_core::IssuerField;
@@ -28,6 +34,11 @@ use mcp_re_binding_core::Verdict;
 use mcp_re_binding_core::VerifyArgs;
 use mcp_re_client_core::HttpRequest;
 use mcp_re_client_core::HttpResponse;
+use refusal::device;
+use refusal::raise;
+use refusal::raise_signing;
+use refusal::SigningDeviceFailure;
+use refusal::WireRefusal;
 
 /// An issuer field by the keyword the Python API takes it as.
 fn field_name(field: IssuerField) -> &'static str {
@@ -36,25 +47,6 @@ fn field_name(field: IssuerField) -> &'static str {
         IssuerField::Role => "issuer_role",
         IssuerField::TrustDomain => "issuer_trust_domain",
         IssuerField::Subject => "issuer_subject",
-    }
-}
-
-/// A binding refusal as the `ValueError` the Python SDK raises.
-fn raise(e: BindingError) -> PyErr {
-    pyo3::exceptions::PyValueError::new_err(e.message(field_name))
-}
-
-/// A device callback as the core's device seam: the signature bytes, or `None` when the
-/// callback raised or returned something that is not bytes.
-fn device<'a>(
-    py: Python<'a>,
-    sign_callback: &'a Py<PyAny>,
-) -> impl FnOnce(&[u8]) -> Option<Vec<u8>> + 'a {
-    move |preimage: &[u8]| {
-        let out = sign_callback
-            .call1(py, (PyBytes::new(py, preimage),))
-            .ok()?;
-        out.extract(py).ok()
     }
 }
 
@@ -305,7 +297,7 @@ fn sign_request_with_signer(
     );
     mcp_re_binding_core::sign_with_device(args, device(py, &sign_callback))
         .map(PySignedRequest::from)
-        .map_err(raise)
+        .map_err(raise_signing)
 }
 
 /// Sign a one-way MCP **notification** — a JSON-RPC message with a `method` and no
@@ -393,7 +385,7 @@ fn sign_notification_with_signer(
     );
     mcp_re_binding_core::sign_with_device(args, device(py, &sign_callback))
         .map(PySignedRequest::from)
-        .map_err(raise)
+        .map_err(raise_signing)
 }
 
 /// The outcome of verifying a delegated-signed bodyless `202 Accepted`.
@@ -543,7 +535,7 @@ fn pinned(
 /// Same trust inputs as `verify_response`: the ROOT ISSUER anchor, the audience scope,
 /// the accepted trust epochs, and the client's static denylist. Anything unsigned,
 /// direct-root-signed, revoked, stale-epoch, or bound to a different transmission fails
-/// closed as a `ValueError` carrying the frozen wire code.
+/// closed as a `WireRefusal` carrying the frozen wire code.
 #[pyfunction]
 #[pyo3(signature = (status, resp_headers, resp_body, req_method, req_target_uri, req_headers, req_body, issuer_key_id, issuer_pubkey_b64url, issuer_role, issuer_trust_domain, issuer_subject, verifier_audiences, expected_audience_hash, accepted_epochs, max_clock_skew, revoked_identifiers, now, issuer_retired_until = None))]
 #[allow(clippy::too_many_arguments)]
@@ -681,6 +673,11 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySignedRequest>()?;
     m.add_class::<PyVerifyResult>()?;
     m.add_class::<PyAcceptedResult>()?;
+    m.add("WireRefusal", m.py().get_type::<WireRefusal>())?;
+    m.add(
+        "SigningDeviceFailure",
+        m.py().get_type::<SigningDeviceFailure>(),
+    )?;
     Ok(())
 }
 
