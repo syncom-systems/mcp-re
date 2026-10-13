@@ -563,16 +563,18 @@ def definition_sites(lines: list[str], pattern: re.Pattern[str]) -> list[tuple[i
     depth = 0
     for index, line in enumerate(lines):
         if depth > 0:
-            # Inside a multi-line attribute. A trailing `//` comment here is still prose,
-            # so it is stripped before the text is kept — but the brackets on the line are
-            # counted from the whole line, because a comment cannot close an attribute.
-            block.append(_COMMENT_TAIL.sub("", line))
-            depth += _bracket_balance(line)
+            # Inside a multi-line attribute. A trailing `//` comment here is prose: it is
+            # stripped before the text is kept and before the brackets are counted, because
+            # a comment cannot close an attribute.
+            code = _COMMENT_TAIL.sub("", line)
+            block.append(code)
+            depth += _bracket_balance(code)
             continue
         stripped = line.strip()
         if stripped.startswith("#["):
-            block.append(_COMMENT_TAIL.sub("", line))
-            depth = max(_bracket_balance(line), 0)
+            code = _COMMENT_TAIL.sub("", line)
+            block.append(code)
+            depth = max(_bracket_balance(code), 0)
             continue
         if not stripped or stripped.startswith(("//", "/*", "*")):
             continue

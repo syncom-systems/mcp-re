@@ -64,7 +64,7 @@ def load(root: Path = REPO_ROOT) -> Registries:
         mutation_probes=load_mutation_probes(root),
         structural_probes=load_structural_probes(path("structural-probes", root)),
         measurements=load_measurements(path("measurements", root)),
-        live_sites=frozenset(live_sites(verification, assumptions, REPO_ROOT)),
+        live_sites=frozenset(live_sites(verification, assumptions, root)),
     )
 
 

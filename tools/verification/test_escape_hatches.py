@@ -377,6 +377,14 @@ def test_a_doc_comment_between_the_attribute_and_the_item_does_not_orphan_it():
     assert seams.SPECIFICATION_TEXT.search(block_for(separated))
 
 
+def test_a_bracket_in_a_comment_does_not_close_the_attribute():
+    """A `// )])` comment inside a multi-line specification would otherwise end the block
+    early, and the `ensures` below it would no longer reach the item."""
+    commented = PROVED.replace("    ensures\n", "    ensures // )])\n")
+    assert commented != PROVED
+    assert seams.SPECIFICATION_TEXT.search(block_for(commented))
+
+
 def test_the_block_walker_does_not_reach_the_previous_item():
     """Otherwise a neighbouring function's `ensures` answers for this one, and the deleted
     specification above reads as present."""
