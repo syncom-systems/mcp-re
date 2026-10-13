@@ -1,0 +1,16 @@
+[package]
+name = "mcp-re-binding-core"
+version = "0.17.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The one adapter both MCP-RE SDK bindings share over mcp-re-client-core: typed signing and verification arguments, the verdict, and the binding refusal (ADR-MCPS-044)."
+publish = false
+
+# No host language is linked here: PyO3 and napi stay in the two binding crates that
+# marshal into this one, and language bindings stay out of mcp-re-client-core.
+
+[dependencies]
+mcp-re-client-core = { path = "../../mcp-re-client-core" }
+mcp-re-core = { path = "../../mcp-re-core" }
+serde_json = { workspace = true }

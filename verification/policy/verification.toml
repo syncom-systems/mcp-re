@@ -5777,59 +5777,94 @@ tested_symbols = [
   "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > fails closed when one byte is appended to the recorded body",
 ]
 
-# THE PYTHON SDK'S NATIVE BINDING IS SHIPPED CODE ON THE PATH FROM A VERIFIED RESULT TO THE
-# APPLICATION, AND THEREFORE OWNED. It is a Rust crate (`//sdk/python:_core`), so the unit is a
-# Rust-ecosystem unit whose battery is a Bazel `rust_test` over the crate; the Python units beside
-# it (`sdk_python.*`) keep their pytest batteries.
+# BOTH SDK BINDINGS ADAPT THROUGH ONE CORE. `mcp-re-binding-core` (`//sdk/binding-core`) holds
+# what the PyO3 and napi bindings used to restate: the signing inputs and their refusal order, the
+# device signature check, the pinned root anchor, the verify preamble and the verdict projection.
+# It is its own Bazel project, so its battery is its own `rust_test`; the two binding units below
+# keep only the marshalling each host owns, and a control here cannot be theirs (a unit's battery
+# is source- and project-scoped). It supports THM-0094 and THM-0095 alike.
 [[unit]]
-id = "sdk_python.native_binding"
+id = "sdk_binding_core.adapter"
 class = "V0"
-description = "THE PYTHON SDK'S NATIVE BINDING PASSES THE TRANSMITTED BYTES AND THE CALLER'S TRUST INPUTS TO THE AUDITED CORE AND REPORTS ITS VERDICT WITHOUT RESTATING IT. `verify_response` / `verify_accepted_202` build the pinned root anchor from the issuer values the caller supplied — an empty or whitespace issuer field is refused by name, a retired root is judged at the caller's `now` through the core's own `TrustedIssuerSet` — build the delegation policy and denylist from the caller's values, hand the request the caller TRANSMITTED to the core unchanged, and project the verified outcome field for field: success or rejection, bound or unbound, and the four execution-contract members verbatim, an absent one staying absent. Every refusal the core makes is rethrown under its wire code. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the interpreter, about PyO3's delivery of arguments and return value beyond the premise ASM-0088 states, or about what the Python layer does with the projected verdict (the sdk_python.* units)."
+description = "THE SDK BINDING CORE HANDS THE CALLER'S VALUES TO THE AUDITED CORE AND REPORTS ITS VERDICT WITHOUT RESTATING IT, ONCE FOR BOTH BINDINGS. Signing reads the call in one refusal order (id, params, provider bindings, then the DPoP credential and the continuation, whose refusals are `mcp-re-client-core`'s) and, under device custody, refuses a device that fails as `mcp-re.invalid_signature`, the HTTP profile's signer seam refusing an answer that is not 64 octets, so a device signature is byte-identical to the software one. Verification builds the pinned root anchor from the issuer values the caller supplied — an empty or whitespace issuer field is refused by name before any evidence is read, a retired root is judged at the caller's `now` through the core's own `TrustedIssuerSet` — builds the delegation policy and denylist from the caller's values, hands the request the caller TRANSMITTED to the core unchanged, and projects the verified outcome field for field: success or rejection, bound or unbound, and the four execution-contract members verbatim, an absent one staying absent. Every refusal the core makes is reported under its wire code. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about either host's marshalling (sdk_python.native_binding, sdk_typescript.native_binding, ASM-0087, ASM-0088), or about what either SDK does with the verdict."
 paths = [
-  "sdk/python/src/lib.rs",
-  "sdk/python/src/projection.rs",
-  "sdk/python/src/trust.rs",
+  "sdk/binding-core/src/lib.rs",
+  "sdk/binding-core/src/error.rs",
+  "sdk/binding-core/src/pinned_issuer.rs",
+  "sdk/binding-core/src/sign.rs",
+  "sdk/binding-core/src/sign_args.rs",
+  "sdk/binding-core/src/verdict.rs",
+  "sdk/binding-core/src/verify.rs",
+  "sdk/binding-core/src/verify_args.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
 evidence = [
-  "test://sdk_python/native_binding/anchor_and_projection",
-  "mutation://sdk_python/native_binding/anchor_and_projection",
+  "test://sdk_binding_core/adapter/sign_anchor_and_projection",
+  "mutation://sdk_binding_core/adapter/sign_anchor_and_projection",
 ]
 tested_symbols = [
-  "//sdk/python:native_binding_test#trust::tests::an_empty_issuer_field_is_refused_by_name",
-  "//sdk/python:native_binding_test#trust::tests::a_retired_root_resolves_through_its_deadline_and_not_after",
-  "//sdk/python:native_binding_test#projection::tests::an_absent_execution_member_stays_absent_in_the_projection",
-  "//sdk/python:native_binding_test#projection::tests::a_rejection_is_not_reported_as_a_success",
+  "//sdk/binding-core:mcp_re_binding_core_test#error::tests::a_wire_refusal_renders_its_frozen_token_after_the_prefix",
+  "//sdk/binding-core:mcp_re_binding_core_test#error::tests::a_local_refusal_renders_its_reason_verbatim_and_a_field_by_the_host_name",
+  "//sdk/binding-core:mcp_re_binding_core_test#pinned_issuer::tests::an_empty_issuer_field_is_refused_by_name",
+  "//sdk/binding-core:mcp_re_binding_core_test#pinned_issuer::tests::an_empty_field_is_named_before_an_unreadable_key",
+  "//sdk/binding-core:mcp_re_binding_core_test#pinned_issuer::tests::a_retired_root_resolves_through_its_deadline_and_not_after",
+  "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_device_signature_is_byte_identical_to_the_software_one",
+  "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_device_that_fails_or_answers_anything_but_64_octets_fails_closed",
+  "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_seed_that_is_not_32_bytes_is_refused",
+  "//sdk/binding-core:mcp_re_binding_core_test#sign_args::tests::a_request_reads_its_id_and_a_notification_has_none",
+  "//sdk/binding-core:mcp_re_binding_core_test#sign_args::tests::the_arguments_are_refused_in_order_with_the_messages_the_hosts_raise",
+  "//sdk/binding-core:mcp_re_binding_core_test#sign_args::tests::a_partial_continuation_is_refused_not_dropped",
+  "//sdk/binding-core:mcp_re_binding_core_test#verdict::tests::an_absent_execution_member_stays_absent_in_the_projection",
+  "//sdk/binding-core:mcp_re_binding_core_test#verdict::tests::a_rejection_is_not_reported_as_a_success",
+  "//sdk/binding-core:mcp_re_binding_core_test#verify::tests::an_unsigned_answer_is_a_wire_refusal_on_both_entry_points",
+  "//sdk/binding-core:mcp_re_binding_core_test#verify_args::tests::the_pinned_identity_is_refused_before_the_check_runs",
+  "//sdk/binding-core:mcp_re_binding_core_test#verify_args::tests::the_check_is_handed_the_callers_values_and_its_refusal_is_a_wire_code",
+]
+
+# THE PYTHON SDK'S NATIVE BINDING IS SHIPPED CODE ON THE PATH FROM A VERIFIED RESULT TO THE
+# APPLICATION, AND THEREFORE OWNED. It is a Rust crate (`//sdk/python:_core`), so the unit is a
+# Rust-ecosystem unit whose battery is a Bazel `rust_test` over the crate; the Python units beside
+# it (`sdk_python.*`) keep their pytest batteries. What it shares with the TypeScript binding is
+# `sdk_binding_core.adapter`'s.
+[[unit]]
+id = "sdk_python.native_binding"
+class = "V0"
+description = "THE PYTHON SDK'S NATIVE BINDING HANDS THE CALLER'S VALUES TO THE BINDING CORE UNCHANGED AND RAISES WHAT IT REPORTS. Each `#[pyfunction]` builds the core's signing or verification arguments from the keyword arguments it is handed — the five continuation keywords each reaching its own handle — passes the transmitted request bytes through untouched, and returns the core's verdict field for field; a refusal is raised as a `ValueError` carrying the core's message, an empty issuer field named by its Python keyword. The anchor, policy, device check and projection are sdk_binding_core.adapter's. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the interpreter, about PyO3's delivery of arguments and return value beyond the premise ASM-0088 states, or about what the Python layer does with the verdict (the sdk_python.* units)."
+paths = ["sdk/python/src/lib.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://sdk_python/native_binding/marshalling",
+  "mutation://sdk_python/native_binding/marshalling",
+]
+tested_symbols = [
+  "//sdk/python:native_binding_test#tests::an_issuer_field_is_named_by_its_python_keyword",
+  "//sdk/python:native_binding_test#tests::the_five_continuation_keywords_reach_their_own_handles",
 ]
 
 # THE TYPESCRIPT SDK'S NATIVE BINDING IS SHIPPED CODE ON THE PATH FROM A VERIFIED RESULT TO THE
 # APPLICATION, AND THEREFORE OWNED. It is a Rust crate (`//sdk/typescript:native`), so the unit is
 # a Rust-ecosystem unit whose battery is a Bazel `rust_test` over the crate; the TypeScript units
-# beside it (`sdk_typescript.*`) keep their vitest batteries.
+# beside it (`sdk_typescript.*`) keep their vitest batteries. What it shares with the Python
+# binding is `sdk_binding_core.adapter`'s.
 [[unit]]
 id = "sdk_typescript.native_binding"
 class = "V0"
-description = "THE TYPESCRIPT SDK'S NATIVE BINDING PASSES THE TRANSMITTED BYTES AND THE CALLER'S TRUST INPUTS TO THE AUDITED CORE AND REPORTS ITS VERDICT WITHOUT RESTATING IT. `verify_response` / `verify_accepted_202` build the pinned root anchor from the issuer values the caller supplied — an empty or whitespace issuer field is refused by name, a retired root is judged at the caller's `now` through the core's own `TrustedIssuerSet` — build the delegation policy and denylist from the caller's values, hand the request the caller TRANSMITTED to the core unchanged, refuse a time or skew that is not a whole in-range number of seconds instead of saturating it, and project the verified outcome field for field: success or rejection, bound or unbound, and the four execution-contract members verbatim, an absent one staying absent. Every refusal the core makes is rethrown under its wire code. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the Node runtime, about napi's delivery of arguments and return value beyond the premise ASM-0087 states, or about what the TypeScript layer does with the projected verdict (the sdk_typescript.* units)."
-paths = [
-  "sdk/typescript/src/lib.rs",
-  "sdk/typescript/src/projection.rs",
-  "sdk/typescript/src/trust.rs",
-]
+description = "THE TYPESCRIPT SDK'S NATIVE BINDING HANDS THE CALLER'S VALUES TO THE BINDING CORE AND THROWS WHAT IT REPORTS. Each `#[napi]` function builds the core's signing or verification arguments from the values it is handed, refusing a time or skew that is not a whole in-range number of seconds instead of saturating it, passes the transmitted request bytes through untouched, and returns the core's verdict field for field; a refusal is thrown carrying the core's message, an empty issuer field named by its TypeScript key. The anchor, policy, device check and projection are sdk_binding_core.adapter's. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the Node runtime, about napi's delivery of arguments and return value beyond the premise ASM-0087 states, or about what the TypeScript layer does with the verdict (the sdk_typescript.* units)."
+paths = ["sdk/typescript/src/lib.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
 evidence = [
-  "test://sdk_typescript/native_binding/anchor_policy_and_projection",
-  "mutation://sdk_typescript/native_binding/anchor_policy_and_projection",
+  "test://sdk_typescript/native_binding/marshalling",
+  "mutation://sdk_typescript/native_binding/marshalling",
 ]
 tested_symbols = [
-  "//sdk/typescript:native_binding_test#trust::tests::an_empty_issuer_field_is_refused_by_name",
-  "//sdk/typescript:native_binding_test#trust::tests::a_retired_root_resolves_through_its_deadline_and_not_after",
   "//sdk/typescript:native_binding_test#tests::a_time_that_is_not_whole_seconds_is_refused",
-  "//sdk/typescript:native_binding_test#projection::tests::an_absent_execution_member_stays_absent_in_the_projection",
-  "//sdk/typescript:native_binding_test#projection::tests::a_rejection_is_not_reported_as_a_success",
+  "//sdk/typescript:native_binding_test#tests::an_issuer_field_is_named_by_its_typescript_key",
 ]
 
 # THE WHOLE RECORDED-SESSION BATTERY WAS UNREGISTERED. `transport_replay.test.ts` refuses

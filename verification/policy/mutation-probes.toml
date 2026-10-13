@@ -13624,69 +13624,87 @@ expect_red = [
 ]
 
 [[probe]]
-id = "M567-the-typescript-binding-refuses-an-empty-issuer-identity"
+id = "M567-the-typescript-binding-names-an-issuer-field-by-its-key"
 unit = "sdk_typescript.native_binding"
 theorem = "THM-0095"
 conjunct = "the native binding refuses an empty issuer identity by name instead of pinning an empty principal"
-note = "r12 step 7 re-review. `root_resolver` refuses an issuer whose key id, role, trust domain or subject is empty or whitespace, because the core compares the pinned principal with the credential's by equality and an empty pin would match an empty claim. The weakening makes the refusal unreachable; the issuer-field test must go red."
-path = "sdk/typescript/src/trust.rs"
+note = "The binding core refuses an empty issuer field; the TypeScript binding names it by the key its API takes it as, so the caller is told which argument to fix. The weakening names the key-id field by the Python keyword; the TypeScript field-naming test must go red."
+path = "sdk/typescript/src/lib.rs"
 anchor = """
-        if value.trim().is_empty() {
+        IssuerField::KeyId => "issuerKeyId",
 """
 weakening = """
-        if false {
+        IssuerField::KeyId => "issuer_key_id",
 """
 expect_red = [
-  "//sdk/typescript:native_binding_test#trust::tests::an_empty_issuer_field_is_refused_by_name",
+  "//sdk/typescript:native_binding_test#tests::an_issuer_field_is_named_by_its_typescript_key",
 ]
 
 [[probe]]
-id = "M568-the-typescript-binding-does-not-read-silence-as-not-executed"
+id = "M568-the-typescript-binding-refuses-a-time-that-is-not-whole-seconds"
 unit = "sdk_typescript.native_binding"
 theorem = "THM-0095"
-conjunct = "an execution member the receipt did not state is reported as not stated, never as not executed"
-note = "r12 step 7 re-review. The verdict projection copies the execution contract's members verbatim. The weakening fills an absent `execution_status` with `not_executed`, the read that makes a post-dispatch refusal look retry-safe; the projection test that expects an absent member to stay absent must go red."
-path = "sdk/typescript/src/projection.rs"
+conjunct = "a time or skew that is not a whole in-range number of seconds is refused, never saturated"
+note = "A JavaScript number becomes the core's `i64` seconds only through `whole_seconds`, because a saturating cast would turn Infinity into an unbounded expiry or skew and NaN into 0. The weakening admits every value; the whole-seconds test must go red."
+path = "sdk/typescript/src/lib.rs"
 anchor = """
-        execution_status: execution.execution_status,
+    if !(v.is_finite() && v.fract() == 0.0 && v.abs() <= 9_007_199_254_740_991.0) {
 """
 weakening = """
-        execution_status: execution.execution_status.or_else(|| Some("not_executed".to_owned())),
+    if false {
 """
 expect_red = [
-  "//sdk/typescript:native_binding_test#projection::tests::an_absent_execution_member_stays_absent_in_the_projection",
+  "//sdk/typescript:native_binding_test#tests::a_time_that_is_not_whole_seconds_is_refused",
 ]
 
 [[probe]]
-id = "M569-the-python-binding-refuses-an-empty-issuer-identity"
+id = "M569-the-binding-core-refuses-an-empty-issuer-identity"
+unit = "sdk_binding_core.adapter"
+theorem = "THM-0094"
+conjunct = "the native binding refuses an empty issuer identity by name instead of pinning an empty principal"
+note = "`PinnedIssuer::anchor` refuses an issuer whose key id, role, trust domain or subject is empty or whitespace, because the core compares the pinned principal with the credential's by equality and an empty pin would match an empty claim. Both SDK bindings anchor through it. The weakening makes the refusal unreachable; the issuer-field tests must go red."
+path = "sdk/binding-core/src/pinned_issuer.rs"
+anchor = """
+            if value.trim().is_empty() {
+"""
+weakening = """
+            if false {
+"""
+expect_red = [
+  "//sdk/binding-core:mcp_re_binding_core_test#pinned_issuer::tests::an_empty_issuer_field_is_refused_by_name",
+  "//sdk/binding-core:mcp_re_binding_core_test#verify_args::tests::the_pinned_identity_is_refused_before_the_check_runs",
+]
+
+[[probe]]
+id = "M570-the-binding-core-does-not-read-silence-as-not-executed"
+unit = "sdk_binding_core.adapter"
+theorem = "THM-0094"
+conjunct = "an execution member the receipt did not state is reported as not stated, never as not executed"
+note = "The verdict projection both SDK bindings return copies the execution contract's members verbatim. The weakening fills an absent `execution_status` with `not_executed`, the read that makes a post-dispatch refusal look retry-safe; the projection test that expects an absent member to stay absent must go red."
+path = "sdk/binding-core/src/verdict.rs"
+anchor = """
+            execution_status: execution.execution_status,
+"""
+weakening = """
+            execution_status: execution.execution_status.or_else(|| Some("not_executed".to_owned())),
+"""
+expect_red = [
+  "//sdk/binding-core:mcp_re_binding_core_test#verdict::tests::an_absent_execution_member_stays_absent_in_the_projection",
+]
+
+[[probe]]
+id = "M591-the-python-binding-names-an-issuer-field-by-its-keyword"
 unit = "sdk_python.native_binding"
 theorem = "THM-0094"
 conjunct = "the native binding refuses an empty issuer identity by name instead of pinning an empty principal"
-note = "r12 step 7 re-review. `root_anchor` refuses an issuer whose key id, role, trust domain or subject is empty or whitespace, because the core compares the pinned principal with the credential's by equality and an empty pin would match an empty claim. The weakening makes the refusal unreachable; the issuer-field test must go red."
-path = "sdk/python/src/trust.rs"
+note = "The binding core refuses an empty issuer field; the Python binding names it by the keyword its API takes it as, so the caller is told which argument to fix. The weakening names the key-id field by the TypeScript key; the Python field-naming test must go red."
+path = "sdk/python/src/lib.rs"
 anchor = """
-        if value.trim().is_empty() {
+        IssuerField::KeyId => "issuer_key_id",
 """
 weakening = """
-        if false {
+        IssuerField::KeyId => "issuerKeyId",
 """
 expect_red = [
-  "//sdk/python:native_binding_test#trust::tests::an_empty_issuer_field_is_refused_by_name",
-]
-
-[[probe]]
-id = "M570-the-python-binding-does-not-read-silence-as-not-executed"
-unit = "sdk_python.native_binding"
-theorem = "THM-0094"
-conjunct = "an execution member the receipt did not state is reported as not stated, never as not executed"
-note = "r12 step 7 re-review. The verdict projection copies the execution contract's members verbatim. The weakening fills an absent `execution_status` with `not_executed`, the read that makes a post-dispatch refusal look retry-safe; the projection test that expects an absent member to stay absent must go red."
-path = "sdk/python/src/projection.rs"
-anchor = """
-        execution_status: execution.execution_status,
-"""
-weakening = """
-        execution_status: execution.execution_status.or_else(|| Some("not_executed".to_owned())),
-"""
-expect_red = [
-  "//sdk/python:native_binding_test#projection::tests::an_absent_execution_member_stays_absent_in_the_projection",
+  "//sdk/python:native_binding_test#tests::an_issuer_field_is_named_by_its_python_keyword",
 ]

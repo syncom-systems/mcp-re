@@ -332,8 +332,11 @@ status = "unreviewed"
 
 [[debt]]
 path = "sdk/python/src/lib.rs"
-baseline_prod_loc = 767
-baseline_sha = "d1fc5fa"
+# MCPRE-198: the binding marshals into `mcp-re-binding-core`, which holds the signing inputs,
+# the root anchor, the verify preamble and the verdict projection both bindings restated:
+# 767 (measured at 6f2000c) -> 686. `baseline_sha` names that parent.
+baseline_prod_loc = 686
+baseline_sha = "6f2000c"
 status = "unreviewed"
 
 [[debt]]
@@ -363,8 +366,11 @@ growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "sdk/typescript/src/lib.rs"
-baseline_prod_loc = 727
-baseline_sha = "99ff012"
+# MCPRE-198: the binding marshals into `mcp-re-binding-core`, which holds the signing inputs,
+# the root anchor, the verify preamble and the verdict projection both bindings restated:
+# 727 (measured at 6f2000c) -> 649. `baseline_sha` names that parent.
+baseline_prod_loc = 649
+baseline_sha = "6f2000c"
 status = "unreviewed"
 
 # MCPRE-175 gave the local listener an owner subtree. `serve.rs` mixed the accept loop with
