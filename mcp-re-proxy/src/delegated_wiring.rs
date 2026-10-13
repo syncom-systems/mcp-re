@@ -115,7 +115,7 @@ fn build_with_root_bound(
     root_signer: impl ResponseSigner + Send + 'static,
     bound: std::time::Duration,
 ) -> Result<DelegatedSigningWiring, String> {
-    let cfg = plan.custody.clone();
+    let cfg = plan.custody().clone();
     let window = cfg.window;
     let root_public_key = root_signer.response_public_key().map_err(|e| {
         format!("delegated-signing: the root issuer states no public key ({e}), so no credential it issues can be verified")
@@ -183,11 +183,7 @@ mod tests {
         let config = delegated_config();
         let validated = crate::config_state::validation::ValidatedDeployment::try_from(config)
             .expect("the fixture must validate");
-        crate::startup_plan::SigningPlan::from_validated(
-            &validated,
-            crate::startup_plan::response_issuer_kid(&validated),
-            crate::startup_plan::TrustEpochPlan::from_validated(&validated),
-        )
+        crate::startup_plan::response_authority_plans(&validated).1
     }
 
     fn delegated_config() -> crate::deployment_request::DeploymentRequest {

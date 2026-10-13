@@ -267,9 +267,12 @@ path = "mcp-re-proxy/src/app.rs"
 # destructures a four-field gate: 775 (measured at 6f2000c) -> 770.
 # MCPRE-197: the root resolves the shard topology once and hands the fleet the owners' values
 # whole, so it no longer projects the basis into `ServerLimits` or the topology into `0 = auto`:
-# 770 (measured at 75fae5e) -> 760. `baseline_sha` names that parent.
-baseline_prod_loc = 760
-baseline_sha = "75fae5e"
+# 770 (measured at 75fae5e) -> 760.
+# MCPRE-209: the trust and signing plans come from their one producer, so the root no longer
+# reads the issuer kid and the epoch and threads them into two constructors:
+# 760 (measured at c939c2f) -> 748. `baseline_sha` names that parent.
+baseline_prod_loc = 748
+baseline_sha = "c939c2f"
 status = "reviewed-exception"
 review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 
@@ -534,9 +537,12 @@ status = "unreviewed"
 [[debt]]
 path = "mcp-re-proxy/src/startup_plan.rs"
 # MCPRE-197: the inner-plane ceiling and raise left with the `Option` x `Option` interface they
-# projected: 385 (measured at bff0cb9) -> 340. `baseline_sha` names that parent.
-baseline_prod_loc = 340
-baseline_sha = "bff0cb9"
+# projected: 385 (measured at bff0cb9) -> 340.
+# MCPRE-209: the response-authority plans have one producer here and the signing plan's
+# fields are private behind projections: 340 (measured at c939c2f) -> 338. `baseline_sha`
+# names that parent.
+baseline_prod_loc = 338
+baseline_sha = "c939c2f"
 status = "unreviewed"
 
 [[debt]]
