@@ -99,7 +99,6 @@ fn bracketed_ipv6(address: &SocketAddr) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::LocalConfig;
 
     fn scope(text: &str, declared: bool) -> BindScope {
         BindScope::decide(text.parse().expect("an address"), declared).expect("a legal bind")
@@ -189,14 +188,8 @@ mod tests {
 
     #[test]
     fn a_port_zero_bind_is_answered_at_the_port_it_was_given() {
-        let bound = crate::serve::bind(&LocalConfig {
-            bind: "127.0.0.1:0".parse().expect("an address"),
-            allow_non_loopback: false,
-            request_lifetime_secs: 60,
-            default_route: None,
-            max_in_flight: 8,
-        })
-        .expect("an ephemeral loopback bind");
+        let bound =
+            crate::serve::bind(scope("127.0.0.1:0", false)).expect("an ephemeral loopback bind");
         let port = bound.local_addr().port();
         let other = if port == 8640 { 8641 } else { 8640 };
         let (_listener, authority) = bound.into_parts();

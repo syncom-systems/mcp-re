@@ -162,7 +162,7 @@ any of them is closed.
 | THM-0121 | The rollback floor only rises, and a floor that has been pushed too high stops the client rather than lowering itself | client.manifest_floor | unit://client.manifest_floor | live |
 | THM-0122 | A security record says what a Core verdict says, and its display text is never a verdict | core.audit_vocabulary | unit://conformance.audit_vocabulary_drift, unit://core.audit_vocabulary | live |
 | THM-0123 | An admitted local request cannot leak its slot, cannot be guessed onto a route, and a pause is never rendered as a finished call | client.local_serving_pipeline | unit://client.local_serving_pipeline | live |
-| THM-0124 | A declared binding commits to what the verifier will digest, or the deployment does not start | client.deployment_config | unit://client.deployment_config | live |
+| THM-0124 | A declared binding commits to what the verifier will digest, or the deployment does not start | client.deployment_config | unit://client.deployment_config, unit://client.validated_config_sole_producer | live |
 | THM-0125 | A request a verifier could not bind is refused before it is sent, and a notification is not a request with no id | client.request_construction | unit://client.request_construction, unit://http_profile.evidence_block_carriage | live |
 | THM-0126 | A verified reply is not a completed call | client.verified_outcome | unit://client.verified_outcome | live |
 | THM-0127 | The deployable's serving path always runs an anchor refresher | client.serving_lifetime | unit://client.serving_lifetime | live |

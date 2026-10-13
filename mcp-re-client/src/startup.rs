@@ -11,7 +11,7 @@
 //! WITHDRAWN once the manifest in force has passed its own `expires_at`, and nothing on the
 //! request path consults that expiry. A client without it verifies for as long as it runs
 //! under a trust picture whose governing document has lapsed, which is exactly the state the
-//! manifest loader's expiry check exists to refuse. `validate()` bounds
+//! manifest loader's expiry check exists to refuse. The validated configuration bounds
 //! `trust.reload_secs`, so the cadence is also a ceiling on that window.
 
 use std::process::ExitCode;
@@ -21,7 +21,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mcp_re_client::anchors::AnchorRefresher;
-use mcp_re_client::config::ClientConfig;
 
 use crate::USAGE;
 
@@ -124,10 +123,10 @@ fn unix_seconds(at: std::time::SystemTime) -> Option<i64> {
 /// the only place a newer manifest — a revocation, a rotation, an extension — reaches a
 /// running client. A client without it keeps trusting a root an org has since revoked or
 /// retired, under the superseded picture, until that picture's own `expires_at`.
-/// `validate()` bounds `trust.reload_secs`, so the cadence is also a ceiling on how long a
-/// published revocation waits to take effect.
+/// `reload` is the validated configuration's cadence, which its checks bound, so it is also
+/// a ceiling on how long a published revocation waits to take effect.
 pub(crate) fn serve_until_shutdown(
-    config: &ClientConfig,
+    reload: Duration,
     built: mcp_re_client::BuiltClient,
     listener: mcp_re_client::serve::BoundListener,
 ) -> ExitCode {
@@ -135,7 +134,7 @@ pub(crate) fn serve_until_shutdown(
         built.loader,
         Arc::clone(&built.snapshot),
         built.manifest_expires_at,
-        Duration::from_secs(config.trust.reload_secs),
+        reload,
         now_unix,
     );
     install_shutdown_handlers();
@@ -348,13 +347,13 @@ mod tests {
         // exactly the case where holding the last good set is the wrong answer.
         std::fs::remove_file(scratch.join("manifest.json")).expect("unpublish");
 
-        let listener = mcp_re_client::serve::bind(&mcp_re_client::config::LocalConfig {
-            bind: "127.0.0.1:0".parse().expect("an address"),
-            allow_non_loopback: false,
-            request_lifetime_secs: 300,
-            default_route: None,
-            max_in_flight: 8,
-        })
+        let listener = mcp_re_client::serve::bind(
+            mcp_re_client::config::BindScope::decide(
+                "127.0.0.1:0".parse().expect("an address"),
+                false,
+            )
+            .expect("loopback"),
+        )
         .expect("an ephemeral port");
         let config = config(&scratch, listener.local_addr());
         let context = Arc::new(mcp_re_client::serve::ServeContext {
@@ -396,7 +395,11 @@ mod tests {
             SHUTDOWN.store(true, Ordering::SeqCst);
         });
 
-        let code = serve_until_shutdown(&config, built, listener);
+        let code = serve_until_shutdown(
+            Duration::from_secs(config.trust.reload_secs),
+            built,
+            listener,
+        );
         watcher.join().expect("the watcher finishes");
         assert!(
             withdrawn.load(Ordering::SeqCst),

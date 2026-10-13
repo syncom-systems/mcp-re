@@ -4674,12 +4674,13 @@ clause and its two `durable_file.rs` controls stay here.
 **Root relationship.** Beside core.verification_taxonomy: that unit owns token rendering, and this proposition covers the envelope placement.
 **Recorded:** 2026-10-04, round-12 remediation of wire.rs.
 
-## NP-248 — the assembled client gives every route the one trust-anchor snapshot and re-validates a handed-in configuration
+## NP-248 — the assembled client gives every route the one trust-anchor snapshot
 
-**Controls:** `mcp-re-client` `lib#tests::build_gives_every_route_the_one_snapshot_and_revalidates_a_handed_in_config`.
+**Controls:** `mcp-re-client` `lib#tests::build_gives_every_route_the_one_snapshot`.
 **Carrier:** `mcp-re-client/src/lib.rs`.
-**Statement.** *build hands every route the one trust-anchor snapshot the refresher publishes into, and re-validates a configuration handed in as a struct before using it.*
-**If false.** A published revocation reaches some routes and not others, or a constructed configuration reaches the signing pipeline unchecked.
+**Statement.** *build hands every route the one trust-anchor snapshot the refresher publishes into.*
+**If false.** A published revocation reaches some routes and not others.
+**Amended 2026-10-13 (MCPRE-202).** The statement's second clause, that `build` re-validates a configuration handed in as a struct, is withdrawn: `build` takes a `ValidatedClientConfig`, so an unchecked configuration cannot reach it at all. That is `client.validated_config_sole_producer`'s, witnessed by S57 and S58.
 **Likely owner:** none. `mcp-re-client/src/lib.rs` is in no unit's `paths` and is listed in
 `config/unit-closure-exclusions.toml`.
 **Root relationship.** A premise of the units above it.
@@ -4713,7 +4714,7 @@ clause and its two `durable_file.rs` controls stay here.
 `config::validation::tests::the_request_lifetime_bound_is_exactly_one_to_the_profiles_signature_validity_ceiling`,
 `config::validation::tests::the_request_lifetime_ceiling_is_the_profiles`.
 **Carrier:** `mcp-re-client/src/config/validation.rs`.
-**Statement.** *ClientConfig::validate refuses a route whose target_uri differs from its audience.target_uri, an empty delegation.expected_audience_hash, and a local.request_lifetime_secs outside 1..=the profile's signature-validity ceiling.*
+**Statement.** *ValidatedClientConfig::new refuses a route whose target_uri differs from its audience.target_uri, an empty delegation.expected_audience_hash, and a local.request_lifetime_secs outside 1..=the profile's signature-validity ceiling.*
 **If false.** A configuration passes `--check` while every request on a route fails AudienceMismatch at signing, a delegated credential with an empty audience-hash claim is accepted, or every call carries a validity window no verifier accepts.
 **Likely owner:** `client.deployment_config`. Its `paths` are `config/mod.rs` only, so `register` is not admissible; `client.local_leg_declaration` holds this file but its statement does not state these facts.
 **Root relationship.** A premise of the units above it.

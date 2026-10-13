@@ -76,6 +76,7 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `DelegatedCertResolver` | `delegated_tls/resolver.rs` | `budget()`, `materialize()` (the only constructor) |
 | `MaterializedLifecycle` | `materializing_runtime/materialized_lifecycle.rs` | `into_lifecycle()` — spent by `MaterializedRuntime::new`, the only consumer; `reached()` is `pub(super)`, called by `finish` alone |
 | `MaterializedRuntime` | `materialized_runtime.rs` | `serve()`, `shutdown()` — the lifecycle it records against is its own, never a parameter |
+| `ValidatedClientConfig` | client `config/validated.rs` | `local()`, `bind_scope()`, `identity()`, `remote()`, `trust()`, `reload_interval()`, `delegation()`, `routes()` — `new` runs every document check; `build` and the listener take it and check nothing (S57, S58) |
 | `P256Point` | http-profile `scitt.rs` | `verifying_key()` — the representation IS the decoded key |
 | `ScittServiceTrustPin` | http-profile `scitt.rs` | `verification_key()`, `kid()`, `service_identifier()`, `leaf_profile()`, `position_profile()`, `resolve()` |
 | `EvidenceCommitment` | http-profile `scitt.rs` | `corresponds_to()`, `is_complete_record()`, `commits_to_verified_evidence()`, `identifies_a_submission()`, `chain_label()` |

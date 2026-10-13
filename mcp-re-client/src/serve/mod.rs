@@ -221,33 +221,19 @@ pub fn serve(
     Ok(())
 }
 
-/// Bind the local listener, refusing a non-loopback address unless declared.
+/// Bind the local listener under a scope the configuration checks decided.
 ///
-/// The refusal lives HERE, at the seam that opens the socket, and not only in
-/// [`crate::config::ClientConfig::validate`]. Every field of [`LocalConfig`] is public
-/// and the type derives `Deserialize`, so a config can be built, deserialized or
-/// mutated without ever passing the validator — and this one boolean is the whole
-/// distance between the network and a socket that signs under this client's identity
-/// on every configured route. A guard that depends on call ordering is a convention;
-/// a guard at the chokepoint is an invariant.
+/// The permission is the argument: a [`BindScope`] exists only for an address the operator
+/// may bind, so this seam opens a socket for nothing else and decides nothing itself. The
+/// validated configuration hands over the scope its checks produced
+/// ([`crate::config::ValidatedClientConfig::bind_scope`]).
 ///
-/// An IPv4-mapped address such as `::ffff:127.0.0.1` reports `is_loopback() == false`
-/// and is therefore refused. That is the fail-closed direction: the check never admits
-/// an address that is not loopback, and an operator who wants that address can spell it
-/// `127.0.0.1`.
-pub fn bind(local: &LocalConfig) -> std::io::Result<BoundListener> {
-    // THE SCOPE IS WHAT ADMITS THE BIND, and this function obtains one rather than
-    // deciding for itself. It used to re-implement `BindScope::decide`'s condition and
-    // copy its message verbatim, which meant the seam that opens the socket never held a
-    // scope at all — so `BindScope`'s own refusal could be deleted and this path would go
-    // on refusing, which is what a mutation probe measured on 2026-09-18. Two
-    // representations of one security fact, kept in agreement by remembering.
-    let scope = BindScope::decide(local.bind, local.allow_non_loopback)
-        .map_err(|refusal| std::io::Error::new(std::io::ErrorKind::InvalidInput, refusal.0))?;
+/// The OS may have chosen the port (`:0`), so the names that reach the socket are decided
+/// over the address it is actually bound to, under the same scope.
+pub fn bind(scope: BindScope) -> std::io::Result<BoundListener> {
     let listener = TcpListener::bind(scope.listen_address())?;
-    // The OS may have chosen the port (`:0`), so the names that reach the socket are
-    // decided over the address it is actually bound to.
-    let bound = BindScope::decide(listener.local_addr()?, local.allow_non_loopback)
+    let bound = scope
+        .bound_to(listener.local_addr()?)
         .map_err(|refusal| std::io::Error::new(std::io::ErrorKind::InvalidInput, refusal.0))?;
     Ok(BoundListener::new(listener, &bound))
 }
@@ -256,36 +242,30 @@ pub fn bind(local: &LocalConfig) -> std::io::Result<BoundListener> {
 mod tests {
     use super::*;
 
-    fn local(bind: &str, allow_non_loopback: bool) -> LocalConfig {
-        LocalConfig {
-            bind: bind.parse().expect("addr"),
-            allow_non_loopback,
-            request_lifetime_secs: 60,
-            default_route: None,
-            max_in_flight: 8,
-        }
+    fn scope(bind: &str, allow_non_loopback: bool) -> Result<BindScope, String> {
+        BindScope::decide(bind.parse().expect("addr"), allow_non_loopback).map_err(|e| e.0)
     }
 
-    /// The guard must be what refuses, at the seam that opens the socket — not a
-    /// validator the caller may skip.
+    /// The socket opens only under a scope, and an undeclared off-host address has none.
     ///
     /// TEST-NET-1 is never assigned to a local interface, so admitting it fails in the
     /// OS with a different error kind. That is how this distinguishes "the guard
     /// refused" from "the bind failed", without opening a socket on every interface.
     #[test]
     fn bind_refuses_a_non_loopback_address_unless_it_is_declared() {
-        let refused = bind(&local("192.0.2.1:0", false)).expect_err("the guard must refuse");
-        assert_eq!(refused.kind(), std::io::ErrorKind::InvalidInput);
+        let refused = scope("192.0.2.1:0", false).expect_err("the guard must refuse");
         assert!(
-            refused.to_string().contains("allow_non_loopback"),
+            refused.contains("allow_non_loopback"),
             "the refusal must name the opt-in that exists: {refused}"
         );
-        let admitted = bind(&local("192.0.2.1:0", true)).expect_err("no such local address");
+        let admitted =
+            bind(scope("192.0.2.1:0", true).expect("declared")).expect_err("no such local address");
         assert_ne!(
             admitted.kind(),
             std::io::ErrorKind::InvalidInput,
             "with the opt-in declared the guard must not be what refuses: {admitted}"
         );
-        bind(&local("127.0.0.1:0", false)).expect("loopback binds without any opt-in");
+        bind(scope("127.0.0.1:0", false).expect("loopback"))
+            .expect("loopback binds without any opt-in");
     }
 }

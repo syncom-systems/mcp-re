@@ -40,8 +40,9 @@ use mcp_re_transport::MtlsClient;
 use zeroize::Zeroizing;
 
 use crate::anchors::AnchorLoader;
-use crate::config::ClientConfig;
 use crate::config::ConfigError;
+use crate::config::RemoteConfig;
+use crate::config::ValidatedClientConfig;
 
 /// A startup failure. Every variant is fatal: the client refuses to run rather than
 /// serve with a piece of its security posture missing.
@@ -137,28 +138,25 @@ pub struct BuiltClient {
 /// The startup load is FAIL-CLOSED: a client that cannot establish which roots it
 /// trusts has no basis to verify anything, so it refuses to start rather than serving
 /// while it waits for a manifest to appear.
-pub fn build(config: &ClientConfig, now: i64) -> Result<BuiltClient, StartupError> {
-    // Re-establish the document invariants on whatever was handed in. `from_json`
-    // validates what it parses, but this function takes a `&ClientConfig` whose fields
-    // are all public, so a caller that constructed or mutated one would otherwise reach
-    // the signing pipeline with a config that has never been checked.
-    config.validate().map_err(StartupError::Config)?;
-    warn_if_permissive(&config.identity.signing_key_seed_path);
-    let signing_key = read_signing_key(&config.identity.signing_key_seed_path)?;
+pub fn build(config: &ValidatedClientConfig, now: i64) -> Result<BuiltClient, StartupError> {
+    let identity = config.identity();
+    warn_if_permissive(&identity.signing_key_seed_path);
+    let signing_key = read_signing_key(&identity.signing_key_seed_path)?;
 
-    let mut loader = AnchorLoader::new(&config.trust).map_err(StartupError::Anchors)?;
+    let mut loader = AnchorLoader::new(config.trust()).map_err(StartupError::Anchors)?;
     let loaded = loader.load(now).map_err(StartupError::Anchors)?;
     let snapshot = Arc::new(AnchorSnapshot::new(loaded.issuers));
 
+    let delegation = config.delegation();
     let policy = DelegationPolicy::new(
-        config.delegation.verifier_audiences.clone(),
-        config.delegation.expected_audience_hash.clone(),
-        config.delegation.accepted_epochs.clone(),
-        config.delegation.max_clock_skew,
+        delegation.verifier_audiences.clone(),
+        delegation.expected_audience_hash.clone(),
+        delegation.accepted_epochs.clone(),
+        delegation.max_clock_skew,
     );
 
     let mut registry = RouteRegistry::new();
-    for route in &config.routes {
+    for route in config.routes() {
         registry = registry.register(Route {
             route_id: route.route_id.clone(),
             target_uri: route.target_uri.clone(),
@@ -177,15 +175,15 @@ pub fn build(config: &ClientConfig, now: i64) -> Result<BuiltClient, StartupErro
         });
     }
 
-    let transport = build_transport(config)?;
+    let transport = build_transport(config.remote())?;
     let proxy = ClientProxy::new(
         registry,
         signing_key,
-        config.identity.key_id.clone(),
+        identity.key_id.clone(),
         Box::new(transport),
     );
 
-    let context = Arc::new(serve::ServeContext::for_local_config(&config.local, proxy));
+    let context = Arc::new(serve::ServeContext::for_local_config(config.local(), proxy));
 
     Ok(BuiltClient {
         context,
@@ -204,20 +202,20 @@ pub fn next_nonce() -> String {
     b64url_encode(&SystemNonceSource::new().draw())
 }
 
-fn build_transport(config: &ClientConfig) -> Result<MtlsRemoteTransport, StartupError> {
+fn build_transport(remote: &RemoteConfig) -> Result<MtlsRemoteTransport, StartupError> {
     let read = |path: &std::path::Path| -> Result<Vec<u8>, StartupError> {
         std::fs::read(path).map_err(|e| StartupError::Material(format!("{}: {e}", path.display())))
     };
-    warn_if_permissive(&config.remote.client_key_path);
+    warn_if_permissive(&remote.client_key_path);
     let tls = ClientTlsConfig::from_pem(
-        &read(&config.remote.client_cert_path)?,
-        &read(&config.remote.client_key_path)?,
-        &read(&config.remote.server_ca_path)?,
+        &read(&remote.client_cert_path)?,
+        &read(&remote.client_key_path)?,
+        &read(&remote.server_ca_path)?,
     )
     .map_err(|e| StartupError::Material(format!("client TLS material: {e}")))?;
-    let client = MtlsClient::new(tls, &config.remote.expected_server_name)
+    let client = MtlsClient::new(tls, &remote.expected_server_name)
         .map_err(|e| StartupError::Material(format!("mTLS client: {e}")))?;
-    Ok(MtlsRemoteTransport::new(client, config.remote.addr))
+    Ok(MtlsRemoteTransport::new(client, remote.addr))
 }
 
 #[cfg(test)]
@@ -259,7 +257,7 @@ mod tests {
 
     /// Write the seed, signed manifest, and mTLS material `build` reads, and return a
     /// configuration over them with two routes.
-    fn fixture(scratch: &Scratch) -> ClientConfig {
+    fn fixture(scratch: &Scratch) -> ValidatedClientConfig {
         std::fs::write(scratch.join("seed"), b64url_encode(&[11u8; 32])).expect("seed");
 
         let org_key = SigningKey::from_seed_bytes(&[7u8; 32]);
@@ -354,13 +352,12 @@ mod tests {
             },
             "routes": [route("r1", "a.example.com"), route("r2", "b.example.com")],
         });
-        ClientConfig::from_json(document.to_string().as_bytes()).expect("fixture config")
+        ValidatedClientConfig::from_json(document.to_string().as_bytes()).expect("fixture config")
     }
 
-    /// Every route reads THE snapshot the refresher publishes into, and a configuration
-    /// handed in as a struct is re-validated rather than trusted.
+    /// Every route reads THE snapshot the refresher publishes into.
     #[test]
-    fn build_gives_every_route_the_one_snapshot_and_revalidates_a_handed_in_config() {
+    fn build_gives_every_route_the_one_snapshot() {
         let scratch = Scratch::new("build");
         let config = fixture(&scratch);
 
@@ -371,13 +368,6 @@ mod tests {
             Arc::strong_count(&built.snapshot),
             3,
             "the returned handle plus one per route: every route holds the one snapshot"
-        );
-
-        let mut illegal = config.clone();
-        illegal.delegation.accepted_epochs = vec![];
-        assert!(
-            matches!(build(&illegal, NOW), Err(StartupError::Config(_))),
-            "a handed-in configuration that validate() refuses must not build"
         );
     }
 

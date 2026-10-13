@@ -373,8 +373,10 @@ status = "unreviewed"
 # registered lines as progress.
 [[debt]]
 path = "mcp-re-client/src/serve/mod.rs"
-baseline_prod_loc = 262
-baseline_sha = "255465e"
+# MCPRE-202: `bind` takes the scope the configuration checks decided instead of deciding one:
+# 254 (measured at 75fae5e) -> 240. `baseline_sha` names that parent.
+baseline_prod_loc = 240
+baseline_sha = "75fae5e"
 status = "unreviewed"
 
 # MCPRE-172 item 2 gave the bodyless verifier an owner subtree: `bodyless.rs` became
@@ -470,8 +472,11 @@ status = "unreviewed"
 # file.
 [[debt]]
 path = "mcp-re-client/src/config/mod.rs"
-baseline_prod_loc = 438
-baseline_sha = "255465e"
+# MCPRE-202: the parse, read and check entry points moved to the validated configuration that
+# owns them, `config/validated.rs`: 382 (measured at 75fae5e) -> 355. `baseline_sha` names that
+# parent.
+baseline_prod_loc = 355
+baseline_sha = "75fae5e"
 status = "unreviewed"
 
 [[debt]]
@@ -782,8 +787,10 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-client/src/lib.rs"
-baseline_prod_loc = 237
-baseline_sha = "d1fc5fa"
+# MCPRE-202: `build` takes the validated configuration and no longer re-runs its checks:
+# 222 (measured at 75fae5e) -> 220. `baseline_sha` names that parent.
+baseline_prod_loc = 220
+baseline_sha = "75fae5e"
 status = "unreviewed"
 
 [[debt]]

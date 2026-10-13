@@ -23,7 +23,8 @@ use mcp_re_client_core::AudienceTuple;
 use serde::Deserialize;
 use serde::Serialize;
 
-/// The whole configuration document.
+/// The whole configuration document, as written: unchecked until it becomes a
+/// [`ValidatedClientConfig`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClientConfig {
@@ -233,7 +234,7 @@ pub struct BindingConfig {
 /// covers one token while the `Authorization` header carries another is a binding to
 /// nothing, and restating the value in two config fields is how that happens.
 ///
-/// Which forms are legal is therefore per artifact type, and [`ClientConfig::validate`]
+/// Which forms are legal is therefore per artifact type, and [`ValidatedClientConfig::new`]
 /// enforces it: for an artifact the verifier recovers from the request itself — the
 /// DPoP access token, which it takes from the covered `Authorization` header — only
 /// [`BindingSource::Header`] can name the transmitted bytes, so the literal and file
@@ -280,40 +281,12 @@ const AUTHORIZATION: &str = "Authorization";
 
 mod bind_scope;
 mod local;
+mod validated;
 mod validation;
 
 pub use bind_scope::BindScope;
 pub use local::LocalConfig;
-
-impl ClientConfig {
-    /// Parse a configuration document.
-    pub fn from_json(bytes: &[u8]) -> Result<Self, ConfigError> {
-        let config: ClientConfig =
-            serde_json::from_slice(bytes).map_err(|e| err(format!("config: {e}")))?;
-        config.validate()?;
-        Ok(config)
-    }
-
-    /// Read and parse a configuration file.
-    pub fn read(path: &std::path::Path) -> Result<Self, ConfigError> {
-        let bytes =
-            std::fs::read(path).map_err(|e| err(format!("config {}: {e}", path.display())))?;
-        ClientConfig::from_json(&bytes)
-    }
-
-    /// The checks that cannot be expressed in the type: non-empty collections, unique
-    /// route ids, a resolvable binding source, and the loopback guard.
-    ///
-    /// Public because every field of this struct is public and the type derives
-    /// `Deserialize`: a consumer that builds or mutates a config rather than going
-    /// through [`ClientConfig::from_json`] must be able to re-establish the invariant,
-    /// and [`crate::build`] runs it on whatever it is handed for the same reason.
-    pub fn validate(&self) -> Result<(), ConfigError> {
-        validation::check_local(&self.local)?;
-        validation::check_trust_and_delegation(self)?;
-        validation::check_routes(self)
-    }
-}
+pub use validated::ValidatedClientConfig;
 
 impl RouteConfig {
     /// Resolve this route's bindings into digested [`ArtifactBinding`]s.
@@ -423,7 +396,7 @@ mod tests {
     #[test]
     fn a_loopback_bind_is_accepted() {
         let doc = document(r#"{ "bind": "127.0.0.1:8640" }"#, ROUTE);
-        ClientConfig::from_json(doc.as_bytes()).expect("loopback config loads");
+        ValidatedClientConfig::from_json(doc.as_bytes()).expect("loopback config loads");
     }
 
     /// The local leg carries no authentication, so an off-host bind hands the signing
@@ -431,7 +404,7 @@ mod tests {
     #[test]
     fn a_non_loopback_bind_is_refused_unless_declared() {
         let doc = document(r#"{ "bind": "0.0.0.0:8640" }"#, ROUTE);
-        let error = ClientConfig::from_json(doc.as_bytes()).expect_err("must refuse");
+        let error = ValidatedClientConfig::from_json(doc.as_bytes()).expect_err("must refuse");
         assert!(
             error.0.contains("not a loopback address"),
             "unexpected: {error}"
@@ -441,7 +414,8 @@ mod tests {
             r#"{ "bind": "198.51.100.7:8640", "allow_non_loopback": true }"#,
             ROUTE,
         );
-        ClientConfig::from_json(declared.as_bytes()).expect("an explicit opt-in is honoured");
+        ValidatedClientConfig::from_json(declared.as_bytes())
+            .expect("an explicit opt-in is honoured");
     }
 
     /// An unknown field is a startup failure, not a silent default — a misspelled
@@ -452,7 +426,8 @@ mod tests {
             r#"{ "bind": "127.0.0.1:8640", "allow_nonloopback": true }"#,
             ROUTE,
         );
-        ClientConfig::from_json(doc.as_bytes()).expect_err("a misspelled field must fail closed");
+        ValidatedClientConfig::from_json(doc.as_bytes())
+            .expect_err("a misspelled field must fail closed");
     }
 
     /// A binding that digests a header the route does not send is a binding to nothing.
@@ -464,9 +439,10 @@ mod tests {
           "audience": { "audience_id": "v1", "target_uri": "https://mcp.example.com/mcp", "route": "a" },
           "artifact_bindings": [{ "artifact_type": "oauth-dpop", "source": { "kind": "header", "name": "Authorization" } }]
         }]"#;
-        let error =
-            ClientConfig::from_json(document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes())
-                .expect_err("must refuse");
+        let error = ValidatedClientConfig::from_json(
+            document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes(),
+        )
+        .expect_err("must refuse");
         assert!(error.0.contains("does not send"), "unexpected: {error}");
     }
 
@@ -486,15 +462,16 @@ mod tests {
           "extra_headers": [{ "name": "Authorization", "value": "Bearer tok-1" }],
           "artifact_bindings": [{ "artifact_type": "oauth-dpop", "source": { "kind": "header", "name": "authorization" } }]
         }]"#;
-        let config =
-            ClientConfig::from_json(document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes())
-                .expect("loads");
-        let resolved = config.routes[0]
+        let config = ValidatedClientConfig::from_json(
+            document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes(),
+        )
+        .expect("loads");
+        let resolved = config.routes()[0]
             .resolve_bindings()
             .expect("bindings resolve");
         // The verifier's own extraction over the headers this route sends.
         let credential =
-            mcp_re_http_profile::authorization_bearer_bytes(&config.routes[0].header_pairs())
+            mcp_re_http_profile::authorization_bearer_bytes(&config.routes()[0].header_pairs())
                 .expect("the route sends a bearer credential");
         assert_eq!(credential, b"tok-1");
         assert_eq!(
@@ -518,11 +495,12 @@ mod tests {
           "extra_headers": [{ "name": "X-Rar", "value": "details-blob" }],
           "artifact_bindings": [{ "artifact_type": "oauth-rar", "source": { "kind": "header", "name": "x-rar" } }]
         }]"#;
-        let config =
-            ClientConfig::from_json(document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes())
-                .expect("loads");
+        let config = ValidatedClientConfig::from_json(
+            document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes(),
+        )
+        .expect("loads");
         assert_eq!(
-            config.routes[0].resolve_bindings().expect("resolve"),
+            config.routes()[0].resolve_bindings().expect("resolve"),
             vec![ArtifactBinding::opaque_digest(
                 ArtifactType::OauthRar,
                 b"details-blob"
@@ -548,7 +526,7 @@ mod tests {
               "artifact_bindings": [{{ "artifact_type": "oauth-dpop", "source": {source} }}]
             }}]"#
             );
-            let error = ClientConfig::from_json(
+            let error = ValidatedClientConfig::from_json(
                 document(r#"{ "bind": "127.0.0.1:8640" }"#, &route).as_bytes(),
             )
             .expect_err("a restated dpop credential must not start");
@@ -571,9 +549,10 @@ mod tests {
           "extra_headers": [{ "name": "X-Token", "value": "Bearer A" }],
           "artifact_bindings": [{ "artifact_type": "oauth-dpop", "source": { "kind": "header", "name": "X-Token" } }]
         }]"#;
-        let error =
-            ClientConfig::from_json(document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes())
-                .expect_err("must refuse");
+        let error = ValidatedClientConfig::from_json(
+            document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes(),
+        )
+        .expect_err("must refuse");
         assert!(
             error.0.contains("and no other header"),
             "unexpected: {error}"
@@ -591,9 +570,10 @@ mod tests {
           "extra_headers": [{ "name": "Authorization", "value": "Basic dXNlcjpwdw==" }],
           "artifact_bindings": [{ "artifact_type": "oauth-dpop", "source": { "kind": "header", "name": "Authorization" } }]
         }]"#;
-        let error =
-            ClientConfig::from_json(document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes())
-                .expect_err("must refuse");
+        let error = ValidatedClientConfig::from_json(
+            document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes(),
+        )
+        .expect_err("must refuse");
         assert!(
             error.0.contains("not a Bearer credential"),
             "unexpected: {error}"
@@ -609,9 +589,10 @@ mod tests {
           "audience": { "audience_id": "v1", "target_uri": "https://mcp.example.com/mcp", "route": "a" },
           "artifact_bindings": [{ "artifact_type": "oauth-mtls", "source": { "kind": "literal", "value": "my-cert" } }]
         }]"#;
-        let error =
-            ClientConfig::from_json(document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes())
-                .expect_err("must refuse");
+        let error = ValidatedClientConfig::from_json(
+            document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes(),
+        )
+        .expect_err("must refuse");
         assert!(
             error.0.contains("config text cannot restate"),
             "unexpected: {error}"
@@ -637,20 +618,21 @@ mod tests {
             r#""accepted_epochs": ["e1"]"#,
             r#""accepted_epochs": ["e1"], "max_clock_skew": 31536000"#,
         );
-        let error = ClientConfig::from_json(doc.as_bytes()).expect_err("must refuse");
+        let error = ValidatedClientConfig::from_json(doc.as_bytes()).expect_err("must refuse");
         assert!(error.0.contains("max_clock_skew"), "unexpected: {error}");
 
         let negative = document(r#"{ "bind": "127.0.0.1:8640" }"#, ROUTE).replace(
             r#""accepted_epochs": ["e1"]"#,
             r#""accepted_epochs": ["e1"], "max_clock_skew": -1"#,
         );
-        ClientConfig::from_json(negative.as_bytes()).expect_err("a negative skew must not start");
+        ValidatedClientConfig::from_json(negative.as_bytes())
+            .expect_err("a negative skew must not start");
 
         let at_bound = document(r#"{ "bind": "127.0.0.1:8640" }"#, ROUTE).replace(
             r#""accepted_epochs": ["e1"]"#,
             &format!(r#""accepted_epochs": ["e1"], "max_clock_skew": {MAX_CLOCK_SKEW_SECS}"#),
         );
-        ClientConfig::from_json(at_bound.as_bytes()).expect("the bound itself is legal");
+        ValidatedClientConfig::from_json(at_bound.as_bytes()).expect("the bound itself is legal");
     }
 
     /// Withdrawing anchors past the manifest's own `expires_at` happens in a refresh
@@ -666,7 +648,7 @@ mod tests {
                     r#""floor": {{ "kind": "durable", "dir": "/var/lib/mcp-re/floor" }}, "reload_secs": {secs}"#
                 ),
             );
-            let error = ClientConfig::from_json(doc.as_bytes())
+            let error = ValidatedClientConfig::from_json(doc.as_bytes())
                 .expect_err("a cadence outside the bound must not start");
             assert!(
                 error.0.contains("trust.reload_secs"),
@@ -679,7 +661,7 @@ mod tests {
                 r#""floor": {{ "kind": "durable", "dir": "/var/lib/mcp-re/floor" }}, "reload_secs": {MAX_MANIFEST_RELOAD_SECS}"#
             ),
         );
-        ClientConfig::from_json(ok.as_bytes()).expect("the bound itself is legal");
+        ValidatedClientConfig::from_json(ok.as_bytes()).expect("the bound itself is legal");
     }
 
     /// Two routes under one id would leave the later one's bindings attached to the
@@ -700,9 +682,10 @@ mod tests {
             "artifact_bindings": [{ "artifact_type": "oauth-rar", "source": { "kind": "literal", "value": "y" } }]
           }
         ]"#;
-        let error =
-            ClientConfig::from_json(document(r#"{ "bind": "127.0.0.1:8640" }"#, routes).as_bytes())
-                .expect_err("must refuse");
+        let error = ValidatedClientConfig::from_json(
+            document(r#"{ "bind": "127.0.0.1:8640" }"#, routes).as_bytes(),
+        )
+        .expect_err("must refuse");
         assert!(
             error.0.contains("duplicate route_id"),
             "unexpected: {error}"
@@ -714,7 +697,7 @@ mod tests {
     fn an_empty_org_key_pin_set_is_refused() {
         let doc = document(r#"{ "bind": "127.0.0.1:8640" }"#, ROUTE)
             .replace(r#"[{ "kid": "org-1", "public_key": "AAAA" }]"#, "[]");
-        let error = ClientConfig::from_json(doc.as_bytes()).expect_err("must refuse");
+        let error = ValidatedClientConfig::from_json(doc.as_bytes()).expect_err("must refuse");
         assert!(
             error.0.contains("pins no manifest-signing key"),
             "unexpected: {error}"
@@ -734,7 +717,7 @@ mod tests {
             "the fixture must actually lose its floor, or this test passes for the \
              wrong reason"
         );
-        ClientConfig::from_json(doc.as_bytes())
+        ValidatedClientConfig::from_json(doc.as_bytes())
             .expect_err("a document with no floor must not start");
     }
 }
