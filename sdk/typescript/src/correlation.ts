@@ -23,7 +23,7 @@
  * | answers an already-answered one   | `mcp-re.replay_detected`          |
  */
 import { McpReError } from "./custody.js";
-import type { SignedRequestJs } from "../native/binding.js";
+import { maxClockSkewBound, type SignedRequestJs } from "../native/binding.js";
 
 /** One outstanding request, as ADR-MCPS-044 §In-flight correlation state requires. */
 export interface PendingRequest {
@@ -101,11 +101,11 @@ const CONSUMED_SCAN_AT = 1024;
  *
  * The consumed set exists to answer "was this id already answered?", which only matters
  * for a response that arrives LATE — so retention has to outlast the request window, not
- * end with it. 300s is the profile's own widest skew tolerance: past it a response is so
- * late that calling it a duplicate says nothing more than calling it unbound, and both
- * refuse it.
+ * end with it. It is the profile's own widest skew tolerance, read from the native core:
+ * past it a response is so late that calling it a duplicate says nothing more than calling
+ * it unbound, and both refuse it.
  */
-const CONSUMED_GRACE = 300;
+const CONSUMED_GRACE = maxClockSkewBound();
 
 /**
  * Tracks outstanding requests and binds responses back to them, fail-closed.

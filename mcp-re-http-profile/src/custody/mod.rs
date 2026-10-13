@@ -1078,7 +1078,7 @@ mod tests {
             credential,
             &DelegationVerifyParams {
                 now,
-                max_clock_skew: 0,
+                max_clock_skew: mcp_re_core::MaxClockSkew::ZERO,
                 verifier_audiences: &audiences,
                 expected_profile: &policy.profile,
                 expected_audience_hash: &policy.audience_hash,

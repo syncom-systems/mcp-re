@@ -886,7 +886,7 @@ propositions the proxy side already holds.
 
 ## NP-012 — the artifact that ships implements the profile
 
-**Controls:** `sdk/typescript/test/smoke.test.ts` (2), `sdk/python/tests/test_smoke.py` (3), `sdk/python/bazel_tests/core_lane_test.py` `TestCoreLane` (3), run by `//sdk/python:core_lane_test` over the Bazel-built extension, the first failing if any other was loaded.
+**Controls:** `sdk/typescript/test/smoke.test.ts` (3), `sdk/python/tests/test_smoke.py` (4), `sdk/python/bazel_tests/core_lane_test.py` `TestCoreLane` (3), run by `//sdk/python:core_lane_test` over the Bazel-built extension, the first failing if any other was loaded.
 **Carrier:** the BUILT package — the napi native addon and the PyO3 wheel — not the source
 tree every other unit's battery measures.
 **Statement.** *The package as built and packed loads, reports a non-empty core version and
@@ -1500,7 +1500,7 @@ taking the last occurrence is how an operator's first, correct argument disappea
 
 ## NP-040 — the auditor trusts exactly what its profile enrolls
 
-**Controls:** `auditor/profile/mod.rs` (5), `auditor/trust_view.rs` (4).
+**Controls:** `auditor/profile/mod.rs` (6), `auditor/trust_view.rs` (4).
 **Statement.** *A coherent trust document becomes a profile and an incoherent one never
 does; an unknown member and a negative clock skew are refused; the revoked set answers for
 the keys it names; and in the resulting view an enrolled request signer resolves with the
@@ -2831,12 +2831,12 @@ is not a registry edit and did not belong in this slice.
 
 ## NP-183 — a configured clock skew cannot widen the credential window
 
-**Control:** `mcp-re-client-core` `lib#response::delegated_tests::an_out_of_range_skew_cannot_widen_the_credential_window`.
+**Control:** `mcp-re-client-core` `lib#response::delegated_tests::the_widest_constructible_skew_cannot_widen_the_credential_window_past_its_bound`.
 **Carrier:** `mcp-re-client-core/src/response.rs`, the delegation verify parameters.
-**Statement.** *The operator-configured `max_clock_skew` does not reach the credential's
-`nbf`/`exp` window unclamped: a receipt whose RFC 9421 freshness is current at the
-verification instant, signed off a credential that expired long before it, fails on the
-CREDENTIAL window rather than being admitted by a skew allowance.*
+**Statement.** *The `max_clock_skew` that reaches the credential's `nbf`/`exp` window is a
+`MaxClockSkew`, so it cannot exceed the profile bound: a receipt whose RFC 9421 freshness is
+current at the verification instant, signed off a credential that expired long before it,
+fails on the CREDENTIAL window even under the widest tolerance the type can hold.*
 **If false.** An operator who sets a week of skew gets a week on the delegated credential's
 TTL — the bound on a compromised delegated key's exposure — while the signature gate they
 could observe is silently clamped, so testing the setting shows nothing wrong. That is the

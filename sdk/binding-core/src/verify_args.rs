@@ -9,6 +9,7 @@ use mcp_re_client_core::HttpRequest;
 use mcp_re_client_core::HttpResponse;
 use mcp_re_client_core::SignerSlot;
 use mcp_re_client_core::StaticRevocationList;
+use mcp_re_core::MaxClockSkew;
 
 use crate::BindingError;
 use crate::PinnedIssuer;
@@ -19,7 +20,9 @@ use crate::PinnedIssuer;
 /// `expected_audience_hash`), the accepted trust epochs, and the client's static denylist,
 /// any mix of delegated kid, issuer kid or credential `jti`; an empty list is the explicit
 /// TTL-only posture. `max_clock_skew` and `now` are seconds; each host converts its own
-/// number type into them before this value exists.
+/// number type into them before this value exists. A `max_clock_skew` outside
+/// `0..=`[`MaxClockSkew::BOUND_SECS`] is refused, as the sidecar's configuration refuses it,
+/// rather than clamped into a tolerance the caller did not ask for.
 #[derive(Debug, Clone)]
 pub struct VerifyArgs {
     pub response: HttpResponse,
@@ -45,12 +48,20 @@ pub(crate) struct Judged<'a> {
 
 impl VerifyArgs {
     /// Read the trust inputs and run `check` under them: the pinned anchor (whose identity
-    /// is refused before any evidence is read), the denylist, and the delegation policy.
+    /// is refused before any evidence is read), the skew, the denylist, and the delegation
+    /// policy.
     pub(crate) fn judge<T>(
         self,
         check: impl FnOnce(Judged<'_>) -> Result<T, HttpProfileError>,
     ) -> Result<T, BindingError> {
         let anchor = self.issuer.anchor()?;
+        let skew = MaxClockSkew::new(self.max_clock_skew).ok_or_else(|| {
+            BindingError::Local(format!(
+                "max_clock_skew {} is outside 0..={} seconds",
+                self.max_clock_skew,
+                MaxClockSkew::BOUND_SECS
+            ))
+        })?;
         let resolve = |kid: &str, slot: SignerSlot, at: i64| anchor.resolve_issuer(kid, slot, at);
         let revocation = StaticRevocationList::from_identifiers(self.revoked_identifiers);
         let trust = CompositeResponseTrust::new(&resolve, &revocation);
@@ -58,7 +69,7 @@ impl VerifyArgs {
             self.verifier_audiences,
             &self.expected_audience_hash,
             self.accepted_epochs,
-            self.max_clock_skew,
+            skew,
         );
         Ok(check(Judged {
             response: &self.response,
@@ -110,6 +121,35 @@ mod tests {
             max_clock_skew: 30,
             revoked_identifiers: Vec::new(),
             now: 1_000,
+        }
+    }
+
+    /// The SDK refuses a skew the sidecar's configuration refuses: the bound is accepted,
+    /// one second past it is a local refusal naming the bound, and the check never runs.
+    #[test]
+    fn a_skew_past_the_bound_is_refused_and_the_bound_is_accepted() {
+        let mut at_bound = args("server");
+        at_bound.max_clock_skew = mcp_re_core::MaxClockSkew::BOUND_SECS;
+        at_bound
+            .judge(|_| Ok(()))
+            .expect("the bound itself is a skew");
+
+        for past in [mcp_re_core::MaxClockSkew::BOUND_SECS + 1, -1] {
+            let mut refused = args("server");
+            refused.max_clock_skew = past;
+            let mut ran = false;
+            let got = refused.judge(|_| {
+                ran = true;
+                Ok(())
+            });
+            match got {
+                Err(BindingError::Local(reason)) => assert!(
+                    reason.contains(&mcp_re_core::MaxClockSkew::BOUND_SECS.to_string()),
+                    "{reason}"
+                ),
+                other => panic!("{past}: expected a local refusal, got {other:?}"),
+            }
+            assert!(!ran, "{past}: no evidence is read under a refused skew");
         }
     }
 

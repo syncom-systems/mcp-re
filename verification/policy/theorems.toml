@@ -3103,13 +3103,12 @@ depends_on = ["THM-0020", "THM-0022"]
 
 [[theorem]]
 id = "THM-0060"
-title = "The client's clock skew is bounded at construction and read once"
+title = "The client's clock skew is bounded by its type and read once"
 statement = """
-`DelegationPolicy` clamps the configured clock skew to the profile's bound when it is
-constructed and keeps the result in a private field, so no inhabitant carries an unbounded
-tolerance; a negative configured skew narrows to zero rather than moving the window
-backwards; and both freshness windows read that one bounded number through the policy's
-single projection.
+`DelegationPolicy` takes the clock skew as a `MaxClockSkew` and keeps it in a private field,
+so no inhabitant carries a tolerance outside the profile's bound — an out-of-range configured
+value is refused where it is configured, never clamped — and both freshness windows read that
+one skew through the policy's single projection.
 """
 security_consequence = """
 An operator cannot widen a client's acceptance window past the profile bound by

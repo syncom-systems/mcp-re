@@ -196,7 +196,7 @@ fn expectations() -> mcp_re_http_profile::DelegationExpectations<'static> {
         verifier_audiences: &["did:example:server"],
         expected_audience_hash: "aud-scope-1",
         accepted_epochs: &["epoch-1"],
-        max_clock_skew: 60,
+        max_clock_skew: mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
     }
 }
 

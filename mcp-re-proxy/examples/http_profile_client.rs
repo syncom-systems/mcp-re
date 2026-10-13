@@ -60,7 +60,7 @@ fn main() {
         verifier_audiences: &verifier_audiences,
         expected_audience_hash: hpp_common::AUD_SCOPE,
         accepted_epochs: &accepted_epochs,
-        max_clock_skew: 60,
+        max_clock_skew: mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
     };
     // No delegated key is revoked in the proof; a real client resolves this from its
     // revocation source.

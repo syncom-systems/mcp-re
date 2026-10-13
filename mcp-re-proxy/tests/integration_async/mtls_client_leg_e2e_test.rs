@@ -398,7 +398,12 @@ fn spawn_server(server_ca: &Ca, client_ca: &Ca) -> RunningServer {
 // ---------------------------------------------------------------------------
 
 fn delegation_policy() -> DelegationPolicy {
-    DelegationPolicy::new(vec![AUD.to_string()], AUD, vec![EPOCH.to_string()], 60)
+    DelegationPolicy::new(
+        vec![AUD.to_string()],
+        AUD,
+        vec![EPOCH.to_string()],
+        mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
+    )
 }
 
 fn client_resolver() -> mcp_re_client_proxy::route::RouteActorResolver {

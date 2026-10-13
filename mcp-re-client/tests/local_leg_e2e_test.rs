@@ -328,7 +328,12 @@ fn start_sidecar_with_backend(
     let loaded = loader.load(NOW).expect("startup manifest loads");
     let snapshot = Arc::new(AnchorSnapshot::new(loaded.issuers));
 
-    let policy = DelegationPolicy::new(vec![AUD.to_string()], AUD, vec![EPOCH.to_string()], 60);
+    let policy = DelegationPolicy::new(
+        vec![AUD.to_string()],
+        AUD,
+        vec![EPOCH.to_string()],
+        mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
+    );
     let route = Route {
         route_id: "r1".into(),
         target_uri: TARGET.into(),

@@ -40,3 +40,8 @@ pub use verify_args::VerifyArgs;
 pub use mcp_re_client_core::CORE_VERSION;
 /// The RFC 9421 profile tag the signature is emitted and verified under.
 pub use mcp_re_client_core::PROFILE_TAG;
+
+/// The widest clock-skew tolerance, in seconds, a verification call accepts: the profile's
+/// own bound, exported so a host derives every window it keeps from the number the core
+/// enforces rather than restating it.
+pub const MAX_CLOCK_SKEW_BOUND_SECS: i64 = mcp_re_core::MaxClockSkew::BOUND_SECS;

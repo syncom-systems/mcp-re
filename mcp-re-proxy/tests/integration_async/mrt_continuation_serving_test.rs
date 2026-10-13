@@ -277,7 +277,7 @@ fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: AUD_SCOPE,
         accepted_epochs: epochs,
-        max_clock_skew: 60,
+        max_clock_skew: mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
     }
 }
 

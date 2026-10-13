@@ -13,6 +13,7 @@ import {
   signRequest,
   verifyResponse,
 } from "../src/index.js";
+import { maxClockSkewBound } from "../native/binding.js";
 
 describe("mcp-re-sdk smoke (built package)", () => {
   it("reports the audited core's version, not this wrapper's", () => {
@@ -26,6 +27,13 @@ describe("mcp-re-sdk smoke (built package)", () => {
     expect(major > 0 || minor >= 17).toBe(true);
     expect(typeof profileTag()).toBe("string");
     expect(profileTag().length).toBeGreaterThan(0);
+  });
+
+  it("exposes the core's clock-skew bound, the one number every SDK window derives from", () => {
+    // `MaxClockSkew::BOUND_SECS`: the sidecar refuses a configured skew past it, and so
+    // does the core under this binding. The transport's ceiling and the correlation
+    // store's consumed-id grace both read it from here rather than restating it.
+    expect(maxClockSkewBound()).toBe(300);
   });
 
   it("signs an MCP request as an RFC 9421 message", () => {

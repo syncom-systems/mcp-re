@@ -98,7 +98,7 @@ any of them is closed.
 | THM-0057 | A client's anchors loaded through the manifest loader are the ones the current signed manifest published | client.trust_manifest_lifecycle | unit://client.delegated_trust_pairing_seal, unit://client.trust_manifest_lifecycle | live |
 | THM-0058 | A client accepts a response only under a signer its trust configuration authorizes | client.response_signer_authorization | unit://client.response_signer_authorization, unit://client.trust_manifest_lifecycle | live |
 | THM-0059 | An unbound receipt is never a success and never another request's answer | client.response_binding_disposition | unit://client.response_binding_disposition | live |
-| THM-0060 | The client's clock skew is bounded at construction and read once | client.delegation_policy_seal | unit://client.delegation_policy_seal | live |
+| THM-0060 | The client's clock skew is bounded by its type and read once | client.delegation_policy_seal | unit://client.delegation_policy_seal | live |
 | THM-0061 | A receipt that says nothing is not a receipt that says nothing ran | client.execution_contract | unit://client.execution_contract, unit://client.proxy_reply_disposition, unit://client.receipt_contract_carriage | live |
 | THM-0062 | A response-signing credential exists only while a valid delegated key does | proxy.delegated_signing_credential | unit://proxy.delegated_signing_credential | live |
 | THM-0063 | A signed response never advertises validity its credential does not authorize | proxy.response_signing | unit://http_profile.delegated_signing_custody, unit://proxy.delegated_signing_credential, unit://proxy.response_signing | live |
@@ -822,9 +822,9 @@ any of them is closed.
 
 **Depends on.** THM-0020, THM-0022
 
-### THM-0060 — The client's clock skew is bounded at construction and read once
+### THM-0060 — The client's clock skew is bounded by its type and read once
 
-**Statement.** `DelegationPolicy` clamps the configured clock skew to the profile's bound when it is constructed and keeps the result in a private field, so no inhabitant carries an unbounded tolerance; a negative configured skew narrows to zero rather than moving the window backwards; and both freshness windows read that one bounded number through the policy's single projection.
+**Statement.** `DelegationPolicy` takes the clock skew as a `MaxClockSkew` and keeps it in a private field, so no inhabitant carries a tolerance outside the profile's bound — an out-of-range configured value is refused where it is configured, never clamped — and both freshness windows read that one skew through the policy's single projection.
 
 **Security consequence.** An operator cannot widen a client's acceptance window past the profile bound by configuration, and the credential window and the signature window cannot disagree about the tolerance they applied — the disagreement that lets a credential be accepted outside the window its own signature was admitted under.
 

@@ -200,7 +200,7 @@ mod tests {
             vec![AUD.to_string()],
             AUD_SCOPE,
             vec![EPOCH.to_string()],
-            60,
+            mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
         )
     }
 

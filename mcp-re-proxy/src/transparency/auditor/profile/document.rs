@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use serde::Serialize;
 
+use mcp_re_core::MaxClockSkew;
 use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::scitt::TransparencyKeyLifecycle;
 use mcp_re_http_profile::AudienceTuple;
@@ -21,13 +22,6 @@ use mcp_re_http_profile::AudienceTuple;
 /// The schema token a profile must carry.
 pub(in crate::transparency::auditor::profile) const AUDIT_PROFILE_SCHEMA: &str =
     "mcp-re-audit-profile/v1";
-
-/// The widest clock-skew tolerance a profile may assert, in seconds.
-///
-/// An unbounded skew is not a stricter audit that happens to be lenient — it is an audit
-/// whose credential-freshness check has been switched off while still reporting a verdict.
-/// One hour is the ceiling the serving path's freshness windows are written against.
-const MAX_CLOCK_SKEW_CEILING: i64 = 3_600;
 
 /// The profile AS WRITTEN — the wire record, before anything about it is checked.
 ///
@@ -102,7 +96,9 @@ pub(super) struct ResponseAnchorRecord {
 /// comparisons that verdict rests on could not be made. An empty verifier-audience list or
 /// an empty epoch set does not audit more strictly, it audits nothing; an unbounded skew
 /// reports a freshness result without a freshness check.
-pub(super) fn coherent(document: &AuditProfileDocument) -> Result<VerificationKey, String> {
+pub(super) fn coherent(
+    document: &AuditProfileDocument,
+) -> Result<(VerificationKey, MaxClockSkew), String> {
     if document.schema != AUDIT_PROFILE_SCHEMA {
         return Err(format!(
             "audit profile: schema is {:?}, expected {AUDIT_PROFILE_SCHEMA:?}",
@@ -132,16 +128,18 @@ pub(super) fn coherent(document: &AuditProfileDocument) -> Result<VerificationKe
                 .to_owned(),
         );
     }
-    if !(0..=MAX_CLOCK_SKEW_CEILING).contains(&document.delegation.max_clock_skew_secs) {
-        return Err(format!(
-            "audit profile: delegation.max_clock_skew_secs is {}, outside \
-             0..={MAX_CLOCK_SKEW_CEILING}; an unbounded tolerance reports a verdict with \
-             the freshness check switched off",
+    let skew = MaxClockSkew::new(document.delegation.max_clock_skew_secs).ok_or_else(|| {
+        format!(
+            "audit profile: delegation.max_clock_skew_secs is {}, outside 0..={}; the \
+             credential window is widened by exactly this tolerance, and a value the \
+             verifier cannot hold would report a freshness verdict it did not reach",
             document.delegation.max_clock_skew_secs,
-        ));
-    }
-    VerificationKey::from_b64url(&document.response_anchor.public_key)
-        .map_err(|_| "audit profile: response_anchor.public_key is not a key".to_owned())
+            MaxClockSkew::BOUND_SECS,
+        )
+    })?;
+    let anchor = VerificationKey::from_b64url(&document.response_anchor.public_key)
+        .map_err(|_| "audit profile: response_anchor.public_key is not a key".to_owned())?;
+    Ok((anchor, skew))
 }
 
 /// The transparency-service key lifecycles a document states, keyed by `kid`, or the first

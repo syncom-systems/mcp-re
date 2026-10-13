@@ -463,7 +463,7 @@ mod delegated_tests {
             vec![AUD.to_string()],
             AUD_SCOPE,
             vec![EPOCH.to_string()],
-            60,
+            mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
         )
     }
     fn custody_cfg() -> CustodyConfig {
@@ -1378,19 +1378,22 @@ mod delegated_tests {
         assert_eq!(err, HttpProfileError::DelegationRevoked);
     }
 
-    // ---- the configured skew is BOUNDED on both windows ----------------------
+    // ---- the skew is BOUNDED on both windows -----------------------------------
 
-    /// The credential's `nbf`/`exp` window is widened by the configured skew and had no
-    /// cap of its own: `DelegationExpectations.max_clock_skew` reached
-    /// `DelegationVerifyParams` raw. An operator who set a week got a week on the
-    /// credential window — the TTL that bounds a compromised delegated key's exposure —
-    /// while the signature gate they could observe was silently clamped, so testing the
-    /// setting showed nothing wrong.
+    /// The credential's `nbf`/`exp` window is widened by the policy's skew, and that skew is
+    /// a [`mcp_re_core::MaxClockSkew`]: a week is not a value the policy can hold, and the
+    /// widest it can hold does not honour a credential far past its `exp` — the TTL that
+    /// bounds a compromised delegated key's exposure.
     ///
     /// The response signature here is fresh at the verification instant; only the
     /// CREDENTIAL is stale, so the failure this asserts is the credential window's.
     #[test]
-    fn an_out_of_range_skew_cannot_widen_the_credential_window() {
+    fn the_widest_constructible_skew_cannot_widen_the_credential_window_past_its_bound() {
+        assert_eq!(
+            mcp_re_core::MaxClockSkew::new(604_800),
+            None,
+            "a week is not a skew"
+        );
         // A request whose own window brackets the (much later) verification instant.
         let inputs = RequestSigningInputs::new(
             CLIENT_KEY_ID.to_string(),
@@ -1425,7 +1428,7 @@ mod delegated_tests {
         let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
         // Signed with the key the custody minted (the factory's first seed): a window opens
         // over no expired credential, so this deliberately stale signature is built from
-        // parts the verifier's clamp is then asked to refuse.
+        // parts the verifier's bounded window is then asked to refuse.
         let stale_key = SigningKey::from_seed_bytes(&[101u8; 32]);
         let resp = mcp_re_http_profile::rejection::build_delegated_rejection_with_owned_key(
             signed.request(),
@@ -1440,30 +1443,22 @@ mod delegated_tests {
         )
         .expect("server signs a fresh receipt off a stale credential");
 
-        let a_week = DelegationPolicy::new(
+        let widest = DelegationPolicy::new(
             vec![AUD.to_string()],
             AUD_SCOPE,
             vec![EPOCH.to_string()],
-            604_800,
+            mcp_re_core::MaxClockSkew::new(mcp_re_core::MaxClockSkew::BOUND_SECS)
+                .expect("the bound itself"),
         );
-        // The BEHAVIOUR first: what the credential window does, not what the accessor
-        // returns. Unclamped, 604800s of tolerance swallows the 3300s the credential is
-        // past `exp` and this verification succeeds.
         let err = verify_delegated_response(
             &resp,
             &trust_with(StaticRevocationList::new()),
             &expectation(&signed),
-            &a_week,
+            &widest,
             late,
         )
-        .expect_err("a week of skew must not honour a credential 3300s past exp");
+        .expect_err("the widest skew must not honour a credential 3300s past exp");
         assert_eq!(err, HttpProfileError::DelegationCredentialExpired);
-
-        // The accessor assertions that used to follow are the OWNER's, and they are its
-        // `policy_seal_tests` — a clamp is a property of the policy, and asserting it from
-        // here would mean this module could read the representation. What belongs here is
-        // exactly what is above: the end-to-end BEHAVIOUR, that a week of configured
-        // tolerance does not honour a credential 3300s past `exp`.
     }
 
     // ---- the trust picture's own expiry -------------------------------------

@@ -28,6 +28,7 @@ use document::coherent;
 use document::transparency_key_lifecycles;
 use document::AuditProfileDocument;
 
+use mcp_re_core::MaxClockSkew;
 use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::scitt::TransparencyKeyLifecycle;
 use mcp_re_http_profile::ActorIdentity;
@@ -55,6 +56,8 @@ pub struct AuditProfile {
     document: AuditProfileDocument,
     /// Decoded once, at construction, from `document.response_anchor.public_key`.
     anchor_key: VerificationKey,
+    /// `document.delegation.max_clock_skew_secs`, refused at construction when out of range.
+    max_clock_skew: MaxClockSkew,
     /// The revoked set as a set, so membership is a lookup and duplicates in the document
     /// cannot mean anything.
     revoked: BTreeSet<String>,
@@ -66,12 +69,13 @@ impl TryFrom<AuditProfileDocument> for AuditProfile {
     type Error = String;
 
     fn try_from(document: AuditProfileDocument) -> Result<Self, Self::Error> {
-        let anchor_key = coherent(&document)?;
+        let (anchor_key, max_clock_skew) = coherent(&document)?;
         let revoked = document.revoked_key_ids.iter().cloned().collect();
         let ts_keys = transparency_key_lifecycles(&document)?;
         Ok(AuditProfile {
             document,
             anchor_key,
+            max_clock_skew,
             revoked,
             ts_keys,
         })
@@ -165,7 +169,7 @@ impl AuditProfile {
             verifier_audiences: &audiences,
             expected_audience_hash: &self.document.delegation.expected_audience_hash,
             accepted_epochs: &epochs,
-            max_clock_skew: self.document.delegation.max_clock_skew_secs,
+            max_clock_skew: self.max_clock_skew,
         })
     }
 }
@@ -220,7 +224,7 @@ mod tests {
         profile.with_delegation(|expect| {
             assert_eq!(expect.verifier_audiences, ["verifier-1"]);
             assert_eq!(expect.accepted_epochs, ["epoch-1"]);
-            assert_eq!(expect.max_clock_skew, 60);
+            assert_eq!(expect.max_clock_skew.secs(), 60);
         });
     }
 
@@ -264,6 +268,25 @@ mod tests {
         let mut d = document();
         d["delegation"]["max_clock_skew_secs"] = serde_json::json!(-1);
         assert!(parse(&d).is_err());
+    }
+
+    /// The profile's bound is the verifier's: the bound itself is a profile, one second past
+    /// it is refused and the refusal names the bound, rather than a wider tolerance being
+    /// written down and a narrower one applied.
+    #[test]
+    fn a_skew_one_past_the_verifier_bound_is_refused_and_the_bound_is_accepted() {
+        let mut d = document();
+        d["delegation"]["max_clock_skew_secs"] = serde_json::json!(MaxClockSkew::BOUND_SECS);
+        let profile = parse(&d).expect("the bound itself is a profile");
+        profile.with_delegation(|expect| {
+            assert_eq!(expect.max_clock_skew.secs(), MaxClockSkew::BOUND_SECS);
+        });
+        d["delegation"]["max_clock_skew_secs"] = serde_json::json!(MaxClockSkew::BOUND_SECS + 1);
+        let refused = parse(&d).expect_err("one past the bound");
+        assert!(
+            refused.contains(&MaxClockSkew::BOUND_SECS.to_string()),
+            "{refused}"
+        );
     }
 
     /// An unknown member is refused rather than ignored, so a typo can never leave an

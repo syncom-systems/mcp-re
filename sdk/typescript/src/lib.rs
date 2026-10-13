@@ -14,6 +14,8 @@
 //! the signing inputs, the device check, the root anchor, the verify preamble and the
 //! verdict are that crate's, shared with the PyO3 binding.
 
+mod core_facts;
+
 use napi::bindgen_prelude::Buffer;
 use napi::bindgen_prelude::Function;
 use napi_derive::napi;
@@ -105,18 +107,6 @@ impl From<SignedParts> for SignedRequestJs {
             evidence_digest_value: p.evidence_digest_value,
         }
     }
-}
-
-/// The audited core's version — `mcp-re-client-core`'s, not this binding crate's.
-#[napi]
-pub fn core_version() -> String {
-    mcp_re_binding_core::CORE_VERSION.to_string()
-}
-
-/// The RFC 9421 profile tag the signature is emitted/verified under.
-#[napi]
-pub fn profile_tag() -> String {
-    mcp_re_binding_core::PROFILE_TAG.to_string()
 }
 
 /// Sign exact preimage bytes with a raw seed, returning the 64-byte detached Ed25519

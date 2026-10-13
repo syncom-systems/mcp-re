@@ -39,6 +39,9 @@ export interface HttpHeader {
   value: string
 }
 
+/** The widest clock-skew tolerance, in seconds, a verification call accepts. */
+export declare function maxClockSkewBound(): number
+
 /** The RFC 9421 profile tag the signature is emitted/verified under. */
 export declare function profileTag(): string
 

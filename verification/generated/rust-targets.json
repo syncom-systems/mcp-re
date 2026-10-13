@@ -257,6 +257,26 @@
    "testonly": true,
    "verus_deps": []
   },
+  "//mcp-re-client:clock_skew_parity_test": {
+   "crate": "",
+   "crate_name": "clock_skew_parity_test",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-client:mcp_re_client",
+    "//mcp-re-core:mcp_re_core",
+    "//sdk/binding-core:mcp_re_binding_core"
+   ],
+   "features": [],
+   "kind": "rust_test",
+   "manual": false,
+   "package": "mcp-re-client",
+   "root": "mcp-re-client/tests/clock_skew_parity_test.rs",
+   "srcs": [
+    "mcp-re-client/tests/clock_skew_parity_test.rs"
+   ],
+   "testonly": true,
+   "verus_deps": []
+  },
   "//mcp-re-client:local_leg_e2e_test": {
    "crate": "",
    "crate_name": "local_leg_e2e_test",
@@ -9220,6 +9240,7 @@
    "package": "sdk/python",
    "root": "sdk/python/src/lib.rs",
    "srcs": [
+    "sdk/python/src/core_facts.rs",
     "sdk/python/src/lib.rs"
    ],
    "testonly": false,
@@ -9238,6 +9259,7 @@
    "package": "sdk/python",
    "root": "sdk/python/src/lib.rs",
    "srcs": [
+    "sdk/python/src/core_facts.rs",
     "sdk/python/src/lib.rs"
    ],
    "testonly": true,
@@ -9256,6 +9278,7 @@
    "package": "sdk/typescript",
    "root": "sdk/typescript/src/lib.rs",
    "srcs": [
+    "sdk/typescript/src/core_facts.rs",
     "sdk/typescript/src/lib.rs"
    ],
    "testonly": true,
@@ -9274,6 +9297,7 @@
    "package": "sdk/typescript",
    "root": "sdk/typescript/src/lib.rs",
    "srcs": [
+    "sdk/typescript/src/core_facts.rs",
     "sdk/typescript/src/lib.rs"
    ],
    "testonly": false,

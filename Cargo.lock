@@ -982,6 +982,7 @@ name = "mcp-re-client"
 version = "0.17.0"
 dependencies = [
  "libc",
+ "mcp-re-binding-core",
  "mcp-re-client-core",
  "mcp-re-client-proxy",
  "mcp-re-core",

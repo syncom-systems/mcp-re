@@ -105,19 +105,6 @@ fn default_manifest_reload() -> u64 {
 /// dictating the common cadence, which is [`default_manifest_reload`].
 pub const MAX_MANIFEST_RELOAD_SECS: u64 = 3600;
 
-/// The largest accepted `delegation.max_clock_skew`.
-///
-/// The same value bounds every verifier in the profile
-/// (`mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND`) — pinned equal by
-/// `a_config_skew_bound_matches_the_profile_bound`. Duplicated rather than imported
-/// because `mcp-re-http-profile` is not a dependency of this crate outside tests.
-///
-/// It has to be checked HERE because the two consumers of the value disagree about an
-/// out-of-range one: the RFC 9421 freshness gate falls back to the profile default,
-/// while the delegated-credential window uses the number raw. Unbounded, that combination
-/// accepts a server credential arbitrarily far past its `exp` while reporting nothing.
-pub const MAX_CLOCK_SKEW_SECS: i64 = 300;
-
 /// A pinned manifest-signing key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -177,7 +164,8 @@ pub struct DelegationConfig {
     /// bounded rollout window.
     pub accepted_epochs: Vec<String>,
     /// Clock-skew tolerance, seconds. Governs both the credential window and the
-    /// RFC 9421 response-signature freshness gate. Bounded `0..=`[`MAX_CLOCK_SKEW_SECS`].
+    /// RFC 9421 response-signature freshness gate. A value outside
+    /// `0..=`[`MaxClockSkew::BOUND_SECS`](mcp_re_core::MaxClockSkew::BOUND_SECS) is refused.
     #[serde(default = "default_skew")]
     pub max_clock_skew: i64,
 }
@@ -599,19 +587,8 @@ mod tests {
         );
     }
 
-    /// The bound has to be the profile's, or the config admits a value no
-    /// `MaxClockSkew` can hold, and the verifier policy silently keeps its default.
-    #[test]
-    fn a_config_skew_bound_matches_the_profile_bound() {
-        assert_eq!(
-            MAX_CLOCK_SKEW_SECS,
-            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND
-        );
-    }
-
-    /// An unbounded skew widens the delegated credential window raw while the
-    /// freshness gate reverts to the default, so the misconfiguration has no symptom
-    /// at all unless it is refused here.
+    /// A tolerance the profile cannot hold is refused at configuration and the refusal names
+    /// the bound; the bound itself is legal and is the skew the client runs with.
     #[test]
     fn an_out_of_range_clock_skew_is_refused() {
         let doc = document(r#"{ "bind": "127.0.0.1:8640" }"#, ROUTE).replace(
@@ -630,9 +607,33 @@ mod tests {
 
         let at_bound = document(r#"{ "bind": "127.0.0.1:8640" }"#, ROUTE).replace(
             r#""accepted_epochs": ["e1"]"#,
-            &format!(r#""accepted_epochs": ["e1"], "max_clock_skew": {MAX_CLOCK_SKEW_SECS}"#),
+            &format!(
+                r#""accepted_epochs": ["e1"], "max_clock_skew": {}"#,
+                mcp_re_core::MaxClockSkew::BOUND_SECS
+            ),
         );
-        ValidatedClientConfig::from_json(at_bound.as_bytes()).expect("the bound itself is legal");
+        let config = ValidatedClientConfig::from_json(at_bound.as_bytes())
+            .expect("the bound itself is legal");
+        assert_eq!(
+            config.max_clock_skew().secs(),
+            mcp_re_core::MaxClockSkew::BOUND_SECS
+        );
+
+        let past = document(r#"{ "bind": "127.0.0.1:8640" }"#, ROUTE).replace(
+            r#""accepted_epochs": ["e1"]"#,
+            &format!(
+                r#""accepted_epochs": ["e1"], "max_clock_skew": {}"#,
+                mcp_re_core::MaxClockSkew::BOUND_SECS + 1
+            ),
+        );
+        let error =
+            ValidatedClientConfig::from_json(past.as_bytes()).expect_err("one past the bound");
+        assert!(
+            error
+                .0
+                .contains(&mcp_re_core::MaxClockSkew::BOUND_SECS.to_string()),
+            "the refusal names the bound: {error}"
+        );
     }
 
     /// Withdrawing anchors past the manifest's own `expires_at` happens in a refresh

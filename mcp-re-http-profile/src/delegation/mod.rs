@@ -26,7 +26,7 @@ use mcp_re_core::VerificationKey;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::policy::VerifierPolicy;
+use mcp_re_core::MaxClockSkew;
 
 /// The frozen credential media type (ADR-MCPRE-052 §1; vocabulary firewall).
 pub const DELEGATION_TYP: &str = "mcp-re-delegation+jwt";
@@ -136,21 +136,6 @@ pub struct VerifiedDelegation {
     pub trust_epoch: String,
 }
 
-/// Constrain a configured clock skew to the profile's hard cap before it widens
-/// the credential window.
-///
-/// The credential window and the RFC 9421 signature window are configured from one
-/// operator value in every caller, but only the signature side runs it through a
-/// [`MaxClockSkew`](mcp_re_core::MaxClockSkew), which holds only `0..=MAX_CLOCK_SKEW_BOUND`.
-/// Applied raw here, `max_clock_skew: 86400` yielded a 300 s signature gate beside a
-/// 24-hour credential-acceptance gate — an exfiltrated or de-listed delegated key
-/// staying acceptable a day past its `exp`, with nothing in the operator's view
-/// saying so. The two gates are now bounded by the same constant, and a negative
-/// value narrows nothing rather than skewing the window asymmetrically.
-fn bounded_skew(configured: i64) -> i64 {
-    configured.clamp(0, VerifierPolicy::MAX_CLOCK_SKEW_BOUND)
-}
-
 /// Root-signed compact JWS statements: the codec, header and claim window every kind of
 /// statement in this profile shares, consumed by the other kinds as they consume [`Audience`].
 pub mod jose;
@@ -184,13 +169,11 @@ pub use issue::issue_delegation_credential_with_signer;
 /// (ADR-MCPRE-052 §3). The caller supplies these from the active profile, the
 /// verified request context, and the deployment's epoch policy.
 pub struct DelegationVerifyParams<'a> {
-    /// `now` in unix seconds, and the tolerated clock skew.
-    ///
-    /// Bounded by [`VerifierPolicy::MAX_CLOCK_SKEW_BOUND`] before it is applied —
-    /// the same hard cap the RFC 9421 signature gate enforces — so a configuration
-    /// above the cap cannot widen the credential-acceptance window beyond it.
+    /// `now` in unix seconds, and the tolerated clock skew. The skew is a [`MaxClockSkew`],
+    /// the type the RFC 9421 signature gate reads, so the credential window cannot be widened
+    /// past the bound that gate holds.
     pub now: i64,
-    pub max_clock_skew: i64,
+    pub max_clock_skew: MaxClockSkew,
     /// This verifier's own audience identifier(s) — the credential's `aud` must
     /// name one of them.
     pub verifier_audiences: &'a [&'a str],
@@ -268,13 +251,17 @@ mod tests {
     fn params<'a>(audiences: &'a [&'a str], epochs: &'a [&'a str]) -> DelegationVerifyParams<'a> {
         DelegationVerifyParams {
             now: 1_500,
-            max_clock_skew: 30,
+            max_clock_skew: skew(30),
             verifier_audiences: audiences,
             expected_profile: PROFILE,
             expected_audience_hash: AUDIENCE_HASH,
             expected_server_signer: SERVER_SIGNER,
             accepted_epochs: epochs,
         }
+    }
+
+    fn skew(secs: i64) -> MaxClockSkew {
+        MaxClockSkew::new(secs).expect("inside the bound")
     }
 
     fn resolver(root_pub: VerificationKey) -> impl Fn(&str) -> Option<VerificationKey> {
@@ -377,63 +364,58 @@ mod tests {
         );
     }
 
-    /// The credential window is bounded by the SAME hard cap as the RFC 9421
-    /// signature window. A deployment that configures a day of skew must not get a
-    /// day of credential acceptance beside a 300 s signature gate — an exfiltrated
-    /// delegated key would outlive its own `exp` by that whole margin.
-    ///
-    /// The instant probed is one second past `exp + MAX_CLOCK_SKEW_BOUND`, so it is
-    /// inside the window the raw value would have opened and outside the capped one.
+    /// The credential window is bounded by the SAME hard cap as the RFC 9421 signature
+    /// window, because the parameter is that window's type. A day of skew is not a value
+    /// the parameter can carry; the widest it can carry still applies in full, so
+    /// `exp + bound` is the first stale instant and the one before it is accepted.
     #[test]
-    fn configured_skew_above_the_hard_cap_does_not_widen_the_credential_window() {
+    fn the_widest_constructible_skew_is_the_bound_and_applies_in_full() {
+        assert_eq!(
+            MaxClockSkew::new(86_400),
+            None,
+            "a day of skew is not constructible"
+        );
         let (r, d) = (root(), delegated());
         let jws = mint(&r, &good_header(), &good_claims(&d.public_key()));
         let claims = good_claims(&d.public_key());
 
-        let mut wide = params(&[AUD], &[EPOCH]);
-        wide.max_clock_skew = 86_400;
-        wide.now = claims.exp + VerifierPolicy::MAX_CLOCK_SKEW_BOUND + 1;
-        assert_eq!(
-            verify(&jws, &wide, r.public_key()).unwrap_err(),
-            HttpProfileError::DelegationCredentialExpired,
-            "a skew above the cap must not extend acceptance past exp + 300s"
-        );
-
-        // Symmetric on the nbf edge.
-        let mut early = params(&[AUD], &[EPOCH]);
-        early.max_clock_skew = 86_400;
-        early.now = claims.nbf - VerifierPolicy::MAX_CLOCK_SKEW_BOUND - 1;
-        assert_eq!(
-            verify(&jws, &early, r.public_key()).unwrap_err(),
-            HttpProfileError::DelegationCredentialExpired
-        );
-
-        // And the cap is a ceiling, not a replacement: the capped window still applies in
-        // full, so `exp + cap` is the first stale instant and the one before it is accepted.
         let mut at_bound = params(&[AUD], &[EPOCH]);
-        at_bound.max_clock_skew = 86_400;
-        at_bound.now = claims.exp + VerifierPolicy::MAX_CLOCK_SKEW_BOUND;
+        at_bound.max_clock_skew = skew(MaxClockSkew::BOUND_SECS);
+        at_bound.now = claims.exp + MaxClockSkew::BOUND_SECS;
         assert_eq!(
             verify(&jws, &at_bound, r.public_key()).unwrap_err(),
             HttpProfileError::DelegationCredentialExpired,
             "exp + skew is the first stale instant, not the last fresh one"
         );
-        at_bound.now = claims.exp + VerifierPolicy::MAX_CLOCK_SKEW_BOUND - 1;
-        verify(&jws, &at_bound, r.public_key()).expect("the capped window still applies");
+        at_bound.now = claims.exp + MaxClockSkew::BOUND_SECS - 1;
+        verify(&jws, &at_bound, r.public_key()).expect("the bounded window applies in full");
+
+        let mut early = params(&[AUD], &[EPOCH]);
+        early.max_clock_skew = skew(MaxClockSkew::BOUND_SECS);
+        early.now = claims.nbf - MaxClockSkew::BOUND_SECS - 1;
+        assert_eq!(
+            verify(&jws, &early, r.public_key()).unwrap_err(),
+            HttpProfileError::DelegationCredentialExpired
+        );
     }
 
-    /// A negative configured skew narrows nothing and never inverts the window.
+    /// No skew: the window is the credential's own `[nbf, exp)`.
     #[test]
-    fn negative_configured_skew_is_treated_as_zero() {
+    fn a_zero_skew_admits_exactly_the_credential_window() {
         let (r, d) = (root(), delegated());
         let jws = mint(&r, &good_header(), &good_claims(&d.public_key()));
         let claims = good_claims(&d.public_key());
         let mut p = params(&[AUD], &[EPOCH]);
-        p.max_clock_skew = -1_000;
+        p.max_clock_skew = MaxClockSkew::ZERO;
         p.now = claims.exp - 1;
         verify(&jws, &p, r.public_key()).expect("the last instant before exp is inside");
         p.now = claims.nbf;
         verify(&jws, &p, r.public_key()).expect("nbf itself is inside");
+        p.now = claims.exp;
+        assert_eq!(
+            verify(&jws, &p, r.public_key()).unwrap_err(),
+            HttpProfileError::DelegationCredentialExpired
+        );
     }
 
     #[test]

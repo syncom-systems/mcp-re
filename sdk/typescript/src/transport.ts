@@ -46,6 +46,7 @@ import type { JSONRPCMessage, RequestId, Transport } from "@modelcontextprotocol
 import { JSONRPCMessageSchema } from "@modelcontextprotocol/core";
 
 import {
+  maxClockSkewBound,
   verifyAccepted202,
   verifyResponse,
   type HttpHeader,
@@ -76,13 +77,11 @@ const MCP_RE_ERROR_CODE = -31001;
 const NO_PEER_WIRE_CODE = "mcp-re-sdk: verified rejection carried no wire code";
 
 /**
- * Widest delegation clock skew a caller may configure, in seconds.
- *
- * Mirrors the RFC 9421 verifier's own ceiling (`VerifierPolicy::MAX_CLOCK_SKEW_BOUND`)
- * so one deployment does not run two different notions of "close enough" — beyond this
- * the credential's nbf/exp window stops bounding anything.
+ * Widest delegation clock skew a caller may configure, in seconds: the native core's own
+ * bound, read from it, so one deployment does not run two different notions of "close
+ * enough" — beyond it the credential's nbf/exp window stops bounding anything.
  */
-const MAX_CLOCK_SKEW_BOUND = 300;
+const MAX_CLOCK_SKEW_BOUND = maxClockSkewBound();
 
 /**
  * The client tried to send a client->server RESPONSE, which has no MCP-RE carrier.

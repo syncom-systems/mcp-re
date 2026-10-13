@@ -24,6 +24,19 @@ def test_core_version_reports_the_audited_core_and_not_this_wrapper():
     assert v.split(".")[0] != "0" or int(v.split(".")[1]) >= 17, v
 
 
+def test_the_cores_clock_skew_bound_is_the_one_every_sdk_window_reads():
+    # `MaxClockSkew::BOUND_SECS`: the sidecar refuses a configured skew past it, and so does
+    # the core under this binding. The transport's ceiling and the correlation store's
+    # consumed-id grace both read it from the native module rather than restating it.
+    from mcp_re_sdk import _core
+    from mcp_re_sdk.correlation import _CONSUMED_GRACE
+    from mcp_re_sdk.transport import MAX_CLOCK_SKEW_BOUND
+
+    assert _core.max_clock_skew_bound() == 300
+    assert MAX_CLOCK_SKEW_BOUND == _core.max_clock_skew_bound()
+    assert _CONSUMED_GRACE == _core.max_clock_skew_bound()
+
+
 def test_profile_tag_is_nonempty_str():
     tag = mcp_re_sdk.profile_tag()
     assert isinstance(tag, str) and tag

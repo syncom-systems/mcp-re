@@ -14,6 +14,8 @@
 use std::path::Path;
 use std::time::Duration;
 
+use mcp_re_core::MaxClockSkew;
+
 use super::err;
 use super::validation;
 use super::BindScope;
@@ -31,6 +33,7 @@ use super::TrustConfig;
 pub struct ValidatedClientConfig {
     config: ClientConfig,
     bind_scope: BindScope,
+    max_clock_skew: MaxClockSkew,
 }
 
 impl ValidatedClientConfig {
@@ -40,9 +43,13 @@ impl ValidatedClientConfig {
     /// ids, a resolvable binding source, bounded windows, and the loopback guard.
     pub fn new(config: ClientConfig) -> Result<Self, ConfigError> {
         let bind_scope = validation::check_local(&config.local)?;
-        validation::check_trust_and_delegation(&config)?;
+        let max_clock_skew = validation::check_trust_and_delegation(&config)?;
         validation::check_routes(&config)?;
-        Ok(Self { config, bind_scope })
+        Ok(Self {
+            config,
+            bind_scope,
+            max_clock_skew,
+        })
     }
 
     /// Parse and check a configuration document.
@@ -92,6 +99,12 @@ impl ValidatedClientConfig {
     /// The delegated-response policy every route verifies under.
     pub fn delegation(&self) -> &DelegationConfig {
         &self.config.delegation
+    }
+
+    /// The clock-skew tolerance the checks admitted, for both the credential window and the
+    /// response-signature freshness gate.
+    pub fn max_clock_skew(&self) -> MaxClockSkew {
+        self.max_clock_skew
     }
 
     /// The route table, non-empty with unique ids.

@@ -22,6 +22,7 @@ pub struct DelegationExpectations<'a> {
     /// The active accepted trust-epoch set — default `{ current }`, optionally
     /// `{ current, previous }` under a bounded rollout window (§3 step 6).
     pub accepted_epochs: &'a [&'a str],
-    /// Clock-skew tolerance for credential freshness (§3 step 4).
-    pub max_clock_skew: i64,
+    /// Clock-skew tolerance for credential freshness (§3 step 4), inside the bound the
+    /// RFC 9421 signature gate holds.
+    pub max_clock_skew: mcp_re_core::MaxClockSkew,
 }

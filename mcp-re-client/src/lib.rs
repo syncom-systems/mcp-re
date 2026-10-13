@@ -152,7 +152,7 @@ pub fn build(config: &ValidatedClientConfig, now: i64) -> Result<BuiltClient, St
         delegation.verifier_audiences.clone(),
         delegation.expected_audience_hash.clone(),
         delegation.accepted_epochs.clone(),
-        delegation.max_clock_skew,
+        config.max_clock_skew(),
     );
 
     let mut registry = RouteRegistry::new();

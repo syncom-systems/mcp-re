@@ -107,7 +107,7 @@ Two lines carry different weight, and it is worth knowing which:
 
 A document is refused outright — before anything is read from the archive — when its schema
 is wrong, its expected audience is incomplete, its verifier-audience list or epoch set is
-empty, its clock skew is outside `0..=3600`, its anchor key does not decode, or a
+empty, its clock skew is outside `0..=300` (the verifier's bound), its anchor key does not decode, or a
 `transparency_service_keys` entry has an empty or repeated `kid`, a `valid_until` not after
 its `valid_from`, or a `revoked_at` before it. An empty
 epoch set does not audit more strictly; it audits nothing.

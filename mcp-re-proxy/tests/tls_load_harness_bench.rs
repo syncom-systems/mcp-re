@@ -1372,7 +1372,7 @@ fn load_harness_smoke() {
             vec![AUDIENCE.to_string()],
             AUDIENCE,
             vec!["epoch-1".to_string()],
-            60,
+            mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
         );
         // MCPRE-172: one trust authority, not a freely pairable resolver + revocation.
         let resolve = |kid: &str, slot: SignerSlot, _now: i64| server_resolve(kid, slot).into();
