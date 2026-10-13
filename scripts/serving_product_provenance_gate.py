@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -135,8 +136,8 @@ def struct_body(text: str, name: str) -> str | None:
     return None
 
 
-def test_only_modules(root: Path) -> set[Path]:
-    """Every file under `root` that its crate roots reach only through `#[cfg(test)]`.
+def test_only_modules(crate_roots: list[Path]) -> set[Path]:
+    """Every file `crate_roots` reach only through `#[cfg(test)]`.
 
     Measured rather than listed. A module declared under `#[cfg(test)]` in its PARENT
     carries no attribute of its own, so a per-file scan reads all of it as production —
@@ -146,25 +147,51 @@ def test_only_modules(root: Path) -> set[Path]:
     `_module_tree` is the one reader of parents: a file reached by any non-test path from
     any crate root stays production.
     """
-    prefix = root.resolve().relative_to(REPO.resolve()).as_posix() + "/"
     test_only: set[Path] = set()
     production: set[Path] = set()
-    for crate_root in sorted(_rust_targets.crate_roots()):
-        if not crate_root.startswith(prefix):
-            continue
-        for module in _module_tree.walk(REPO / crate_root).files:
+    for crate_root in crate_roots:
+        for module in _module_tree.walk(crate_root).files:
             (test_only if module.test_only else production).add(module.path.resolve())
     return test_only - production
 
 
+def shipped_files(root: Path, crate_roots: list[Path]) -> list[Path]:
+    """Every `.rs` under `root` except those `crate_roots` reach only under `#[cfg(test)]`."""
+    excluded = test_only_modules(crate_roots)
+    return [p for p in sorted(root.rglob("*.rs")) if p.resolve() not in excluded]
+
+
 def production_sources(root: Path) -> dict[str, str]:
     """Every shipped `.rs` under `root`, keyed by relative path, test regions removed."""
-    excluded = test_only_modules(root)
+    prefix = root.resolve().relative_to(REPO.resolve()).as_posix() + "/"
+    crate_roots = [REPO / r for r in sorted(_rust_targets.crate_roots()) if r.startswith(prefix)]
     return {
         str(p.relative_to(REPO)): code_only(production_text(p.read_text(encoding="utf-8")))
-        for p in sorted(root.rglob("*.rs"))
-        if p.resolve() not in excluded
+        for p in shipped_files(root, crate_roots)
     }
+
+
+def _selftest_test_only() -> int:
+    """The exclusion itself, on the module-tree fixture: a file reached only under
+    `#[cfg(test)]` is not shipped, and one a second root reaches without it stays shipped."""
+    failures = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        tree = _module_tree.materialize_fixture(Path(tmp))
+        src = tree / "src"
+        lib = src / "lib.rs"
+        shipped = {p.relative_to(src).as_posix() for p in shipped_files(src, [lib])}
+        if "tests.rs" in shipped or "tests/helper.rs" in shipped:
+            print(f"SELFTEST FAILED: a module reached only under #[cfg(test)] was shipped: {sorted(shipped)}")
+            failures += 1
+        if not {"alpha.rs", "outer/nested.rs"} <= shipped:
+            print(f"SELFTEST FAILED: a production module was excluded: {sorted(shipped)}")
+            failures += 1
+        (src / "bin.rs").write_text('#[path = "tests.rs"]\nmod t;\n', encoding="utf-8")
+        both = {p.relative_to(src).as_posix() for p in shipped_files(src, [lib, src / "bin.rs"])}
+        if "tests.rs" not in both:
+            print("SELFTEST FAILED: a file a second root reaches without #[cfg(test)] was excluded")
+            failures += 1
+    return failures
 
 
 def read_subtree(sources: dict[str, str], prefix: str) -> str:
@@ -344,6 +371,7 @@ def selftest() -> int:
         if not ok:
             for problem in found:
                 print(f"        {problem}")
+    failures += _selftest_test_only()
     print()
     if failures:
         print(f"serving-product provenance selftest: FAIL — {failures} case(s) not caught")

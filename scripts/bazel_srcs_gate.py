@@ -211,13 +211,29 @@ def _first_strings(body: str) -> list[str]:
     return re.findall(r'\(\s*"([^"]+)"\s*,', body)
 
 
-def _guard_patterns(build_text: str) -> list[str]:
-    """The glob patterns of a package's `guard_src_files` filegroup, or none."""
+def _guard_patterns(build_text: str) -> tuple[list[str], list[str]]:
+    """The include and exclude patterns of a package's `guard_src_files` glob, or none.
+
+    Only `srcs = glob([...])`, with or without `exclude = [...]`, is read. Any other `srcs`
+    shape raises `ValueError`: a pattern read from the wrong list would mark an excluded file
+    as carried.
+    """
     match = re.search(r'name\s*=\s*"guard_src_files"', build_text)
     if match is None:
-        return []
-    start = build_text.rfind("(", 0, match.start())
-    return re.findall(r'"([^"]+)"', balanced(build_text, start, "(", ")").split("glob(", 1)[-1])
+        return [], []
+    rule = balanced(build_text, build_text.rfind("(", 0, match.start()), "(", ")")
+    srcs = re.search(r"\bsrcs\s*=\s*", rule)
+    value = attribute_value(rule, srcs.end()).strip() if srcs else ""
+    if not value.startswith("glob(") or balanced(value, value.index("("), "(", ")") != value[4:]:
+        raise ValueError(f"guard_src_files srcs this gate does not read: {value!r}")
+    call = value[5:-1]
+    include = balanced(call, call.index("["), "[", "]")
+    rest = call[call.index("[") + len(include) :]
+    exclude_at = re.search(r"\bexclude\s*=\s*\[", rest)
+    exclude = balanced(rest, exclude_at.end() - 1, "[", "]") if exclude_at else "[]"
+    if re.sub(r"\bexclude\s*=\s*\[[^\]]*\]", "", rest).strip(" ,\n") != "":
+        raise ValueError(f"guard_src_files glob arguments this gate does not read: {value!r}")
+    return re.findall(r'"([^"]+)"', include), re.findall(r'"([^"]+)"', exclude)
 
 
 def _glob_matches(pattern: str, path: str) -> bool:
@@ -248,14 +264,22 @@ def check_source_trees(root: Path) -> tuple[list[str], int]:
 
     checked = 0
     base = root.resolve()
+    #: Each package's `(include, exclude)` glob patterns, or `None` when its `srcs` is unread.
+    globs: dict[str, tuple[list[str], list[str]] | None] = {}
     for label, row in sorted(rows.items()):
         package = row["package"]
         # A test-only target is linked by tests alone — Bazel refuses any other consumer — so
         # its sources are test sources, which the guard does not scan by design.
         if row["kind"] not in kinds or package not in scanned or row["testonly"]:
             continue
-        build = root / package / "BUILD.bazel"
-        patterns = _guard_patterns(build.read_text(encoding="utf-8")) if build.is_file() else []
+        if package not in globs:
+            build = root / package / "BUILD.bazel"
+            try:
+                globs[package] = _guard_patterns(build.read_text(encoding="utf-8")) if build.is_file() else ([], [])
+            except ValueError as exc:
+                findings.append(f"{package}/BUILD.bazel: {exc}")
+                globs[package] = None
+        read = globs[package]
         for module in _module_tree.walk(root / row["root"]).files:
             rel = os.path.relpath(module.path.resolve(), base)
             within = rel[len(package) + 1 :] if rel.startswith(f"{package}/") else None
@@ -265,7 +289,10 @@ def check_source_trees(root: Path) -> tuple[list[str], int]:
                     f"{label} compiles {rel}, outside the {dirs} the audit-vocabulary guard "
                     f"walks in {package} — the guard never reads it"
                 )
-            elif not any(_glob_matches(p, within) for p in patterns):
+            elif read is not None and (
+                not any(_glob_matches(p, within) for p in read[0])
+                or any(_glob_matches(p, within) for p in read[1])
+            ):
                 findings.append(
                     f"{label} compiles {rel}, which {package}:guard_src_files does not glob — "
                     f"the guard's runfiles do not carry it"
@@ -521,7 +548,8 @@ def _selftest_source_trees() -> bool:
     library = {"kind": "rust_library", "package": "pkg", "root": "pkg/src/lib.rs", "testonly": False}
 
     def case(name: str, expect: str | None, *, extra: str = "", rows: dict | None = None,
-             files: dict[str, str] | None = None, glob: str = '"src/**/*.rs", "examples/**/*.rs"') -> bool:
+             files: dict[str, str] | None = None,
+             srcs: str = 'glob(["src/**/*.rs", "examples/**/*.rs"])') -> bool:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             fixture = {
@@ -533,7 +561,7 @@ def _selftest_source_trees() -> bool:
             (root / GUARD).parent.mkdir(parents=True)
             (root / GUARD).write_text(guard.format(extra=extra))
             (root / "pkg" / "BUILD.bazel").write_text(
-                f'filegroup(\n    name = "guard_src_files",\n    srcs = glob([{glob}]),\n)\n'
+                f'filegroup(\n    name = "guard_src_files",\n    srcs = {srcs},\n)\n'
             )
             (root / TARGET_TABLE).parent.mkdir(parents=True)
             (root / TARGET_TABLE).write_text(json.dumps({"targets": rows or {"//pkg:lib": library}}))
@@ -570,7 +598,22 @@ def _selftest_source_trees() -> bool:
         "does not glob",
         rows={"//pkg:lib": library, "//pkg:demo": {**library, "kind": "rust_binary", "root": "pkg/examples/demo.rs"}},
         files={"pkg/examples/demo.rs": ""},
-        glob='"src/**/*.rs"',
+        srcs='glob(["src/**/*.rs"])',
+    )
+    ok &= case(
+        "a compiled file the glob's `exclude` leaves out of the runfiles",
+        "does not glob",
+        srcs='glob(\n        ["src/**/*.rs", "examples/**/*.rs"],\n        exclude = ["src/alpha/deep.rs"],\n    )',
+    )
+    ok &= case(
+        "an `exclude` naming no compiled file excludes nothing",
+        None,
+        srcs='glob(["src/**/*.rs", "examples/**/*.rs"], exclude = ["src/never.rs"])',
+    )
+    ok &= case(
+        "a `srcs` shape the gate does not read is a finding, not a guess",
+        "does not read",
+        srcs='glob(["src/**/*.rs", "examples/**/*.rs"]) + ["extra.rs"]',
     )
     ok &= case(
         "a test-only target's sources are test sources",
