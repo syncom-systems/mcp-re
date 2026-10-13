@@ -41,6 +41,7 @@ which gazelle merges — so a forgotten dep edge (the #220 failure) IS caught th
 Missing TARGETS are always caught regardless of deps representation.
 
 CI: `python3 scripts/bazel_gazelle_gate.py` (pair with `bazel test //...`).
+`--selftest` runs the drift classifier over hand-written diffs, with no Bazel.
 """
 
 from __future__ import annotations
@@ -329,15 +330,20 @@ def analyze_file(lines: list[tuple[str, str]]) -> tuple[list[str], list[str]]:
     return names, inserted
 
 
-def main() -> int:
-    diff = run_gazelle_diff()
-    files = parse_per_file(diff)
+def classify(
+    diff: str,
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]], set[str]]:
+    """`(missing targets, missing edges, tracked drift seen)` for a gazelle diff.
 
-    missing_targets: list[tuple[str, str]] = []   # (file, name)
-    missing_edges: list[tuple[str, str]] = []      # (file, edge label)
+    Targets and edges are `(file, name-or-label)`. A proposed target the ALLOWLIST names
+    is not drift; one of those that is tracked drift is reported back so the pass line
+    keeps naming it.
+    """
+    missing_targets: list[tuple[str, str]] = []
+    missing_edges: list[tuple[str, str]] = []
     tracked_hits: set[str] = set()
 
-    for path, lines in files.items():
+    for path, lines in parse_per_file(diff).items():
         new_names, inserted = analyze_file(lines)
 
         for name in new_names:
@@ -349,6 +355,61 @@ def main() -> int:
 
         for edge in inserted:
             missing_edges.append((path, edge))
+    return missing_targets, missing_edges, tracked_hits
+
+
+def selftest() -> int:
+    """Each drift shape the gate exists to catch goes red; each managed shape stays clean.
+
+    The fixtures are gazelle diffs written by hand, so the selftest needs no Bazel.
+    """
+    head = "--- a/x/BUILD.bazel\n+++ b/x/BUILD.bazel\n@@ -1,9 +1,9 @@\n"
+    target = (
+        head
+        + '+nt_rust_test(\n+    name = "forgotten_test",\n+    srcs = ["tests/forgotten_test.rs"],\n+)\n'
+    )
+    edge = head + ' nt_rust_library(\n     deps = [\n+        "//mcp-re-core:mcp_re_core",\n     ],\n )\n'
+    reorder = (
+        head
+        + ' nt_rust_library(\n     deps = [\n-        "//a:a",\n         "//b:b",\n+        "//a:a",\n     ],\n )\n'
+    )
+    whole_attr = head + '+deps = [\n+    "//c:c",\n+],\n'
+    keep = head + '     deps = [\n+        "//d:d",  # keep\n     ],\n'
+    flavor = head + '     deps = [\n+        "//mcp-re-host:mcp_re_host",\n     ],\n'
+    allowed_name = next(iter(sorted(ALLOWLIST - set(ALLOW_TRACKED_DRIFT))))
+    allowed = target.replace("forgotten_test", allowed_name)
+    tracked_name = next(iter(sorted(ALLOW_TRACKED_DRIFT)))
+    tracked = target.replace("forgotten_test", tracked_name)
+
+    cases = [
+        ("a Cargo target missing from BUILD", target, True),
+        ("a dep edge a `use` implies and BUILD omits", edge, True),
+        ("a reordered deps list", reorder, False),
+        ("a whole-attribute rewrite of an unmergeable form", whole_attr, False),
+        ("a `# keep` edge", keep, False),
+        ("a plain edge beside a kept feature flavor", flavor, False),
+        ("an allowlisted target", allowed, False),
+        ("tracked drift", tracked, False),
+        ("an empty diff", "", False),
+    ]
+    failures = 0
+    for label, diff, drift in cases:
+        targets, edges, hits = classify(diff)
+        got = bool(targets or edges)
+        ok = got == drift
+        if label == "tracked drift":
+            ok = ok and hits == {tracked_name}
+        print(f"  {'ok  ' if ok else 'FAIL'}  {label}: {'drift' if got else 'clean'}")
+        failures += not ok
+    if failures:
+        print(f"bazel-gazelle-gate selftest: FAIL ({failures})")
+        return 1
+    print("bazel-gazelle-gate selftest: PASS")
+    return 0
+
+
+def main() -> int:
+    missing_targets, missing_edges, tracked_hits = classify(run_gazelle_diff())
 
     # --- Report ---------------------------------------------------------------
     drift = bool(missing_targets or missing_edges)
@@ -378,4 +439,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(selftest() if "--selftest" in sys.argv else main())

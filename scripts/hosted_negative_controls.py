@@ -10,6 +10,7 @@ measured nothing.
 
 Edits are made in place and reverted with `git checkout` after every control, so it must be
 run in a throwaway checkout. Evidence goes to a scratch directory, never the run's own.
+`--selftest` checks the refusal rule and the edits in memory; it edits no file.
 """
 
 from __future__ import annotations
@@ -49,15 +50,32 @@ def expect_refusal(name: str, code: int, output: str, needles: list[str]) -> boo
     return True
 
 
-def tampered_linux_prover(scratch: Path) -> bool:
-    text = LOCK.read_text()
+def tamper_linux_prover(text: str) -> str | None:
+    """The lock with the Linux `rust_verify` digest changed, or None when the digest this
+    control edits is no longer where it expects."""
     marker = "[verus_linux_x86_64.binaries]"
+    if text.count(marker) != 1:
+        return None
     head, tail = text.split(marker)
     old = 'rust_verify = "sha256:4'
     if old not in tail:
+        return None
+    return head + marker + tail.replace(old, 'rust_verify = "sha256:5', 1)
+
+
+def falsify_proof(text: str) -> str | None:
+    """The proof file with one proved bound made false, or None when it has moved."""
+    if "DAYS_IN_MONTH@[i] <= 31," not in text:
+        return None
+    return text.replace("DAYS_IN_MONTH@[i] <= 31,", "DAYS_IN_MONTH@[i] <= 30,", 1)
+
+
+def tampered_linux_prover(scratch: Path) -> bool:
+    tampered = tamper_linux_prover(LOCK.read_text())
+    if tampered is None:
         print("the Linux rust_verify digest no longer starts with 4; update this control")
         return False
-    LOCK.write_text(head + marker + tail.replace(old, 'rust_verify = "sha256:5', 1))
+    LOCK.write_text(tampered)
     try:
         code, out = run(["tools/verification/verify-verus"], scratch / "tamper")
     finally:
@@ -68,11 +86,11 @@ def tampered_linux_prover(scratch: Path) -> bool:
 
 
 def false_proof(scratch: Path) -> bool:
-    text = PROOF.read_text()
-    if "DAYS_IN_MONTH@[i] <= 31," not in text:
+    falsified = falsify_proof(PROOF.read_text())
+    if falsified is None:
         print("the proof this control falsifies has moved; update this control")
         return False
-    PROOF.write_text(text.replace("DAYS_IN_MONTH@[i] <= 31,", "DAYS_IN_MONTH@[i] <= 30,", 1))
+    PROOF.write_text(falsified)
     try:
         code, out = run(["tools/verification/verify-verus"], scratch / "false-proof")
     finally:
@@ -94,5 +112,44 @@ def main() -> int:
     return 0 if all(results) else 1
 
 
+def selftest() -> int:
+    """The refusal check and the two hostile edits, without running a lane or editing a file.
+
+    A lane that exits 0 under a hostile edit, or refuses for a reason other than the one
+    named, must fail the control; each edit must change the tree it is pointed at today, so a
+    control whose target moved fails here instead of passing vacuously on the hosted runner.
+    """
+    failures = 0
+
+    def case(label: str, ok: bool) -> None:
+        nonlocal failures
+        print(f"  {'ok  ' if ok else 'FAIL'}  {label}")
+        failures += not ok
+
+    case("a lane that stays green fails the control",
+         not expect_refusal("selftest: green lane", 0, "VERDICT: PASS", ["VERDICT: FAIL"]))
+    case("a refusal for another reason fails the control",
+         not expect_refusal("selftest: wrong reason", 1, "VERDICT: FAIL", ["identity mismatch"]))
+    case("a refusal for the named reason passes the control",
+         expect_refusal("selftest: named reason", 1, "rust_verify identity mismatch\nVERDICT: FAIL",
+                        ["rust_verify identity mismatch", "VERDICT: FAIL"]))
+
+    lock = '[verus_linux_x86_64.binaries]\nrust_verify = "sha256:4abc"\n'
+    tampered = tamper_linux_prover(lock)
+    case("the prover edit changes the Linux digest", tampered is not None and "sha256:5abc" in tampered)
+    case("the prover edit refuses a lock it does not recognise",
+         tamper_linux_prover(lock.replace("sha256:4", "sha256:7")) is None)
+    case("the prover edit applies to today's lock", tamper_linux_prover(LOCK.read_text()) is not None)
+    case("the proof edit makes the bound false",
+         falsify_proof("DAYS_IN_MONTH@[i] <= 31,") == "DAYS_IN_MONTH@[i] <= 30,")
+    case("the proof edit applies to today's proof", falsify_proof(PROOF.read_text()) is not None)
+
+    if failures:
+        print(f"hosted negative controls selftest: FAIL ({failures})")
+        return 1
+    print("hosted negative controls selftest: PASS")
+    return 0
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(selftest() if "--selftest" in sys.argv else main())

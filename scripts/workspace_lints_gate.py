@@ -24,6 +24,8 @@ Two checks, and neither is optional:
     half is compiled inside a real target, and each build must fail with the expected
     lint: `clippy::todo` under `--config=lint`, `non_ascii_idents` under a plain build
     (rustc names the command-line level it enforced: `-D non-ascii-idents`).
+
+`--selftest` checks the membership rule over fixed query answers, without Bazel.
 """
 
 from __future__ import annotations
@@ -71,22 +73,58 @@ def query(expr: str) -> set[str]:
     return {line for line in proc.stdout.splitlines() if line.startswith("//")}
 
 
-def membership() -> tuple[list[str], int]:
-    """Every first-party Rust target carries the policy."""
-    targets = query(f'kind("^({RUST_RULES}) rule$", //...)')
+def membership_problems(targets: set[str], carrying: set[str], exempt: dict[str, str]) -> list[str]:
+    """What the query answers say is wrong: a target without the policy, a stale exemption,
+    or an empty graph."""
     if not targets:
         return ["the build graph holds no first-party Rust target — this gate examined "
-                "nothing, which is not a pass"], 0
-    carrying = query(f'attr(lint_config, "{POLICY}", kind("^({RUST_RULES}) rule$", //...))')
+                "nothing, which is not a pass"]
     problems = [
         f"{t}: does not carry `{POLICY}`. The Group A protections do NOT apply to it, and "
         f"nothing else in the build reports that. Build it with the `nt_rust_*` macro and "
         f"leave `lint_config` unset."
-        for t in sorted(targets - carrying - EXEMPT.keys())
+        for t in sorted(targets - carrying - exempt.keys())
     ]
     problems += [f"EXEMPT names {t}, which is not a first-party Rust target"
-                 for t in sorted(EXEMPT.keys() - targets)]
-    return problems, len(targets)
+                 for t in sorted(exempt.keys() - targets)]
+    return problems
+
+
+def membership() -> tuple[list[str], int]:
+    """Every first-party Rust target carries the policy."""
+    targets = query(f'kind("^({RUST_RULES}) rule$", //...)')
+    if not targets:
+        return membership_problems(targets, set(), EXEMPT), 0
+    carrying = query(f'attr(lint_config, "{POLICY}", kind("^({RUST_RULES}) rule$", //...))')
+    return membership_problems(targets, carrying, EXEMPT), len(targets)
+
+
+def selftest() -> int:
+    """The membership rule over fixed query answers, with no Bazel.
+
+    `--probe` is what shows the policy reaches the build; this shows the gate refuses a
+    target that does not carry it, an exemption naming nothing, and an empty graph.
+    """
+    targets = {"//a:a", "//b:b", "//fixture:mock"}
+    exempt = {"//fixture:mock": "a test fixture"}
+    cases = [
+        ("every target carries the policy", targets, {"//a:a", "//b:b"}, exempt, False),
+        ("a target without the policy", targets, {"//a:a"}, exempt, True),
+        ("an exemption naming no target", targets, {"//a:a", "//b:b"},
+         {**exempt, "//gone:gone": "removed"}, True),
+        ("an empty build graph", set(), set(), {}, True),
+    ]
+    failures = 0
+    for label, all_targets, carrying, exemptions, red in cases:
+        problems = membership_problems(all_targets, carrying, exemptions)
+        ok = bool(problems) == red
+        print(f"  {'ok  ' if ok else 'FAIL'}  {label}: {len(problems)} problem(s)")
+        failures += not ok
+    if failures:
+        print(f"workspace-lints gate selftest: FAIL ({failures})")
+        return 1
+    print("workspace-lints gate selftest: PASS")
+    return 0
 
 
 def probe() -> int:
@@ -125,6 +163,8 @@ def probe() -> int:
 
 
 def main() -> int:
+    if "--selftest" in sys.argv:
+        return selftest()
     if "--probe" in sys.argv:
         return probe()
     problems, examined = membership()
