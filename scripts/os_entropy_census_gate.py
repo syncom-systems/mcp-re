@@ -91,6 +91,7 @@ def _tree(files: dict[str, str], registered: list[str]) -> Path:
     for rel, text in files.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
+        (root / Path(rel).parts[0] / "Cargo.toml").write_text("", encoding="utf-8")
     paths = ", ".join(f'"{p}"' for p in registered)
     (root / BOUNDARIES).parent.mkdir(parents=True, exist_ok=True)
     (root / BOUNDARIES).write_text(f'[[boundary]]\nid = "{BOUNDARY_ID}"\npaths = [{paths}]\n',

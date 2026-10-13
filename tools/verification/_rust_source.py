@@ -209,15 +209,27 @@ class ProductionView:
         return out
 
 
+def _lines(text: str) -> list[str]:
+    """`text` split on `\\n` only, without the empty string after a final newline.
+
+    `code_only` preserves exactly the `\\n` characters, so splitting both the raw text and its
+    code-only form this way keeps their line indices aligned.
+    """
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def production_view(source: str | Path) -> ProductionView:
     """The production view of a Rust source, given its text or its path."""
     text = source.read_text(encoding="utf-8") if isinstance(source, Path) else source
-    raw = text.splitlines()
-    code_lines = code_only(text).split("\n")
+    raw = _lines(text)
+    code_lines = _lines(code_only(text))
     kept: list[tuple[int, str]] = []
     i = 0
     while i < len(raw):
-        if TEST_ATTR.match(raw[i].lstrip()):
+        if TEST_ATTR.match(code_lines[i].lstrip()):
             i = _region_end(code_lines, i)
             continue
         kept.append((i + 1, raw[i]))
@@ -228,18 +240,33 @@ def production_view(source: str | Path) -> ProductionView:
 # -------------------------------------------------------------------------------- walk
 
 
+def _dirs_between(root: Path, path: Path) -> list[Path]:
+    """`root` and every directory below it that contains `path`."""
+    out = [root]
+    for part in path.relative_to(root).parts[:-1]:
+        out.append(out[-1] / part)
+    return out
+
+
+def _crate_target_dir(directory: Path) -> bool:
+    """`directory` is a crate's `tests/`, `benches/` or `examples/`: it sits beside the
+    crate's `Cargo.toml`. A tests-only crate has no `src/`, so `src/` is not the marker."""
+    return directory.name in NON_PRODUCTION_DIRS and (directory.parent / "Cargo.toml").is_file()
+
+
 def crate_sources(root: Path) -> list[Path]:
     """Every production `.rs` under `root`, sorted.
 
-    Skips build outputs and vendored trees, the `tests/`, `benches/` and `examples/`
+    Skips build outputs and vendored trees, a crate's `tests/`, `benches/` and `examples/`
     directories, and `build.rs`: none of those is compiled into a shipped library or binary.
+    A directory of those names inside `src/` is a production module and is walked.
     """
     out: list[Path] = []
     for p in sorted(root.rglob("*.rs")):
         rel = p.relative_to(root)
         if any(part in SKIP_DIRS for part in rel.parts):
             continue
-        if any(part in NON_PRODUCTION_DIRS for part in rel.parts[:-1]):
+        if any(_crate_target_dir(d) for d in _dirs_between(root, p)):
             continue
         if p.name == "build.rs":
             continue
@@ -346,17 +373,29 @@ def selftest() -> int:
         "mod" not in code_only('/// mod ghost\nconst X: &str = r#"mod ghost"#;\n'),
         None,
     )
+    in_comment = "/*\n#[cfg(test)]\n*/\npub fn prod() {}\n"
+    case("a #[cfg(test)] inside a block comment opens no region", len(production_view(in_comment)) == 4, production_view(in_comment).lines)
+    in_raw = 'const S: &str = r#"\n#[cfg(test)]\n"#;\npub fn prod() {}\n'
+    case("a #[cfg(test)] inside a raw string opens no region", len(production_view(in_raw)) == 4, production_view(in_raw).lines)
+    crlf = "fn a() {}\r\n#[cfg(test)]\r\nmod t {}\r\nfn b() {}\r\n"
+    case("CRLF text keeps raw and code-only lines aligned", len(production_view(crlf)) == 2, production_view(crlf).lines)
     case("a lifetime is not a char literal", code_only("fn f<'a>(x: &'a str) {}") == "fn f<'a>(x: &'a str) {}", None)
 
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        for rel in ("src/lib.rs", "src/a/b.rs", "src/tests/t.rs", "tests/it.rs", "benches/b.rs", "examples/e.rs", "build.rs", "target/x.rs", "vendor/v.rs"):
+        (root / "Cargo.toml").write_text("")
+        (root / "testonly").mkdir()
+        (root / "testonly" / "Cargo.toml").write_text("")
+        for rel in ("testonly/tests/t.rs", "src/lib.rs", "src/a/b.rs", "src/tests/t.rs", "src/examples/mod.rs", "tests/it.rs", "benches/b.rs", "examples/e.rs", "build.rs", "target/x.rs", "vendor/v.rs"):
             (root / rel).parent.mkdir(parents=True, exist_ok=True)
             (root / rel).write_text("")
         got = [p.relative_to(root).as_posix() for p in crate_sources(root)]
-        case("crate_sources walks production modules only", got == ["src/a/b.rs", "src/lib.rs"], got)
+        want = ["src/a/b.rs", "src/examples/mod.rs", "src/lib.rs", "src/tests/t.rs"]
+        case("crate_sources walks production modules only", got == want, got)
+        got = [p.relative_to(root / "src").as_posix() for p in crate_sources(root / "src")]
+        case("a walk rooted at src/ keeps src/examples and src/tests", got == ["a/b.rs", "examples/mod.rs", "lib.rs", "tests/t.rs"], got)
 
     if failures:
         print(f"rust source: SELFTEST FAILED ({failures})")
