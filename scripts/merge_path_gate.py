@@ -54,15 +54,15 @@ convention has to be remembered by anyone.
 
 REACHED, not merely named. An entry point is on the merge path when an unconditional workflow
 names it, or when a DISPATCHER that is itself reached runs it. There is one dispatcher:
-`tools/verification/verify`, whose `LANES` table is where a lane's entry point is written
-down. That table is read FROM THE DISPATCHER rather than pattern-matched out of it — a lane
-silently leaving `LANES` is exactly the defect this half must catch, and a regex over the
-file would match the line that remained in a comment.
+`tools/verification/verify`, which runs the rows of the lane catalogue
+`tools/verification/_lanes.py`, where a lane's entry point is written down. That table is
+read by IMPORT rather than pattern-matched out of the file — a lane silently leaving
+`LANES` is exactly the defect this half must catch, and a regex over the file would match
+the line that remained in a comment.
 
-Reading a dispatcher by import executes its module level, so this is deliberately ONE
-dispatcher whose module level is pure (a table, a phase map, and two asserts) and not a
-general mechanism. A gate that imported every control to discover edges would be running
-them.
+Importing executes the catalogue's module level, which is pure: rows, derived sets and
+asserts, with no import from the package. A gate that imported every control to discover
+edges would be running them.
 
 The second half is the same failure class read one step earlier. A control that cannot
 START is not enforced, however many workflows name it, and the failure is not subtle when
@@ -333,7 +333,7 @@ def workflow_entry_coverage(root: Path) -> tuple[set[str], set[str]]:
 
 
 def dispatched_entry_points(root: Path) -> tuple[set[str], str | None]:
-    """The lane entry points `verify` runs, read from its own `LANES` table.
+    """The lane entry points `verify` runs, read from the lane catalogue's `LANES` rows.
 
     `(reached, problem)`. A problem is a FAILURE and never a silent empty set: if this
     gate cannot read the one edge source it has, every lane entry point becomes an orphan
@@ -341,24 +341,25 @@ def dispatched_entry_points(root: Path) -> tuple[set[str], str | None]:
     honest report, and a gate that quietly returned `set()` here would instead be the
     "green that measured nothing" shape with the sign flipped.
     """
-    dispatcher = root / ENTRY_ROOT / "verify"
-    if not dispatcher.is_file():
-        return set(), f"{ENTRY_ROOT}/verify does not exist, so no lane has a known runner"
-    previous = list(sys.path)
-    sys.path.insert(0, str(root / ENTRY_ROOT))
-    try:
-        from _load_tool import load_tool
+    import importlib.util
 
-        module = load_tool("verify", "_merge_path_gate_verify", root / ENTRY_ROOT)
+    catalogue = root / ENTRY_ROOT / "_lanes.py"
+    if not catalogue.is_file():
+        return set(), f"{ENTRY_ROOT}/_lanes.py does not exist, so no lane has a known runner"
+    name = "_merge_path_gate_lanes"
+    try:
+        spec = importlib.util.spec_from_file_location(name, catalogue)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
         lanes = getattr(module, "LANES", None)
         if not lanes:
-            return set(), f"{ENTRY_ROOT}/verify declares no LANES table"
-        return {f"{ENTRY_ROOT}/{script}" for _name, script, _formal in lanes}, None
+            return set(), f"{ENTRY_ROOT}/_lanes.py declares no LANES rows"
+        return {f"{ENTRY_ROOT}/{lane.script}" for lane in lanes}, None
     except Exception as exc:  # noqa: BLE001 - any failure to read the table is the same answer
-        return set(), f"{ENTRY_ROOT}/verify's LANES table could not be read: {exc!r}"
+        return set(), f"{ENTRY_ROOT}/_lanes.py's LANES rows could not be read: {exc!r}"
     finally:
-        sys.modules.pop("_merge_path_gate_verify", None)
-        sys.path[:] = previous
+        sys.modules.pop(name, None)
 
 
 #: Entry points that are deliberately NOT admissibility controls, each with the reason.
@@ -705,7 +706,7 @@ def selftest() -> int:
         # Named by an unconditional workflow; dispatched by a reached dispatcher; exempt.
         for unconditional, dispatched, exempt, label in [
             ({f"{ENTRY_ROOT}/a-control"}, set(), {}, "named by an unconditional workflow"),
-            (set(), {f"{ENTRY_ROOT}/a-control"}, {}, "dispatched by verify's LANES"),
+            (set(), {f"{ENTRY_ROOT}/a-control"}, {}, "dispatched by the lane catalogue"),
             (set(), set(), {f"{ENTRY_ROOT}/a-control": "decides nothing"}, "exempt with a reason"),
         ]:
             if entry_point_defects({f"{ENTRY_ROOT}/a-control"}, unconditional, dispatched, exempt):
@@ -726,7 +727,7 @@ def selftest() -> int:
         # An unreadable dispatcher is ONE defect naming its cause, never nine orphans.
         _, problem = dispatched_entry_points(root)
         if problem is None:
-            print("SELFTEST FAIL: a tree with no verify reported a readable LANES table", file=sys.stderr)
+            print("SELFTEST FAIL: a tree with no lane catalogue reported a readable LANES table", file=sys.stderr)
             return 1
         if not entry_point_defects(set(), set(), set(), {}, None, problem):
             print("SELFTEST FAIL: an unreadable dispatcher produced no defect", file=sys.stderr)
@@ -736,7 +737,7 @@ def selftest() -> int:
     # missing file is missing.
     lanes, problem = dispatched_entry_points(REPO)
     if problem is not None or not lanes:
-        print(f"SELFTEST FAIL: this tree's verify LANES table could not be read: {problem}", file=sys.stderr)
+        print(f"SELFTEST FAIL: this tree's lane catalogue could not be read: {problem}", file=sys.stderr)
         return 1
     # The coverage matcher must see an EXTENSIONLESS entry point, which is the shape
     # `scripts_in` is structurally unable to match and the reason this half exists.
@@ -832,7 +833,7 @@ def main() -> int:
     print(
         f"merge-path gate: OK — {len(population)} assurance-platform entry point(s) under "
         f"{ENTRY_ROOT}/, {len(entry_unconditional & population)} named by an unconditional "
-        f"workflow and {len(dispatched & population)} dispatched by verify's LANES table; "
+        f"workflow and {len(dispatched & population)} dispatched through the lane catalogue verify runs; "
         f"exempt: {entry_exemptions}"
     )
     return 0

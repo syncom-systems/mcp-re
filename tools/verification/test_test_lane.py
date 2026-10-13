@@ -310,10 +310,10 @@ def test_an_in_crate_selector_must_name_a_module_the_unit_measures():
 
 
 def test_only_units_claiming_test_evidence_are_in_scope():
-    assert lane.claims_test_evidence({"evidence": ["test://a/b/c"]})
-    assert lane.claims_test_evidence({"evidence": ["verus://x", "test://a/b/c"]})
-    assert not lane.claims_test_evidence({"evidence": ["verus://x"]})
-    assert not lane.claims_test_evidence({})
+    assert lane.claims({"evidence": ["test://a/b/c"]}, "test")
+    assert lane.claims({"evidence": ["verus://x", "test://a/b/c"]}, "test")
+    assert not lane.claims({"evidence": ["verus://x"]}, "test")
+    assert not lane.claims({}, "test")
 
 
 # --- a result line that could not be READ is re-measured, never assumed ------

@@ -54,26 +54,13 @@ from pathlib import Path
 
 from _evidence import EvidenceRecord, load_records
 from _fingerprint import fingerprint_unit
+from _lanes import EXTRACTION_LANES, FORMAL
+from _lanes import required as lane_required
 from _manifest import aggregate_verdict
 
-#: The lanes that produce per-unit EVIDENCE, mapped to the classes that require them.
-#:
-#: Derived from the class, never from what a lane happened to report: "this unit is V2" is
-#: what makes Lean evidence required, and a lane's own `NOT_REQUIRED` about a V2 unit is a
-#: contradiction rather than an excuse. That is why the rule below refuses it outright.
-FORMAL_LANES: dict[str, set[str]] = {
-    "test": {"V0", "V1", "V2", "V3"},
-    "mutation": {"V0", "V1", "V2", "V3"},
-    # ADR-MCPRE-068's two new establishing classes. EVERY verification tier, because the
-    # evidence class and the V0/V1/V2/V3 tier are different facts: a V1 unit whose
-    # proposition is closed by the representation owes a compile-refusal probe exactly as a
-    # V0 one does. What decides whether the lane is required is the declared URI, below.
-    "structural": {"V0", "V1", "V2", "V3"},
-    "measured": {"V0", "V1", "V2", "V3"},
-    "verus": {"V1", "V3"},
-    "lean": {"V2", "V3"},
-    "generated-model": {"V2", "V3"},
-}
+#: The lanes that produce per-unit evidence. Which tiers each applies to, which phase runs
+#: it and which URI requires it are the lane catalogue's rows (`_lanes`).
+FORMAL_LANE_NAMES = frozenset(lane.name for lane in FORMAL)
 
 # A LANE MAY NOT DECLARE `NOT_REQUIRED` FOR A CLASS THAT REQUIRES IT, and neither of the
 # extracted-model lanes can: `verify-lean` reaches its NOT_REQUIRED branch only when no
@@ -82,22 +69,6 @@ FORMAL_LANES: dict[str, set[str]] = {
 # was not asked for any" — is refused at the executor by construction rather than being
 # something the composer detects after the fact. Pinned by a control, because a structural
 # impossibility that nothing checks is one refactor away from being possible.
-
-#: Which execution environment each formal lane belongs to. Total over `FORMAL_LANES` by
-#: construction — a lane in neither set would be a lane no phase runs and no control
-#: notices, which is the failure this whole module is repairing one level up.
-HOST_LANES = frozenset({"test", "mutation", "structural", "measured", "verus"})
-EXTRACTION_LANES = frozenset({"lean", "generated-model"})
-assert HOST_LANES | EXTRACTION_LANES == set(FORMAL_LANES)
-assert not (HOST_LANES & EXTRACTION_LANES)
-
-
-#: The lanes whose requirement is read off the unit's own evidence URI, one for one.
-#:
-#: Named rather than written as a set literal inside the loop, because the list grows: 068
-#: added `structural` and `measured`, and a lane missing from here would be required of
-#: every unit of its classes whether or not the manifest ever promised it.
-URI_DERIVED = frozenset({"test", "mutation", "structural", "measured"})
 
 
 @dataclass(frozen=True)
@@ -119,23 +90,10 @@ def requirements(doc: dict, toolchains: dict, assumptions: dict) -> list[Require
     out: list[Requirement] = []
     for unit in doc.get("unit", []):
         fingerprint = fingerprint_unit(unit, doc, toolchains, assumptions)["fingerprint"]
-        for lane, classes in sorted(FORMAL_LANES.items()):
-            if unit["class"] not in classes:
-                continue
-            # EVERY LANE IS DERIVED FROM THE DECLARED EVIDENCE URI, never from the class
-            # alone. A V0 unit with no battery claims none, and requiring one would make the
-            # aggregate demand evidence the manifest never promised.
-            #
-            # `generated-model` has no URI of its own and is derived from `lean://` because
-            # it is the FRESHNESS PRECONDITION of that same evidence: a Lean theorem about a
-            # stale model is a theorem about a different tree. Deriving it from the class
-            # instead made this the second authority over "what does this unit require" —
-            # `_evidence.required_lanes` reads the URIs, and the two agreed only while every
-            # V2/V3 unit happened to declare `lean://`. The manifest now requires that, so
-            # both authorities read one fact.
-            if lane in URI_DERIVED and not _claims(unit, f"{lane}://"):
-                continue
-            if lane in {"lean", "generated-model"} and not _claims(unit, "lean://"):
+        for lane in sorted(FORMAL_LANE_NAMES):
+            # Read from the declared evidence URI, never from the class alone, except where
+            # the catalogue says the tier is the requirement (`_lanes.required`).
+            if not lane_required(unit, lane):
                 continue
             out.append(Requirement(lane, unit["id"], fingerprint))
     return out
@@ -175,10 +133,6 @@ def contradictions(lane_verdicts: dict[str, str], required: list[Requirement]) -
         for lane, verdict in sorted(lane_verdicts.items())
         if verdict == "NOT_REQUIRED" and lane in needed
     ]
-
-
-def _claims(unit: dict, scheme: str) -> bool:
-    return any(str(entry).startswith(scheme) for entry in unit.get("evidence", []))
 
 
 def _duplicates(store: Path, lane: str) -> list[str]:
@@ -243,7 +197,7 @@ def compose(
     refusals: list[str] = []
     lane_verdicts: dict[str, str] = {}
 
-    for lane in sorted(FORMAL_LANES):
+    for lane in sorted(FORMAL_LANE_NAMES):
         wanted = [r for r in required if r.lane == lane]
         unreadable = "PASS"
         for name in _malformed(store, lane):

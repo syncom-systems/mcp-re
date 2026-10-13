@@ -56,7 +56,7 @@ end to end, from authorities that already govern the campaign:
                            build inputs and closed forward over prerequisite edges
       -> required lanes    `_evidence.required_lanes` — the lanes a unit's declared
                            `evidence` URIs claim
-      -> required checks   `verify.LANES` names each lane's script; the workflows name
+      -> required checks   `_lanes.LANES` names each lane's script; the workflows name
                            which job runs that script, or the umbrella `verify` that
                            contains it. The job's `name:` IS the check name GitHub reports.
 
@@ -64,7 +64,7 @@ WHICH OF THOSE STEPS IS BOUND TO THE CANDIDATE, stated because a reader who assu
 them" would be wrong. The ESTATE is: `manifest_at(sha)` reads
 `verification/policy/verification.toml` out of the candidate commit, so which units a change
 affects and which lanes they require are the candidate's own facts. The LANE-TO-CHECK
-MAPPING is not: `verify.LANES` and `.github/workflows/*.yml` are read from the WORKING TREE,
+MAPPING is not: `_lanes.LANES` and `.github/workflows/*.yml` are read from the WORKING TREE,
 so a candidate that renames a lane, moves a lane's script, or renames the job that runs it is
 mapped through the tree's spelling of those names rather than its own. That gap is known and
 not closed here. Most of its shapes are conservative — a lane the tree cannot name, or whose
@@ -129,7 +129,7 @@ sys.path.insert(0, str(REPO / "tools" / "verification"))
 
 from _evidence import MALFORMED_LANE, PREREQUISITE_KINDS, required_lanes  # noqa: E402
 from _fingerprint import WORKSPACE_BUILD_INPUTS  # noqa: E402
-from _load_tool import load_tool  # noqa: E402
+from _lanes import LANES  # noqa: E402
 from _manifest import SCHEMA_VERSION, load_verification  # noqa: E402
 import _registries  # noqa: E402
 
@@ -153,8 +153,8 @@ class Undecidable(Exception):
 
 
 def lane_scripts() -> dict[str, str]:
-    """`{lane: script}` from the umbrella's own LANES table — the naming authority."""
-    return {name: script for name, script, _is_formal in load_tool("verify").LANES}
+    """`{lane: script}` from the lane catalogue the umbrella runs — the naming authority."""
+    return {lane.name: lane.script for lane in LANES}
 
 
 def workflow_jobs() -> list[tuple[str, str, set[str]]]:
@@ -217,7 +217,7 @@ def checks_for_lanes(lanes: set[str], scripts: dict[str, str]) -> dict[str, list
         script = scripts.get(lane)
         if script is None:
             raise Undecidable(
-                f"lane '{lane}' is claimed by the manifest but is not in verify.LANES, so "
+                f"lane '{lane}' is claimed by the manifest but is not in the lane catalogue, so "
                 f"no script and no job can be derived for it"
             )
         wanted = {f"tools/verification/{script}", UMBRELLA}
@@ -365,7 +365,7 @@ def manifest_at(sha: str) -> dict:
         and unparsable TOML both raise `Undecidable` — the brief's fallback (b), which
         costs nothing once the ESTATE comes from the candidate rather than the tree. Note
         the scope: this binds which units and which lanes to the candidate. The
-        lane-to-check mapping (`verify.LANES`, `.github/workflows`) is still read from the
+        lane-to-check mapping (`_lanes.LANES`, `.github/workflows`) is still read from the
         working tree, so "every input comes from one commit" is not yet true of the whole
         verdict;
       * a `schema_version` this tooling does not implement is `Undecidable` for the same

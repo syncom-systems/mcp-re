@@ -62,6 +62,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _assurance_graph import unmet_obligations  # noqa: E402
 from _compose import compose, contradictions, requirements, within  # noqa: E402
+from _lanes import FORMAL, HYGIENE, LANES, PHASES, SCOPABLE_LANES  # noqa: E402
 from _evidence import evidence_store, write_bundle  # noqa: E402
 from _theorems import load_theorems, unsupported_theorems  # noqa: E402
 from _manifest import (  # noqa: E402
@@ -98,59 +99,26 @@ def _declared_verdict(output: str) -> str | None:
     return verdict if verdict in LANE_VERDICTS else None
 
 
-#: (display name, script, is_formal).
+#: The lanes, in dispatch order, with each one's entry point, phase and scope, are the lane
+#: catalogue's rows (`_lanes`).
 #:
-#: `is_formal` is what separates a lane that produces EVIDENCE from a lane that is a
-#: PRECONDITION for trusting evidence. The assumption/TCB gate can withhold a pass by
-#: failing, but its passing says nothing about the code — so it must never be able to
-#: carry the aggregate to PASS on its own.
-LANES = [
-    ("assumptions", "check-assumptions", False),
-    ("generated-model", "check-generated", True),
-    ("test", "verify-tests", True),
-    # A V0 claim's negative battery, self-tested: does deleting the check a theorem names
-    # actually turn a declared control red? Formal in the `is_formal` sense — it produces
-    # EVIDENCE about the code, not a precondition for trusting other evidence.
-    ("mutation", "verify-mutations", True),
-    # ADR-MCPRE-068 Phase 0B. A structural claim's falsifier is a COMPILATION that must be
-    # refused, and a measured one's is an apparatus that must still MOVE; neither is a test
-    # going red, which is why they are lanes of their own rather than mutation's arguments.
-    # Both are formal in the `is_formal` sense: they produce evidence about the code.
-    ("structural", "verify-structural", True),
-    ("measured", "verify-measured", True),
-    ("verus", "verify-verus", True),
-    ("lean", "verify-lean", True),
-]
-
-#: Which FORMAL lanes each execution phase may run — the split the two environments force.
+#: A FORMAL lane produces EVIDENCE; a hygiene lane is a PRECONDITION for trusting evidence.
+#: The assumption/TCB gate can withhold a pass by failing, but its passing says nothing about
+#: the code — so it must never be able to carry the aggregate to PASS on its own.
 #:
-#: Charon links the private rustc crates and does not build on macOS, so the extracted-model
-#: lanes run inside the pinned container; Verus and the cargo matrix are not in that
-#: container, so they run on the host. Neither phase can run the other's lanes, which is why
-#: neither may state the repository's aggregate: `--aggregate` does that, over records.
+#: Each execution phase runs only its own formal lanes — the split the two environments
+#: force. Charon links the private rustc crates and does not build on macOS, so the
+#: extracted-model lanes run inside the pinned container; Verus and the Bazel matrix are not
+#: in that container, so they run on the host. Neither phase can run the other's lanes, which
+#: is why neither may state the repository's aggregate: `--aggregate` does that, over
+#: records. HYGIENE LANES ARE IN NEITHER, and belong to the composer: they are
+#: whole-repository propositions with no per-unit evidence to compose, and running them in a
+#: phase as well would be measuring the same thing twice and recording it nowhere.
 #:
-#: HYGIENE LANES ARE IN NEITHER, and belong to the composer. They are whole-repository
-#: propositions with no per-unit evidence to compose, they are host-capable, and running
-#: them in a phase as well would be measuring the same thing twice and recording it nowhere.
-#:
-#: TOTAL over the formal lanes by construction, and checked below. A formal lane in no phase
-#: would be a lane nothing executes — and because the aggregate derives its requirements
-#: from the MANIFEST rather than from what ran, that shows up as a missing record.
-PHASES = {
-    "host": {"test", "mutation", "structural", "measured", "verus"},
-    "extraction": {"generated-model", "lean"},
-}
-assert set().union(*PHASES.values()) == {
-    name for name, _s, is_formal in LANES if is_formal
-}
-assert not (PHASES["host"] & PHASES["extraction"])
-
-#: The formal lanes a scoped run (`--units-file`) confines to the selected units. Each
-#: takes `--unit` with one shared semantics (`_unit_selection`). The extraction lanes are
-#: not here: they judge the one extracted model as a whole, in under a minute, so they run
-#: in full and the composer reads only the selected units' records.
-SCOPABLE_LANES = {"test", "mutation", "structural", "measured", "verus"}
-assert SCOPABLE_LANES <= PHASES["host"]
+#: A scoped run (`--units-file`) confines the scopable lanes to the selected units, each
+#: through `--unit` with one shared semantics (`_unit_selection`). The extraction lanes are
+#: not scopable: they judge the one extracted model as a whole, in under a minute, so they
+#: run in full and the composer reads only the selected units' records.
 
 
 def gate_exit_code(aggregate: str, gate: bool) -> int:
@@ -616,7 +584,7 @@ def _run() -> RunOutcome:
         # rather than to inherit a verdict from a run that no longer describes the tree.
         return RunOutcome(0, "INCOMPLETE", {"manifests": "PASS"})
 
-    selected = PHASES[args.phase] if args.phase else {name for name, _s, _f in LANES}
+    selected = PHASES[args.phase] if args.phase else {lane.name for lane in LANES}
     if args.aggregate:
         # The composer executes the HYGIENE lanes and no formal one. They are whole-
         # repository propositions with no per-unit evidence to compose, they are
@@ -624,13 +592,14 @@ def _run() -> RunOutcome:
         # pass, never to carry one. Composing a formal lane's evidence and executing a
         # formal lane in the same process is exactly what `--phase` and `--aggregate` are
         # kept apart to prevent.
-        selected = {name for name, _s, is_formal in LANES if not is_formal}
+        selected = {lane.name for lane in HYGIENE}
 
     if scope is not None:
         print(f"\n[scope] {len(scope)} unit(s): {', '.join(sorted(scope)) or '(none)'}")
     verdicts: dict[str, str] = {}
     timings: list[tuple[str, str, float]] = []
-    for name, script, _is_formal in LANES:
+    for lane in LANES:
+        name, script = lane.name, lane.script
         if name not in selected:
             continue
         argv = [sys.executable, str(HERE / script)]
@@ -673,7 +642,7 @@ def _run() -> RunOutcome:
     if args.aggregate:
         return _composed_outcome(verdicts, args.gate, scope)
 
-    formal = {name for name, _script, is_formal in LANES if is_formal}
+    formal = {lane.name for lane in FORMAL}
     aggregate = aggregate_verdict(
         [verdict for name, verdict in verdicts.items() if name in formal],
         [verdict for name, verdict in verdicts.items() if name not in formal],

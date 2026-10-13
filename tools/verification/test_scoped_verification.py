@@ -29,6 +29,7 @@ sys.path.insert(0, str(HERE))
 
 from _compose import Requirement, within  # noqa: E402
 from _evidence import decide_issuance, load_bundle, write_bundle  # noqa: E402
+from _lanes import LANES, SCOPABLE_LANES  # noqa: E402
 from _load_tool import load_tool  # noqa: E402
 from _unit_selection import selection_error  # noqa: E402
 
@@ -215,9 +216,9 @@ def test_every_scoped_lane_refuses_an_undeclared_unit_as_fail():
 
 
 def test_the_scopable_lanes_are_exactly_the_lanes_that_take_unit():
-    for name, script, _formal in verify.LANES:
-        help_text = _lane(script, "--help").stdout
-        assert ("--unit" in help_text) == (name in verify.SCOPABLE_LANES), (name, script)
+    for lane in LANES:
+        help_text = _lane(lane.script, "--help").stdout
+        assert ("--unit" in help_text) == (lane.name in SCOPABLE_LANES), (lane.name, lane.script)
 
 
 def test_units_file_is_refused_on_the_full_sweep():

@@ -286,6 +286,8 @@ def test_the_test_lane_instrument_is_part_of_the_evidence_identity():
         "tools/verification/_manifest.py",
         "tools/verification/_ecosystems.py",
         "tools/verification/_rust_targets.py",
+        # Which units are in scope: `test://` claims the lane through the catalogue.
+        "tools/verification/_lanes.py",
     }
     assert all(digest.startswith("sha256:") for digest in lane.values())
 
@@ -331,12 +333,15 @@ def test_the_extraction_lane_instruments_are_part_of_the_evidence_identity():
         "tools/verification/_lean_model.py",
         "tools/verification/_extraction_identity.py",
         "tools/verification/_manifest.py",
+        # Which tiers the lane covers and which scheme claims it: the lane catalogue.
+        "tools/verification/_lanes.py",
     }
     assert set(c["generated_model_lane_identity"]) == {
         "tools/verification/check-generated",
         "tools/verification/regenerate-lean",
         "tools/verification/_lean_model.py",
         "tools/verification/_extraction_identity.py",
+        "tools/verification/_lanes.py",
     }
     assert all(d.startswith("sha256:") for d in c["lean_lane_identity"].values())
     assert all(d.startswith("sha256:") for d in c["generated_model_lane_identity"].values())
@@ -771,6 +776,8 @@ def test_the_structural_probe_set_is_measured_so_it_cannot_silently_shrink():
         # decides whether a refusal is attributable to the boundary the probe attacks, and
         # a change there changes what every structural record means.
         "tools/verification/_structural.py",
+        # Which units the lane covers: the scheme that claims it is the catalogue's.
+        "tools/verification/_lanes.py",
     }
 
 
@@ -1513,9 +1520,9 @@ VERUS_UNIT = "core.time_rfc3339"
 
 
 def _verus_units() -> list[str]:
-    from _manifest import claims_verus_evidence
+    from _lanes import claims
 
-    return sorted(uid for uid, u in UNITS.items() if claims_verus_evidence(u))
+    return sorted(uid for uid, u in UNITS.items() if claims(u, "verus"))
 
 
 def test_the_verus_population_is_the_repositorys_machine_checked_surface():
@@ -1566,10 +1573,10 @@ def test_the_target_table_module_moves_every_lane_that_resolves_a_label_through_
     proved unit is verified by, and the build-graph row a probe's red control runs in. Both
     lanes resolve through `_rust_targets`, so an edit there must move every unit whose
     evidence either lane establishes — not only the test lane's."""
-    from _manifest import claims_mutation_evidence
+    from _lanes import claims
 
     watched = set(_verus_units()) | {
-        uid for uid, u in UNITS.items() if claims_mutation_evidence(u)
+        uid for uid, u in UNITS.items() if claims(u, "mutation")
     }
     assert len(watched) > len(_verus_units()), "no mutation claimant: the population is empty"
     before = {uid: fingerprint_unit(UNITS[uid], DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]

@@ -65,10 +65,10 @@ from _ecosystems import valid_target  # noqa: E402
 from _ecosystems import vitest_report_path  # noqa: E402
 from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
+from _lanes import claims  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
     ManifestError,
-    claims_test_evidence,
     load_assumptions,
     load_toolchains,
     load_verification,
@@ -485,7 +485,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
 
-    units = [unit for unit in doc.get("unit", []) if claims_test_evidence(unit)]
+    units = [unit for unit in doc.get("unit", []) if claims(unit, "test")]
     basis = f"every unit declaring test:// evidence ({len(units)} of {len(doc.get('unit', []))})"
     if args.unit:
         wanted = dict.fromkeys(args.unit)

@@ -69,12 +69,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path("tools/verification").resolve()))
 from _ecosystems import unit_ecosystem  # noqa: E402
-from _manifest import claims_test_evidence, load_verification  # noqa: E402
+from _lanes import claims  # noqa: E402
+from _manifest import load_verification  # noqa: E402
 
 doc = load_verification()
 names = set()
 for unit in doc.get("unit", []):
-    if not claims_test_evidence(unit):
+    if not claims(unit, "test"):
         continue
     eco = unit_ecosystem(unit)
     if eco is not None:

@@ -51,6 +51,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
+from _lanes import BY_NAME, claims  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 import _registries  # noqa: E402
 from _manifest import (  # noqa: E402
@@ -71,16 +72,12 @@ from _unit_selection import (  # noqa: E402
 
 REGISTRY = _registries.path("measurements")
 
-SCHEME = "measured://"
+SCHEME = BY_NAME["measured"].scheme
 
 #: Where a result is preserved. Inside the run's evidence store, never in the working tree:
 #: an artifact committed to the repository would be a measurement of whatever tree produced
 #: it, read as a measurement of the tree that holds it.
 ARTIFACT_DIR = "measured-artifacts"
-
-
-def claims_measured(unit: dict) -> bool:
-    return any(str(e).startswith(SCHEME) for e in unit.get("evidence", []))
 
 
 def run(argv: list[str]) -> tuple[int, str]:
@@ -177,7 +174,7 @@ def main() -> int:
             f"measures the LANE and says nothing about the repository's declarations"
         )
     declaring = (
-        sorted(uid for uid, unit in units.items() if claims_measured(unit)) if official else []
+        sorted(uid for uid, unit in units.items() if claims(unit, "measured")) if official else []
     )
     registered = {m["unit"] for m in measurements}
     orphaned = [uid for uid in declaring if uid not in registered]
@@ -254,7 +251,7 @@ def main() -> int:
         # iterating the whole registry would write a pass for units nothing measured.
         for unit_id in sorted({m["unit"] for m in selected}):
             unit = units.get(unit_id)
-            if unit is None or not claims_measured(unit):
+            if unit is None or not claims(unit, "measured"):
                 continue
             mine = [m["id"] for m in selected if m["unit"] == unit_id]
             failed = [mid for mid in mine if mid in failures]

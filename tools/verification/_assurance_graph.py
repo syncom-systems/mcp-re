@@ -196,17 +196,6 @@ def root_reachable(theorems: dict, units: dict, roots: list[str]) -> set[str]:
     return seen
 
 
-def _claims_falsifier(unit: dict, scheme: str) -> bool:
-    """Whether the unit names at least one evidence URI in `scheme`.
-
-    Deliberately local rather than imported from `_manifest`: this layer is read BY the
-    loader path, and importing the loader here would make the two mutually dependent. The
-    check is one line, and duplicating one line is cheaper than a cycle — the vocabulary it
-    reads (`FALSIFIER_SCHEME`) is still declared exactly once, in `_evidence_class`.
-    """
-    return any(str(entry).startswith(scheme) for entry in unit.get("evidence", []))
-
-
 def unmet_obligations(theorems: dict, units: dict) -> dict[str, dict]:
     """N1's population: `tested` propositions at Medium-or-higher that name no falsifier.
 
@@ -217,10 +206,11 @@ def unmet_obligations(theorems: dict, units: dict) -> dict[str, dict]:
 
     `measured` takes no mutation obligation at all (Ruling 4) and `proved`/`structural` owe
     their own falsifier forms, which the class-adequacy check already enforces per record.
-    So this asks only about `tested`, and asks it with `FALSIFIER_SCHEME` rather than a
-    literal, because a class's falsifier form is declared in one place.
+    So this asks only about `tested`, and asks it with the catalogue's `FALSIFIER_SCHEME`
+    rather than a literal, because a class's falsifier form is declared in one place.
     """
-    from _evidence_class import FALSIFIER_SCHEME, OBLIGATION_FLOOR
+    from _evidence_class import OBLIGATION_FLOOR
+    from _lanes import FALSIFIER_SCHEME, claims_scheme
 
     derived = severities(theorems, units)
     reachable = root_reachable(theorems, units, theorems.get("root_theorems", []))
@@ -233,7 +223,7 @@ def unmet_obligations(theorems: dict, units: dict) -> dict[str, dict]:
         measured = derived[node]
         if SEVERITY_ORDER[measured["effective"] or SEVERITIES[0]] < OBLIGATION_FLOOR:
             continue
-        if _claims_falsifier(unit, scheme):
+        if claims_scheme(unit, scheme):
             continue
         out[unit["id"]] = {
             "effective_severity": measured["effective"],

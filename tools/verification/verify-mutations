@@ -67,10 +67,10 @@ from _unit_selection import (  # noqa: E402
     selection_error,
 )
 from _fingerprint import fingerprint_unit  # noqa: E402
+from _lanes import claims  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
     ManifestError,
-    claims_mutation_evidence,
     load_assumptions,
     load_toolchains,
     load_verification,
@@ -645,7 +645,7 @@ def main() -> int:
     orphaned = sorted(
         unit_id
         for unit_id, unit in units.items()
-        if claims_mutation_evidence(unit)
+        if claims(unit, "mutation")
         and not any(probe["unit"] == unit_id for probe in probes)
     )
     if orphaned:
@@ -815,7 +815,7 @@ def main() -> int:
     if not args.probe:
         for unit_id in probed_units:
             unit = units.get(unit_id)
-            if unit is None or not claims_mutation_evidence(unit):
+            if unit is None or not claims(unit, "mutation"):
                 continue
             unit_failures = [
                 p["id"] for p in probes if p["unit"] == unit_id and p["id"] in failures
