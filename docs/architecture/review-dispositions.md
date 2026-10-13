@@ -2980,3 +2980,18 @@ two types it already re-exports), and move authority (c) into
 `config_state/client_credential_window.rs`, its one deciding reader. Authority (a) stays in
 `transport.rs`. Recorded, not performed, under the campaign's size-is-recorded rule; the
 file may not grow meanwhile.
+
+### Performed (2026-10-13, MCPRE-207, #1132)
+
+Both moves, as recorded. `config_state/crl_revocation.rs` holds authority (b) with its four
+tests; `config_state/mod.rs` declares it and re-exports `CrlRevocationState` from it.
+`MAX_CLIENT_CERT_LIFETIME` is defined in `config_state/client_credential_window.rs`, and the
+CLI, the validation doc and the TLS load-harness bench read it there. No behaviour changed:
+every refusal sentence and test body moved byte for byte. The unit
+`proxy.transport_binding_and_crl_state` measures both files; its four CRL test symbols name
+`config_state::crl_revocation::tests`.
+
+`transport.rs` now holds authority (a) alone, at 263 production lines (419 before the move,
+measured at `c939c2f`), still over the 200-line trigger. Whether one authority of that size
+is kept whole is a census question this action did not ask, so the register entry stays
+`reviewed-action-required` at the new baseline until a census records it.

@@ -40,8 +40,14 @@
 
 use std::time::Duration;
 
-use crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME;
 use crate::deployment_request::DeploymentRequest;
+
+/// The ceiling on `--max-client-cert-lifetime` (ADR-MCPS-023 §A1, MCPS-57). A
+/// lifetime above this cannot honestly be audited as `short_lived_cert`, so the
+/// proxy rejects it. Matches the 1h default. Exported so test fixtures mint client
+/// certs whose validity window is within the SAME bound the proxy enforces — there
+/// is one source of truth, not a hand-picked magic number per fixture.
+pub const MAX_CLIENT_CERT_LIFETIME: Duration = Duration::from_secs(3600);
 
 /// The window within which a client credential authorizes traffic.
 ///
