@@ -31,7 +31,7 @@
 //! ([`docs/dev/sealed-owners.md`](../../../../docs/dev/sealed-owners.md)).
 
 use crate::async_replay::AsyncReplayTier;
-use crate::control_runtime::ControlRuntime;
+use crate::control_runtime::ControlRuntimeProvision;
 use crate::http_profile_dispatch::{ReplayAdmission, ReplayPosture};
 use crate::replay_tier::ReplayDurabilityTier;
 use crate::startup_plan::{PlannedStore, ReplayPlan};
@@ -69,13 +69,12 @@ impl MaterializedReplay {
     /// from configuration alone were already decided by layer A, and the plan is a
     /// projection of that decision rather than a second chance to refuse it.
     ///
-    /// `control` must be present when the plan declared it needed (see
-    /// `startup_plan::control_runtime_requirement`); its absence there is a wiring error in
-    /// this process, not an operator mistake.
+    /// `control` is asked for a handle only by the Redis arm, so a plan selecting the etcd
+    /// store starts no control runtime.
     pub fn materialize(
         plan: &ReplayPlan,
         freshness: crate::config_state::FreshnessWindow,
-        control: Option<&ControlRuntime>,
+        control: &ControlRuntimeProvision,
     ) -> Result<Self, String> {
         // The tier is READ from the plan, never chosen beside it: the replay owner paired
         // this store with the only tier it can serve, and materialization has no standing
@@ -265,7 +264,7 @@ mod tests {
         let etcd = MaterializedReplay::materialize(
             &crate::config_state::test_support::linearizable_replay_plan(),
             crate::config_state::test_support::freshness(60),
-            None,
+            &ControlRuntimeProvision::idle(),
         );
         if cfg!(feature = "cpstore_etcd") {
             // The etcd store is lazy: establishing it contacts nothing, so a TEST-NET-3
@@ -282,19 +281,18 @@ mod tests {
             assert!(err.contains("cpstore_etcd"), "{err}");
         }
 
-        // The redis arm refuses without a control runtime in either build: without the
-        // backend it names the feature, and with it the runtime is read before any connect.
-        let err = match MaterializedReplay::materialize(
-            &crate::config_state::test_support::redis_replay_plan(),
-            crate::config_state::test_support::freshness(60),
-            None,
-        ) {
-            Ok(_) => panic!("the redis arm cannot materialize without a control runtime"),
-            Err(e) => e,
-        };
-        if cfg!(feature = "redis_replay") {
-            assert!(err.contains("control runtime"), "{err}");
-        } else {
+        // Without the backend the redis arm names the feature. With it, the arm would start
+        // the control runtime and contact the store; its handle and quorum are asserted in
+        // `backends`, where nothing is contacted.
+        if !cfg!(feature = "redis_replay") {
+            let err = match MaterializedReplay::materialize(
+                &crate::config_state::test_support::redis_replay_plan(),
+                crate::config_state::test_support::freshness(60),
+                &ControlRuntimeProvision::idle(),
+            ) {
+                Ok(_) => panic!("refused without the backend"),
+                Err(e) => e,
+            };
             assert!(err.contains("redis_replay"), "{err}");
         }
     }
@@ -328,20 +326,20 @@ mod tests {
 
         for plan in [&etcd, &redis] {
             assert!(
-                MaterializedReplay::materialize(plan, freshness, None).is_err(),
+                MaterializedReplay::materialize(plan, freshness, &ControlRuntimeProvision::idle())
+                    .is_err(),
                 "BF-01: with neither backend linked, no replay state may be reachable"
             );
         }
     }
 
-    /// The converse of BF-01, in the one lane that can state it without a control
+    /// The converse of BF-01, in the one lane that can state it without starting a control
     /// runtime: a build that LINKS `cpstore_etcd` reaches the linearizable state. This is
     /// a reachability fact about a build WITH a backend, not BF-01, which is why it is a
     /// separate test in a lane where the BF-01 test does not exist.
     ///
-    /// Only the etcd arm can be probed with `None`; the Redis arm CONSUMES a control
-    /// runtime, and handing it `None` would assert the runtime contract rather than
-    /// reachability. One reachable state is enough to show such a build is a serving
+    /// Only the etcd arm can be probed offline; the Redis arm starts a control runtime and
+    /// contacts its store. One reachable state is enough to show such a build is a serving
     /// binary.
     ///
     /// # NOT EVIDENCE, and that is recorded here rather than left to be discovered
@@ -367,7 +365,8 @@ mod tests {
         let freshness = crate::config_state::test_support::freshness(60);
 
         assert!(
-            MaterializedReplay::materialize(&etcd, freshness, None).is_ok(),
+            MaterializedReplay::materialize(&etcd, freshness, &ControlRuntimeProvision::idle())
+                .is_ok(),
             "a build linking cpstore_etcd must reach the linearizable state"
         );
     }

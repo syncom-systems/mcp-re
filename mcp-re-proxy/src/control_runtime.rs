@@ -7,43 +7,29 @@
 //!
 //! # It does not know why it exists
 //!
-//! This module never inspects configuration. Whether a runtime is needed is decided by
-//! the pure plans that know what they intend to build, and arrives here as a
-//! [`ControlRuntimeRequirement`]. Domain plans declare requirements; infrastructure
-//! satisfies them.
+//! This module never inspects configuration. A capability needs the runtime exactly when
+//! its owner selected a networked store — `ReplayPlan::store()` naming Redis,
+//! `ContinuationControlPlan::shared()` naming a store, `AdmissionState::enforced()` naming
+//! a gate — and that capability's networked arm asks [`ControlRuntimeProvision::handle`]
+//! for access. The selection that needs the runtime and the request that obtains it are
+//! the same step, so there is no separately computed requirement for a consumer to find
+//! missing.
 //!
-//! That boundary is not decoration. The requirement used to be inferred from whichever
-//! seam happened to reach a runtime first, which was the replay tier — and admission,
-//! whose Redis endpoint has nothing to do with replay, was thereby made unimplementable
-//! on the CP/linearizable tier. An operator who supplied `--admission-redis-url` was told
-//! the flag was missing, and the natural resolution was to turn a security control off.
-//!
-//! So: control-runtime availability is derived independently from EVERY capability that
-//! requires it. It must never be inferred from the replay tier or from replay having been
-//! selected, because continuation and admission have their own requirements.
-//!
-//! # PRECONDITION
-//!
-//! **[`ControlRuntimeRequirement`] is not a feature-availability validator.** Its
-//! correctness assumes that unsupported requested capabilities have ALREADY been
-//! rejected, by validation or by a materialization guard.
-//!
-//! It answers one question: does this VALID configuration require control execution. In
-//! a build without `redis_replay`, shared replay, `--trust-epoch-redis-url` and
-//! `--admission` each refuse rather than serve with the control silently disabled, and
-//! reporting `NotRequired` there is sound only BECAUSE they do.
-//!
-//! Remove one of those refusals and this becomes the place an unsupported configuration
-//! passes through — which is the opposite of where that decision belongs. It is stated
-//! as a precondition so nobody expects the aggregation to catch it.
+//! The runtime used to be built from whichever seam happened to reach for it first, which
+//! was the replay tier — and admission, whose Redis endpoint has nothing to do with replay,
+//! was thereby made unimplementable on the CP/linearizable tier. An operator who supplied
+//! `--admission-redis-url` was told the flag was missing, and the natural resolution was to
+//! turn a security control off. Here every networked arm reaches the same provision, so no
+//! capability's access depends on another having been selected.
 //!
 //! # Ownership vs. access
 //!
-//! [`ControlRuntime`] owns the runtime. Consumers get a `tokio::runtime::Handle`, which
-//! conveys execution ACCESS and no ownership: a cloned handle does not keep the runtime
-//! alive, which is exactly the lifetime property wanted here. A handle conveys no usable
-//! execution guarantee once its owner is gone — after shutdown, I/O-dependent work on it
-//! can fail or panic. It is access while the owner lives, not a way to resurrect it.
+//! [`ControlRuntime`] owns the runtime, and the provision owns the [`ControlRuntime`] once
+//! one is started. Consumers get a `tokio::runtime::Handle`, which conveys execution
+//! ACCESS and no ownership: a cloned handle does not keep the runtime alive, which is
+//! exactly the lifetime property wanted here. A handle conveys no usable execution
+//! guarantee once its owner is gone — after shutdown, I/O-dependent work on it can fail or
+//! panic. It is access while the owner lives, not a way to resurrect it.
 //!
 //! # Shutdown order, for whoever owns this next
 //!
@@ -53,61 +39,63 @@
 //! lifecycle relationship nobody wrote down, which is the class of defect this refactor
 //! exists to remove. Do not leave that to field-declaration order.
 
-/// Whether this deployment needs the shared control runtime.
+use std::sync::OnceLock;
+
+/// The shared control runtime, started by the first networked arm that asks for it.
 ///
-/// Produced by aggregating what the plans declare (see `startup_plan`), never by asking
-/// any single consumer — no consumer owns the decision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ControlRuntimeRequirement {
-    Required,
-    NotRequired,
+/// Held by the materializing runtime from the moment materialization begins, so a runtime
+/// started part-way through is owned before the step that started it returns. A deployment
+/// whose owners selected no networked store never asks, and starts no threads.
+pub struct ControlRuntimeProvision {
+    runtime: OnceLock<ControlRuntime>,
 }
 
-impl ControlRuntimeRequirement {
-    /// `Required` if any contributor needs it.
-    pub fn any(contributors: impl IntoIterator<Item = bool>) -> ControlRuntimeRequirement {
-        if contributors.into_iter().any(|needed| needed) {
-            ControlRuntimeRequirement::Required
-        } else {
-            ControlRuntimeRequirement::NotRequired
+impl ControlRuntimeProvision {
+    /// A provision nothing has asked yet.
+    pub fn idle() -> ControlRuntimeProvision {
+        ControlRuntimeProvision {
+            runtime: OnceLock::new(),
         }
     }
 
-    pub fn is_required(self) -> bool {
-        self == ControlRuntimeRequirement::Required
+    /// Execution access for a networked arm, starting the runtime on the first request.
+    ///
+    /// Every later request receives a handle to the same runtime. The only refusal is the
+    /// runtime failing to build, which is a fact about the host.
+    #[cfg_attr(not(feature = "redis_replay"), allow(dead_code))]
+    pub fn handle(&self) -> Result<tokio::runtime::Handle, String> {
+        if let Some(runtime) = self.runtime.get() {
+            return Ok(runtime.handle());
+        }
+        let started = ControlRuntime::start()?;
+        Ok(self.runtime.get_or_init(|| started).handle())
+    }
+
+    /// The runtime, if any arm asked for one — taken for reclamation in teardown order.
+    pub fn take(&mut self) -> Option<ControlRuntime> {
+        self.runtime.take()
     }
 }
 
 /// The owned process-lifetime control runtime.
 pub struct ControlRuntime {
-    /// Read only by [`ControlRuntime::handle`]. Every consumer that would call it is
-    /// gated on `redis_replay`, so in a build without that backend this substrate has
-    /// no callers at all — and correctly, since nothing then requires it either.
-    #[cfg_attr(not(feature = "redis_replay"), allow(dead_code))]
     runtime: tokio::runtime::Runtime,
 }
 
 impl ControlRuntime {
-    /// Start the runtime if the plans require one.
-    ///
-    /// Returns `None` for `NotRequired`, so a deployment that needs no networked
-    /// control-plane client starts no threads for one.
-    pub fn start(requirement: ControlRuntimeRequirement) -> Result<Option<ControlRuntime>, String> {
-        if !requirement.is_required() {
-            return Ok(None);
-        }
+    /// Build the runtime: one worker, named so it is identifiable in a thread dump.
+    pub fn start() -> Result<ControlRuntime, String> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()
             .thread_name("mcp-re-control")
             .build()
             .map_err(|e| format!("build control runtime: {e}"))?;
-        Ok(Some(ControlRuntime { runtime }))
+        Ok(ControlRuntime { runtime })
     }
 
     /// Execution access for a consumer. Conveys no ownership: this handle will not keep
     /// the runtime alive, and is not usable once the owner is gone.
-    #[cfg_attr(not(feature = "redis_replay"), allow(dead_code))]
     pub fn handle(&self) -> tokio::runtime::Handle {
         self.runtime.handle().clone()
     }
@@ -124,34 +112,34 @@ mod tests {
 
     #[test]
     fn a_deployment_that_needs_no_control_plane_client_starts_no_runtime() {
-        let none = ControlRuntime::start(ControlRuntimeRequirement::NotRequired)
-            .expect("no runtime is not an error");
-        assert!(none.is_none(), "nothing required it, so nothing was built");
+        let mut idle = ControlRuntimeProvision::idle();
+        assert!(
+            idle.take().is_none(),
+            "nothing asked for access, so nothing was built"
+        );
     }
 
+    /// The first request starts the runtime, and the provision owns what it started.
     #[test]
-    fn a_single_contributor_is_enough_and_no_contributor_is_not() {
-        assert_eq!(
-            ControlRuntimeRequirement::any([false, true, false]),
-            ControlRuntimeRequirement::Required
-        );
-        assert_eq!(
-            ControlRuntimeRequirement::any([false, false, false]),
-            ControlRuntimeRequirement::NotRequired
-        );
-        assert_eq!(
-            ControlRuntimeRequirement::any([]),
-            ControlRuntimeRequirement::NotRequired
-        );
+    fn the_first_request_starts_the_runtime_and_the_provision_owns_it() {
+        let mut provision = ControlRuntimeProvision::idle();
+        let handle = provision.handle().expect("the runtime builds");
+        let owned = provision
+            .take()
+            .expect("a request for access started a runtime the provision owns");
+        assert_eq!(handle.id(), owned.handle().id());
     }
 
-    /// Several consumers share ONE substrate rather than each building its own.
+    /// Several consumers share ONE substrate rather than each building its own, and none
+    /// of them depends on another having asked first.
     #[test]
     fn every_consumer_receives_a_handle_to_the_same_runtime() {
-        let rt = ControlRuntime::start(ControlRuntimeRequirement::Required)
-            .expect("build")
-            .expect("required");
-        let (replay, continuation, admission) = (rt.handle(), rt.handle(), rt.handle());
+        let provision = ControlRuntimeProvision::idle();
+        let (admission, continuation, replay) = (
+            provision.handle().expect("build"),
+            provision.handle().expect("build"),
+            provision.handle().expect("build"),
+        );
         assert_eq!(replay.id(), continuation.id());
         assert_eq!(continuation.id(), admission.id());
     }
@@ -167,9 +155,7 @@ mod tests {
         let started = Arc::new(AtomicBool::new(false));
         let still_running = Arc::new(AtomicBool::new(false));
 
-        let rt = ControlRuntime::start(ControlRuntimeRequirement::Required)
-            .expect("build")
-            .expect("required");
+        let rt = ControlRuntime::start().expect("build");
         let handle = rt.handle();
 
         let started_in_task = Arc::clone(&started);
@@ -219,8 +205,7 @@ mod tests {
         // it, and then fails at a later phase — the shape of every `?` between the
         // first networked client and `serve_fleet`.
         fn materialize(alive: Arc<AtomicBool>) -> Result<(), String> {
-            let control =
-                ControlRuntime::start(ControlRuntimeRequirement::Required)?.expect("required");
+            let control = ControlRuntime::start()?;
             control.handle().spawn(async move {
                 loop {
                     tokio::time::sleep(Duration::from_millis(5)).await;

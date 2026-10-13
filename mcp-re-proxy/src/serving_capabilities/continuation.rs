@@ -63,16 +63,12 @@ const CONTINUATION_STORE_NO_BACKEND: &str =
 #[cfg(feature = "redis_replay")]
 pub(crate) fn mrtr_continuation_store(
     plan: &crate::startup_plan::ContinuationControlPlan,
-    control: Option<&crate::control_runtime::ControlRuntime>,
+    control: &crate::control_runtime::ControlRuntimeProvision,
 ) -> Result<Established<Arc<dyn crate::continuation_store::AsyncContinuationStore>>, String> {
     let Some((url, capacity)) = plan.shared() else {
         return Ok(Established::off(CONTINUATION_STORE_OFF));
     };
-    let handle = control
-        .ok_or(
-            "internal error: the plan declared the continuation store needs the control runtime",
-        )?
-        .handle();
+    let handle = control.handle()?;
     let store = handle
         .block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url, capacity))
         .map_err(|e| format!("connect redis continuation store: {e}"))?;
@@ -97,7 +93,7 @@ pub(crate) fn mrtr_continuation_store(
 #[cfg(not(feature = "redis_replay"))]
 pub(crate) fn mrtr_continuation_store(
     plan: &crate::startup_plan::ContinuationControlPlan,
-    _control: Option<&crate::control_runtime::ControlRuntime>,
+    _control: &crate::control_runtime::ControlRuntimeProvision,
 ) -> Result<Established<Arc<dyn crate::continuation_store::AsyncContinuationStore>>, String> {
     if plan.shared_store().is_some() {
         return Err(CONTINUATION_STORE_NO_BACKEND.to_string());
@@ -127,6 +123,10 @@ mod tests {
             .continuation_plan()
     }
 
+    fn idle() -> crate::control_runtime::ControlRuntimeProvision {
+        crate::control_runtime::ControlRuntimeProvision::idle()
+    }
+
     fn no_locator() -> crate::startup_plan::ContinuationControlPlan {
         plan_for(|c| c.continuation_control.shared = None)
     }
@@ -146,9 +146,14 @@ mod tests {
     /// 2026-09-03 ruling forbids, so it is asserted here rather than assumed.
     #[test]
     fn an_unselected_capability_is_off_and_installs_no_store() {
-        let (artifact, posture) = mrtr_continuation_store(&no_locator(), None)
+        let mut control = idle();
+        let (artifact, posture) = mrtr_continuation_store(&no_locator(), &control)
             .expect("omitting the flag is a legitimate posture, not a refusal")
             .into_parts();
+        assert!(
+            control.take().is_none(),
+            "OFF started a control runtime nothing selected"
+        );
         assert!(
             artifact.is_none(),
             "OFF installed a store: a deployment that selected nothing now holds a \
@@ -164,7 +169,7 @@ mod tests {
     /// all. A line that names a fallback is evidence someone reintroduced one.
     #[test]
     fn the_off_line_promises_no_local_fallback() {
-        let (_, posture) = mrtr_continuation_store(&no_locator(), None)
+        let (_, posture) = mrtr_continuation_store(&no_locator(), &idle())
             .expect("OFF is not a refusal")
             .into_parts();
         let crate::startup_posture::SeamState::Off(line) = posture else {
@@ -192,7 +197,7 @@ mod tests {
     #[cfg(not(feature = "redis_replay"))]
     #[test]
     fn a_selected_capability_this_build_cannot_carry_refuses_startup() {
-        let refusal = mrtr_continuation_store(&selected(), None)
+        let refusal = mrtr_continuation_store(&selected(), &idle())
             .err()
             .expect("a selected capability this build lacks must refuse, never announce OFF");
         assert!(
@@ -203,46 +208,30 @@ mod tests {
 
     /// CONTROL 4 — a SELECTED capability that cannot be established refuses startup.
     ///
-    /// Reached without a store to connect to: the plan says the establishment needs the
-    /// control runtime and none is offered, so the seam cannot produce the artifact it was
-    /// asked for. What is under test is the DIRECTION — an establishment that does not
-    /// happen is an error, never an OFF posture.
-    #[cfg(feature = "redis_replay")]
-    #[test]
-    fn a_selected_capability_that_cannot_be_established_refuses_startup() {
-        assert!(
-            mrtr_continuation_store(&selected(), None).is_err(),
-            "a selected store that cannot be established must refuse, never announce OFF"
-        );
-    }
-
-    /// CONTROL 5 — the establishment that FAILS is an error too, not an OFF posture.
-    ///
-    /// Control 4 reaches the refusal by withholding the control runtime, so it measures the
-    /// seam's own precondition and never the backend. The realistic failure is the other
-    /// one: the runtime is there, the operator selected a store, and the store cannot be
-    /// reached. That path has its own `?`, and until this control existed nothing held it —
-    /// a probe replacing it with `Established::off` left every declared control green.
+    /// The realistic failure: the operator selected a store and the store cannot be
+    /// reached. The selection is what asks for the control runtime, so the establishment
+    /// runs on a runtime it started itself and fails at the connect, which has its own `?` —
+    /// a probe replacing it with `Established::off` must turn this red.
     ///
     /// The address is a port nothing can be listening on without privilege, so the connect
     /// refuses rather than hanging.
     #[cfg(feature = "redis_replay")]
     #[test]
     fn a_selected_store_that_cannot_be_reached_refuses_startup() {
-        let runtime = crate::control_runtime::ControlRuntime::start(
-            crate::control_runtime::ControlRuntimeRequirement::Required,
-        )
-        .expect("a control runtime for the establishment to run on")
-        .expect("Required must start one");
+        let mut control = idle();
         let unreachable = plan_for(|c| {
             c.continuation_control.shared = Some(SharedStoreRequest::redis("redis://127.0.0.1:1"))
         });
-        let refusal = mrtr_continuation_store(&unreachable, Some(&runtime))
+        let refusal = mrtr_continuation_store(&unreachable, &control)
             .err()
             .expect("a selected store that cannot be reached must refuse, never announce OFF");
         assert!(
             refusal.contains("connect redis continuation store"),
             "the refusal must name the establishment that failed: {refusal}"
+        );
+        assert!(
+            control.take().is_some(),
+            "the selected store asked for the control runtime it was established on"
         );
     }
 

@@ -6,12 +6,12 @@
 //! configuration alone were already decided by layer A.
 //!
 //! The two backends differ in more than their protocol. The etcd store drives its own
-//! requests, so it needs no share of the control runtime and the plan declares none for it;
-//! the Redis one does, and its `WAIT` window has to be sized BEFORE connecting or the
+//! requests, so it needs no share of the control runtime and never asks for one; the Redis
+//! one does, and its `WAIT` window has to be sized BEFORE connecting or the
 //! declared durability would be advertised and not enforced.
 
 use crate::async_replay::AsyncReplayTier;
-use crate::control_runtime::ControlRuntime;
+use crate::control_runtime::ControlRuntimeProvision;
 use crate::replay_tier::ReplayDurabilityTier;
 
 /// The retention padding this deployment's shared store applies, stated at startup.
@@ -29,8 +29,8 @@ fn divergence_audit_line(freshness: crate::config_state::FreshnessWindow) -> Str
 
 /// The CP/linearizable backend: an async etcd CAS per admitted nonce.
 ///
-/// The store drives its own requests, so it needs no share of the control runtime — which
-/// is why the plan does not declare one for it.
+/// The store drives its own requests, so it needs no share of the control runtime and
+/// never asks the provision for one.
 #[cfg_attr(not(feature = "cpstore_etcd"), allow(unused_variables))]
 pub(super) fn establish_etcd(
     endpoint: &str,
@@ -73,7 +73,7 @@ pub(super) fn establish_redis(
     url: &str,
     tier: &ReplayDurabilityTier,
     freshness: crate::config_state::FreshnessWindow,
-    control: Option<&ControlRuntime>,
+    control: &ControlRuntimeProvision,
 ) -> Result<AsyncReplayTier, String> {
     #[cfg(feature = "redis_replay")]
     {
@@ -102,7 +102,7 @@ pub(super) fn establish_redis(
 
 /// What connecting the Redis store needs, read off the plan before anything is contacted:
 /// the control runtime's handle, the clock held back by the declared divergence, and the
-/// declared `WAIT` quorum. Separate from the connect so the refusal and the quorum are
+/// declared `WAIT` quorum. Separate from the connect so the runtime and the quorum are
 /// assertable in the `redis_replay` lane without a live server.
 #[cfg(feature = "redis_replay")]
 struct RedisConnection {
@@ -111,22 +111,16 @@ struct RedisConnection {
     wait_quorum: Option<(u32, u64)>,
 }
 
-/// Refuse, do not panic: the caller reports a startup refusal, and a panic in the
-/// composition root would reach an operator as a backtrace rather than as the sentence that
-/// says which part of the plan disagreed with which.
+/// The handle is asked for HERE, by the arm whose plan selected Redis, so the store that
+/// needs the control runtime is the request that starts it. The only refusal is the
+/// runtime failing to build.
 #[cfg(feature = "redis_replay")]
 fn redis_connection(
     tier: &ReplayDurabilityTier,
     freshness: crate::config_state::FreshnessWindow,
-    control: Option<&ControlRuntime>,
+    control: &ControlRuntimeProvision,
 ) -> Result<RedisConnection, String> {
-    let runtime = control
-        .ok_or_else(|| {
-            "the plan declared the redis replay tier, which needs the control runtime, \
-             and none was established"
-                .to_owned()
-        })?
-        .handle();
+    let runtime = control.handle()?;
     Ok(RedisConnection {
         runtime,
         clock: freshness
@@ -170,34 +164,32 @@ mod tests {
     #[test]
     fn the_redis_arm_connects_in_the_declared_wait_quorum() {
         let plan = crate::config_state::test_support::redis_replay_plan();
-        let control = crate::control_runtime::ControlRuntime::start(
-            crate::control_runtime::ControlRuntimeRequirement::Required,
-        )
-        .expect("the control runtime starts")
-        .expect("a required runtime is established");
+        let control = crate::control_runtime::ControlRuntimeProvision::idle();
         let connection = super::redis_connection(
             plan.tier(),
             crate::config_state::test_support::freshness(60),
-            Some(&control),
+            &control,
         )
-        .unwrap_or_else(|e| panic!("a planned redis tier with a runtime connects: {e}"));
+        .unwrap_or_else(|e| panic!("a planned redis tier connects on the control runtime: {e}"));
         assert_eq!(connection.wait_quorum, Some((1, 100)));
     }
 
-    /// Without the control runtime the Redis arm refuses, before any connect, with the
-    /// sentence that names what the plan was missing.
+    /// The Redis arm runs on the shared control runtime, and asking for it is what starts
+    /// it: the store that needs the runtime and the runtime it gets cannot disagree.
     #[cfg(feature = "redis_replay")]
     #[test]
-    fn the_redis_arm_refuses_without_the_control_runtime() {
+    fn the_redis_arm_runs_on_the_control_runtime_it_asked_for() {
         let plan = crate::config_state::test_support::redis_replay_plan();
-        let err = match super::redis_connection(
+        let mut control = crate::control_runtime::ControlRuntimeProvision::idle();
+        let connection = super::redis_connection(
             plan.tier(),
             crate::config_state::test_support::freshness(60),
-            None,
-        ) {
-            Ok(_) => panic!("the redis arm needs the control runtime"),
-            Err(e) => e,
-        };
-        assert!(err.contains("control runtime"), "{err}");
+            &control,
+        )
+        .unwrap_or_else(|e| panic!("a planned redis tier connects on the control runtime: {e}"));
+        let started = control
+            .take()
+            .expect("the redis arm's request started the control runtime");
+        assert_eq!(connection.runtime.id(), started.handle().id());
     }
 }

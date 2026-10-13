@@ -36,7 +36,7 @@
 //! returned an error: an event that merely decorated an error path would assert an
 //! ownership fact nobody established.
 
-use crate::control_runtime::ControlRuntime;
+use crate::control_runtime::ControlRuntimeProvision;
 use crate::materialized_runtime::MaterializedRuntime;
 use crate::runtime_state::RuntimeEvent;
 use crate::runtime_state::RuntimeLifecycle;
@@ -63,9 +63,11 @@ pub(crate) struct MaterializingRuntime {
     signing: Option<SigningPlane>,
     tls: Option<TlsPlane>,
     proxy: Option<HttpProfileProxy>,
-    /// Genuinely optional: a deployment with no networked control-plane dependency has
-    /// none. Absence here is a legal outcome, unlike the four above.
-    control: Option<ControlRuntime>,
+    /// Held from `begin`, so a runtime a networked arm starts part-way through
+    /// materialization is owned here before that arm returns. A deployment with no
+    /// networked control-plane dependency never starts one, which is a legal outcome,
+    /// unlike an absence among the four above.
+    control: ControlRuntimeProvision,
 }
 
 impl MaterializingRuntime {
@@ -80,7 +82,7 @@ impl MaterializingRuntime {
             signing: None,
             tls: None,
             proxy: None,
-            control: None,
+            control: ControlRuntimeProvision::idle(),
         })
     }
 
@@ -118,18 +120,9 @@ impl MaterializingRuntime {
         completeness::install_once(&mut self.proxy, Some(proxy), "proxy")
     }
 
-    /// Take ownership WHERE THE RUNTIME IS STARTED — a local held to the assembly's end
-    /// unwinds by declaration order on every `?` between (r12 R12-635).
-    pub(crate) fn install_control(
-        &mut self,
-        control: Option<ControlRuntime>,
-    ) -> Result<(), String> {
-        completeness::install_once(&mut self.control, control, "control runtime")
-    }
-
     /// BORROWED, so a consumer built on it never becomes the thing that reclaims it.
-    pub(crate) fn control(&self) -> Option<&ControlRuntime> {
-        self.control.as_ref()
+    pub(crate) fn control(&self) -> &ControlRuntimeProvision {
+        &self.control
     }
 
     /// Every required resource is owned: assemble the runtime and advance the lifecycle.
@@ -412,7 +405,6 @@ mod tests {
         let second_at = Arc::new(AtomicUsize::new(0));
 
         let mut building = MaterializingRuntime::begin(planned()).unwrap();
-        assert_eq!(building.install_control(None), Ok(()));
         building
             .install_trust(TrustPlane::for_teardown_test(recording(
                 Arc::clone(&counter),

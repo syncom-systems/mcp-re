@@ -8031,7 +8031,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.redis_replay_establishment"
 class = "V0"
-description = "In a build carrying `redis_replay`, the Redis replay arm reads what connecting needs off the plan before contacting anything: it refuses, with a sentence naming the missing control runtime, when none was established, and otherwise connects the store in the `WAIT` quorum the plan declares, so the store that serves runs the fail-closed quorum tier the startup audit line advertises rather than plain `SET NX PX`. Says nothing about what the store does with the quorum once connected (the store's own protocol tests) or which tier a deployment may declare (the configuration owner)."
+description = "In a build carrying `redis_replay`, the Redis replay arm reads what connecting needs off the plan before contacting anything: it runs on the shared control runtime, which its own request starts, and connects the store in the `WAIT` quorum the plan declares, so the store that serves runs the fail-closed quorum tier the startup audit line advertises rather than plain `SET NX PX`. Says nothing about what the store does with the quorum once connected (the store's own protocol tests) or which tier a deployment may declare (the configuration owner)."
 paths = [
   "mcp-re-proxy/src/replay_plane/mod.rs",
   "mcp-re-proxy/src/replay_plane/backends.rs",
@@ -8046,7 +8046,7 @@ evidence = [
 ]
 tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#replay_plane::backends::tests::the_redis_arm_connects_in_the_declared_wait_quorum",
-  "//mcp-re-proxy:proxy_ext_unit_test#replay_plane::backends::tests::the_redis_arm_refuses_without_the_control_runtime",
+  "//mcp-re-proxy:proxy_ext_unit_test#replay_plane::backends::tests::the_redis_arm_runs_on_the_control_runtime_it_asked_for",
 ]
 
 [[unit]]
@@ -8275,7 +8275,6 @@ evidence = [
 # What is measured is only the DIRECTION this arm can get wrong: an establishment that does
 # not happen is an error, never an OFF posture.
 tested_symbols = [
-  "//mcp-re-proxy:proxy_ext_unit_test#serving_capabilities::continuation::tests::a_selected_capability_that_cannot_be_established_refuses_startup",
   "//mcp-re-proxy:proxy_ext_unit_test#serving_capabilities::continuation::tests::a_selected_store_that_cannot_be_reached_refuses_startup",
 ]
 # `proxy_ext_unit_test` is the target this arm is compiled by, named rather than left to
@@ -11953,7 +11952,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.startup_plan_legality"
 class = "V0"
-description = "PLANNING REFUSES A STATE THAT SKIPPED THE PARSER, AND CONTACTS NOTHING: a linearizable tier without an endpoint, a shared Redis tier without a URL and a shared tier without a durability tier are each refused for what they are missing, a request with no durable replay configuration fails closed, the withdrawn alias is refused rather than reinterpreted, each declaration is made by its own owner — continuation on its own locator and not the replay tier, admission independently of replay, only the Redis tier declaring a need, only the networked push state planning an epoch source — with the control-runtime requirement being the OR of every contributor, the build refusal is stated ONCE and names both consequences, the assertion arm is refused at the boundary and the both-set arm agrees with the gate on an unreachable input, a deployable configuration reads the verified peer certificate, and PLANNING A NETWORKED TIER OPENS NO SOCKET. Says nothing about what a plan that survives CARRIES, which is `proxy.startup_plan_provenance`'s."
+description = "PLANNING REFUSES A STATE THAT SKIPPED THE PARSER, AND CONTACTS NOTHING: a linearizable tier without an endpoint, a shared Redis tier without a URL and a shared tier without a durability tier are each refused for what they are missing, a request with no durable replay configuration fails closed, the withdrawn alias is refused rather than reinterpreted, each selection is made by its own owner — continuation on its own locator and not the replay tier, admission independently of replay, only the Redis tier selecting a networked store, only the networked push state planning an epoch source — the build refusal is stated ONCE and names both consequences, the assertion arm is refused at the boundary and the both-set arm agrees with the gate on an unreachable input, a deployable configuration reads the verified peer certificate, and PLANNING A NETWORKED TIER OPENS NO SOCKET. Says nothing about what a plan that survives CARRIES, which is `proxy.startup_plan_provenance`'s."
 paths = ["mcp-re-proxy/src/startup_plan.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -11969,17 +11968,16 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::a_request_with_no_durable_replay_configuration_fails_closed",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::a_shared_redis_tier_that_skipped_the_parser_is_refused_without_a_url",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::a_shared_tier_that_skipped_the_parser_is_refused_without_a_durability_tier",
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::admission_declares_independently_of_replay",
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::continuation_declares_on_its_own_locator_not_the_replay_tier",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::admission_selects_independently_of_replay",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::continuation_selects_on_its_own_locator_not_the_replay_tier",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::linearizable_plans_etcd_at_the_declared_endpoint",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::only_the_networked_push_state_plans_an_epoch_source",
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::only_the_redis_replay_tier_declares_a_need",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::only_the_redis_replay_tier_selects_a_networked_store",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::planning_reaches_a_networked_tier_without_contacting_anything",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_assertion_arm_is_refused_at_the_boundary",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_both_set_arm_agrees_with_the_gate_on_an_unreachable_input",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_build_refusal_is_stated_once_and_names_both_consequences",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_old_alias_is_refused_rather_than_reinterpreted",
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_requirement_is_the_or_of_every_contributor",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::a_networked_locator_is_readable_only_through_the_build_verdict",
 ]
 

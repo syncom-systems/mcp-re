@@ -193,14 +193,6 @@ impl ReplayPlan {
     pub fn tier(&self) -> &ReplayDurabilityTier {
         &self.tier
     }
-
-    /// Whether establishing THIS tier needs the shared control runtime.
-    ///
-    /// Only the Redis tier: the etcd store drives its own requests. One contributor to the
-    /// aggregate — never the decision itself.
-    pub fn needs_control_runtime(&self) -> bool {
-        cfg!(feature = "redis_replay") && matches!(self.backend, PlannedBackend::Redis { .. })
-    }
 }
 
 /// Which state the request most nearly names, before its locators are known to be present.

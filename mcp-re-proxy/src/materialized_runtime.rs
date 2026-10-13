@@ -421,9 +421,7 @@ mod tests {
 
     /// A control runtime, the substrate phase 3 reclaims.
     fn substrate() -> ControlRuntime {
-        ControlRuntime::start(crate::control_runtime::ControlRuntimeRequirement::Required)
-            .expect("a control runtime builds")
-            .expect("Required yields one")
+        ControlRuntime::start().expect("a control runtime builds")
     }
 
     /// A fully populated runtime whose three planes are real, each running `body`.
@@ -743,10 +741,7 @@ mod tests {
         let started = Arc::new(AtomicBool::new(false));
         let still_running = Arc::new(AtomicBool::new(false));
 
-        let control =
-            ControlRuntime::start(crate::control_runtime::ControlRuntimeRequirement::Required)
-                .expect("a control runtime builds")
-                .expect("Required yields one");
+        let control = ControlRuntime::start().expect("a control runtime builds");
         let handle = control.handle();
 
         let started_in_task = Arc::clone(&started);
@@ -800,10 +795,7 @@ mod tests {
     /// between the process and `retire()`.
     #[test]
     fn the_transition_phase_leaves_the_substrate_intact() {
-        let control =
-            ControlRuntime::start(crate::control_runtime::ControlRuntimeRequirement::Required)
-                .expect("a control runtime builds")
-                .expect("Required yields one");
+        let control = ControlRuntime::start().expect("a control runtime builds");
         let mut runtime = MaterializedRuntime {
             // The planes need TLS material, a key source and a trust store to build, and
             // none of that bears on WHICH FIELDS each phase takes. `None` here costs the
