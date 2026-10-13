@@ -40,9 +40,13 @@ from __future__ import annotations
 import re
 import sys
 import tempfile
+from bisect import bisect_right
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools" / "verification"))
+
+from _rust_source import SKIP_DIRS, crate_sources, production_view  # noqa: E402
 
 # The one module allowed to start a thread: it is the thing that owns them.
 OWNER_MODULE = "src/managed_worker/mod.rs"
@@ -110,108 +114,6 @@ ALLOWED = {
 # production sites already used it, and a gate that watched only `thread::spawn` would
 # have reported a clean tree over them.
 SPAWN = re.compile(r"\bthread\s*::\s*(?:spawn\b|Builder\b)")
-CFG_TEST = re.compile(r"#!?\[\s*cfg\s*\(\s*test\s*\)\s*\]")
-
-
-def code_mask(src: str) -> list[bool]:
-    """True at every offset that is real code — not a comment, string or char literal.
-
-    Written out rather than approximated with a line-based heuristic because the whole
-    point is to find a `thread::spawn` someone did not mean to leave in; a scanner that
-    can be fooled by the word appearing in a doc comment would be trained away rather
-    than trusted.
-    """
-    mask = [False] * len(src)
-    i, n = 0, len(src)
-    while i < n:
-        c = src[i]
-        if c == "/" and i + 1 < n and src[i + 1] == "/":
-            while i < n and src[i] != "\n":
-                i += 1
-            continue
-        if c == "/" and i + 1 < n and src[i + 1] == "*":
-            depth, i = 1, i + 2
-            while i < n and depth:
-                if src.startswith("/*", i):
-                    depth, i = depth + 1, i + 2
-                elif src.startswith("*/", i):
-                    depth, i = depth - 1, i + 2
-                else:
-                    i += 1
-            continue
-        if c == "r" and i + 1 < n and src[i + 1] in '#"':
-            j = i + 1
-            hashes = 0
-            while j < n and src[j] == "#":
-                hashes, j = hashes + 1, j + 1
-            if j < n and src[j] == '"':
-                close = '"' + "#" * hashes
-                end = src.find(close, j + 1)
-                i = n if end < 0 else end + len(close)
-                continue
-        if c == '"':
-            i += 1
-            while i < n:
-                if src[i] == "\\":
-                    i += 2
-                    continue
-                if src[i] == '"':
-                    i += 1
-                    break
-                i += 1
-            continue
-        if c == "'":
-            # A lifetime (`'a`) is code; a char literal is not. Distinguished by the
-            # closing quote appearing within a couple of characters.
-            j = i + 1
-            if j < n and src[j] == "\\":
-                j += 2
-                while j < n and src[j] != "'":
-                    j += 1
-                i = j + 1
-                continue
-            if j + 1 < n and src[j + 1] == "'":
-                i = j + 2
-                continue
-        mask[i] = True
-        i += 1
-    return mask
-
-
-def test_regions(src: str, mask: list[bool]) -> list[tuple[int, int]]:
-    """Offset ranges covered by a `#[cfg(test)]` item, by brace matching."""
-    regions: list[tuple[int, int]] = []
-    for m in CFG_TEST.finditer(src):
-        if not mask[m.start()]:
-            continue
-        i, n = m.end(), len(src)
-        while i < n and not (src[i] == "{" and mask[i]):
-            # A `#![cfg(test)]` at file scope, or an attribute on a non-block item;
-            # neither opens a region this way.
-            if src[i] == ";" and mask[i]:
-                i = -1
-                break
-            i += 1
-        if i < 0 or i >= n:
-            continue
-        depth, j = 0, i
-        while j < n:
-            if mask[j]:
-                if src[j] == "{":
-                    depth += 1
-                elif src[j] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        break
-            j += 1
-        regions.append((m.start(), j))
-    return regions
-
-
-#: Directories that hold Rust which is not this repository's production library code.
-#: `node_modules` carries vendored fixture crates from an npm dependency, and build
-#: outputs are copies of sources already scanned.
-PRUNED = {"target", "node_modules", ".git", "bazel-out"}
 
 
 def crates(root: Path) -> list[Path]:
@@ -227,32 +129,28 @@ def crates(root: Path) -> list[Path]:
         if (current / "Cargo.toml").is_file() and (current / "src").is_dir():
             found.append(current)
         for child in current.iterdir():
-            if child.is_dir() and not child.is_symlink() and child.name not in PRUNED:
+            if child.is_dir() and not child.is_symlink() and child.name not in SKIP_DIRS:
                 stack.append(child)
     return sorted(found)
 
 
 def production_spawns(src: str) -> list[int]:
-    """The 1-based line of every `thread::spawn`/`Builder` in real, non-test code."""
-    if not SPAWN.search(src):
-        return []
-    mask = code_mask(src)
-    regions = test_regions(src, mask)
-    lines = []
-    for m in SPAWN.finditer(src):
-        off = m.start()
-        if not mask[off]:
-            continue
-        if any(a <= off <= b for a, b in regions):
-            continue
-        lines.append(src.count("\n", 0, off) + 1)
-    return lines
+    """The 1-based line of every `thread::spawn`/`Builder` in real, non-test code.
+
+    Searched in the owner's code-only view, so a `thread::spawn` in a doc comment, a
+    string literal or a test region is not a finding, and the line reported is the one
+    the spelling sits on in the file.
+    """
+    view = production_view(src)
+    code = view.code()
+    starts = [0] + [i + 1 for i, ch in enumerate(code) if ch == "\n"]
+    return [view.lines[bisect_right(starts, m.start()) - 1][0] for m in SPAWN.finditer(code)]
 
 
 def check(root: Path) -> list[str]:
     problems: list[str] = []
     for crate in crates(root):
-        for src_path in sorted((crate / "src").rglob("*.rs")):
+        for src_path in crate_sources(crate / "src"):
             rel_in_crate = src_path.relative_to(crate).as_posix()
             rel = src_path.relative_to(root).as_posix()
             if rel_in_crate == OWNER_MODULE:

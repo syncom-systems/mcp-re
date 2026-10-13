@@ -113,8 +113,8 @@ sys.path.insert(0, str(REPO / "tools" / "verification"))
 
 # Module resolution is IMPORTED, not re-written: `_module_tree` is the one owner of which
 # file a `mod` names, and a second copy would be a second opinion about what a module is.
-from _module_tree import children, code_only, is_mod_rs_name  # noqa: E402
-from module_size_gate import production_source  # noqa: E402
+from _module_tree import children, is_mod_rs_name  # noqa: E402
+from _rust_source import production_view  # noqa: E402
 
 #: A Rust item declared at the start of a line, after any visibility and any of the
 #: modifiers that may precede one. `use` and `mod` are absent on purpose: a file whose whole
@@ -234,12 +234,12 @@ def declares_items(root: Path, rel: str) -> bool:
     """Whether `rel` declares an item of its own outside a test region.
 
     False for a namespace — a file whose whole body is `mod` and `pub use`. The test region
-    is excluded through `module_size_gate.production_source` so that the two gates cannot
-    disagree about where one ends, and comments and string literals are blanked so that an
-    item named in prose is not an item.
+    is excluded through `_rust_source.production_view`, the one owner of where a region
+    ends, and comments and string literals are blanked so that an item named in prose is
+    not an item.
     """
     text = (root / rel).read_text(errors="replace")
-    return bool(ITEM.search(code_only("\n".join(production_source(text)))))
+    return bool(ITEM.search(production_view(text).code()))
 
 
 # --------------------------------------------------------------------------------------

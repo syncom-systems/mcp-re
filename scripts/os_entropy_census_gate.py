@@ -14,10 +14,10 @@ ASM-0068 states how many acquisition sites the boundary names and requires owner
 any new one. That count was kept by hand, and a fifth site went into the tree with the
 assumption still saying four.
 
-"Production" is the definition `scripts/module_size_gate.py` owns: no `tests/`, `benches/`,
-`examples/` or `build.rs`, and no line inside a `#[cfg(test)]`-family region. "In code" is
-the definition `scripts/bazel_srcs_gate.py` owns: comments, string literals and character
-literals are blanked first, so a doc comment naming `getrandom` is not a site.
+"Production" and "in code" are the definitions `tools/verification/_rust_source.py` owns:
+no `tests/`, `benches/`, `examples/` or `build.rs`, no line inside a `#[cfg(test)]`-family
+region, and comments, string literals and character literals blanked first, so a doc comment
+naming `getrandom` is not a site.
 
 WHAT IT DOES NOT PROVE: anything about the quality of the bytes, or about randomness that
 reaches the code indirectly — through `SystemNonceSource` or any other wrapper, or through
@@ -39,11 +39,8 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "tools" / "verification"))
 
-from _module_tree import code_only  # noqa: E402
-from module_size_gate import production_source, rust_sources  # noqa: E402
-
-sys.path.insert(0, str(REPO / "tools" / "verification"))
 import _registries  # noqa: E402
+from _rust_source import crate_sources, production_view  # noqa: E402
 
 BOUNDARIES = _registries.relative("trust-boundaries")
 BOUNDARY_ID = "boundary.os_entropy"
@@ -53,9 +50,8 @@ ACQUISITION = re.compile(r"\bgetrandom\b")
 def acquisition_sites(root: Path) -> set[str]:
     """Every production Rust file under `root` that names `getrandom` in code."""
     sites: set[str] = set()
-    for path in rust_sources(root):
-        production = "\n".join(production_source(path.read_text(encoding="utf-8")))
-        if ACQUISITION.search(code_only(production)):
+    for path in crate_sources(root):
+        if ACQUISITION.search(production_view(path).code()):
             sites.add(path.relative_to(root).as_posix())
     return sites
 

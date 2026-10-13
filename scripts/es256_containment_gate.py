@@ -41,12 +41,12 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-sys.path.insert(0, str(REPO / "scripts"))
+sys.path.insert(0, str(REPO / "tools" / "verification"))
 
-# The test-region rule is IMPORTED, not re-written. `module_size_gate.TEST_ATTR` only OPENS
-# a region; where one ENDS is `production_source`'s answer, and a second copy of that scan
-# would be a second opinion about which lines are production.
-from module_size_gate import production_source  # noqa: E402
+# The test-region rule is IMPORTED, not re-written: `_rust_source` owns where a region opens
+# and ends, and a second copy of that scan would be a second opinion about which lines are
+# production.
+from _rust_source import production_view  # noqa: E402
 
 # The one crate permitted to depend on p256, and the modules permitted to use it.
 #
@@ -162,7 +162,7 @@ def check_registry(root: Path) -> list[str]:
             "measures has moved or gone, so the gate is measuring nothing."
         ]
 
-    prod = "\n".join(production_source(path.read_text(encoding="utf-8")))
+    prod = production_view(path).text()
     problems: list[str] = []
 
     body = _enum_body(prod)
