@@ -319,6 +319,23 @@ def selftest() -> int:
         for key in ("noref", "gone", "norecord", "status", "field", "missing"):
             case(f"schema refuses `{key}`", key in flagged, found)
 
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        reg = Register("config/debt.toml", schema, root)
+        git(root, "init", "-q")
+        (root / "config").mkdir()
+        reg.path.write_text(body)
+        git(root, "add", "-A")
+        git(root, "commit", "-q", "-m", "first")
+        blob = subprocess.run(
+            ["git", "rev-parse", "HEAD:config/debt.toml"], cwd=root, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        (root / ".git" / "objects" / blob[:2] / blob[2:]).unlink()
+        lost = reg.at("HEAD")
+        case("a register the revision names but whose blob is unreadable is Unreadable, not Absent",
+             isinstance(lost, Unreadable), lost)
+
     case(
         "transitions pair only the entries both registers hold",
         transitions({"a": {"s": 1}, "b": {"s": 2}}, {"b": {"s": 3}, "c": {"s": 4}})
