@@ -39,7 +39,8 @@
 //! lifecycle relationship nobody wrote down, which is the class of defect this refactor
 //! exists to remove. Do not leave that to field-declaration order.
 
-use std::sync::OnceLock;
+use std::sync::Mutex;
+use std::sync::PoisonError;
 
 /// The shared control runtime, started by the first networked arm that asks for it.
 ///
@@ -47,14 +48,15 @@ use std::sync::OnceLock;
 /// started part-way through is owned before the step that started it returns. A deployment
 /// whose owners selected no networked store never asks, and starts no threads.
 pub struct ControlRuntimeProvision {
-    runtime: OnceLock<ControlRuntime>,
+    /// Locked across the build, so concurrent first requests start one runtime between them.
+    runtime: Mutex<Option<ControlRuntime>>,
 }
 
 impl ControlRuntimeProvision {
     /// A provision nothing has asked yet.
     pub fn idle() -> ControlRuntimeProvision {
         ControlRuntimeProvision {
-            runtime: OnceLock::new(),
+            runtime: Mutex::new(None),
         }
     }
 
@@ -64,16 +66,24 @@ impl ControlRuntimeProvision {
     /// runtime failing to build, which is a fact about the host.
     #[cfg_attr(not(feature = "redis_replay"), allow(dead_code))]
     pub fn handle(&self) -> Result<tokio::runtime::Handle, String> {
-        if let Some(runtime) = self.runtime.get() {
+        // A poisoned lock means another request panicked; the slot is still `None` or a
+        // fully built runtime, because the build completes before it is stored.
+        let mut slot = self.runtime.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(runtime) = slot.as_ref() {
             return Ok(runtime.handle());
         }
         let started = ControlRuntime::start()?;
-        Ok(self.runtime.get_or_init(|| started).handle())
+        let handle = started.handle();
+        *slot = Some(started);
+        Ok(handle)
     }
 
     /// The runtime, if any arm asked for one — taken for reclamation in teardown order.
     pub fn take(&mut self) -> Option<ControlRuntime> {
-        self.runtime.take()
+        self.runtime
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 }
 
@@ -142,6 +152,33 @@ mod tests {
         );
         assert_eq!(replay.id(), continuation.id());
         assert_eq!(continuation.id(), admission.id());
+    }
+
+    /// Concurrent first requests share one runtime, and the provision owns it.
+    #[test]
+    fn concurrent_first_requests_share_the_one_runtime_the_provision_owns() {
+        let mut provision = ControlRuntimeProvision::idle();
+        let barrier = std::sync::Barrier::new(4);
+        let ids: Vec<_> = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..4)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        provision.handle().expect("build").id()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .map(|w| w.join().expect("worker"))
+                .collect()
+        });
+        let owned = provision
+            .take()
+            .expect("a runtime was started")
+            .handle()
+            .id();
+        assert!(ids.iter().all(|id| *id == owned), "{ids:?} vs {owned:?}");
     }
 
     /// A handle conveys access, not ownership.
