@@ -57,12 +57,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _seams import (  # noqa: E402
-    MECHANISMS,
-    PRODUCTION_MECHANISMS,
-    code_of,
-    declared_items,
-    production_lines,
-    site_key,
+    is_registered,
+    live_sites,
+    proved_symbol_defects,
+    registered_by_unit,
+    scan,
+    stale_sites,
+    unit_files,
 )
 from _manifest import (  # noqa: E402
     REPO_ROOT,
@@ -71,10 +72,7 @@ from _manifest import (  # noqa: E402
     load_toolchains,
     load_verification,
 )
-from _premise import has_come_true, is_live  # noqa: E402
-from _registries import stale_sites  # noqa: E402
-
-VERIFICATION_DIR = REPO_ROOT / "verification"
+from _premise import stale_obligations  # noqa: E402
 
 #: Tokens that mean "there is Verus specification text here". A production file carrying
 #: one of these is a proof surface no matter where it lives, and must belong to a
@@ -84,336 +82,10 @@ PROOF_TEXT = re.compile(r"\bverus_spec\b|\bverus_verify\b|\bverus!\s*\{|\bassume
 #: Directories whose Rust is never production source.
 NON_PRODUCTION = ("verification/", "target/")
 
-#: Mechanisms that, applied to the very function a unit claims to have proved, make the
-#: claimed theorem vacuous or delete it. No assumption registers these at a proved symbol,
-#: because there is no honest justification for one: the unit would be advertising a
-#: theorem that the prover was told not to check.
-VACUITY_AT_PROVED_SYMBOL = {
-    "external_body": r"\bexternal_body\b",
-    "external": r"verifier::external\b(?!_)|verus_verify\s*\(\s*external\s*\)",
-    "external_fn_specification": r"\bexternal_fn_specification\b",
-    "assume_specification": r"\bassume_specification\b",
-    "opaque": r"verifier::opaque\b",
-}
 
-#: What makes an attribute block a SPECIFICATION rather than decoration.
-SPECIFICATION_TEXT = re.compile(r"\bensures\b|\brequires\b")
-
-def _definition(name: str) -> re.Pattern[str]:
-    """A Rust function definition, as it appears at the head of the item."""
-    return re.compile(
-        r"^\s*(?:pub(?:\([^)]*\))?\s+)?"
-        r"(?:default\s+|const\s+|async\s+|unsafe\s+|extern\s+\"[^\"]*\"\s+)*"
-        rf"fn\s+{re.escape(name)}\s*[(<]"
-    )
-
-
-SCANNED_SUFFIXES = {".rs", ".lean", ".v"}
-
-#: Generated Lean is machine-owned and may legitimately contain extraction artifacts. It is
-#: excluded from the token scan and covered instead by the generated-drift gate: a
-#: hand-edit there is caught by regeneration mismatch, which is the stronger control.
-#:
-#: Reproducers are standalone crates outside the Cargo workspace, in no unit's paths and in
-#: no lane's input. Nothing there can make any unit's proof pass, so a token there is not an
-#: escape hatch — it is a bug report about the prover.
-EXCLUDED = ("verification/lean/generated/", "verification/reproducers/")
-
-
-def registered_by_unit() -> dict[str, set[tuple[str, str]]]:
-    """`(mechanism kind, SITE)` pairs the registry accounts for, per unit in `scope`.
-
-    Scope is what makes registration mean something, and the SITE is what makes it mean one
-    thing. `verus:external_body` trusted inside `core.time_rfc3339` is a statement about
-    that unit's trusted computing base and no other; collapsing the registry to a set of
-    names would hand every unit in the repository whatever any one assumption happened to
-    need. Kind-level registration inside a unit had the same defect one level down —
-    R9-C037 / R9-C067 / R9-C068: `scope` names whole crates, so one entry licensed every
-    present and future site of that mechanism in every file those units declare. The
-    registry recorded *"this unit trusts uninterpreted spec functions"*, which is not a fact
-    about any seam.
-
-    An assumption with NO `sites` therefore registers NOTHING. That is the fail-closed
-    direction and the only one available: the alternative — absent means all — is the rule
-    being replaced.
-    """
-    doc = load_assumptions()
-    out: dict[str, set[tuple[str, str]]] = {}
-    for entry in doc.get("assumption", []):
-        mechanism = entry["tool_specific_mechanism"].split(":", 1)[-1]
-        sites = [str(site) for site in entry.get("sites", [])]
-        for target in entry.get("scope", []):
-            target = str(target)
-            if target.startswith("unit://"):
-                unit_id = target.removeprefix("unit://")
-                out.setdefault(unit_id, set()).update((mechanism, site) for site in sites)
-    return out
-
-
-def live_sites(hits=None) -> set[str]:
-    """Every seam site the tree declares: each escape-hatch hit's item, and each declared
-    item a `none:` premise registers."""
-    found = scan() if hits is None else hits
-    return {hit[5] for hit in found if hit[5]} | declared_seam_sites()
-
-
-def declared_seam_sites() -> set[str]:
-    """The registered sites of `none:` assumptions whose item is declared in the tree.
-
-    A `none:` mechanism (`trusted-seam`, `trusted-primitive`) is a premise no scanner
-    pattern can see, so its site is never among the escape-hatch hits and cannot be
-    confirmed live by one. It is confirmed the only way it can be: the file exists and
-    declares the item the key names. A renamed or moved item stops resolving and is
-    reported as stale, exactly as a Verus site is. The key is the one `site_key` derives,
-    so an enum variant (not an item) is named by its enum.
-
-    WHAT THIS ESTABLISHES, AND NOTHING MORE: that a file at the registered path declares an
-    item of the registered name. It does not establish that the premise holds (a
-    `trusted-seam` is by definition not checked by any code), nor that the item still does
-    what the premise's justification says, nor that a renamed successor is the same seam. A
-    passing site is a location, never a proof; the premise stays `assumed` or
-    `external-boundary` in the registry.
-    """
-    declared: dict[str, set[str]] = {}
-    resolved: set[str] = set()
-    for entry in load_assumptions().get("assumption", []):
-        if not entry["tool_specific_mechanism"].startswith("none:"):
-            continue
-        for site in map(str, entry.get("sites", [])):
-            path, _, item = site.partition("#")
-            if path not in declared:
-                try:
-                    text = (REPO_ROOT / path).read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError):
-                    text = ""
-                declared[path] = {name for _, name in declared_items(text.splitlines())}
-            if item in declared[path]:
-                resolved.add(site)
-    return resolved
-
-
-def is_registered(
-    mechanism: str,
-    site: str | None,
-    owners: frozenset[str] | set[str],
-    registered: dict[str, set[tuple[str, str]]],
-) -> bool:
-    """Is THIS SEAM registered by an assumption scoped to a unit that declares its file?
-
-    Three conjuncts, and each one is a way registration could say more than it means: the
-    MECHANISM, because trusting an uninterpreted spec function is not trusting an
-    `external_body`; the UNIT, because a trusted computing base belongs to the unit whose
-    proofs rest on it; and the SITE, because a seam is a place a proof stops proving, and
-    the registry is a statement about places.
-
-    A file no unit declares has no owning trusted computing base, so nothing can register a
-    mechanism there — which is why the empty owner set answers no rather than yes. A seam
-    whose item cannot be named (`site is None`) is likewise unregistrable: it has no
-    identity to register.
-    """
-    if site is None:
-        return False
-    return any((mechanism, site) in registered.get(unit_id, set()) for unit_id in owners)
-
-
-def unit_files() -> dict[Path, set[str]]:
-    """Every existing file a `verification.toml` unit names -> the units that name it."""
-    doc = load_verification()
-    files: dict[Path, set[str]] = {}
-    for unit in doc.get("unit", []):
-        for declared in unit["paths"]:
-            for path in REPO_ROOT.glob(declared):
-                if path.is_file():
-                    files.setdefault(path, set()).add(unit["id"])
-    return files
-
-
-def declared_unit_files() -> set[Path]:
-    """Every existing file a `verification.toml` unit names, expanded from its globs."""
-    return set(unit_files())
-
-
-def scan_paths() -> list[tuple[Path, bool, frozenset[str]]]:
-    """(file, is_production, owning units) for everything in scope, in a stable order."""
-    declared = unit_files()
-    scoped: dict[Path, tuple[bool, frozenset[str]]] = {}
-    if VERIFICATION_DIR.exists():
-        for path in VERIFICATION_DIR.rglob("*"):
-            if path.is_file() and path.suffix in SCANNED_SUFFIXES:
-                scoped[path] = (False, frozenset(declared.get(path, ())))
-    for path, owners in declared.items():
-        if path.suffix in SCANNED_SUFFIXES:
-            scoped.setdefault(path, (True, frozenset(owners)))
-    out = []
-    for path in sorted(scoped):
-        rel = path.relative_to(REPO_ROOT).as_posix()
-        if any(rel.startswith(prefix) for prefix in EXCLUDED):
-            continue
-        is_production, owners = scoped[path]
-        out.append((path, is_production, owners))
-    return out
-
-
-#: A test region opens here — ADR-MCPRE-061 §5.1, the same definition
-#: `scripts/module_size_gate.py` reads.
-def scan() -> list[tuple[Path, int, str, str, frozenset[str], str | None]]:
-    hits: list[tuple[Path, int, str, str, frozenset[str], str | None]] = []
-    for path, is_production, owners in scan_paths():
-        mechanisms = PRODUCTION_MECHANISMS if is_production else MECHANISMS
-        text = path.read_text(encoding="utf-8")
-        lines = text.splitlines()
-        rel = path.relative_to(REPO_ROOT).as_posix()
-        # One declaration pass per file, shared by every seam in it: the qualifier of an item
-        # is decided by the blocks open above it, and re-deriving that per seam is quadratic
-        # in exactly the specification files that carry the most seams.
-        items = declared_items(lines)
-        numbered = (
-            production_lines(text)
-            if is_production
-            else list(enumerate(lines, start=1))
-        )
-        for lineno, line in numbered:
-            # Comments are not code. Prose mentioning a mechanism counted as an escape-hatch
-            # site, and kind-level registration hid it: the kind was registered, so a comment
-            # and a real seam both read `[registered]`. One rule, in `_seams`, for both the
-            # census here and the boundary rule that asks which seams a proof trusts.
-            code = code_of(line)
-            for name, pattern in mechanisms.items():
-                if re.search(pattern, code):
-                    hits.append(
-                        (
-                            path.relative_to(REPO_ROOT),
-                            lineno,
-                            name,
-                            line.strip(),
-                            owners,
-                            site_key(rel, lines, lineno, items),
-                        )
-                    )
-    return hits
-
-
-def _bracket_balance(line: str) -> int:
-    return sum(line.count(c) for c in "([{") - sum(line.count(c) for c in ")]}")
-
-
-#: A line comment's tail, and a whole-line block comment. Removed before an attribute block
-#: is searched — see `_definition_sites`.
-_COMMENT_TAIL = re.compile(r"//.*$")
-
-
-def _definition_sites(lines: list[str], pattern: re.Pattern[str]) -> list[tuple[int, str]]:
-    """`(line index, ATTRIBUTE text)` for every definition `pattern` matches.
-
-    Read forwards rather than backwards from the item. A Verus specification is a
-    multi-line `#[cfg_attr(...)]` whose body is arbitrary expression text, so no
-    line-shaped heuristic recognises its middle; accumulating the block from its opening
-    `#[` until the brackets balance does.
-
-    COMMENTS ARE NOT PART OF THE BLOCK, and that is the whole point of this function
-    returning attribute text rather than everything above the item. They used to be
-    accumulated, so `SPECIFICATION_TEXT` — the ONLY control for a deleted specification —
-    matched the words `requires` or `ensures` in the doc comment above the function. A
-    specification could therefore be deleted while the prose describing it stayed, and the
-    gate would report the theorem present. Doc comments say what a function is supposed to
-    do; the attribute is what makes the prover check it, and only the second is evidence.
-    A comment cannot supply an escape-hatch mechanism either, so removing them fixes a
-    false positive in the same walk.
-
-    Comment lines still do not RESET the block: an attribute separated from its item by a
-    doc comment is still that item's attribute.
-    """
-    sites: list[tuple[int, str]] = []
-    block: list[str] = []
-    depth = 0
-    for index, line in enumerate(lines):
-        if depth > 0:
-            # Inside a multi-line attribute. A trailing `//` comment here is still prose,
-            # so it is stripped before the text is kept — but the brackets on the line are
-            # counted from the whole line, because a comment cannot close an attribute.
-            block.append(_COMMENT_TAIL.sub("", line))
-            depth += _bracket_balance(line)
-            continue
-        stripped = line.strip()
-        if stripped.startswith("#["):
-            block.append(_COMMENT_TAIL.sub("", line))
-            depth = max(_bracket_balance(line), 0)
-            continue
-        if not stripped or stripped.startswith(("//", "/*", "*")):
-            continue
-        if pattern.match(line):
-            sites.append((index, "\n".join(block)))
-        block = []
-    return sites
-
-
-def proved_symbol_defects() -> list[str]:
-    """Claimed theorems that no lane can distinguish from a deleted one.
-
-    Three ways a unit advertises a theorem it does not have, none of which the prover's
-    report shows: the function is not in the unit's declared paths at all, it carries an
-    escape hatch that tells the prover not to check it, or its specification has simply
-    been removed while the function stayed.
-    """
-    doc = load_verification()
-    defects: list[str] = []
-    # Expanded ONCE. `unit_files()` reloads verification.toml and re-globs every declared
-    # path in the repository, so calling it inside the comprehension made this function
-    # quadratic in the manifest: 6 units x 381 declared .rs files = 2292 full expansions,
-    # measured at 264s for a function that decides nothing about any of them. Deliberately
-    # a local, not a module-level cache -- these self-tests substitute manifests on purpose,
-    # and a cache that outlived one call would let a test read the previous test's world.
-    owners_by_file = unit_files()
-    ordered_files = sorted(owners_by_file)
-    for unit in doc.get("unit", []):
-        symbols = unit.get("proved_symbols", [])
-        if not symbols:
-            continue
-        sources = [
-            path
-            for path in ordered_files
-            if path.suffix == ".rs" and unit["id"] in owners_by_file[path]
-        ]
-        for symbol in symbols:
-            name = symbol.rsplit("::", 1)[-1]
-            pattern = _definition(name)
-            sites = 0
-            for path in sources:
-                lines = path.read_text(encoding="utf-8").splitlines()
-                rel = path.relative_to(REPO_ROOT).as_posix()
-                for index, block in _definition_sites(lines, pattern):
-                    sites += 1
-                    for mechanism, mechanism_pattern in sorted(
-                        VACUITY_AT_PROVED_SYMBOL.items()
-                    ):
-                        if re.search(mechanism_pattern, block):
-                            defects.append(
-                                f"{unit['id']}: proved symbol {symbol} is annotated "
-                                f"`{mechanism}` at {rel}:{index + 1}. The prover is told "
-                                f"not to check the function the unit claims to have "
-                                f"proved, so the theorem is vacuous while the symbol "
-                                f"still appears verified."
-                            )
-                    if not SPECIFICATION_TEXT.search(block):
-                        defects.append(
-                            f"{unit['id']}: proved symbol {symbol} at {rel}:{index + 1} "
-                            f"carries no `requires`/`ensures`. The specification is a "
-                            f"detachable attribute: deleting it leaves the function, the "
-                            f"crate's verified count and the prover's symbol list "
-                            f"unchanged, so no lane sees the theorem go."
-                        )
-            if sites == 0:
-                defects.append(
-                    f"{unit['id']}: proved symbol {symbol} defines no function in the "
-                    f"unit's declared paths. A theorem the manifest advertises over source "
-                    f"the unit does not declare is invalidated by no change to it."
-                )
-    return defects
-
-
-def undeclared_proof_text() -> list[tuple[Path, int, str]]:
+def undeclared_proof_text(verification: dict) -> list[tuple[Path, int, str]]:
     """Verus specification text in production Rust that no unit declares."""
-    declared = declared_unit_files()
+    declared = set(unit_files(verification, REPO_ROOT))
     found: list[tuple[Path, int, str]] = []
     for path in sorted(REPO_ROOT.rglob("*.rs")):
         rel = path.relative_to(REPO_ROOT).as_posix()
@@ -427,38 +99,14 @@ def undeclared_proof_text() -> list[tuple[Path, int, str]]:
     return found
 
 
-def stale_obligations() -> list[str]:
-    """Review obligations whose OBSERVABLE discharging event has already happened — C4.
-
-    Not a pass, and not a silent discharge. The registry would be asserting debt the tree
-    says is paid, which is the same stale-record defect `_evidence.write_bundle` records for
-    the evidence bundle: a record that outlives the state it describes makes the tree look
-    measured when it is not.
-
-    Discharge is a registry EDIT, owner-reviewed like every other security-sensitive change.
-    This gate's job is not to notice a discharge; it is to make the debt impossible to stop
-    seeing. `owner-event` obligations are never reported here, because nothing observes them
-    — they are reported as OPEN, in the release view, against every root that reaches them.
-    """
-    assumptions = load_assumptions()
-    verification = load_verification()
-    toolchains = load_toolchains()
-    found = []
-    for entry in assumptions.get("assumption", []):
-        if not is_live(entry) or entry.get("premise_class") != "review-obligation":
-            continue
-        problem = has_come_true(entry, verification, toolchains)
-        if problem is not None:
-            found.append(problem)
-    return found
-
-
 def main() -> int:
     try:
-        registered = registered_by_unit()
-        stray = undeclared_proof_text()
-        vacuous = proved_symbol_defects()
-        stale_debt = stale_obligations()
+        assumptions = load_assumptions()
+        verification = load_verification()
+        registered = registered_by_unit(assumptions)
+        stray = undeclared_proof_text(verification)
+        vacuous = proved_symbol_defects(verification, REPO_ROOT)
+        stale_debt = stale_obligations(assumptions, verification, load_toolchains())
     except ManifestError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
@@ -507,14 +155,16 @@ def main() -> int:
     def covered(mechanism: str, site: str | None, owners: frozenset[str]) -> bool:
         return is_registered(mechanism, site, owners, registered)
 
-    hits = scan()
+    hits = scan(verification, REPO_ROOT)
     unregistered = [hit for hit in hits if not covered(hit[2], hit[5], hit[4])]
 
     # A registration naming no seam is the same defect read backwards. A site key is derived
     # from the ITEM, so it survives formatting — but not a rename or a deletion, and an entry
     # left pointing at a seam that no longer exists reads as trust the tree no longer needs.
     # Refusing it is what keeps the registry a measurement rather than a memory.
-    stale = stale_sites(load_assumptions().get("assumption", []), live_sites(hits))
+    stale = stale_sites(
+        assumptions.get("assumption", []), live_sites(verification, assumptions, REPO_ROOT, hits)
+    )
 
     if not hits:
         print("check-assumptions: PASS — no proof escape hatch in scope")

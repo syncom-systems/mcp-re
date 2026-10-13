@@ -15,7 +15,13 @@ alongside it. Only a seam distinguishes them, so the boundary rule needs the sam
 "seam" the escape-hatch gate uses — and a second copy of these patterns would be a second
 answer to what a seam is, diverging the first time one was updated.
 
-Stdlib only, and it imports nothing from this package: `_manifest` imports it.
+It also owns the seam INVENTORY the escape-hatch gate and the registry cross-check both
+read: `scan` and `live_sites` over the tree, `stale_sites` against the registry, the per-site
+registration rule, and the vacuity rule at a proved symbol. Each takes the loaded registry
+documents and the repository root it reads, so `check-assumptions` and `_registry_refs`
+call one implementation rather than one hand-loading the other.
+
+It imports nothing from this package but `_rust_source`: `_manifest` imports it.
 """
 
 from __future__ import annotations
@@ -111,7 +117,7 @@ def code_of(line: str) -> str:
     `semantic_boundary_crossings` would read a boundary file that merely DISCUSSES a
     mechanism as one the proof trusts.
 
-    `_definition_sites` in `check-assumptions` has stripped comments for exactly this reason
+    `definition_sites` below has stripped comments for exactly this reason
     since the deleted-specification repair — *"a comment cannot supply an escape-hatch
     mechanism either"*. That reasoning was applied to attribute blocks and not to the line
     scan; this is the same rule in the one place both consumers read.
@@ -296,3 +302,343 @@ def site_key(
     """`<path>#<qualified item>` — the stable identity of one trusted seam."""
     item = item_at(lines, lineno, items)
     return f"{relative_path}#{item}" if item else None
+
+
+# -------------------------------------------------------------------- the seam inventory
+
+SCANNED_SUFFIXES = {".rs", ".lean", ".v"}
+
+#: Generated Lean is machine-owned and may legitimately contain extraction artifacts. It is
+#: excluded from the token scan and covered instead by the generated-drift gate: a
+#: hand-edit there is caught by regeneration mismatch, which is the stronger control.
+#:
+#: Reproducers are standalone crates outside the Cargo workspace, in no unit's paths and in
+#: no lane's input. Nothing there can make any unit's proof pass, so a token there is not an
+#: escape hatch — it is a bug report about the prover.
+EXCLUDED = ("verification/lean/generated/", "verification/reproducers/")
+
+#: One escape-hatch hit: `(path relative to the root, line, mechanism, line text, owning
+#: units, site key)`.
+Hit = tuple[Path, int, str, str, frozenset[str], str | None]
+
+
+def unit_files(verification: dict, repo_root: Path) -> dict[Path, set[str]]:
+    """Every existing file a `verification.toml` unit names -> the units that name it."""
+    files: dict[Path, set[str]] = {}
+    for unit in verification.get("unit", []):
+        for declared in unit["paths"]:
+            for path in repo_root.glob(declared):
+                if path.is_file():
+                    files.setdefault(path, set()).add(unit["id"])
+    return files
+
+
+def scan_paths(verification: dict, repo_root: Path) -> list[tuple[Path, bool, frozenset[str]]]:
+    """(file, is_production, owning units) for everything in scope, in a stable order."""
+    declared = unit_files(verification, repo_root)
+    scoped: dict[Path, tuple[bool, frozenset[str]]] = {}
+    verification_dir = repo_root / "verification"
+    if verification_dir.exists():
+        for path in verification_dir.rglob("*"):
+            if path.is_file() and path.suffix in SCANNED_SUFFIXES:
+                scoped[path] = (False, frozenset(declared.get(path, ())))
+    for path, owners in declared.items():
+        if path.suffix in SCANNED_SUFFIXES:
+            scoped.setdefault(path, (True, frozenset(owners)))
+    out = []
+    for path in sorted(scoped):
+        rel = path.relative_to(repo_root).as_posix()
+        if any(rel.startswith(prefix) for prefix in EXCLUDED):
+            continue
+        is_production, owners = scoped[path]
+        out.append((path, is_production, owners))
+    return out
+
+
+def scan(verification: dict, repo_root: Path) -> list[Hit]:
+    """Every escape-hatch hit in scope: production Rust in its code forms, the rest in full."""
+    hits: list[Hit] = []
+    for path, is_production, owners in scan_paths(verification, repo_root):
+        mechanisms = PRODUCTION_MECHANISMS if is_production else MECHANISMS
+        text = path.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        rel = path.relative_to(repo_root).as_posix()
+        # One declaration pass per file, shared by every seam in it: the qualifier of an item
+        # is decided by the blocks open above it, and re-deriving that per seam is quadratic
+        # in exactly the specification files that carry the most seams.
+        items = declared_items(lines)
+        numbered = (
+            production_lines(text)
+            if is_production
+            else list(enumerate(lines, start=1))
+        )
+        for lineno, line in numbered:
+            # Comments are not code: one rule, `code_of`, for this census and for the
+            # boundary rule that asks which seams a proof trusts.
+            code = code_of(line)
+            for name, pattern in mechanisms.items():
+                if re.search(pattern, code):
+                    hits.append(
+                        (
+                            path.relative_to(repo_root),
+                            lineno,
+                            name,
+                            line.strip(),
+                            owners,
+                            site_key(rel, lines, lineno, items),
+                        )
+                    )
+    return hits
+
+
+def declared_seam_sites(assumptions: dict, repo_root: Path) -> set[str]:
+    """The registered sites of `none:` assumptions whose item is declared in the tree.
+
+    A `none:` mechanism (`trusted-seam`, `trusted-primitive`) is a premise no scanner
+    pattern can see, so its site is never among the escape-hatch hits and cannot be
+    confirmed live by one. It is confirmed the only way it can be: the file exists and
+    declares the item the key names. A renamed or moved item stops resolving and is
+    reported as stale, exactly as a Verus site is. The key is the one `site_key` derives,
+    so an enum variant (not an item) is named by its enum.
+
+    WHAT THIS ESTABLISHES, AND NOTHING MORE: that a file at the registered path declares an
+    item of the registered name. It does not establish that the premise holds (a
+    `trusted-seam` is by definition not checked by any code), nor that the item still does
+    what the premise's justification says, nor that a renamed successor is the same seam. A
+    passing site is a location, never a proof; the premise stays `assumed` or
+    `external-boundary` in the registry.
+    """
+    declared: dict[str, set[str]] = {}
+    resolved: set[str] = set()
+    for entry in assumptions.get("assumption", []):
+        if not entry["tool_specific_mechanism"].startswith("none:"):
+            continue
+        for site in map(str, entry.get("sites", [])):
+            path, _, item = site.partition("#")
+            if path not in declared:
+                try:
+                    text = (repo_root / path).read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    text = ""
+                declared[path] = {name for _, name in declared_items(text.splitlines())}
+            if item in declared[path]:
+                resolved.add(site)
+    return resolved
+
+
+def live_sites(
+    verification: dict, assumptions: dict, repo_root: Path, hits: list[Hit] | None = None
+) -> set[str]:
+    """Every seam site the tree declares: each escape-hatch hit's item, and each declared
+    item a `none:` premise registers. `hits` is a `scan` the caller already ran."""
+    found = scan(verification, repo_root) if hits is None else hits
+    return {hit[5] for hit in found if hit[5]} | declared_seam_sites(assumptions, repo_root)
+
+
+def stale_sites(assumptions: list[dict], live: set[str] | frozenset[str]) -> dict[str, list[str]]:
+    """Assumption id -> the registered sites that name no seam in `live`.
+
+    A site key is derived from the ITEM a seam sits on, so it survives formatting but not a
+    rename or a deletion. An entry left pointing at a seam that no longer exists reads as
+    trust the tree no longer needs.
+    """
+    out: dict[str, list[str]] = {}
+    for entry in assumptions:
+        gone = sorted({str(site) for site in entry.get("sites", [])} - set(live))
+        if gone:
+            out[entry["id"]] = gone
+    return out
+
+
+# -------------------------------------------------------------------- registration
+
+
+def registered_by_unit(assumptions: dict) -> dict[str, set[tuple[str, str]]]:
+    """`(mechanism kind, SITE)` pairs the registry accounts for, per unit in `scope`.
+
+    Scope is what makes registration mean something, and the SITE is what makes it mean one
+    thing. `verus:external_body` trusted inside `core.time_rfc3339` is a statement about
+    that unit's trusted computing base and no other; collapsing the registry to a set of
+    names would hand every unit in the repository whatever any one assumption happened to
+    need. Kind-level registration inside a unit had the same defect one level down —
+    R9-C037 / R9-C067 / R9-C068: `scope` names whole crates, so one entry licensed every
+    present and future site of that mechanism in every file those units declare. The
+    registry recorded *"this unit trusts uninterpreted spec functions"*, which is not a fact
+    about any seam.
+
+    An assumption with NO `sites` therefore registers NOTHING. That is the fail-closed
+    direction and the only one available: the alternative — absent means all — is the rule
+    being replaced.
+    """
+    out: dict[str, set[tuple[str, str]]] = {}
+    for entry in assumptions.get("assumption", []):
+        mechanism = entry["tool_specific_mechanism"].split(":", 1)[-1]
+        sites = [str(site) for site in entry.get("sites", [])]
+        for target in entry.get("scope", []):
+            target = str(target)
+            if target.startswith("unit://"):
+                unit_id = target.removeprefix("unit://")
+                out.setdefault(unit_id, set()).update((mechanism, site) for site in sites)
+    return out
+
+
+def is_registered(
+    mechanism: str,
+    site: str | None,
+    owners: frozenset[str] | set[str],
+    registered: dict[str, set[tuple[str, str]]],
+) -> bool:
+    """Is THIS SEAM registered by an assumption scoped to a unit that declares its file?
+
+    Three conjuncts, and each one is a way registration could say more than it means: the
+    MECHANISM, because trusting an uninterpreted spec function is not trusting an
+    `external_body`; the UNIT, because a trusted computing base belongs to the unit whose
+    proofs rest on it; and the SITE, because a seam is a place a proof stops proving, and
+    the registry is a statement about places.
+
+    A file no unit declares has no owning trusted computing base, so nothing can register a
+    mechanism there — which is why the empty owner set answers no rather than yes. A seam
+    whose item cannot be named (`site is None`) is likewise unregistrable: it has no
+    identity to register.
+    """
+    if site is None:
+        return False
+    return any((mechanism, site) in registered.get(unit_id, set()) for unit_id in owners)
+
+
+# -------------------------------------------------------------------- vacuity at a proved symbol
+
+#: Mechanisms that, applied to the very function a unit claims to have proved, make the
+#: claimed theorem vacuous or delete it. No assumption registers these at a proved symbol,
+#: because there is no honest justification for one: the unit would be advertising a
+#: theorem that the prover was told not to check.
+VACUITY_AT_PROVED_SYMBOL = {
+    "external_body": r"\bexternal_body\b",
+    "external": r"verifier::external\b(?!_)|verus_verify\s*\(\s*external\s*\)",
+    "external_fn_specification": r"\bexternal_fn_specification\b",
+    "assume_specification": r"\bassume_specification\b",
+    "opaque": r"verifier::opaque\b",
+}
+
+#: What makes an attribute block a SPECIFICATION rather than decoration.
+SPECIFICATION_TEXT = re.compile(r"\bensures\b|\brequires\b")
+
+
+def definition_pattern(name: str) -> re.Pattern[str]:
+    """A Rust function definition, as it appears at the head of the item."""
+    return re.compile(
+        r"^\s*(?:pub(?:\([^)]*\))?\s+)?"
+        r"(?:default\s+|const\s+|async\s+|unsafe\s+|extern\s+\"[^\"]*\"\s+)*"
+        rf"fn\s+{re.escape(name)}\s*[(<]"
+    )
+
+
+def _bracket_balance(line: str) -> int:
+    return sum(line.count(c) for c in "([{") - sum(line.count(c) for c in ")]}")
+
+
+def definition_sites(lines: list[str], pattern: re.Pattern[str]) -> list[tuple[int, str]]:
+    """`(line index, ATTRIBUTE text)` for every definition `pattern` matches.
+
+    Read forwards rather than backwards from the item. A Verus specification is a
+    multi-line `#[cfg_attr(...)]` whose body is arbitrary expression text, so no
+    line-shaped heuristic recognises its middle; accumulating the block from its opening
+    `#[` until the brackets balance does.
+
+    COMMENTS ARE NOT PART OF THE BLOCK, and that is the whole point of this function
+    returning attribute text rather than everything above the item. They used to be
+    accumulated, so `SPECIFICATION_TEXT` — the ONLY control for a deleted specification —
+    matched the words `requires` or `ensures` in the doc comment above the function. A
+    specification could therefore be deleted while the prose describing it stayed, and the
+    gate would report the theorem present. Doc comments say what a function is supposed to
+    do; the attribute is what makes the prover check it, and only the second is evidence.
+    A comment cannot supply an escape-hatch mechanism either, so removing them fixes a
+    false positive in the same walk.
+
+    Comment lines still do not RESET the block: an attribute separated from its item by a
+    doc comment is still that item's attribute.
+    """
+    sites: list[tuple[int, str]] = []
+    block: list[str] = []
+    depth = 0
+    for index, line in enumerate(lines):
+        if depth > 0:
+            # Inside a multi-line attribute. A trailing `//` comment here is still prose,
+            # so it is stripped before the text is kept — but the brackets on the line are
+            # counted from the whole line, because a comment cannot close an attribute.
+            block.append(_COMMENT_TAIL.sub("", line))
+            depth += _bracket_balance(line)
+            continue
+        stripped = line.strip()
+        if stripped.startswith("#["):
+            block.append(_COMMENT_TAIL.sub("", line))
+            depth = max(_bracket_balance(line), 0)
+            continue
+        if not stripped or stripped.startswith(("//", "/*", "*")):
+            continue
+        if pattern.match(line):
+            sites.append((index, "\n".join(block)))
+        block = []
+    return sites
+
+
+def proved_symbol_defects(verification: dict, repo_root: Path) -> list[str]:
+    """Claimed theorems that no lane can distinguish from a deleted one.
+
+    Three ways a unit advertises a theorem it does not have, none of which the prover's
+    report shows: the function is not in the unit's declared paths at all, it carries an
+    escape hatch that tells the prover not to check it, or its specification has simply
+    been removed while the function stayed.
+    """
+    defects: list[str] = []
+    # Expanded ONCE. `unit_files` re-globs every declared path in the repository, so calling
+    # it per unit made this function quadratic in the manifest: 6 units x 381 declared .rs
+    # files = 2292 full expansions, measured at 264s for a function that decides nothing
+    # about any of them. A local, not a module-level cache: callers pass the manifest, and a
+    # cache that outlived one call would answer for the previous manifest.
+    owners_by_file = unit_files(verification, repo_root)
+    ordered_files = sorted(owners_by_file)
+    for unit in verification.get("unit", []):
+        symbols = unit.get("proved_symbols", [])
+        if not symbols:
+            continue
+        sources = [
+            path
+            for path in ordered_files
+            if path.suffix == ".rs" and unit["id"] in owners_by_file[path]
+        ]
+        for symbol in symbols:
+            name = symbol.rsplit("::", 1)[-1]
+            pattern = definition_pattern(name)
+            sites = 0
+            for path in sources:
+                lines = path.read_text(encoding="utf-8").splitlines()
+                rel = path.relative_to(repo_root).as_posix()
+                for index, block in definition_sites(lines, pattern):
+                    sites += 1
+                    for mechanism, mechanism_pattern in sorted(
+                        VACUITY_AT_PROVED_SYMBOL.items()
+                    ):
+                        if re.search(mechanism_pattern, block):
+                            defects.append(
+                                f"{unit['id']}: proved symbol {symbol} is annotated "
+                                f"`{mechanism}` at {rel}:{index + 1}. The prover is told "
+                                f"not to check the function the unit claims to have "
+                                f"proved, so the theorem is vacuous while the symbol "
+                                f"still appears verified."
+                            )
+                    if not SPECIFICATION_TEXT.search(block):
+                        defects.append(
+                            f"{unit['id']}: proved symbol {symbol} at {rel}:{index + 1} "
+                            f"carries no `requires`/`ensures`. The specification is a "
+                            f"detachable attribute: deleting it leaves the function, the "
+                            f"crate's verified count and the prover's symbol list "
+                            f"unchanged, so no lane sees the theorem go."
+                        )
+            if sites == 0:
+                defects.append(
+                    f"{unit['id']}: proved symbol {symbol} defines no function in the "
+                    f"unit's declared paths. A theorem the manifest advertises over source "
+                    f"the unit does not declare is invalidated by no change to it."
+                )
+    return defects
