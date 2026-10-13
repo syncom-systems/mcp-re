@@ -25,6 +25,17 @@ cost, so the cheapest thing that can be wrong fails first.
 | 4 | The ADR-MCPRE-051 §7 local SLO lane (`scripts/local_slo_lane.sh`) | ~5 min |
 | 5 | The four fleet proofs on a local kind cluster — identical harness, chart and images to GKE (opt-in) | ~15 min |
 
+## Which script runs where: the gate registry
+
+`config/gates.toml` has one row per `scripts/*.py|*.sh`: the stages above that run it, the
+workflow jobs that name it, whether it has a `--selftest` of its own, and — where it
+applies — why it is not a control (`not_a_control`) or not required on the merge path
+(`off_merge_path`). `scripts/merge_path_gate.py` (stage 1, and CI) fails a script with no
+row, a row naming no file, and a row whose stages or jobs disagree with this aggregate and
+the workflows; the control census takes its gate population from the same rows. Adding a
+gate therefore means adding its row, and moving one between stages or jobs means updating
+it. The registry lists the gates; this aggregate and the workflows decide when they run.
+
 ## Why this order exists
 
 It is not hygiene. Each stage exists because skipping it has already cost something:

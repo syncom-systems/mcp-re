@@ -16,7 +16,8 @@ mechanical consequences the ratification attached to the registry:
                                                    at the baseline is discharged or fails.
     a registered unit that no longer owes       -> FAIL until the row is removed. A dead
                                                    row hides the next live one, the same
-                                                   rule `merge_path_gate.EXEMPT` follows.
+                                                   rule `merge_path_gate.py` applies to a
+                                                   dead `off_merge_path`.
     a row whose effective severity has MOVED    -> FAIL. The obligation is not the one the
                                                    row records, so the row does not cover
                                                    it. Raising severity is "materially

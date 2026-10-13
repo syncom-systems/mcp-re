@@ -63,11 +63,13 @@ Two secondary readings, both used below and both stated because they decide the 
   necessary one: a gate can be the carrier of a proposition the graph has simply never
   stated, which is the whole subject of ADR-069.
 
-`scripts/merge_path_gate.py` already rules on part of this population, and its rulings are
-reused rather than re-derived: it names `module_map.py` and `startup_backedges.py` as
-"an architecture report with no verdict", `demo-local.sh` as "a demo runner, not a control",
-and `local_slo_lane.sh` as "an SLO measurement, not an admissibility control". Those are
-ADR-069 dispositions in everything but name, and ND-008 records them as such.
+Whether a script under `scripts/` is a control at all is decided once, in the gate registry
+`config/gates.toml`. A row marked `not_a_control` — a driver, runner, report, demo or
+repository operation — states its reason there and is outside the census's gate population,
+so this register holds no row for it. The same rows carry the merge-path gate's exemptions
+(`off_merge_path`), so the two rulings about one file cannot disagree. A script that grows a
+verdict of its own — an exit status that means a property failed rather than an operation
+failed — loses its `not_a_control` marker and returns to the census.
 
 ---
 
@@ -560,38 +562,6 @@ evidence for whatever that decision claims. Conjunct 3 gives a second exit — a
 that stops being inert by default is running on every deployment, and a divide-by-zero or an
 out-of-range slot in it is then a live refusal path rather than a report's arithmetic. Either
 one makes this the wrong family, and the disposition becomes `new-proposition`.
-
-## ND-008 — not a control: drivers, runners, reports and demos
-
-**Covers:** `bump_version.sh`, `coverage.sh`, `demo-gcp-kms.sh`, `demo-local.sh`,
-`local_gate.sh`, `local_slo_lane.sh`, `merge_readiness_gate.py`, `merge_verified_pr.py`,
-`module_map.py`, `run_gate.sh`, `run_gate_selftest.sh`, `run_test_lane.sh`,
-`runtime_topology_sweep.sh`, `saturation_liveness.sh`, `saturation_rig.sh`,
-`startup_backedges.py`, `test-demos.sh`.
-**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 2.
-
-The census enumerates every executable file under `scripts/`, deliberately: an
-under-inclusive enumeration is how a control kind goes dark, and ADR-069 §2.1 is what that
-costs. These are the files that enumeration catches which are not controls at all — they
-drive other controls, they print a report with no verdict, they run a demo, or they perform
-an operation on the repository.
-
-**Why they are not evidence.** They state no verdict, so there is nothing for a proposition
-to rest on. `module_map.py` and `startup_backedges.py` print an architecture report;
-`run_gate.sh` is the wrapper that keeps a verdict and an exit status one fact;
-`local_gate.sh` is the driver that runs the others; `merge_verified_pr.py` performs a merge.
-
-**This ruling is reused, not invented.** `scripts/merge_path_gate.py` already names four of
-these in its own exemption list, in these words — *an architecture report with no verdict*,
-*a demo runner, not a control*, *an SLO measurement, not an admissibility control*, *sourced
-toolchain shim*. A second authority reaching a different answer about the same file would be
-the defect this campaign exists to remove.
-
-**What would move a control out.** A file here that grows a verdict of its own — an exit
-status that means a property failed rather than an operation failed. `run_gate.sh --selftest`
-is deliberately NOT such a case: it proves the wrapper cannot report a false green, which is
-ND-003's subject, and it is invoked as a control from `local_gate.sh` stage 1 rather than
-being one itself.
 
 ---
 

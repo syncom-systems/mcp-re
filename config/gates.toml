@@ -1,0 +1,632 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The gate registry: one row per script. It is where this repository says which scripts are
+# gates, where each runs, and why one is not a control or not on the merge path.
+#
+# Population. Every `scripts/*.py` and `scripts/*.sh` has a row, and so does every path
+# outside `scripts/` that carries `off_merge_path`. A script with no row, and a row naming
+# no file, fail `scripts/merge_path_gate.py`.
+#
+# Fields:
+#   path            repository-relative path of the script.
+#   stages          the `scripts/local_gate.sh` stages that invoke it, by the order of the
+#                   `run` lines (1 static, 2 suites, 3 BUILD drift, 4 SLO, 5 kind); [] when
+#                   none does. Checked against local_gate.sh.
+#   ci              every `<workflow file>:<job key>` under .github/workflows whose commands
+#                   name it; [] when none does. Checked against the workflows.
+#   selftest        whether the script handles a `--selftest` argument of its own. Checked
+#                   against the script's text.
+#   not_a_control   present when the script is not a control at all — a driver, runner,
+#                   report, demo or repository operation — with the reason. Such a script is
+#                   outside the control census's gate population (tools/verification/_controls.py).
+#   off_merge_path  present when the script is deliberately not required on the merge path,
+#                   with the reason. For a script local_gate.sh invokes, the merge-path gate
+#                   then accepts that no unconditional workflow names it; for an
+#                   assurance-platform entry point under tools/verification/, that nothing
+#                   reaches it. An `off_merge_path` naming nothing those checks would flag
+#                   is a dead exemption and fails.
+#
+# The registry lists gates. It does not decide when or how they run: local_gate.sh and the
+# workflows do, and this file is checked against them.
+
+[[script]]
+path = "scripts/adr051_slo_gate.py"
+stages = [1]
+ci = ["ci.yml:release-gates"]
+selftest = true
+
+[[script]]
+path = "scripts/assurance_obligation_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/authorization_provenance_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/bazel_gazelle_gate.py"
+stages = [3]
+ci = ["ci.yml:bazel"]
+selftest = false
+
+[[script]]
+path = "scripts/bazel_srcs_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/bump_version.sh"
+stages = []
+ci = []
+selftest = false
+not_a_control = "performs a repository operation: moves every surface that carries the product version"
+
+[[script]]
+path = "scripts/check_port_registry.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = false
+
+[[script]]
+path = "scripts/claim_surface_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/clippy_ratchet_gate.py"
+stages = [1, 2]
+ci = ["ci.yml:bazel"]
+selftest = true
+
+[[script]]
+path = "scripts/codebuild_guard_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/conformance_claims_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/control_census_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/coverage.sh"
+stages = []
+ci = []
+selftest = false
+not_a_control = "a coverage runner; the verdicts it reports come from the test lanes it runs"
+
+[[script]]
+path = "scripts/crate_spec_parity_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/demo-gcp-kms.sh"
+stages = []
+ci = []
+selftest = false
+not_a_control = "a demo runner, not a control"
+
+[[script]]
+path = "scripts/demo-local.sh"
+stages = [2]
+ci = []
+selftest = false
+not_a_control = "a demo runner, not a control"
+off_merge_path = "a demo runner, not a control"
+
+[[script]]
+path = "scripts/deploy_image_tag_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/discriminator_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = false
+
+[[script]]
+path = "scripts/doc_path_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/es256_containment_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/evidence_class_ratchet.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/extraction_image_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/finding_ledger_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/fixture_feature_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/format_control_table_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/heavy_lane_disk_preflight.py"
+stages = [1, 4, 5]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/helm_render_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = false
+
+[[script]]
+path = "scripts/hosted_negative_controls.py"
+stages = []
+ci = ["verification.yml:negative-controls"]
+selftest = false
+
+[[script]]
+path = "scripts/install_pinned_verus.py"
+stages = []
+ci = ["verification.yml:host", "verification.yml:negative-controls"]
+selftest = false
+
+[[script]]
+path = "scripts/jcs_vocabulary_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/lifecycle_purity_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/local_gate.sh"
+stages = []
+ci = ["slo.yml:lane"]
+selftest = false
+not_a_control = "the driver that runs the other gates in cost order"
+
+# The SLO lane runs in CI through .github/workflows/slo.yml, which is `paths:`-filtered on
+# the declared performance surface (slo_evidence_identity.py refuses a narrower filter) and
+# invokes it through `local_gate.sh --from 4`, so this path is not named literally there.
+[[script]]
+path = "scripts/local_slo_lane.sh"
+stages = [4]
+ci = []
+selftest = false
+not_a_control = "an SLO measurement, not an admissibility control"
+off_merge_path = "an SLO measurement, not an admissibility control; scheduled by the surface-filtered .github/workflows/slo.yml via local_gate.sh stage 4"
+
+[[script]]
+path = "scripts/merge_path_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/merge_readiness_gate.py"
+stages = []
+ci = ["ci.yml:rust"]
+selftest = true
+not_a_control = "a merge-time authority over a candidate SHA, run by the merge operation rather than on a change"
+
+[[script]]
+path = "scripts/merge_verified_pr.py"
+stages = []
+ci = ["ci.yml:rust"]
+selftest = true
+not_a_control = "performs a merge"
+
+# Architecture analysis: ADR-MCPRE-060's workflow is measure, validate, classify, review.
+# Only its --selftest runs in the gate, which checks that the measurement still measures.
+[[script]]
+path = "scripts/module_map.py"
+stages = [1]
+ci = []
+selftest = true
+not_a_control = "an architecture report with no verdict"
+off_merge_path = "an architecture report with no verdict; --selftest only"
+
+[[script]]
+path = "scripts/module_size_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/no_cargo_execution_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/node_matrix_state.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/node_runtime_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/os_entropy_census_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/owned_worker_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/prepare_node_matrix.sh"
+stages = []
+ci = ["verification.yml:host"]
+selftest = false
+
+[[script]]
+path = "scripts/prepare_python_matrix.sh"
+stages = []
+ci = ["verification.yml:host"]
+selftest = false
+
+[[script]]
+path = "scripts/proxy_flag_doc_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/python_runtime_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/refusal_provenance_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/registry_approval_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/rehearsal_claim_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/release_assurance_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/run_gate.sh"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+not_a_control = "the wrapper that keeps a gate's verdict and its exit status one fact"
+
+[[script]]
+path = "scripts/run_gate_selftest.sh"
+stages = []
+ci = []
+selftest = false
+not_a_control = "the mutation probe for run_gate.sh; it proves the wrapper, not a property of the product"
+
+[[script]]
+path = "scripts/run_test_lane.sh"
+stages = []
+ci = [
+  "ci.yml:release-gates",
+  "ci.yml:rfc9421-cross-verify",
+  "cloud-kms-live.yml:aws-kms-real",
+  "cloud-kms-live.yml:gcp-kms-real",
+  "live-infra-e2e.yml:etcd",
+  "live-infra-e2e.yml:redis-ocsp",
+]
+selftest = false
+not_a_control = "a driver that runs a Bazel test lane and refuses one that selected no tests"
+
+[[script]]
+path = "scripts/runtime_topology_sweep.sh"
+stages = []
+ci = []
+selftest = false
+not_a_control = "a topology measurement on this host, with no verdict"
+
+[[script]]
+path = "scripts/saturation_liveness.sh"
+stages = [2]
+ci = ["ci.yml:release-gates"]
+selftest = false
+not_a_control = "a liveness check of the capacity instrument, not of the product"
+
+[[script]]
+path = "scripts/saturation_rig.sh"
+stages = []
+ci = []
+selftest = false
+not_a_control = "a capacity measurement rig, with no verdict"
+
+[[script]]
+path = "scripts/seam_posture_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/self_hosted_docker_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/semantic_altitude_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/serving_identity_provenance_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/serving_product_provenance_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/slo_evidence_identity.py"
+stages = [1, 4]
+ci = ["ci.yml:rust", "slo.yml:lane"]
+selftest = true
+
+[[script]]
+path = "scripts/slo_gate.py"
+stages = [1]
+ci = ["ci.yml:release-gates"]
+selftest = true
+
+[[script]]
+path = "scripts/slo_invocation_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/stage_image_binaries.sh"
+stages = []
+ci = []
+selftest = false
+
+[[script]]
+path = "scripts/startup_backedges.py"
+stages = [1]
+ci = []
+selftest = true
+not_a_control = "an architecture report with no verdict"
+off_merge_path = "an architecture report with no verdict; --selftest only"
+
+[[script]]
+path = "scripts/supply_chain_gate.py"
+stages = []
+ci = ["mcp-re-supply-chain.yml:supply-chain"]
+selftest = true
+
+[[script]]
+path = "scripts/test-demos.sh"
+stages = []
+ci = []
+selftest = false
+not_a_control = "a smoke test of the evaluator demo scripts"
+
+[[script]]
+path = "scripts/test_inventory_gate.py"
+stages = [1]
+ci = ["ci.yml:rust", "test-inventory.yml:inventory"]
+selftest = true
+
+[[script]]
+path = "scripts/test_target_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/tracked_secrets_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/unit_closure_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+# Checks the verification runner's environment for that workflow's jobs; its scope IS
+# that workflow's filter, the one shape the filtered-only rule admits.
+[[script]]
+path = "scripts/verification_runner_preflight.sh"
+stages = [1]
+ci = ["verification.yml:host"]
+selftest = false
+off_merge_path = "a runner-environment preflight whose scope is the verification workflow itself"
+
+[[script]]
+path = "scripts/verification_trigger_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/workflow_reader.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/workspace_lints_gate.py"
+stages = [1, 2]
+ci = ["ci.yml:bazel"]
+selftest = false
+
+# Needs a live kind cluster and a 3 GB bench image, which no CI runner has.
+# rehearsal_claim_gate.py, which is unconditional, keeps it wired.
+[[script]]
+path = "tools/slo/rehearse_job_spec.sh"
+stages = [5]
+ci = []
+selftest = false
+off_merge_path = "a kind-cluster Job-spec rehearsal; its wiring is policed by rehearsal_claim_gate.py"
+
+[[script]]
+path = "tools/verification/attest"
+stages = []
+ci = []
+selftest = false
+off_merge_path = "an evidence writer invoked by the lanes; it issues records, it does not decide"
+
+[[script]]
+path = "tools/verification/evidence"
+stages = []
+ci = []
+selftest = false
+off_merge_path = "a driver over phases the merge path runs as separate steps"
+
+[[script]]
+path = "tools/verification/evidence-graph"
+stages = []
+ci = []
+selftest = false
+off_merge_path = "a semantic overlay report with no verdict"
+
+[[script]]
+path = "tools/verification/extraction-image"
+stages = [1, 2]
+ci = ["extraction-image.yml:build"]
+selftest = false
+off_merge_path = "builds and names the pinned extraction image; the lanes that decide run inside it"
+
+[[script]]
+path = "tools/verification/fingerprint"
+stages = []
+ci = []
+selftest = false
+off_merge_path = "a CLI over _fingerprint.fingerprint_unit; a measurement, not a verdict"
+
+[[script]]
+path = "tools/verification/generate-views"
+stages = []
+ci = []
+selftest = false
+off_merge_path = "a generator; the verdict over its output is check-views"
+
+# Charon links the private rustc crates, so this cannot execute outside the pinned
+# extraction container, and the workflow whose filter it sits behind is the only place that exists.
+[[script]]
+path = "tools/verification/regenerate-lean"
+stages = [1, 2]
+ci = ["verification.yml:extraction"]
+selftest = false
+off_merge_path = "runs only inside the pinned extraction container, which one filtered workflow provides"
+
+# The attestation store is machine-local and gitignored, so a merge-path job cannot see
+# what it would report.
+[[script]]
+path = "tools/verification/review"
+stages = [1]
+ci = []
+selftest = false
+off_merge_path = "reads the machine-local attestation store; its binding mode is policed by release_assurance_gate.py"
+
+[[script]]
+path = "tools/verification/review-frontier"
+stages = []
+ci = []
+selftest = false
+off_merge_path = "a review-obligation report with no verdict"
+
+[[script]]
+path = "tools/verification/review-packet"
+stages = []
+ci = []
+selftest = false
+off_merge_path = "a derived review packet; a document, not a decision"
+
+# It decides a pull request's SCOPE, never a verdict; on any doubt it widens to a full run.
+[[script]]
+path = "tools/verification/select-units"
+stages = []
+ci = ["mutation-probe.yml:probe", "verification.yml:scope"]
+selftest = false
+off_merge_path = "scopes the filtered verification workflows; pinned by test_scoped_verification.py in ci.yml"
+
+# verification_trigger_gate.py, which is unconditional, holds verification.yml's filter to
+# every unit's fingerprint read set, so the dispatcher runs on exactly the changes that move a unit.
+[[script]]
+path = "tools/verification/verify"
+stages = [1, 2]
+ci = [
+  "verification.yml:aggregate",
+  "verification.yml:extraction",
+  "verification.yml:host",
+]
+selftest = false
+off_merge_path = "the lane dispatcher; runs in verification.yml, whose filter verification_trigger_gate.py holds to every fingerprint input"
