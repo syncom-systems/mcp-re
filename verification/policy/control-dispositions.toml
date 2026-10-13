@@ -1614,6 +1614,14 @@ proposition = "NP-015"
 recorded = "2026-09-19"
 
 [[disposition]]
+id = "CD-20482"
+project = "sdk/python"
+control = "pytest#tests/test_custody.py::TestDeviceFailsClosed::test_the_native_seam_does_not_report_a_device_failure_as_a_wire_code"
+decision = "new-proposition"
+proposition = "NP-015"
+recorded = "2026-10-13"
+
+[[disposition]]
 id = "CD-2008"
 project = "sdk/python"
 control = "pytest#tests/test_custody.py::TestNonExportingIsByteIdentical::test_the_device_is_the_sole_holder_of_the_key"
@@ -6328,7 +6336,7 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-15100"
 project = "mcp-re-http-profile"
-control = "src/lib.rs#verify::bound_request::tests::a_request_with_no_signature_input_has_no_handle"
+control = "src/lib.rs#evidence::request_role::tests::a_request_with_no_signature_input_has_no_handle"
 decision = "new-proposition"
 proposition = "NP-098"
 recorded = "2026-09-19"
@@ -12850,7 +12858,7 @@ record = "docs/architecture/control-dispositions.md#np-203"
 [[proposition]]
 id = "NP-204"
 title = "A delegated snapshot and its lifecycle audit name this issuance's own identity and credential id"
-carrier = "mcp-re-http-profile/src/custody/active_key.rs"
+carrier = "mcp-re-http-profile/src/custody/active_key/mod.rs"
 likely_owner = "http_profile.delegated_signing_custody: both carriers are in its paths, but its description covers only lifecycle clauses (root untouched, overlap rotation, epoch advance, window, fail-closed). Amending the description would let these four register beside the M97/M98 siblings."
 consequence = "high"
 root_relationship = "Beside the M97 (attested key) and M98 (echoed claim set) conjuncts already bound to http_profile.delegated_signing_custody; the third leg of 'the credential attests THIS issuance'."
@@ -14498,7 +14506,7 @@ record = "docs/architecture/control-dispositions.md#np-275"
 [[proposition]]
 id = "NP-276"
 title = "No profile signer signs over a request evidence block that fails validation"
-carrier = "mcp-re-http-profile/src/sign/request_block.rs (validate_carried, require_valid), called from sign/request.rs (sign_headers_as_given), sign.rs (sign_response_with_signer, sign_delegated_response_full_with_owned_key) and bodyless/mod.rs (sign_delegated_accepted_202_with_owned_key)"
+carrier = "mcp-re-http-profile/src/sign/request_block.rs (validate_carried, require_valid), called from sign/request.rs (sign_headers_as_given), sign.rs (sign_response_with_signer, emit_delegated_response_full) and bodyless/mod.rs (emit_delegated_accepted_202), whose public paths are the window emitters in custody/window_emission.rs"
 likely_owner = "http_profile.request_evidence_signing_boundary, owner Ruling 18.1"
 consequence = "medium"
 root_relationship = "owner Ruling 17.2 (0f0dc26c60f6d5be): HttpRequestEvidenceBlock keeps public fields under CF-007's precedent, and its boundary is validation at every signing entry point"
@@ -14996,6 +15004,14 @@ control = "src/lib.rs#tests::test_nonces_are_distinct_across_threads"
 decision = "not-evidence"
 reason_family = "ND-016"
 recorded = "2026-10-11"
+
+[[disposition]]
+id = "CD-20486"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#custody::active_key::stated::tests::a_stated_key_carries_what_the_caller_stated"
+decision = "not-evidence"
+reason_family = "ND-016"
+recorded = "2026-10-13"
 
 [[disposition]]
 id = "CD-20419"

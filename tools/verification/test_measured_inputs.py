@@ -1185,7 +1185,7 @@ def test_a_unit_may_not_declare_its_own_assumptions():
 
     assert "assumptions" not in _manifest._UNIT_KEYS
     try:
-        _manifest._reject_unknown("unit u", {"assumptions": ["ASM-A"]}, _manifest._UNIT_KEYS)
+        _manifest.reject_unknown("unit u", {"assumptions": ["ASM-A"]}, _manifest._UNIT_KEYS)
     except _manifest.ManifestError as refused:
         assert "assumptions" in str(refused)
     else:
@@ -1401,11 +1401,11 @@ def test_the_consumed_contracts_component_is_derived_and_not_authored():
     """The unit key is gone, so there is nothing to author. The component still exists and
     still participates — it is now a reading of the graph rather than a second claim about
     it."""
-    from _manifest import ManifestError, _reject_unknown, _UNIT_KEYS
+    from _manifest import ManifestError, reject_unknown, _UNIT_KEYS
 
     assert "consumed_contracts" not in _UNIT_KEYS
     try:
-        _reject_unknown("t", {"consumed_contracts": []}, _UNIT_KEYS)
+        reject_unknown("t", {"consumed_contracts": []}, _UNIT_KEYS)
     except ManifestError as exc:
         assert "[[edge]].contract" in str(exc), exc
     else:

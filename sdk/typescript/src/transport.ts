@@ -298,22 +298,20 @@ const MIN_NONCE_CHARS = 22;
  * unchanged — no cross-implementation coordination, no fixture regeneration.
  */
 /**
- * The frozen `mcp-re.*` token in a thrown core error's message, or `null`.
+ * The frozen `mcp-re.*` token a core refusal carries, or `null`.
  *
- * The napi binding formats every core failure as `"mcp-re: mcp-re.<token>"`. What the
- * taxonomy pins — and what a caller branches on without parsing prose (REQ-14/POL-6) —
- * is the TOKEN, so the binding's prefix is stripped before the code is delivered. Both
- * spellings are accepted, since the prefix is a binding detail. The Python twin's
- * `_peer_wire_code` does the same, so one wire event has one spelling in both SDKs.
+ * The napi binding throws a core refusal with the frozen token as the error's `code` —
+ * a typed field, never prose to parse — and nothing else it throws has a `code` in that
+ * namespace. What the taxonomy pins, and what a caller branches on (REQ-14/POL-6), is that
+ * token; the Python twin reads the same token from `WireRefusal.wire_code`.
  *
- * `null` for anything that is not a token, so a local condition — a reset connection, a
- * TLS error, a timeout thrown by the caller's `poster` — is delivered under the
- * `mcp-re-sdk:` prefix instead of occupying the field that otherwise only ever holds
- * something the peer said.
+ * `null` for anything else, so a local condition — a reset connection, a TLS error, a
+ * timeout thrown by the caller's `poster` — is delivered under the `mcp-re-sdk:` prefix
+ * instead of occupying the field that otherwise only ever holds something the peer said.
  */
-const peerWireCode = (message: string): string | null => {
-  const token = message.startsWith("mcp-re: ") ? message.slice("mcp-re: ".length) : message;
-  return /^mcp-re\.[a-z0-9_]+$/.test(token) ? token : null;
+const coreWireCode = (e: unknown): string | null => {
+  const code = (e as { code?: unknown }).code;
+  return typeof code === "string" && code.startsWith("mcp-re.") ? code : null;
 };
 
 const checkedNonce = (factory: () => string): string => {
@@ -816,13 +814,13 @@ export class McpReHttpTransport implements Transport {
         reply = errorMessage(request.id, `mcp-re-sdk: ${e.message}`);
       } else if (e instanceof Error) {
         // Two unrelated things arrive here as plain Errors: the core's own fail-closed
-        // errors, which carry a frozen `mcp-re.*` token, and whatever the caller's
-        // `poster` throws while doing real I/O — a reset connection, a TLS error, a
-        // timeout. Delivering both verbatim would put "socket hang up" in the same field
-        // that otherwise only ever holds something the peer said, so only a message that
-        // IS a frozen token is passed through as one. Everything else is delivered under
-        // the prefix that means "local condition", named, exactly as Python does it.
-        reply = errorMessage(request.id, peerWireCode(e.message) ?? `mcp-re-sdk: ${e.name}: ${e.message}`);
+        // refusals, which carry a frozen `mcp-re.*` token in `code`, and whatever the
+        // caller's `poster` throws while doing real I/O — a reset connection, a TLS error,
+        // a timeout. Delivering both verbatim would put "socket hang up" in the same field
+        // that otherwise only ever holds something the peer said, so only a core refusal's
+        // token is passed through as one. Everything else is delivered under the prefix
+        // that means "local condition", named, exactly as Python does it.
+        reply = errorMessage(request.id, coreWireCode(e) ?? `mcp-re-sdk: ${e.name}: ${e.message}`);
       } else {
         throw e;
       }
@@ -965,15 +963,14 @@ export class McpReHttpTransport implements Transport {
       );
     } catch (e) {
       // The same normalization the request path applies: `wireCode` is documented as the
-      // frozen token, and the napi binding spells a core failure `"mcp-re: mcp-re.<x>"`,
-      // so the prefix is stripped. Anything that is not a token is a local condition and
-      // says so, rather than travelling as an invented wire code.
+      // frozen token, which a core refusal carries in its `code`. Anything else is a local
+      // condition and says so, rather than travelling as an invented wire code.
       throw new NotificationNotAcknowledged(
         method,
         e instanceof McpReError
           ? e.wireCode
           : e instanceof Error
-            ? (peerWireCode(e.message) ?? `mcp-re-sdk: ${e.name}: ${e.message}`)
+            ? (coreWireCode(e) ?? `mcp-re-sdk: ${e.name}: ${e.message}`)
             : String(e),
       );
     }

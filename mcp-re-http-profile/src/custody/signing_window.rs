@@ -17,6 +17,7 @@
 use std::sync::Arc;
 
 use super::ActiveDelegatedKey;
+use super::DelegatedSigner;
 
 /// A delegated credential snapshotted for one exchange, with the response validity it
 /// authorizes.
@@ -93,6 +94,30 @@ impl SigningWindow {
     /// Unix seconds the signed response may claim validity until.
     pub fn expires(&self) -> i64 {
         self.expires
+    }
+
+    /// The parts a delegated emitter signs with, all read from this window.
+    pub(crate) fn signer(&self) -> DelegatedSigner<'_> {
+        DelegatedSigner::of(self)
+    }
+
+    /// A window whose validity the CALLER states, over a key whose parts the caller states
+    /// ([`ActiveDelegatedKey::stated`]).
+    ///
+    /// The name is the contract: this establishes only that the caller said so. Neither
+    /// `created < expires` nor `expires <= exp` is checked, because the batteries that need
+    /// this sign the artefacts a verifier must refuse — a stale window, an inverted one, a
+    /// response signed under a key its credential does not confirm.
+    ///
+    /// Compiled only under `test` or the test-only `pre_052_fixtures` feature, so a product
+    /// build has [`over`](Self::over) as its sole producer.
+    #[cfg(any(test, feature = "pre_052_fixtures"))]
+    pub fn stated(key: ActiveDelegatedKey, created: i64, expires: i64) -> Self {
+        SigningWindow {
+            key: Arc::new(key),
+            created,
+            expires,
+        }
     }
 }
 

@@ -44,7 +44,6 @@ import base64
 import hashlib
 import inspect
 import json
-import re
 import secrets
 import sys
 import time
@@ -598,31 +597,6 @@ def _answer_leg_id(request_id, round_index: int) -> str:
     return f"{request_id}/mrt-{round_index}"
 
 
-#: How the native binding spells a core failure: ``"mcp-re: mcp-re.<token>"``.
-_WIRE_PREFIX = "mcp-re: "
-
-#: The shape of a frozen wire code. Anything else is not one.
-_WIRE_CODE = re.compile(r"^mcp-re\.[a-z0-9_]+$")
-
-
-def _peer_wire_code(message: str) -> Optional[str]:
-    """The frozen ``mcp-re.*`` token in a core error's message, or ``None``.
-
-    The PyO3 binding formats every core failure as ``"mcp-re: mcp-re.<token>"``. What the
-    taxonomy pins — and what a caller branches on without parsing prose (REQ-14/POL-6) —
-    is the TOKEN, so the binding's prefix is stripped before the code is delivered.
-    Byte-identical to the TypeScript twin's ``peerWireCode``: both spellings are accepted,
-    since the prefix is a binding detail.
-
-    ``None`` for anything that is not a token, so a local condition — a reset connection,
-    a TLS error, a timeout raised by the caller's ``poster`` — can be delivered under the
-    ``mcp-re-sdk:`` prefix instead of occupying the field that otherwise only ever holds
-    something the peer said.
-    """
-    token = message[len(_WIRE_PREFIX):] if message.startswith(_WIRE_PREFIX) else message
-    return token if _WIRE_CODE.match(token) else None
-
-
 # A verified rejection receipt that carried no (or an empty) wire code. The receipt is a
 # genuine refusal whose signature verified, so no `mcp-re.*` token may stand in for the one
 # the peer did not send; the condition is the SDK's own and carries its prefix.
@@ -916,14 +890,14 @@ async def _notify(config: McpReConfig, poster: Poster, method: str, params) -> N
         )
     except McpReError as e:
         raise NotificationNotAcknowledged(method, e.wire_code) from e
+    except _core.WireRefusal as e:
+        # The core's fail-closed refusal carries its frozen token in `.wire_code`.
+        raise NotificationNotAcknowledged(method, e.wire_code) from e
     except ValueError as e:
-        # The core's fail-closed errors arrive as ValueError carrying the frozen token,
-        # spelled by the binding as `"mcp-re: mcp-re.<token>"`. `wire_code` is documented
-        # as the frozen token, so the prefix is stripped; anything that is not a token is
-        # a local condition and says so.
+        # Any other ValueError is a local condition, and says so rather than travelling
+        # as a wire code.
         raise NotificationNotAcknowledged(
-            method,
-            _peer_wire_code(str(e)) or f"mcp-re-sdk: {type(e).__name__}: {e}",
+            method, f"mcp-re-sdk: {type(e).__name__}: {e}"
         ) from e
 
     if config.on_notification_acknowledged is not None:
@@ -973,19 +947,16 @@ async def _one(config: McpReConfig, poster: Poster, request: JSONRPCRequest, rea
         except McpReSdkError as e:
             # A local failure (e.g. the signing device). No wire code describes it.
             message = _error_message(request.id, f"mcp-re-sdk: {e}")
+        except _core.WireRefusal as e:
+            # The core's own fail-closed refusal: deliver its frozen token rather than
+            # letting the caller hang, because that is what the taxonomy pins and what a
+            # caller branches on.
+            message = _error_message(request.id, e.wire_code)
         except ValueError as e:
-            # The core's own fail-closed errors arrive as ValueError carrying the frozen
-            # token, which the binding spells `"mcp-re: mcp-re.<token>"`; deliver the
-            # TOKEN rather than letting the caller hang, because that is what the
-            # taxonomy pins and what a caller branches on.
-            #
-            # A `ValueError` that is NOT a token came from somewhere else — the caller's
-            # `poster` doing real I/O, say — and is delivered under the prefix that means
-            # "local condition", so it can never be read as something the peer said.
-            message = _error_message(
-                request.id,
-                _peer_wire_code(str(e)) or f"mcp-re-sdk: {type(e).__name__}: {e}",
-            )
+            # Any other `ValueError` came from somewhere else — the caller's `poster`
+            # doing real I/O, say — and is delivered under the prefix that means "local
+            # condition", so it can never be read as something the peer said.
+            message = _error_message(request.id, f"mcp-re-sdk: {type(e).__name__}: {e}")
         except Exception as e:
             # Anything else — and in practice that is dominated by the caller's `poster`
             # doing real I/O: a reset connection, a TLS error, a timeout. Exchanges run

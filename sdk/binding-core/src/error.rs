@@ -15,10 +15,10 @@ pub enum IssuerField {
 
 /// Why a binding call was refused.
 ///
-/// `Wire` carries a frozen `mcp-re.*` token, and [`BindingError::message`] renders it as
-/// `mcp-re: <token>` — the one place that rendering is written. `Local` is a refusal of the
-/// caller's arguments that no server verdict describes. `EmptyIssuerField` is kept apart
-/// from `Local` because its message names the field, and the name is the host's.
+/// `Wire` carries a frozen `mcp-re.*` token, which a binding raises in a typed field
+/// ([`BindingError::wire_code`]) rather than in prose. `Local` is a refusal of the caller's
+/// arguments that no server verdict describes. `EmptyIssuerField` is kept apart from
+/// `Local` because its message names the field, and the name is the host's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BindingError {
     Wire(&'static str),
@@ -27,10 +27,18 @@ pub enum BindingError {
 }
 
 impl BindingError {
+    /// The frozen `mcp-re.*` token, for a refusal that has one.
+    pub fn wire_code(&self) -> Option<&'static str> {
+        match self {
+            BindingError::Wire(code) => Some(code),
+            BindingError::Local(_) | BindingError::EmptyIssuerField(_) => None,
+        }
+    }
+
     /// The message a host raises for this refusal, naming an issuer field with `field_name`.
     pub fn message(&self, field_name: impl Fn(IssuerField) -> &'static str) -> String {
         match self {
-            BindingError::Wire(code) => format!("mcp-re: {code}"),
+            BindingError::Wire(code) => (*code).to_owned(),
             BindingError::Local(reason) => reason.clone(),
             BindingError::EmptyIssuerField(field) => {
                 format!("invalid issuer identity: {} is empty", field_name(*field))
@@ -67,9 +75,10 @@ mod tests {
     }
 
     #[test]
-    fn a_wire_refusal_renders_its_frozen_token_after_the_prefix() {
+    fn a_wire_refusal_carries_its_frozen_token_and_says_only_that() {
         let e = BindingError::from(HttpProfileError::InvalidSignature);
-        assert_eq!(e.message(snake), "mcp-re: mcp-re.invalid_signature");
+        assert_eq!(e.wire_code(), Some("mcp-re.invalid_signature"));
+        assert_eq!(e.message(snake), "mcp-re.invalid_signature");
     }
 
     #[test]
@@ -78,6 +87,7 @@ mod tests {
             BindingError::Local("params must be a JSON object".into()).message(snake),
             "params must be a JSON object"
         );
+        assert_eq!(BindingError::Local("x".into()).wire_code(), None);
         assert_eq!(
             BindingError::EmptyIssuerField(IssuerField::TrustDomain).message(snake),
             "invalid issuer identity: issuer_trust_domain is empty"

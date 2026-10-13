@@ -406,7 +406,8 @@ _MOVED_AUTHORITY = {
 }
 
 
-def _reject_unknown(where: str, got, allowed: set[str]) -> None:
+def reject_unknown(where: str, got, allowed: set[str]) -> None:
+    """Refuse a key `allowed` does not name, and name the new authority of a moved one."""
     moved = sorted(set(got) & set(_MOVED_AUTHORITY))
     if moved:
         raise ManifestError(
@@ -422,7 +423,8 @@ def _reject_unknown(where: str, got, allowed: set[str]) -> None:
         )
 
 
-def _require(where: str, got: dict, required: set[str]) -> None:
+def require(where: str, got: dict, required: set[str]) -> None:
+    """Refuse a record that lacks a key `required` names."""
     missing = sorted(required - set(got))
     if missing:
         raise ManifestError(f"{where}: missing required key(s) {missing}")
@@ -453,8 +455,8 @@ def validate_edges(
     """
     for index, edge in enumerate(edges):
         ewhere = f"{where} [[edge]] #{index}"
-        _reject_unknown(ewhere, edge, _EDGE_KEYS)
-        _require(ewhere, edge, {"kind", "from", "to"})
+        reject_unknown(ewhere, edge, _EDGE_KEYS)
+        require(ewhere, edge, {"kind", "from", "to"})
         if edge["kind"] not in EDGE_KINDS:
             raise ManifestError(
                 f"{ewhere}: kind {edge['kind']!r} not one of {sorted(EDGE_KINDS)}"
@@ -465,7 +467,7 @@ def validate_edges(
                     f"{ewhere}: {endpoint} {edge[endpoint]!r} is not a declared unit"
                 )
         if edge["kind"] == "CONTRACT_CONSUMES":
-            _require(ewhere, edge, {"contract"})
+            require(ewhere, edge, {"contract"})
             # Exported by THIS edge's `from`, not by some unit somewhere. The previous check
             # ran only under `sealed` and compared against the union of every unit's exports,
             # so a seal could name a contract an unrelated unit published — a relation
@@ -484,15 +486,15 @@ def validate_edges(
                     f"means source-only dirtiness stops at a proved unchanged contract, "
                     f"which is meaningless without a contract."
                 )
-            _require(ewhere, edge, {"sealed_by", "rationale"})
+            require(ewhere, edge, {"sealed_by", "rationale"})
 
 
 def load_verification() -> dict:
     """Load and validate `verification/policy/verification.toml`."""
     doc = _load(VERIFICATION_TOML)
     where = "verification.toml"
-    _reject_unknown(where, doc, _VERIFICATION_TOP)
-    _require(
+    reject_unknown(where, doc, _VERIFICATION_TOP)
+    require(
         where,
         doc,
         {"schema_version", "policy_revision", "unknown_is_dirty"},
@@ -517,8 +519,8 @@ def load_verification() -> dict:
     exports: dict[str, set[str]] = {}
     for index, unit in enumerate(doc.get("unit", [])):
         uwhere = f"{where} [[unit]] #{index}"
-        _reject_unknown(uwhere, unit, _UNIT_KEYS)
-        _require(uwhere, unit, {"id", "class", "paths"})
+        reject_unknown(uwhere, unit, _UNIT_KEYS)
+        require(uwhere, unit, {"id", "class", "paths"})
         # ADR-MCPRE-068 §9.3, registry adequacy: declaring a class you do not satisfy is a
         # lie and is fatal here, at load, before anything reads the unit. Every rule
         # `class_problems` applies is computable from THIS record alone, which is what
@@ -652,8 +654,8 @@ def load_assumptions() -> dict:
     """Load and validate the trusted-assumption registry."""
     doc = _load(ASSUMPTIONS_TOML)
     where = "assumptions.toml"
-    _reject_unknown(where, doc, {"schema_version", "assumption"})
-    _require(where, doc, {"schema_version"})
+    reject_unknown(where, doc, {"schema_version", "assumption"})
+    require(where, doc, {"schema_version"})
     if doc["schema_version"] != ASSUMPTIONS_SCHEMA_VERSION:
         raise ManifestError(
             f"{where}: schema_version {doc['schema_version']} but this tooling implements "
@@ -663,8 +665,8 @@ def load_assumptions() -> dict:
     seen: set[str] = set()
     for index, entry in enumerate(doc.get("assumption", [])):
         awhere = f"{where} [[assumption]] #{index}"
-        _reject_unknown(awhere, entry, _ASSUMPTION_KEYS)
-        _require(awhere, entry, _ASSUMPTION_REQUIRED)
+        reject_unknown(awhere, entry, _ASSUMPTION_KEYS)
+        require(awhere, entry, _ASSUMPTION_REQUIRED)
         if entry["id"] in seen:
             raise ManifestError(
                 f"{awhere}: duplicate assumption id {entry['id']!r}. Ids are never reused "
@@ -773,12 +775,12 @@ def load_trust_boundaries() -> dict:
     """Load and validate the declared trust boundaries."""
     doc = _load(TRUST_BOUNDARIES_TOML)
     where = "trust-boundaries.toml"
-    _reject_unknown(where, doc, {"schema_version", "boundary"})
-    _require(where, doc, {"schema_version"})
+    reject_unknown(where, doc, {"schema_version", "boundary"})
+    require(where, doc, {"schema_version"})
     for index, entry in enumerate(doc.get("boundary", [])):
         bwhere = f"{where} [[boundary]] #{index}"
-        _reject_unknown(bwhere, entry, _BOUNDARY_KEYS)
-        _require(bwhere, entry, {"id", "description", "kind", "paths", "beyond"})
+        reject_unknown(bwhere, entry, _BOUNDARY_KEYS)
+        require(bwhere, entry, {"id", "description", "kind", "paths", "beyond"})
         cls = entry.get("max_class_without_assumption")
         if cls is not None and cls not in CLASSES:
             raise ManifestError(f"{bwhere}: max_class_without_assumption {cls!r} invalid")
@@ -1034,7 +1036,7 @@ def load_toolchains() -> dict:
     """Load and validate the toolchain lock."""
     doc = _load(TOOLCHAINS_LOCK_TOML)
     where = "toolchains.lock.toml"
-    _require(where, doc, {"schema_version"})
+    require(where, doc, {"schema_version"})
     for name, entry in doc.items():
         if name == "schema_version":
             continue
