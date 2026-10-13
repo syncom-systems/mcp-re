@@ -66,7 +66,7 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `ClientCredentialWindow` | `config_state/client_credential_window.rs` | `cert_lifetime()`, `connection_age()`, `exposure_window()` |
 | `ConnectionBounds` | `config_state/connection_bounds/` | `read_timeout()`, `write_timeout()`, `request_deadline()`, `idle_bound()`, `drain_grace()`, `max_connections()` — every one in force; `from_limits` refuses a disabled bound, and `classify_and_validate` also refuses a drain window shorter than the deadline, so only a deployment's bounds carry that relation |
 | `ShardTopologyRequest` | `config_state/topology.rs` | `shards()`, `workers_per_shard()` |
-| `ResolvedTopology` | `async_fleet/resolved_topology.rs` | `shards() -> NonZeroUsize`, `depth() -> ShardDepth` |
+| `ResolvedTopology` | `async_fleet/resolved_topology.rs` | `shards() -> NonZeroUsize`, `depth() -> NonZeroUsize` |
 | `TrustPlan` | `trust_plan.rs` | `revocation()`, `document_path()`, `response_kid()`, `reload()`, `epoch()` |
 | `TlsListenerSecurityState` | `tls_listener_state/` (a module TREE) | `epoch()`, `build_exported_key_config()`, `build_delegated_config()`, `build_delegated_resolver_config()` |
 | `PeerIdentityValue` | `communication_assurance/peer_identity_value.rs` | `as_str()` |

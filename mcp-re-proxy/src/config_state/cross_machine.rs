@@ -14,12 +14,20 @@
 //! mechanism the channel key must match (see `x2a`). X6 reads `revocation_list_paths`, a
 //! field no machine classifies.
 //!
-//! Three live here: X2a, X6, X9. X2b has no representation left to refuse (see its test).
+//! X10 reads the recognised `ChannelCredentialCustodyState`'s exposure and the topology
+//! machine's shard request, and refuses only their combination; it lives in
+//! [`delegated_tls_depth`], whose refusal is operator-facing prose of its own.
+//!
+//! Four live here: X2a, X6, X9, X10. X2b has no representation left to refuse (see its test).
 
+use crate::config_state::channel_credential_custody::ChannelCredentialCustodyState;
+use crate::config_state::topology::ShardTopologyRequest;
 use crate::config_state::trust_revocation::TrustRevocationState;
 use crate::deployment_request::{
     ChannelKeyRequest, DelegatedChannelKeyRequest, DeploymentRequest, SigningSourceRequest,
 };
+
+mod delegated_tls_depth;
 
 /// The relations, kept separate so each can be reported where its clause has always been
 /// read rather than in one block at the end (CF-11 — precedence changes deliberately).
@@ -31,6 +39,8 @@ pub(crate) struct CrossMachineViolations {
     pub(crate) x6_unenforceable_deny_list: Vec<String>,
     /// X9 — `TrustRevocation` × `DelegatedSigning`.
     pub(crate) x9_trust_epoch_posture: Vec<String>,
+    /// X10 — `ChannelCredentialCustody` × `ShardTopology`.
+    pub(crate) x10_delegated_tls_depth: Vec<String>,
 }
 
 /// X2a: the channel key object must live in a backend this deployment already reaches.
@@ -123,10 +133,12 @@ fn delegated_channel_key(key: &ChannelKeyRequest) -> Option<&DelegatedChannelKey
     }
 }
 
-/// Check the cross-machine relations: X9 over the trust-revocation state pass 1 recognised,
-/// X2a and X6 over the request selections they relate.
+/// Check the cross-machine relations: X9 and X10 over the states pass 1 recognised, X2a and
+/// X6 over the request selections they relate.
 pub(crate) fn validate(
     trust_revocation: Option<&TrustRevocationState>,
+    channel_custody: Option<&ChannelCredentialCustodyState>,
+    shard_topology: ShardTopologyRequest,
     config: &DeploymentRequest,
 ) -> CrossMachineViolations {
     CrossMachineViolations {
@@ -136,6 +148,7 @@ pub(crate) fn validate(
         ),
         x6_unenforceable_deny_list: x6(config),
         x9_trust_epoch_posture: x9(trust_revocation, config),
+        x10_delegated_tls_depth: delegated_tls_depth::x10(channel_custody, shard_topology),
     }
 }
 
@@ -228,7 +241,10 @@ mod tests {
         let mut config = legal_config();
         mutate(&mut config);
         let (trust, _) = crate::config_state::trust_revocation::classify_and_validate(&config);
-        validate(trust.as_ref(), &config)
+        let (channel, _) =
+            crate::config_state::channel_credential_custody::classify_and_validate(&config);
+        let (_, shards) = crate::config_state::topology::classify(&config);
+        validate(trust.as_ref(), channel.as_ref(), shards, &config)
     }
 
     #[test]

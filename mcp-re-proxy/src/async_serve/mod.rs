@@ -432,17 +432,8 @@ mod admission_bound_tests {
     /// same value the runtime was built from.
     #[test]
     fn the_handshake_bound_leaves_workers_for_the_rest_of_the_core() {
-        // Every depth a fleet can RESOLVE, under both signing custodies and both
-        // provenances — `ResolvedTopology` holds a stated depth or a derived one, and
-        // the pair (delegated custody, stated 1) is refused rather than resolved, so it is
-        // not a depth a fleet can reach and is excluded here. Its own controls are
-        // `async_fleet::core_runtime`'s.
-        let depths = (1..=16usize).flat_map(|depth| {
-            [
-                crate::async_fleet::ShardDepth::stated(depth),
-                crate::async_fleet::ShardDepth::derived(depth),
-            ]
-        });
+        // Every depth a fleet can RESOLVE, under both signing custodies.
+        let depths = (1..=16usize).filter_map(std::num::NonZeroUsize::new);
         let cases = depths.flat_map(|depth| [(depth, false), (depth, true)]);
         for (depth, tls_signing_may_block) in cases {
             let custody = if tls_signing_may_block {
@@ -450,14 +441,7 @@ mod admission_bound_tests {
             } else {
                 crate::config_state::PrivateKeyExposure::ProcessReadable
             };
-            let Ok(pool) = crate::async_fleet::CorePool::for_core(depth, custody) else {
-                assert!(
-                    tls_signing_may_block && depth == crate::async_fleet::ShardDepth::stated(1),
-                    "{depth:?}: only the operator-stated single thread under delegated \
-                     custody has no safe shape"
-                );
-                continue;
-            };
+            let pool = crate::async_fleet::CorePool::for_core(depth, custody);
             let Some(permits) = pool.handshake_bound().permits() else {
                 assert!(
                     !tls_signing_may_block,
