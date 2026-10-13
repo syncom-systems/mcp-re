@@ -99,7 +99,7 @@ pub(super) fn classify_refusable(config: &DeploymentRequest) -> (RefusableStates
     let (admission, admission_violations) = m::admission::classify_and_validate(config);
     let (authorization, authorization_violations) = m::authorization::classify_and_validate(config);
     let (channel_binding, binding_violations) = m::transport::classify_and_validate_binding(config);
-    let (crl_revocation, crl_violations) = m::transport::classify_and_validate_crl(config);
+    let (crl_revocation, crl_violations) = m::crl_revocation::classify_and_validate_crl(config);
     let (freshness, freshness_violations) = m::freshness::classify_and_validate(config);
     let (mcp_transport_contract, mcp_transport_contract_violations) =
         m::mcp_transport_contract::classify_and_validate(config);

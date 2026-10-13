@@ -125,7 +125,7 @@ impl TryFrom<DeploymentRequest> for ValidatedDeployment {
 /// file mode and reuses the same fail-closed posture).
 ///
 /// ADR-MCPS-023 §A1 (v0.9, MCPS-57): a `--max-client-cert-lifetime` GREATER than
-/// [`crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME`] is rejected. Mode-A's entire certificate-revocation
+/// [`crate::config_state::client_credential_window::MAX_CLIENT_CERT_LIFETIME`] is rejected. Mode-A's entire certificate-revocation
 /// posture is short-lived certificates (on GCP the online-OCSP path is a no-op and
 /// CAS is CRL-only), so a long-lived cert cannot honestly be audited as
 /// `short_lived_cert`. DISABLED enforcement (`none`/`0`, i.e.

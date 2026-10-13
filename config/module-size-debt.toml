@@ -520,8 +520,11 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/config_state/transport.rs"
-baseline_prod_loc = 488
-baseline_sha = "d1fc5fa"
+# MCPRE-207: EX-018's named action moves the CRL revocation machine to `crl_revocation.rs`
+# and the client-certificate lifetime ceiling to `client_credential_window.rs`: 419 (measured
+# at c939c2f) -> 263. `baseline_sha` names that parent.
+baseline_prod_loc = 263
+baseline_sha = "c939c2f"
 status = "reviewed-action-required"
 review_ref = "EX-018 in docs/architecture/review-dispositions.md"
 
