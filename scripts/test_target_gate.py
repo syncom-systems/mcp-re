@@ -68,7 +68,7 @@ def commands(path: Path) -> list[Command]:
     """
     text = path.read_text(encoding="utf-8")
     found = parse(text, str(path)).commands() if path.suffix == ".yml" else shell_commands(text)
-    return [command for command in found if command.executed]
+    return [command for command in found if command.executed_segments()]
 
 
 def root_modules(root: Path, row: dict) -> set[str]:
@@ -83,8 +83,8 @@ def check(root: Path, targets: dict[str, dict]) -> tuple[list[str], int]:
     for pattern in SCAN_GLOBS:
         for path in sorted(root.glob(pattern)):
             rel = path.relative_to(root)
-            for command in commands(path):
-                number, block = command.line, command.executed
+            for command, block in ((c, seg) for c in commands(path) for seg in c.executed_segments()):
+                number = command.line
                 if not BAZEL_TEST.search(block):
                     continue
                 labels = [lbl for lbl in LABEL.findall(block) if not lbl.startswith("//...")]
@@ -162,6 +162,21 @@ def selftest() -> int:
                 "an inline module is declared too",
                 "run: bazel test //pkg:real_test --test_arg=other::x\n",
                 "",
+            ),
+            (
+                "a label of a neighbouring segment is not the test lane's",
+                "run: bazel build //pkg:ghost && bazel test //pkg:real_test\n",
+                "",
+            ),
+            (
+                "a filter of a neighbouring segment is not the test lane's",
+                "run: bazel test //pkg:real_test && scripts/x.sh --test_arg=ghost_mod::\n",
+                "",
+            ),
+            (
+                "a test lane after a neighbouring segment is still read",
+                "run: true && bazel test //pkg:ghost_test\n",
+                "not a test target",
             ),
             (
                 "a filter naming no module selects nothing",

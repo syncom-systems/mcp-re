@@ -77,9 +77,9 @@ def invocation_lines(path: Path, root: Path) -> list[tuple[int, str, bool]]:
     text = path.read_text(errors="replace")
     rel = path.relative_to(root)
     if rel.parts[:2] == (".github", "workflows"):
-        return [(c.line, c.executed, False) for c in parse(text, str(rel)).commands() if c.executed]
+        return [(c.line, seg, False) for c in parse(text, str(rel)).commands() for seg in c.executed_segments()]
     if path.suffix == ".sh":
-        return [(c.line, c.executed, False) for c in shell_commands(text) if c.executed]
+        return [(c.line, seg, False) for c in shell_commands(text) for seg in c.executed_segments()]
     return [(n, line, True) for n, line in enumerate(text.splitlines(), 1)]
 
 
@@ -166,6 +166,12 @@ def selftest() -> int:
             ("a comment in a script", f"# bazel run {label} -- --ignored\n", lane, 0),
             ("--ignored in a workflow step",
              f"jobs:\n  a:\n    steps:\n      - run: bazel run {label} -- --ignored\n", flow, 1),
+            # A flag belongs to the segment that holds it, not to a neighbour.
+            ("a correct bench chained to an unrelated ignored test",
+             f"jobs:\n  a:\n    steps:\n      - run: bazel run {label} -- {BENCH} --exact && "
+             f"bazel test //other:t --test_arg=--ignored\n", flow, 0),
+            ("a broken bench chained after a correct step",
+             f"jobs:\n  a:\n    steps:\n      - run: true && bazel run {label} -- --ignored\n", flow, 1),
             ("a workflow comment is not an invocation",
              f"jobs:\n  a:\n    steps:\n      # bazel run {label} -- --ignored\n      - run: true\n", flow, 0),
         ]

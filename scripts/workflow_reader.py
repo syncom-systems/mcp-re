@@ -17,8 +17,8 @@ So this module owns the syntax, and a gate states only its own property:
   * `shell_commands(text)` gives the logical commands of a `run:` body or a shell script.
     Comment lines and trailing comments are dropped and `\\` continuations are joined.
     A segment that prints (`echo`, `printf`) names a command without running it:
-    `Command.executed` is the command without its printing segments, and `Command.prints`
-    marks a command that only prints. `echo "$T" | docker login …` still runs `docker`.
+    `Command.executed_segments()` is the command without its printing segments, and
+    `Command.prints` marks a command that only prints. `echo "$T" | docker login …` still runs `docker`.
   * `Command.invocations()` gives what each non-printing segment of a command runs: the
     program, or the script an interpreter is handed. `named_paths` gives every repository path a command
     names in any position.
@@ -289,15 +289,20 @@ class Command:
         segments = self.segments()
         return bool(segments) and all(_prints(segment) for segment in segments)
 
-    @property
-    def executed(self) -> str:
+    def executed_segments(self) -> list[str]:
         """The segments this command runs, without those that only print.
 
         A segment, not the whole command: `echo "$T" | docker login …` prints and runs
         `docker login`, and a reader that dropped the command for its first word would hide
-        the login.
+        the login. A predicate about one invocation — its flags, its labels — reads the
+        segment that holds it, never a neighbour's.
         """
-        return " ; ".join(segment for segment in self.segments() if not _prints(segment))
+        return [segment for segment in self.segments() if not _prints(segment)]
+
+    @property
+    def executed(self) -> str:
+        """`executed_segments()` as one text, for a question about the whole command."""
+        return " ; ".join(self.executed_segments())
 
     def segments(self) -> list[str]:
         return _segments(self.text)
