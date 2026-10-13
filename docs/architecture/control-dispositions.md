@@ -1022,7 +1022,7 @@ written, they pass in the measured lane, and the unit above them makes no claim 
 **Root relationship.** Under THM-0094. A second asymmetry between the two SDK roots, found
 the same way as NP-014 and recorded separately from it because it is a different clause.
 **Severity:** `high`, matching its TypeScript twin.
-**Note on shape.** One of the seven is parametrised over signature lengths, and pytest's
+**Note on shape.** One of the eight is parametrised over signature lengths, and pytest's
 generated ids for it embed raw bytes. That is a registration-mechanics problem for whoever
 ratifies this, not a reason the proposition is absent, and it is recorded here so the
 ratification meets it deliberately.
