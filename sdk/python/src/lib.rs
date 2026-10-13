@@ -9,174 +9,65 @@
 //! Two custody classes are exposed (ADR-MCPS-044 §Compliance): `sign_request` takes a
 //! raw seed (software custody), and `sign_request_with_signer` takes only a sign
 //! callback, so the private key never enters the SDK (non-exporting custody).
-
-mod projection;
-mod trust;
-use projection::project_verdict;
-use trust::root_anchor;
-use trust::PinnedIssuer;
+//!
+//! This file marshals Python values into `mcp-re-binding-core` and its results back; the
+//! signing inputs, the device check, the root anchor, the verify preamble and the verdict
+//! are that crate's, shared with the N-API binding.
 
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-use mcp_re_client_core::build_authorization;
-use mcp_re_client_core::build_signed_notification;
-use mcp_re_client_core::build_signed_notification_with_signer;
-use mcp_re_client_core::build_signed_request;
-use mcp_re_client_core::build_signed_request_with_signer;
-use mcp_re_client_core::verify_delegated_accepted_202;
-use mcp_re_client_core::verify_delegated_response;
-use mcp_re_client_core::AudienceTuple;
-use mcp_re_client_core::CompositeResponseTrust;
-use mcp_re_client_core::ContinuationHandles;
-use mcp_re_client_core::DelegatedResponseTrust;
-use mcp_re_client_core::DelegationPolicy;
-use mcp_re_client_core::DpopCredential;
-use mcp_re_client_core::HttpProfileError;
+use mcp_re_binding_core::BindingError;
+use mcp_re_binding_core::Call;
+use mcp_re_binding_core::ContinuationArgs;
+use mcp_re_binding_core::IssuerField;
+use mcp_re_binding_core::PinnedIssuer;
+use mcp_re_binding_core::SignArgs;
+use mcp_re_binding_core::SignedParts;
+use mcp_re_binding_core::Verdict;
+use mcp_re_binding_core::VerifyArgs;
 use mcp_re_client_core::HttpRequest;
 use mcp_re_client_core::HttpResponse;
-use mcp_re_client_core::ProvidedAuthorization;
-use mcp_re_client_core::RequestSigningInputs;
-use mcp_re_client_core::ResponseExpectation;
-use mcp_re_client_core::SignerSlot;
-use mcp_re_client_core::StaticRevocationList;
-use mcp_re_client_core::PROFILE_TAG;
-use mcp_re_core::SigningKey;
-use mcp_re_core::VerificationKey;
-use serde_json::Map;
-use serde_json::Value;
 
-fn err(e: HttpProfileError) -> PyErr {
-    pyo3::exceptions::PyValueError::new_err(format!("mcp-re: {}", e.wire_code()))
-}
-fn seed_to_key(seed: &[u8]) -> PyResult<SigningKey> {
-    if seed.len() != 32 {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            "signing seed must be exactly 32 bytes",
-        ));
-    }
-    let mut s = [0u8; 32];
-    s.copy_from_slice(seed);
-    Ok(SigningKey::from_seed_bytes(&s))
-}
-fn parse_json(s: &str, what: &str) -> PyResult<Value> {
-    serde_json::from_str(s)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid {what} json: {e}")))
-}
-fn params_object(params_json: &str) -> PyResult<Map<String, Value>> {
-    match parse_json(params_json, "params")? {
-        Value::Object(m) => Ok(m),
-        _ => Err(pyo3::exceptions::PyValueError::new_err(
-            "params must be a JSON object",
-        )),
+/// An issuer field by the keyword the Python API takes it as.
+fn field_name(field: IssuerField) -> &'static str {
+    match field {
+        IssuerField::KeyId => "issuer_key_id",
+        IssuerField::Role => "issuer_role",
+        IssuerField::TrustDomain => "issuer_trust_domain",
+        IssuerField::Subject => "issuer_subject",
     }
 }
 
-/// The RFC 9421 signing inputs shared by both custody paths: the signed audience
-/// tuple, the DPoP artifact binding whose credential is the covered `Authorization`
-/// header, and — for an ADR-MCPS-047 MRTR answer leg — the signed continuation.
-///
-/// FALLIBLE, and both refusals are `mcp-re-client-core`'s rather than this file's, so the
-/// N-API binding cannot disagree with this one about either rule:
-///
-/// * an EMPTY `dpop_token` is refused ([`DpopCredential`]) instead of minting a binding
-///   over zero bytes beside a signed `Authorization: Bearer ` header carrying nothing;
-/// * a PARTIALLY supplied continuation is refused ([`ContinuationHandles`]) instead of
-///   being dropped, which used to turn an answer leg into an ordinary new call with no
-///   error anywhere.
-#[allow(clippy::too_many_arguments)]
-fn signing_inputs(
-    key_id: &str,
-    audience_id: &str,
-    target_uri: &str,
-    route: Option<String>,
-    dpop_token: &str,
-    nonce: &str,
-    created: i64,
-    expires: i64,
-    cont_prev_alg: Option<String>,
-    cont_prev_value: Option<String>,
-    cont_irr_alg: Option<String>,
-    cont_irr_value: Option<String>,
-    cont_request_state: Option<String>,
-    provided: ProvidedAuthorization,
-) -> PyResult<RequestSigningInputs> {
-    let audience = AudienceTuple {
-        audience_id: audience_id.to_owned(),
-        target_uri: target_uri.to_owned(),
-        route,
-    };
-    // DPoP stays the built-in, header-derived binding: its credential is the covered
-    // `Authorization: Bearer` header, so it is never provider-supplied — `build_authorization`
-    // refuses a provider that presents one. Provider bindings are appended after it.
-    let credential = DpopCredential::present(dpop_token)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-    let mut bindings = vec![credential.binding()];
-    bindings.extend(provided.bindings);
-    let mut inputs = RequestSigningInputs::new(key_id, audience, bindings, nonce, created, expires)
-        .with_headers(vec![(
-            "Authorization".to_owned(),
-            credential.authorization_header_value(),
-        )]);
-    let handles = ContinuationHandles::from_optional(
-        cont_prev_alg,
-        cont_prev_value,
-        cont_irr_alg,
-        cont_irr_value,
-        cont_request_state,
-    )
-    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-    if let Some(handles) = handles {
-        inputs = inputs.with_continuation(handles.continuation());
-    }
-    if let Some(jws) = provided.decision {
-        // The document goes in; the `pdp-decision` binding over it is minted there, from
-        // these exact bytes, so nothing in this file can make the two disagree.
-        inputs = inputs.with_authorization_decision(jws);
-    }
-    Ok(inputs)
+/// A binding refusal as the `ValueError` the Python SDK raises.
+fn raise(e: BindingError) -> PyErr {
+    pyo3::exceptions::PyValueError::new_err(e.message(field_name))
 }
 
-/// Deserialize a provider list into the bindings and decision it contributes.
-///
-/// The rule lives in `mcp-re-client-core`, not here: the spec JSON is a public seam that
-/// the Python wrapper classes do not stand in front of, and one implementation is what
-/// keeps this binding and the N-API one from drifting apart on it.
-fn provided_authorization(bindings_json: Option<&str>) -> PyResult<ProvidedAuthorization> {
-    let Some(json) = bindings_json else {
-        return Ok(ProvidedAuthorization::default());
-    };
-    build_authorization(json)
-        .map_err(|r| pyo3::exceptions::PyValueError::new_err(format!("mcp-re: {}", r.wire_code())))
-}
-
-fn to_signed_request(signed: mcp_re_client_core::SignedRequest) -> PySignedRequest {
-    let req = signed.request();
-    PySignedRequest {
-        method: req.method.clone(),
-        target_uri: req.target_uri.clone(),
-        headers: req.headers.clone(),
-        body_bytes: req.body.clone(),
-        evidence_digest_alg: signed.evidence().digest_alg().to_owned(),
-        evidence_digest_value: signed.evidence().digest_value().to_owned(),
+/// A device callback as the core's device seam: the signature bytes, or `None` when the
+/// callback raised or returned something that is not bytes.
+fn device<'a>(
+    py: Python<'a>,
+    sign_callback: &'a Py<PyAny>,
+) -> impl FnOnce(&[u8]) -> Option<Vec<u8>> + 'a {
+    move |preimage: &[u8]| {
+        let out = sign_callback
+            .call1(py, (PyBytes::new(py, preimage),))
+            .ok()?;
+        out.extract(py).ok()
     }
 }
 
 /// The audited core's version — `mcp-re-client-core`'s, not this binding crate's.
-///
-/// r12 R12-1474: this used to return `env!("CARGO_PKG_VERSION")`, which is the pyo3
-/// wrapper's own version (`0.1.x`) and moves independently of the code that was audited.
-/// A consumer calling a function named `core_version` to learn which audited core they
-/// have was told the version of the shim in front of it.
 #[pyfunction]
 fn core_version() -> &'static str {
-    mcp_re_client_core::CORE_VERSION
+    mcp_re_binding_core::CORE_VERSION
 }
 
 /// The RFC 9421 profile tag the signature is emitted/verified under.
 #[pyfunction]
 fn profile_tag() -> &'static str {
-    PROFILE_TAG
+    mcp_re_binding_core::PROFILE_TAG
 }
 
 /// Sign exact preimage bytes with a raw seed, returning the 64-byte detached Ed25519
@@ -190,9 +81,7 @@ fn sign_preimage<'py>(
     seed: &[u8],
     preimage: &[u8],
 ) -> PyResult<Bound<'py, PyBytes>> {
-    let key = seed_to_key(seed)?;
-    let sig = mcp_re_core::b64url_decode(&key.sign(preimage))
-        .map_err(|_| err(HttpProfileError::InvalidSignature))?;
+    let sig = mcp_re_binding_core::sign_preimage(seed, preimage).map_err(raise)?;
     Ok(PyBytes::new(py, &sig))
 }
 
@@ -222,10 +111,80 @@ impl PySignedRequest {
     }
 }
 
+impl From<SignedParts> for PySignedRequest {
+    fn from(p: SignedParts) -> Self {
+        PySignedRequest {
+            method: p.method,
+            target_uri: p.target_uri,
+            headers: p.headers,
+            body_bytes: p.body,
+            evidence_digest_alg: p.evidence_digest_alg,
+            evidence_digest_value: p.evidence_digest_value,
+        }
+    }
+}
+
+/// The arguments every signing entry point shares, in the order the Python API takes them.
+#[allow(clippy::too_many_arguments)]
+fn sign_args(
+    call: Call,
+    key_id: &str,
+    method: &str,
+    params_json: &str,
+    target_uri: &str,
+    audience_id: &str,
+    route: Option<String>,
+    dpop_token: &str,
+    nonce: &str,
+    created: i64,
+    expires: i64,
+    bindings_json: Option<String>,
+) -> SignArgs {
+    SignArgs {
+        call,
+        key_id: key_id.to_owned(),
+        method: method.to_owned(),
+        params_json: params_json.to_owned(),
+        target_uri: target_uri.to_owned(),
+        audience_id: audience_id.to_owned(),
+        route,
+        dpop_token: dpop_token.to_owned(),
+        nonce: nonce.to_owned(),
+        created,
+        expires,
+        bindings_json,
+    }
+}
+
+/// A request call: its id, and the ADR-MCPS-047 answer-leg handles, all five or none.
+fn request_call(
+    id_json: &str,
+    prev_alg: Option<String>,
+    prev_value: Option<String>,
+    irr_alg: Option<String>,
+    irr_value: Option<String>,
+    request_state: Option<String>,
+) -> Call {
+    Call::Request {
+        id_json: id_json.to_owned(),
+        continuation: ContinuationArgs {
+            prev_alg,
+            prev_value,
+            irr_alg,
+            irr_value,
+            request_state,
+        },
+    }
+}
+
 /// Sign an MCP request as an RFC 9421 + RFC 9530 message.
 ///
 /// `dpop_token` is bound as an OAuth-DPoP artifact binding whose credential is the
-/// covered `Authorization: Bearer` header. `created`/`expires` are Unix seconds.
+/// covered `Authorization: Bearer` header. `created`/`expires` are Unix seconds. For an
+/// ADR-MCPS-047 answer leg, the five `cont_*` handles bind this request to the
+/// `InputRequiredResult` it answers; all five or none. `bindings_json` is the
+/// provider-supplied artifact bindings (ADR-MCPS-044 §Authorization-binding hook) as a
+/// JSON array of specs; absent means DPoP only.
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (
@@ -247,43 +206,38 @@ fn sign_request(
     nonce: &str,
     created: i64,
     expires: i64,
-    // ADR-MCPS-047 MRTR answer leg: bind this request to the `InputRequiredResult` it
-    // answers. All five are `Some` together (or all `None` for an ordinary request):
-    // the previous-request evidence digest (this client's OPEN-leg sign handle), the
-    // input-required-response evidence digest (the OPEN-leg verify handle), and the
-    // opaque `requestState`. The continuation rides inside the signed evidence block.
     cont_prev_alg: Option<String>,
     cont_prev_value: Option<String>,
     cont_irr_alg: Option<String>,
     cont_irr_value: Option<String>,
     cont_request_state: Option<String>,
-    // Provider-supplied artifact bindings (ADR-MCPS-044 §Authorization-binding hook), as
-    // a JSON array of specs carrying the artifact MATERIAL; the core digests it. Absent
-    // means DPoP only — the frozen parity vectors sign through this path unchanged.
     bindings_json: Option<String>,
 ) -> PyResult<PySignedRequest> {
-    let key = seed_to_key(seed)?;
-    let id = parse_json(id_json, "id")?;
-    let params = params_object(params_json)?;
-    let inputs = signing_inputs(
-        key_id,
-        audience_id,
-        target_uri,
-        route,
-        dpop_token,
-        nonce,
-        created,
-        expires,
+    let call = request_call(
+        id_json,
         cont_prev_alg,
         cont_prev_value,
         cont_irr_alg,
         cont_irr_value,
         cont_request_state,
-        provided_authorization(bindings_json.as_deref())?,
-    )?;
-    let signed =
-        build_signed_request(&id, method, params, target_uri, &inputs, &key).map_err(err)?;
-    Ok(to_signed_request(signed))
+    );
+    let args = sign_args(
+        call,
+        key_id,
+        method,
+        params_json,
+        target_uri,
+        audience_id,
+        route,
+        dpop_token,
+        nonce,
+        created,
+        expires,
+        bindings_json,
+    );
+    mcp_re_binding_core::sign(args, seed)
+        .map(PySignedRequest::from)
+        .map_err(raise)
 }
 
 /// Sign an MCP request under NON-EXPORTING custody: the private key never enters the
@@ -296,7 +250,7 @@ fn sign_request(
 ///
 /// The produced evidence is byte-identical to the software path for the same inputs —
 /// the key has only moved behind the device. A device that cannot sign, or that
-/// returns anything other than signature bytes, fails closed as
+/// returns anything other than 64 signature bytes, fails closed as
 /// `mcp-re.invalid_signature`.
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
@@ -325,48 +279,33 @@ fn sign_request_with_signer(
     cont_irr_alg: Option<String>,
     cont_irr_value: Option<String>,
     cont_request_state: Option<String>,
-    // Provider-supplied artifact bindings (ADR-MCPS-044 §Authorization-binding hook), as
-    // a JSON array of specs carrying the artifact MATERIAL; the core digests it. Absent
-    // means DPoP only — the frozen parity vectors sign through this path unchanged.
     bindings_json: Option<String>,
 ) -> PyResult<PySignedRequest> {
-    let id = parse_json(id_json, "id")?;
-    let params = params_object(params_json)?;
-    let inputs = signing_inputs(
-        key_id,
-        audience_id,
-        target_uri,
-        route,
-        dpop_token,
-        nonce,
-        created,
-        expires,
+    let call = request_call(
+        id_json,
         cont_prev_alg,
         cont_prev_value,
         cont_irr_alg,
         cont_irr_value,
         cont_request_state,
-        provided_authorization(bindings_json.as_deref())?,
-    )?;
-    // The device seam. Any failure — the callback raising, returning a non-bytes
-    // value, or returning a wrong-length signature — is an unusable signature and
-    // fails closed rather than emitting unsigned or malformed evidence.
-    let sign_base = |preimage: &[u8]| -> Result<Vec<u8>, HttpProfileError> {
-        let out = sign_callback
-            .call1(py, (PyBytes::new(py, preimage),))
-            .map_err(|_| HttpProfileError::InvalidSignature)?;
-        let sig: Vec<u8> = out
-            .extract(py)
-            .map_err(|_| HttpProfileError::InvalidSignature)?;
-        if sig.len() != 64 {
-            return Err(HttpProfileError::InvalidSignature);
-        }
-        Ok(sig)
-    };
-    let signed =
-        build_signed_request_with_signer(&id, method, params, target_uri, &inputs, sign_base)
-            .map_err(err)?;
-    Ok(to_signed_request(signed))
+    );
+    let args = sign_args(
+        call,
+        key_id,
+        method,
+        params_json,
+        target_uri,
+        audience_id,
+        route,
+        dpop_token,
+        nonce,
+        created,
+        expires,
+        bindings_json,
+    );
+    mcp_re_binding_core::sign_with_device(args, device(py, &sign_callback))
+        .map(PySignedRequest::from)
+        .map_err(raise)
 }
 
 /// Sign a one-way MCP **notification** — a JSON-RPC message with a `method` and no
@@ -396,22 +335,23 @@ fn sign_notification(
     expires: i64,
     bindings_json: Option<String>,
 ) -> PyResult<PySignedRequest> {
-    let key = seed_to_key(seed)?;
-    let params = params_object(params_json)?;
-    let inputs = notification_inputs(
+    let args = sign_args(
+        Call::Notification,
         key_id,
-        audience_id,
+        method,
+        params_json,
         target_uri,
+        audience_id,
         route,
         dpop_token,
         nonce,
         created,
         expires,
         bindings_json,
-    )?;
-    let signed =
-        build_signed_notification(method, params, target_uri, &inputs, &key).map_err(err)?;
-    Ok(to_signed_request(signed))
+    );
+    mcp_re_binding_core::sign(args, seed)
+        .map(PySignedRequest::from)
+        .map_err(raise)
 }
 
 /// Non-exporting-custody variant of [`sign_notification`]: the private key never
@@ -437,66 +377,23 @@ fn sign_notification_with_signer(
     expires: i64,
     bindings_json: Option<String>,
 ) -> PyResult<PySignedRequest> {
-    let params = params_object(params_json)?;
-    let inputs = notification_inputs(
+    let args = sign_args(
+        Call::Notification,
         key_id,
-        audience_id,
+        method,
+        params_json,
         target_uri,
+        audience_id,
         route,
         dpop_token,
         nonce,
         created,
         expires,
         bindings_json,
-    )?;
-    let sign_base = |preimage: &[u8]| -> Result<Vec<u8>, HttpProfileError> {
-        let out = sign_callback
-            .call1(py, (PyBytes::new(py, preimage),))
-            .map_err(|_| HttpProfileError::InvalidSignature)?;
-        let sig: Vec<u8> = out
-            .extract(py)
-            .map_err(|_| HttpProfileError::InvalidSignature)?;
-        if sig.len() != 64 {
-            return Err(HttpProfileError::InvalidSignature);
-        }
-        Ok(sig)
-    };
-    let signed =
-        build_signed_notification_with_signer(method, params, target_uri, &inputs, sign_base)
-            .map_err(err)?;
-    Ok(to_signed_request(signed))
-}
-
-/// The signing inputs for a notification: the request inputs minus the continuation,
-/// which a message that receives no result cannot carry.
-#[allow(clippy::too_many_arguments)]
-fn notification_inputs(
-    key_id: &str,
-    audience_id: &str,
-    target_uri: &str,
-    route: Option<String>,
-    dpop_token: &str,
-    nonce: &str,
-    created: i64,
-    expires: i64,
-    bindings_json: Option<String>,
-) -> PyResult<RequestSigningInputs> {
-    signing_inputs(
-        key_id,
-        audience_id,
-        target_uri,
-        route,
-        dpop_token,
-        nonce,
-        created,
-        expires,
-        None,
-        None,
-        None,
-        None,
-        None,
-        provided_authorization(bindings_json.as_deref())?,
-    )
+    );
+    mcp_re_binding_core::sign_with_device(args, device(py, &sign_callback))
+        .map(PySignedRequest::from)
+        .map_err(raise)
 }
 
 /// The outcome of verifying a delegated-signed bodyless `202 Accepted`.
@@ -517,6 +414,122 @@ struct PyAcceptedResult {
     /// stays off the request path (ADR-MCPRE-052).
     #[pyo3(get)]
     server_keyid: String,
+}
+
+/// The outcome of verifying a delegated-required RFC 9421 response.
+///
+/// `ok` means the evidence VERIFIED (the credential chained to the trusted root and
+/// the delegated signature covered the message) — it does NOT mean the request
+/// succeeded. `outcome` distinguishes a verified SUCCESS (`"success"`) from a verified
+/// REJECTION receipt (`"rejection"`): a delegated-signed fail-closed answer (e.g. a
+/// replay or trust rejection) verifies as genuine evidence but is NOT an acceptance.
+/// For a rejection, `wire_code` carries the server's frozen `mcp-re.*` reason from the
+/// verified body. A caller decides acceptance on `outcome == "success"`. The remaining
+/// members are [`Verdict`]'s.
+#[pyclass]
+struct PyVerifyResult {
+    #[pyo3(get)]
+    ok: bool,
+    #[pyo3(get)]
+    server_keyid: String,
+    #[pyo3(get)]
+    outcome: String,
+    #[pyo3(get)]
+    wire_code: Option<String>,
+    #[pyo3(get)]
+    bound: bool,
+    #[pyo3(get)]
+    execution_status: Option<String>,
+    #[pyo3(get)]
+    retry_safety: Option<String>,
+    #[pyo3(get)]
+    continuation_status: Option<String>,
+    #[pyo3(get)]
+    retention_status: Option<String>,
+    #[pyo3(get)]
+    resp_evidence_digest_alg: String,
+    #[pyo3(get)]
+    resp_evidence_digest_value: String,
+    #[pyo3(get)]
+    request_state: Option<String>,
+}
+
+impl From<Verdict> for PyVerifyResult {
+    fn from(v: Verdict) -> Self {
+        PyVerifyResult {
+            ok: true,
+            server_keyid: v.server_keyid,
+            outcome: v.outcome.to_owned(),
+            wire_code: v.wire_code,
+            bound: v.bound,
+            execution_status: v.execution_status,
+            retry_safety: v.retry_safety,
+            continuation_status: v.continuation_status,
+            retention_status: v.retention_status,
+            resp_evidence_digest_alg: v.resp_evidence_digest_alg,
+            resp_evidence_digest_value: v.resp_evidence_digest_value,
+            request_state: v.request_state,
+        }
+    }
+}
+
+/// The arguments both verification entry points share, in the order the Python API takes
+/// them.
+#[allow(clippy::too_many_arguments)]
+fn verify_args(
+    status: u16,
+    resp_headers: Vec<(String, String)>,
+    resp_body: &[u8],
+    req_method: &str,
+    req_target_uri: &str,
+    req_headers: Vec<(String, String)>,
+    req_body: &[u8],
+    issuer: PinnedIssuer,
+    verifier_audiences: Vec<String>,
+    expected_audience_hash: &str,
+    accepted_epochs: Vec<String>,
+    max_clock_skew: i64,
+    revoked_identifiers: Vec<String>,
+    now: i64,
+) -> VerifyArgs {
+    VerifyArgs {
+        response: HttpResponse {
+            status,
+            headers: resp_headers,
+            body: resp_body.to_vec(),
+        },
+        request: HttpRequest {
+            method: req_method.to_owned(),
+            target_uri: req_target_uri.to_owned(),
+            headers: req_headers,
+            body: req_body.to_vec(),
+        },
+        issuer,
+        verifier_audiences,
+        expected_audience_hash: expected_audience_hash.to_owned(),
+        accepted_epochs,
+        max_clock_skew,
+        revoked_identifiers,
+        now,
+    }
+}
+
+fn pinned(
+    key_id: &str,
+    pubkey_b64url: &str,
+    role: &str,
+    trust_domain: &str,
+    subject: &str,
+    retired_until: Option<i64>,
+) -> PinnedIssuer {
+    PinnedIssuer {
+        key_id: key_id.to_owned(),
+        pubkey_b64url: pubkey_b64url.to_owned(),
+        role: role.to_owned(),
+        trust_domain: trust_domain.to_owned(),
+        subject: subject.to_owned(),
+        retired_until,
+    }
 }
 
 /// Verify the delegated-signed bodyless `202` a server returns for a one-way
@@ -555,102 +568,35 @@ fn verify_accepted_202(
     now: i64,
     issuer_retired_until: Option<i64>,
 ) -> PyResult<PyAcceptedResult> {
-    let issuer_pub = VerificationKey::from_b64url(issuer_pubkey_b64url)
-        .map_err(|_| pyo3::exceptions::PyValueError::new_err("invalid issuer public key"))?;
-    let issuer = PinnedIssuer {
-        key_id: issuer_key_id,
-        role: issuer_role,
-        trust_domain: issuer_trust_domain,
-        subject: issuer_subject,
-    };
-    let anchor = root_anchor(&issuer, issuer_pub, issuer_retired_until)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let resolve = |kid: &str, slot: SignerSlot, at: i64| anchor.resolve_issuer(kid, slot, at);
-    let response = HttpResponse {
+    let issuer = pinned(
+        issuer_key_id,
+        issuer_pubkey_b64url,
+        issuer_role,
+        issuer_trust_domain,
+        issuer_subject,
+        issuer_retired_until,
+    );
+    let args = verify_args(
         status,
-        headers: resp_headers,
-        body: resp_body.to_vec(),
-    };
-    let request = HttpRequest {
-        method: req_method.to_owned(),
-        target_uri: req_target_uri.to_owned(),
-        headers: req_headers,
-        body: req_body.to_vec(),
-    };
-    let policy = DelegationPolicy::new(
+        resp_headers,
+        resp_body,
+        req_method,
+        req_target_uri,
+        req_headers,
+        req_body,
+        issuer,
         verifier_audiences,
         expected_audience_hash,
         accepted_epochs,
         max_clock_skew,
+        revoked_identifiers,
+        now,
     );
-    let revocation = StaticRevocationList::from_identifiers(revoked_identifiers);
-    let trust = CompositeResponseTrust::new(&resolve, &revocation);
-    let actor =
-        verify_delegated_accepted_202(&response, &request, &trust, &policy, now).map_err(err)?;
+    let accepted = mcp_re_binding_core::verify_accepted_202(args).map_err(raise)?;
     Ok(PyAcceptedResult {
         ok: true,
-        server_keyid: actor.identity.keyid,
+        server_keyid: accepted.server_keyid,
     })
-}
-
-/// The outcome of verifying a delegated-required RFC 9421 response.
-///
-/// `ok` means the evidence VERIFIED (the credential chained to the trusted root and
-/// the delegated signature covered the message) — it does NOT mean the request
-/// succeeded. `outcome` distinguishes a verified SUCCESS (`"success"`) from a verified
-/// REJECTION receipt (`"rejection"`): a delegated-signed fail-closed answer (e.g. a
-/// replay or trust rejection) verifies as genuine evidence but is NOT an acceptance.
-/// For a rejection, `wire_code` carries the server's frozen `mcp-re.*` reason from the
-/// verified body. A caller decides acceptance on `outcome == "success"`.
-#[pyclass]
-struct PyVerifyResult {
-    #[pyo3(get)]
-    ok: bool,
-    #[pyo3(get)]
-    server_keyid: String,
-    #[pyo3(get)]
-    outcome: String,
-    #[pyo3(get)]
-    wire_code: Option<String>,
-    #[pyo3(get)]
-    bound: bool,
-    /// The ADR-MCPRE-058 §10 execution/retry contract the server derived from its
-    /// exchange machine and signed into the rejection body. Absent on success and on a
-    /// receipt that stated nothing.
-    ///
-    /// An ABSENT `execution_status` is not `"not_executed"`. The server states a
-    /// disposition when it has one, and collapsing silence into "nothing ran" is
-    /// exactly the read that makes a post-dispatch refusal look retry-safe.
-    #[pyo3(get)]
-    execution_status: Option<String>,
-    /// `retry_safety`: what a retry of this refused request would cost.
-    #[pyo3(get)]
-    retry_safety: Option<String>,
-    /// `continuation_status`: whether the exchange consumed a human approval.
-    #[pyo3(get)]
-    continuation_status: Option<String>,
-    /// `retention_status`: whether the server's evidence-retention obligation failed.
-    #[pyo3(get)]
-    retention_status: Option<String>,
-    /// The verified response's evidence-handle digest algorithm — the
-    /// `input_required_response_evidence` handle an MRTR answer leg binds to
-    /// (ADR-MCPS-047). Read from the VERIFIED response only.
-    #[pyo3(get)]
-    resp_evidence_digest_alg: String,
-    /// The verified response's evidence-handle digest value (base64url, no pad).
-    #[pyo3(get)]
-    resp_evidence_digest_value: String,
-    /// `result.requestState` (a string) from the verified response body IFF the
-    /// audited classifier reads it as an `InputRequiredResult`; else `None`. The
-    /// opaque MRTR state the answer leg re-presents. Read only after the response
-    /// verified as genuine evidence.
-    ///
-    /// The discriminator itself is deliberately not restated here — it lives in
-    /// `mcp_re_http_profile::result_class`, and a doc comment repeating it is one
-    /// more copy to drift. A verified reply that declares itself non-terminal
-    /// without a usable state is an ERROR, never an absent state.
-    #[pyo3(get)]
-    request_state: Option<String>,
 }
 
 /// Verify a delegated-required RFC 9421 response bound to the request the client
@@ -692,61 +638,33 @@ fn verify_response(
     now: i64,
     issuer_retired_until: Option<i64>,
 ) -> PyResult<PyVerifyResult> {
-    let issuer_pub = VerificationKey::from_b64url(issuer_pubkey_b64url)
-        .map_err(|_| pyo3::exceptions::PyValueError::new_err("invalid issuer public key"))?;
-    let issuer = PinnedIssuer {
-        key_id: issuer_key_id,
-        role: issuer_role,
-        trust_domain: issuer_trust_domain,
-        subject: issuer_subject,
-    };
-    let anchor = root_anchor(&issuer, issuer_pub, issuer_retired_until)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let resolve = |kid: &str, slot: SignerSlot, at: i64| anchor.resolve_issuer(kid, slot, at);
-    let response = HttpResponse {
+    let issuer = pinned(
+        issuer_key_id,
+        issuer_pubkey_b64url,
+        issuer_role,
+        issuer_trust_domain,
+        issuer_subject,
+        issuer_retired_until,
+    );
+    let args = verify_args(
         status,
-        headers: resp_headers,
-        body: resp_body.to_vec(),
-    };
-    let request = HttpRequest {
-        method: req_method.to_owned(),
-        target_uri: req_target_uri.to_owned(),
-        headers: req_headers,
-        body: req_body.to_vec(),
-    };
-    let expectation = ResponseExpectation::new(request);
-    let policy = DelegationPolicy::new(
+        resp_headers,
+        resp_body,
+        req_method,
+        req_target_uri,
+        req_headers,
+        req_body,
+        issuer,
         verifier_audiences,
         expected_audience_hash,
         accepted_epochs,
         max_clock_skew,
+        revoked_identifiers,
+        now,
     );
-    let revocation = StaticRevocationList::from_identifiers(revoked_identifiers);
-    let trust = CompositeResponseTrust::new(&resolve, &revocation);
-    let verified =
-        verify_delegated_response(&response, &trust, &expectation, &policy, now).map_err(err)?;
-    // `result.requestState` only if this is an InputRequiredResult — a terminal reply
-    // has none. The verified product derives it from the body verification covered and
-    // REFUSES, rather than reporting as terminal, both a reply that declares itself
-    // non-terminal without a usable state and one whose `resultType` is outside the set
-    // MCP 2026-07-28 defines (MCPRE-495).
-    let request_state = verified.continuation_state().map_err(err)?;
-    // A verified rejection receipt is genuine evidence but NOT an acceptance — surface
-    // the outcome so the caller does not read a signed replay/trust rejection as a
-    // success. (An unsigned / direct-root / forged answer never reaches here: it fails
-    // verify_delegated_response above and is raised as an error.)
-    let ev = verified.verified();
-    // The response evidence handle (D_irr): the answer leg binds to it. Read from the
-    // VERIFIED response evidence, never from unverified bytes.
-    let resp_digest = ev.response_signature_base_digest();
-    Ok(project_verdict(
-        &ev.accepted_signer().identity.keyid,
-        verified.outcome(),
-        ev.is_bound(),
-        resp_digest.digest_alg(),
-        resp_digest.digest_value(),
-        request_state,
-    ))
+    mcp_re_binding_core::verify_response(args)
+        .map(PyVerifyResult::from)
+        .map_err(raise)
 }
 
 #[pymodule]
@@ -764,4 +682,54 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVerifyResult>()?;
     m.add_class::<PyAcceptedResult>()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::field_name;
+    use super::request_call;
+    use mcp_re_binding_core::BindingError;
+    use mcp_re_binding_core::Call;
+    use mcp_re_binding_core::IssuerField;
+
+    #[test]
+    fn an_issuer_field_is_named_by_its_python_keyword() {
+        let named = [
+            (IssuerField::KeyId, "issuer_key_id"),
+            (IssuerField::Role, "issuer_role"),
+            (IssuerField::TrustDomain, "issuer_trust_domain"),
+            (IssuerField::Subject, "issuer_subject"),
+        ];
+        for (field, keyword) in named {
+            assert_eq!(
+                BindingError::EmptyIssuerField(field).message(field_name),
+                format!("invalid issuer identity: {keyword} is empty")
+            );
+        }
+    }
+
+    #[test]
+    fn the_five_continuation_keywords_reach_their_own_handles() {
+        let call = request_call(
+            "7",
+            Some("a".into()),
+            Some("b".into()),
+            Some("c".into()),
+            Some("d".into()),
+            Some("e".into()),
+        );
+        let Call::Request {
+            id_json,
+            continuation,
+        } = call
+        else {
+            panic!("a request call");
+        };
+        assert_eq!(id_json, "7");
+        assert_eq!(continuation.prev_alg.as_deref(), Some("a"));
+        assert_eq!(continuation.prev_value.as_deref(), Some("b"));
+        assert_eq!(continuation.irr_alg.as_deref(), Some("c"));
+        assert_eq!(continuation.irr_value.as_deref(), Some("d"));
+        assert_eq!(continuation.request_state.as_deref(), Some("e"));
+    }
 }

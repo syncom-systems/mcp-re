@@ -292,6 +292,7 @@ not an omission to hide.
 | proxy.trust_snapshot_swap | V0 | _none_ | 0 |
 | proxy.unestablishable_capability_refusal | V0 | _none_ | 0 |
 | proxy.verified_context_carrier_boundary | V0 | _none_ | 2 |
+| sdk_binding_core.adapter | V0 | _none_ | 0 |
 | sdk_python.authorization_binding | V0 | _none_ | 0 |
 | sdk_python.bounded_read | V0 | _none_ | 0 |
 | sdk_python.continuation_drive | V0 | _none_ | 0 |

@@ -9145,12 +9145,59 @@
    "testonly": true,
    "verus_deps": []
   },
+  "//sdk/binding-core:mcp_re_binding_core": {
+   "crate": "",
+   "crate_name": "mcp_re_binding_core",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-core:mcp_re_core"
+   ],
+   "features": [],
+   "kind": "rust_library",
+   "manual": false,
+   "package": "sdk/binding-core",
+   "root": "sdk/binding-core/src/lib.rs",
+   "srcs": [
+    "sdk/binding-core/src/error.rs",
+    "sdk/binding-core/src/lib.rs",
+    "sdk/binding-core/src/pinned_issuer.rs",
+    "sdk/binding-core/src/sign.rs",
+    "sdk/binding-core/src/sign_args.rs",
+    "sdk/binding-core/src/verdict.rs",
+    "sdk/binding-core/src/verify.rs",
+    "sdk/binding-core/src/verify_args.rs"
+   ],
+   "testonly": false,
+   "verus_deps": []
+  },
+  "//sdk/binding-core:mcp_re_binding_core_test": {
+   "crate": "//sdk/binding-core:mcp_re_binding_core",
+   "crate_name": "mcp_re_binding_core",
+   "deps": [],
+   "features": [],
+   "kind": "rust_test",
+   "manual": false,
+   "package": "sdk/binding-core",
+   "root": "sdk/binding-core/src/lib.rs",
+   "srcs": [
+    "sdk/binding-core/src/error.rs",
+    "sdk/binding-core/src/lib.rs",
+    "sdk/binding-core/src/pinned_issuer.rs",
+    "sdk/binding-core/src/sign.rs",
+    "sdk/binding-core/src/sign_args.rs",
+    "sdk/binding-core/src/verdict.rs",
+    "sdk/binding-core/src/verify.rs",
+    "sdk/binding-core/src/verify_args.rs"
+   ],
+   "testonly": true,
+   "verus_deps": []
+  },
   "//sdk/python:_core_shared": {
    "crate": "",
    "crate_name": "_core",
    "deps": [
     "//mcp-re-client-core:mcp_re_client_core",
-    "//mcp-re-core:mcp_re_core"
+    "//sdk/binding-core:mcp_re_binding_core"
    ],
    "features": [],
    "kind": "rust_shared_library",
@@ -9158,9 +9205,7 @@
    "package": "sdk/python",
    "root": "sdk/python/src/lib.rs",
    "srcs": [
-    "sdk/python/src/lib.rs",
-    "sdk/python/src/projection.rs",
-    "sdk/python/src/trust.rs"
+    "sdk/python/src/lib.rs"
    ],
    "testonly": false,
    "verus_deps": []
@@ -9170,7 +9215,7 @@
    "crate_name": "_core",
    "deps": [
     "//mcp-re-client-core:mcp_re_client_core",
-    "//mcp-re-core:mcp_re_core"
+    "//sdk/binding-core:mcp_re_binding_core"
    ],
    "features": [],
    "kind": "rust_test",
@@ -9178,9 +9223,7 @@
    "package": "sdk/python",
    "root": "sdk/python/src/lib.rs",
    "srcs": [
-    "sdk/python/src/lib.rs",
-    "sdk/python/src/projection.rs",
-    "sdk/python/src/trust.rs"
+    "sdk/python/src/lib.rs"
    ],
    "testonly": true,
    "verus_deps": []
@@ -9190,7 +9233,7 @@
    "crate_name": "mcp_re_sdk_core",
    "deps": [
     "//mcp-re-client-core:mcp_re_client_core",
-    "//mcp-re-core:mcp_re_core"
+    "//sdk/binding-core:mcp_re_binding_core"
    ],
    "features": [],
    "kind": "rust_test",
@@ -9198,9 +9241,7 @@
    "package": "sdk/typescript",
    "root": "sdk/typescript/src/lib.rs",
    "srcs": [
-    "sdk/typescript/src/lib.rs",
-    "sdk/typescript/src/projection.rs",
-    "sdk/typescript/src/trust.rs"
+    "sdk/typescript/src/lib.rs"
    ],
    "testonly": true,
    "verus_deps": []
@@ -9210,7 +9251,7 @@
    "crate_name": "mcp_re_sdk_core",
    "deps": [
     "//mcp-re-client-core:mcp_re_client_core",
-    "//mcp-re-core:mcp_re_core"
+    "//sdk/binding-core:mcp_re_binding_core"
    ],
    "features": [],
    "kind": "rust_shared_library",
@@ -9218,9 +9259,7 @@
    "package": "sdk/typescript",
    "root": "sdk/typescript/src/lib.rs",
    "srcs": [
-    "sdk/typescript/src/lib.rs",
-    "sdk/typescript/src/projection.rs",
-    "sdk/typescript/src/trust.rs"
+    "sdk/typescript/src/lib.rs"
    ],
    "testonly": false,
    "verus_deps": []

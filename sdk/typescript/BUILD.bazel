@@ -40,10 +40,8 @@ nt_napi_addon(
     proc_macro_deps = ["@crates_mcp_re//:napi-derive"],
     deps = [
         "//mcp-re-client-core:mcp_re_client_core",
-        "//mcp-re-core:mcp_re_core",
+        "//sdk/binding-core:mcp_re_binding_core",
         "@crates_mcp_re//:napi",
-        "@crates_mcp_re//:serde",
-        "@crates_mcp_re//:serde_json",
     ],
 )
 
@@ -61,9 +59,7 @@ nt_rust_test(
     rustc_flags = ["-C", "link-arg=$(execpath :napi_host_stub)"],
     deps = [
         "//mcp-re-client-core:mcp_re_client_core",
-        "//mcp-re-core:mcp_re_core",
+        "//sdk/binding-core:mcp_re_binding_core",
         "@crates_mcp_re//:napi",
-        "@crates_mcp_re//:serde",
-        "@crates_mcp_re//:serde_json",
     ],
 )
