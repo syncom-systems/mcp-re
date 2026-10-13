@@ -189,3 +189,85 @@ def apparatus_problem(measurement: dict, first: list[str], second: list[str] | N
             "that cannot move is not a measurement."
         )
     return None
+
+
+# ------------------------------------------------------------------ declaration cross-check
+
+#: A unit's four measurement declarations, each beside the registry row field it must equal.
+#: ADR-MCPRE-068 A3/A4: the unit DECLARES its measurement evidence and the registry row is
+#: the registered apparatus; neither is derived from the other, so they are checked equal.
+DECLARED_AS = (
+    ("measurement_protocol", "protocol"),
+    ("measurement_scope", "scope"),
+    ("measurement_artifact", "artifact"),
+    ("measurement_control", "control"),
+)
+
+
+def _registered(row: dict, field: str):
+    """The row's value for `field` in the form a unit declares it."""
+    if field == "protocol":
+        return list(row.get("protocol", []))
+    if field == "scope":
+        return " ".join(str(row.get("scope", "")).split())
+    if field == "control":
+        control = {"kind": row.get("control_kind")}
+        if row.get("control"):
+            control["argv"] = list(row["control"])
+        return control
+    return row.get(field)
+
+
+def _declared(unit: dict, key: str):
+    """The unit's declaration for `key`, scope compared by its words rather than its wrapping."""
+    value = unit.get(key)
+    if key == "measurement_scope" and isinstance(value, str):
+        return " ".join(value.split())
+    return value
+
+
+def declaration_problems(units: dict[str, dict], measurements: list[dict]) -> list[str]:
+    """Every `measured://` declaration that does not resolve to, or does not agree with, ONE row.
+
+    A unit declaring `measured://` evidence resolves to the registered measurement naming it
+    as `unit`. No row is a dangling reference and two rows are an ambiguous one; with exactly
+    one, each of the four declared fields must equal the row's. A row whose unit declares no
+    `measured://` evidence is a number no claim rests on.
+    """
+    out: list[str] = []
+    rows: dict[str, list[dict]] = {}
+    for row in measurements:
+        rows.setdefault(row["unit"], []).append(row)
+    for uid in sorted(units):
+        unit = units[uid]
+        declares = any(str(e).startswith("measured://") for e in unit.get("evidence", []))
+        found = rows.get(uid, [])
+        if not declares:
+            out.extend(
+                f"measurement {row['id']}: unit {uid!r} declares no measured:// evidence, so "
+                f"the number is one no claim rests on"
+                for row in found
+            )
+            continue
+        if not found:
+            out.append(
+                f"unit {uid}: declares measured:// evidence but no measurement is registered "
+                f"for it. A declared evidence class nothing measures is unmeasured evidence."
+            )
+            continue
+        if len(found) > 1:
+            out.append(
+                f"unit {uid}: {len(found)} measurements are registered for it "
+                f"({sorted(r['id'] for r in found)}); its declaration names one"
+            )
+            continue
+        row = found[0]
+        for key, field in DECLARED_AS:
+            declared, registered = _declared(unit, key), _registered(row, field)
+            if declared != registered:
+                out.append(
+                    f"unit {uid}: declares {key} {declared!r} but measurement {row['id']} "
+                    f"registers {field} {registered!r}. The declaration and the registered "
+                    f"apparatus are checked against each other, and they disagree."
+                )
+    return out

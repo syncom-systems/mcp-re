@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from _manifest import expand_paths, load_assumptions, load_trust_boundaries, load_verification
-from _measured import load_measurements
+from _measured import declaration_problems, load_measurements
 from _mutation import load_probes as load_mutation_probes
 from _mutation import undeclared_expectations, weaken
 from _registries import REPO_ROOT, ManifestError, path
@@ -153,6 +153,7 @@ def reference_problems(reg: Registries, root: Path = REPO_ROOT) -> list[str]:
         for m in reg.measurements
         if m["unit"] not in reg.units
     ]
+    out += declaration_problems(reg.units, reg.measurements)
     out += _assumption_problems(reg)
     return out
 

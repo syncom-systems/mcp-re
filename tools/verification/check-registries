@@ -8,7 +8,7 @@ tree, is checked here once, on the merge path:
   * a mutation probe's unit, its theorem resting on that unit, the controls it expects
     red, and every site it weakens resolving to exactly one place;
   * a structural probe's unit and its documented case;
-  * a measurement's unit;
+  * a measurement's unit, and a measured unit's four declarations against its measurement;
   * an assumption's scoped units and boundaries, and every seam site it registers.
 
 It also holds the reader rule: no production gate or tool spells a registry's path, so
@@ -69,11 +69,27 @@ def gate() -> int:
 _SOURCE = "fn guard() {\n    check_one();\n    check_two();\n}\nfn x() {}\nfn twice() { dup(); dup(); }\n"
 
 
+_MEASUREMENT = {
+    "id": "X1", "unit": "u.measured", "protocol": ["run", "it"], "scope": "the\n corpus",
+    "artifact": "out.txt", "control_kind": "sensitivity", "control": ["perturb", "it"],
+}
+_MEASURED_UNIT = {
+    "id": "u.measured", "evidence": ["measured://u/corpus"], "evidence_class": "measured",
+    "measurement_protocol": ["run", "it"], "measurement_scope": "the corpus",
+    "measurement_artifact": "out.txt",
+    "measurement_control": {"kind": "sensitivity", "argv": ["perturb", "it"]},
+}
+
+
+def _measured(**changes) -> dict[str, dict]:
+    return {"u.measured": dict(_MEASURED_UNIT, **changes)}
+
+
 def _fixture() -> Registries:
     unit = {"id": "u.one", "paths": ["a/src/lib.rs"], "tested_symbols": ["//a:t#ctl"],
             "gate_controls": ["scripts/g.py"]}
     return Registries(
-        units={"u.one": unit},
+        units={"u.one": unit, "u.measured": _MEASURED_UNIT},
         theorems=[{"id": "THM-0001", "owner": "u.one", "supported_by": ["unit://u.one"]}],
         assumptions=[{"id": "ASM-0001", "scope": ["unit://u.one", "boundary://b.one"],
                       "sites": ["a/src/lib.rs#x"]}],
@@ -88,7 +104,7 @@ def _fixture() -> Registries:
             "id": "S1", "unit": "u.one", "kind": "crate-boundary-compile-fail",
             "doc_path": "a/src/lib.rs", "doc_item": "Guard",
         }],
-        measurements=[{"id": "X1", "unit": "u.one"}],
+        measurements=[_MEASUREMENT],
         live_sites=frozenset({"a/src/lib.rs#x"}),
     )
 
@@ -150,7 +166,20 @@ def selftest() -> int:
             ("an assumption scoped to an undeclared boundary",
              _with(reg, boundaries=frozenset()), "names a boundary"),
             ("a measurement on an undeclared unit",
-             _with(reg, measurements=[{"id": "X1", "unit": "u.gone"}]), "measurement X1: unit 'u.gone'"),
+             _with(reg, measurements=[dict(_MEASUREMENT, unit="u.gone")]), "measurement X1: unit 'u.gone'"),
+            ("a measured:// declaration no measurement resolves",
+             _with(reg, measurements=[]), "unit u.measured: declares measured:// evidence but no measurement"),
+            ("a measurement on a unit that declares no measured:// evidence",
+             _with(reg, measurements=[dict(_MEASUREMENT, unit="u.one")]), "declares no measured:// evidence"),
+            ("a declared protocol the measurement does not register",
+             _with(reg, units=_measured(measurement_protocol=["run", "else"])), "declares measurement_protocol"),
+            ("a declared scope the measurement does not register",
+             _with(reg, units=_measured(measurement_scope="another corpus")), "declares measurement_scope"),
+            ("a declared artifact the measurement does not register",
+             _with(reg, units=_measured(measurement_artifact="elsewhere.txt")), "declares measurement_artifact"),
+            ("a declared control the measurement does not register",
+             _with(reg, units=_measured(measurement_control={"kind": "reproducibility"})),
+             "declares measurement_control"),
             ("a structural probe on an undeclared unit",
              _with(reg, structural_probes=[dict(reg.structural_probes[0], unit="u.gone")]),
              "structural probe S1: unit 'u.gone'"),

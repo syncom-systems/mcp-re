@@ -10591,10 +10591,43 @@ exported_contracts = []
 evidence_class = "measured"
 direct_consequence_severity = "medium"
 evidence = ["measured://conformance/audit_vocabulary/verdict_scope"]
-measurement_protocol = "The workspace walk in `audit_vocabulary_guard_test`, executed with its scope-identity control, emitting one `MEASURED:` line per observation. Registered as a runnable argv in verification/policy/measurements.toml (MSR-0001)."
-measurement_scope = "Every first-party crate package the build graph compiles, both SDK bindings included, derived from the committed target table at compile time rather than from a hand-list, so a new crate cannot be scanned by nobody; the clippy activation probes are the one named exclusion. Production halves only: test regions are excluded by `rust_source::production_half`."
+# The four declarations are what this unit claims as its measurement evidence, and
+# check-registries holds each equal to MSR-0001 in measurements.toml. The protocol runs the
+# walk with its scope-identity controls and emits one `MEASURED:` line per observation; the
+# sensitivity control removes `mcp-re-core` from the scanned set, which must change exactly
+# one observation, and reports `APPARATUS-MOVED: <n>`, which the lane reads as a count rather
+# than an exit status.
+measurement_protocol = [
+  "bazel",
+  "test",
+  "//mcp-re-conformance:audit_vocabulary_guard_test",
+  "--nocache_test_results",
+  "--test_output=streamed",
+  "--test_arg=--exact",
+  "--test_arg=exactly_two_files_decide_what_a_verdict_token_says",
+  "--test_arg=the_scanned_crate_set_is_the_workspace",
+  "--test_arg=the_scanned_corpus_includes_the_compiled_examples",
+  "--test_arg=--nocapture",
+]
+measurement_scope = """
+Every first-party crate package the build graph compiles, both SDK bindings included, derived
+from the committed target table at compile time; the clippy activation probes are the one named
+exclusion. Each package's `src/` and `examples/` trees — every Rust source a compiled target is
+built from. Production halves only, with test regions excluded by `rust_source::production_half`.
+Measured on whatever host runs the lane, which does not bound the result: the corpus is the
+tree, not the machine.
+"""
 measurement_artifact = "verdict-vocabulary-scope.txt"
-measurement_control = "Sensitivity: removing `mcp-re-core` from the scanned set must change exactly one observation, and the walk must read fewer files. The control reports `APPARATUS-MOVED: <n>`, and the lane reads the COUNT rather than the exit status — a control that selected nothing exits 0 exactly like one that perturbed everything."
+measurement_control = { kind = "sensitivity", argv = [
+  "bazel",
+  "test",
+  "//mcp-re-conformance:audit_vocabulary_guard_test",
+  "--nocache_test_results",
+  "--test_output=streamed",
+  "--test_arg=--exact",
+  "--test_arg=the_measurement_moves_when_the_scanned_set_shrinks",
+  "--test_arg=--nocapture",
+] }
 
 # v0.17 assurance-closure mandate, priority 2: `mcp-re-host`, four files and zero tests in
 # both lanes. The measurement changed what the slice is about.
