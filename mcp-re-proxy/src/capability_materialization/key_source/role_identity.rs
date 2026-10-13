@@ -60,8 +60,9 @@ pub(super) fn response_role_identity(source: &(dyn KeySource + Send + Sync)) -> 
 /// certificate would start reporting the fault as a signing-role collapse.
 ///
 /// It also cannot become a way to SKIP the comparison, because there is no execution in
-/// which a role produced no key and serving proceeds. The composition root reads the served
-/// chain immediately afterwards to build the listener, and the response public key to build
+/// which a role produced no key and serving proceeds. The witness's channel projection reads
+/// the served chain and refuses when it cannot be had, and the listener is built from nothing
+/// else; the composition root reads the response public key immediately afterwards to build
 /// the delegation — so a deployment where either is unavailable starts no server. The only
 /// executions this arm admits are executions that never serve.
 ///

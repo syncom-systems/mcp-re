@@ -629,19 +629,6 @@ pub(crate) mod test_support {
             .expect("a delegated PKCS#11 TLS key names a state")
     }
 
-    /// The TLS-custody state a deployment reading the handshake key from a file reaches.
-    pub(crate) fn channel_custody_exported(key_path: &str) -> super::ChannelCredentialCustodyState {
-        let mut config = legal_config();
-        config.channel_credential.key = crate::deployment_request::ChannelKeyRequest::ExportedFile(
-            crate::deployment_request::ExportedChannelKeyRequest {
-                key_path: key_path.to_string(),
-            },
-        );
-        super::channel_credential_custody::classify_and_validate(&config)
-            .0
-            .expect("an exported TLS key names a state")
-    }
-
     /// The custody state a deployment holding the signing key on a PKCS#11 token reaches.
     pub(crate) fn custody_pkcs11() -> super::CustodyState {
         let mut config = legal_config();

@@ -11,9 +11,10 @@
 //! startup and signs with another on the data plane. Every signature still verifies, every
 //! startup line is still true, and the two facts are simply about different keys.
 //!
-//! > The composition root opens the key source ONCE, through the materializer; it reads the
-//! > role-separation witness's source through one projection; it constructs no key source of
-//! > its own; and the signing plane it installs is materialized from that same witness.
+//! > The composition root opens the key source ONCE, through the materializer; it takes the
+//! > channel credential from the role-separation witness through one projection; it
+//! > constructs no key source of its own; and the signing plane it installs is materialized
+//! > from that same witness.
 //!
 //! # Why a source scan and not a type
 //!
@@ -26,10 +27,10 @@
 //! bug to make and the root's own bug to be caught making — evidence, not
 //! unconstructibility (`docs/dev/sealed-owners.md`).
 
-/// The materializer, the witness's one borrowed projection, and the plane the signer is
+/// The materializer, the witness's one channel projection, and the plane the signer is
 /// installed through.
 const MATERIALIZER: &str = "build_key_source";
-const WITNESS_EXIT: &str = ".key_source()";
+const WITNESS_EXIT: &str = ".channel_credential()";
 const SIGNING_PLANE: &str = "SigningPlane::materialize";
 
 /// The binding the root must carry from one to the other. Named, because the property is
@@ -47,10 +48,11 @@ const RIVAL_CONSTRUCTORS: &[&str] = &[
     "GcpKmsKeySource::",
 ];
 
-/// The two accessors whose eager, fallible read is what turns `RoleSeparation::NotCompared`
-/// into a refusal rather than a serving deployment: a role that materialized no key is not
-/// compared, and the root reads both keys immediately afterwards.
-const EAGER_ROLE_READS: &[&str] = &[".tls_server_cert_chain()", ".response_public_key()"];
+/// The two reads whose eager, fallible form is what turns `RoleSeparation::NotCompared` into
+/// a refusal rather than a serving deployment: a role that materialized no key is not
+/// compared, and the root reads both roles immediately afterwards. The channel role is read
+/// through the witness's channel projection, which reads the served chain.
+const EAGER_ROLE_READS: &[&str] = &[WITNESS_EXIT, ".response_public_key()"];
 
 fn app_source() -> String {
     let path = mcp_re_test_paths::resolve_runfile("MCP_RE_APP_SRC");
@@ -80,9 +82,9 @@ fn the_composition_root_opens_one_key_source_through_the_materializer() {
     assert_eq!(
         occurrences(&source, WITNESS_EXIT),
         1,
-        "the role-separation witness must be projected exactly once. A second \
-         `{WITNESS_EXIT}` is a second read surface over the source, and the reads this \
-         control places no longer all follow one comparison."
+        "the role-separation witness's channel projection must be taken exactly once. A \
+         second `{WITNESS_EXIT}` is a second channel credential, and nothing decides which \
+         one the listener serves."
     );
 }
 
@@ -182,7 +184,7 @@ fn the_composition_root_reads_both_signing_roles_eagerly_and_fallibly() {
 fn the_role_reads_follow_the_witness_exit() {
     let source = app_source();
     let exit = source
-        .find(WITNESS_EXIT)
+        .find(&format!("{MATERIALIZER}("))
         .expect("the composition root opens the role-separation witness");
     for accessor in EAGER_ROLE_READS {
         let at = source
@@ -208,9 +210,12 @@ fn the_rules_would_catch_each_regression() {
         0
     );
     assert_eq!(
-        occurrences("a.key_source();\nb.key_source();", WITNESS_EXIT),
+        occurrences(
+            "a.channel_credential();\nb.channel_credential();",
+            WITNESS_EXIT
+        ),
         2,
-        "a second projection of the witness must be seen"
+        "a second channel projection of the witness must be seen"
     );
     assert_eq!(
         occurrences("let k = FileKeySource::new(p);", "FileKeySource::"),
@@ -238,13 +243,13 @@ fn the_rules_would_catch_each_regression() {
     assert_eq!(occurrences(&half, "build_key_source("), 1);
 
     // The eager-read rule must see a lazy, swallowed and closure-wrapped read.
-    let eager = "let c = key_source.tls_server_cert_chain().map_err(|e| e.to_string())?;";
+    let eager = "let c = roots.channel_credential().map_err(|e| e.to_string())?;";
     assert!(read_statement(eager, EAGER_ROLE_READS[0]).is_some_and(|s| is_eager_and_fallible(&s)));
     for lazy in [
-        "let c = key_source.tls_server_cert_chain().unwrap_or_default();",
-        "let c = key_source.tls_server_cert_chain().ok();",
-        "let c = || key_source.tls_server_cert_chain().map_err(|e| e.to_string())?;",
-        "key_source.tls_server_cert_chain()?;",
+        "let c = roots.channel_credential().unwrap_or_else(|_| fallback());",
+        "let c = roots.channel_credential().ok();",
+        "let c = || roots.channel_credential().map_err(|e| e.to_string())?;",
+        "roots.channel_credential()?;",
     ] {
         assert!(
             !read_statement(lazy, EAGER_ROLE_READS[0]).is_some_and(|s| is_eager_and_fallible(&s)),

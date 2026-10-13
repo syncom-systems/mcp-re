@@ -192,7 +192,6 @@ mod revocation_posture_tests {
     /// written here at all. The `Option<Duration>` this took could name every one of them.
     fn plan(cert_lifetime_secs: u64) -> ChannelEstablishmentPlan {
         ChannelEstablishmentPlan {
-            custody: crate::config_state::test_support::channel_custody_exported("/key"),
             client_revocation: crate::config_state::test_support::crl_plan(&[], None),
             credential_window: crate::config_state::test_support::credential_window(
                 cert_lifetime_secs,

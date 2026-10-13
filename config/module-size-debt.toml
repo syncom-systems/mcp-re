@@ -244,10 +244,13 @@ path = "mcp-re-proxy/src/app.rs"
 # tree that exists, and `baseline_sha` names the commit that first establishes IT.
 # MCPRE-183: the argv path carries the validation proof into `run`, and the audit drain decides
 # from its own stream whether there is anything to report, so the root no longer reads the raw
-# `audit_sink` field: 846 (measured at 4312c49) -> 839. `baseline_sha` names that parent; the
-# change that establishes 839 is its child.
-baseline_prod_loc = 839
-baseline_sha = "4312c49"
+# `audit_sink` field: 846 (measured at 4312c49) -> 839.
+# MCPRE-185: the key-source owner hands the root an established channel credential, so the
+# root no longer reads the TLS accessors or chooses delegated-or-exported key material:
+# 839 (measured at abd8f49) -> 816. `baseline_sha` names that parent; the change that
+# establishes 816 is its child.
+baseline_prod_loc = 816
+baseline_sha = "abd8f49"
 status = "reviewed-exception"
 review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 
@@ -395,8 +398,10 @@ status = "unreviewed"
 # `tls_plane.rs` became `tls_plane/mod.rs`. The debt moves WITH the file.
 [[debt]]
 path = "mcp-re-proxy/src/tls_plane/mod.rs"
-baseline_prod_loc = 393
-baseline_sha = "255465e"
+# MCPRE-185: the requested-versus-established custody check left for the key-source owner,
+# and the plane takes one established credential: 393 -> 372.
+baseline_prod_loc = 372
+baseline_sha = "abd8f49"
 status = "unreviewed"
 
 [[debt]]

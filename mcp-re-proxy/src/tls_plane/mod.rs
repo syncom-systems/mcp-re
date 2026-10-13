@@ -212,34 +212,18 @@ impl TlsPlane {
     /// what is left here is loading the bytes, building the verifier and starting the
     /// worker the posture calls for.
     ///
-    /// `material` is MOVED in — the reload worker rebuilds the verifier from the same
-    /// immutable key material, so nothing outside this plane may keep a second copy. It is
-    /// the ESTABLISHED custody, and the plan states the REQUESTED one; the two are checked
-    /// against each other below rather than assumed to agree.
+    /// `credential` is MOVED in — the reload worker rebuilds the verifier from the same
+    /// immutable key material, so nothing outside this plane may keep a second copy. The
+    /// key-source owner established it with the custody the deployment requested, so the
+    /// custody this plane serves under is that one.
     pub fn materialize(
         plan: &crate::startup_plan::ChannelEstablishmentPlan,
-        material: TlsKeyMaterial,
-        server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
-        client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
+        credential: crate::capability_materialization::EstablishedChannelCredential,
         startup_now_unix: i64,
         deployment: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<TlsPlane, String> {
+        let (material, server_chain, client_ca) = credential.into_parts();
         let established = material.exposure();
-        // The one place the REQUESTED custody and the ESTABLISHED custody meet. Layer A
-        // classified which the deployment asked for from its TLS key selectors; the key
-        // source produced an actual signer. Nothing else compares them, so a divergence —
-        // a selector that classifies as delegated while the key source yields an exported
-        // key — would silently serve handshakes under weaker custody than the deployment
-        // declared, and every startup line would report the declared one.
-        if established != plan.custody.exposure() {
-            return Err(format!(
-                "TLS custody mismatch: the deployment is configured for {} handshake custody, \
-                 but the key source established {} custody. Refusing to serve under a custody \
-                 the configuration does not name",
-                custody_word(plan.custody.exposure()),
-                custody_word(established),
-            ));
-        }
         let crl_paths = plan.client_revocation.paths();
         let crls = load_and_check_crls(crl_paths, &client_ca, startup_now_unix)?;
         // Cloned because the initial build below consumes the original; the reload
@@ -309,7 +293,10 @@ pub enum TlsKeyMaterial {
 
 /// The operator-facing word for a custody fact, unchanged from the flag vocabulary an
 /// operator reads in the startup transcript.
-fn custody_word(exposure: PrivateKeyExposure) -> &'static str {
+///
+/// `pub(crate)` so the key-source owner's custody-mismatch refusal speaks the vocabulary
+/// this plane's startup line uses.
+pub(crate) fn custody_word(exposure: PrivateKeyExposure) -> &'static str {
     match exposure {
         PrivateKeyExposure::ProcessReadable => "exported-key",
         PrivateKeyExposure::NonExporting => "delegated",
@@ -324,7 +311,10 @@ impl TlsKeyMaterial {
     /// depends on it too: a `NonExporting` signer blocks inside rustls' synchronous
     /// `Signer::sign`, so each core needs a worker pool rather than the single-threaded
     /// share-nothing default.
-    fn exposure(&self) -> PrivateKeyExposure {
+    ///
+    /// `pub(crate)` because the key-source owner compares it against the requested custody
+    /// before this plane is handed the material.
+    pub(crate) fn exposure(&self) -> PrivateKeyExposure {
         match self {
             TlsKeyMaterial::Exported(_) => PrivateKeyExposure::ProcessReadable,
             TlsKeyMaterial::Delegated(_) => PrivateKeyExposure::NonExporting,
@@ -527,57 +517,19 @@ mod handle_lifetime_tests {
     }
 }
 
-/// The one place the REQUESTED custody and the ESTABLISHED custody meet.
+/// The plane serves under the custody of the credential it was handed.
 #[cfg(test)]
 mod custody_agreement_tests {
     use super::*;
+    use crate::capability_materialization::EstablishedChannelCredential;
     use crate::startup_plan::ChannelEstablishmentPlan;
 
-    fn exported_material() -> TlsKeyMaterial {
-        use rustls::pki_types::PrivateKeyDer;
-        use rustls::pki_types::PrivatePkcs8KeyDer;
-        let key = rcgen::KeyPair::generate().expect("key");
-        TlsKeyMaterial::Exported(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
-            key.serialize_der(),
-        )))
-    }
-
-    fn plan(
-        custody: crate::config_state::ChannelCredentialCustodyState,
-    ) -> ChannelEstablishmentPlan {
+    fn plan() -> ChannelEstablishmentPlan {
         ChannelEstablishmentPlan {
-            custody,
             client_revocation: crate::config_state::test_support::crl_plan(&[], None),
             credential_window: crate::config_state::test_support::credential_window(3600, 300),
             handshake_signing: crate::delegated_tls::HandshakeSignCapacity::default(),
         }
-    }
-
-    /// A deployment configured for delegated handshake custody must not be served by an
-    /// exported key.
-    ///
-    /// Nothing else compares these. Layer A classifies the custody from the TLS key
-    /// selectors; the key source produces an actual signer; and every startup line reports
-    /// the DECLARED custody. A divergence would therefore serve handshakes under weaker
-    /// custody than the transcript claims — the failure would be invisible in exactly the
-    /// place an operator looks.
-    #[test]
-    fn a_key_source_that_disagrees_with_the_declared_custody_refuses() {
-        let err = TlsPlane::materialize(
-            &plan(crate::config_state::test_support::channel_custody_delegated_pkcs11("tls")),
-            exported_material(),
-            Vec::new(),
-            Vec::new(),
-            0,
-            Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        )
-        .err()
-        .expect("mismatched custody must refuse");
-        assert!(err.contains("custody"), "{err}");
-        assert!(
-            err.contains("delegated") && err.contains("exported-key"),
-            "the refusal must name both sides: {err}"
-        );
     }
 
     /// The snapshot the plane serves carries the custody of the material it was built
@@ -587,10 +539,12 @@ mod custody_agreement_tests {
     fn the_served_snapshot_carries_the_established_custody() {
         let (chain, signer) = crate::delegated_tls::tests::corresponding_material();
         let plane = TlsPlane::materialize(
-            &plan(crate::config_state::test_support::channel_custody_delegated_pkcs11("tls")),
-            TlsKeyMaterial::Delegated(signer),
-            chain.clone(),
-            chain,
+            &plan(),
+            EstablishedChannelCredential::from_parts_for_tests(
+                TlsKeyMaterial::Delegated(signer),
+                chain.clone(),
+                chain,
+            ),
             0,
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
@@ -653,15 +607,16 @@ mod custody_agreement_tests {
             inner: signer,
             calls: std::sync::atomic::AtomicUsize::new(0),
         });
-        let mut plan =
-            plan(crate::config_state::test_support::channel_custody_delegated_pkcs11("tls"));
+        let mut plan = plan();
         plan.handshake_signing =
             crate::delegated_tls::HandshakeSignCapacity::new(1, 2).expect("in bounds");
         let plane = TlsPlane::materialize(
             &plan,
-            TlsKeyMaterial::Delegated(counting.clone()),
-            chain.clone(),
-            chain.clone(),
+            EstablishedChannelCredential::from_parts_for_tests(
+                TlsKeyMaterial::Delegated(counting.clone()),
+                chain.clone(),
+                chain.clone(),
+            ),
             0,
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
@@ -675,31 +630,6 @@ mod custody_agreement_tests {
             counting.calls.load(std::sync::atomic::Ordering::Relaxed),
             2,
             "a refused handshake must never reach the delegated signer"
-        );
-    }
-
-    /// Negative control: agreement is not refused. Without this the assertion above would
-    /// pass just as well if `materialize` refused everything.
-    ///
-    /// It fails later — on the empty certificate chain — which is the point: the custody
-    /// check is not what stops it, and the diagnostic proves which check ran.
-    #[test]
-    fn agreeing_custody_passes_the_check_and_fails_on_something_else() {
-        let err = TlsPlane::materialize(
-            &plan(crate::config_state::test_support::channel_custody_exported(
-                "/key",
-            )),
-            exported_material(),
-            Vec::new(),
-            Vec::new(),
-            0,
-            Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        )
-        .err()
-        .expect("an empty chain cannot build a server config");
-        assert!(
-            !err.contains("custody mismatch"),
-            "agreeing custody must pass the check: {err}"
         );
     }
 }
@@ -835,7 +765,6 @@ mod fleet_crl_bound_tests {
         cert_lifetime_secs: u64,
     ) -> ChannelEstablishmentPlan {
         ChannelEstablishmentPlan {
-            custody: crate::config_state::test_support::channel_custody_exported("/key"),
             client_revocation,
             // The connection age is the default 300s, or the lifetime where that is
             // shorter: a fixture cannot name an age that outlives the credential, because

@@ -210,6 +210,7 @@ _PROXY_LIB_SRCS = [
     "src/capability_materialization/key_file_custody/process_groups.rs",
 "src/capability_materialization/ingress.rs",
     "src/capability_materialization/key_source/aws.rs",
+    "src/capability_materialization/key_source/channel_credential.rs",
     "src/capability_materialization/key_source/file.rs",
     "src/capability_materialization/key_source/gcp.rs",
     "src/capability_materialization/key_source/mod.rs",
