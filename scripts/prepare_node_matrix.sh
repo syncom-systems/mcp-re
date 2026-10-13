@@ -29,18 +29,9 @@ PROJECT="sdk/typescript"
 
 command -v npm >/dev/null || { echo "prepare_node_matrix: npm is not on PATH." >&2; exit 1; }
 
-readarray -t RUNTIMES < <(python3 - <<'PY'
-import sys, tomllib
-doc = tomllib.load(open("verification/policy/toolchains.lock.toml", "rb"))
-entry = doc.get("typescript")
-if not isinstance(entry, dict) or entry.get("state") != "resolved":
-    sys.exit("prepare_node_matrix: [typescript] is not a resolved pin.")
-versions = [str(v) for v in entry.get("interpreters", [])]
-if not versions:
-    sys.exit("prepare_node_matrix: [typescript] names no runtime.")
-print("\n".join(sorted(versions)))
-PY
-)
+readarray -t RUNTIMES < <(python3 tools/verification/_toolchains.py interpreters typescript)
+# A process substitution's exit status is lost, so an empty read is the refusal.
+[ "${#RUNTIMES[@]}" -gt 0 ] || { echo "prepare_node_matrix: the lock pins no usable [typescript] runtime." >&2; exit 1; }
 
 echo "prepare_node_matrix: ${#RUNTIMES[@]} pinned runtime(s): ${RUNTIMES[*]}"
 

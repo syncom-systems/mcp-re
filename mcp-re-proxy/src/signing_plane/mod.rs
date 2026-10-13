@@ -151,12 +151,12 @@ impl SigningPlane {
     /// `roots` is MOVED in (borrowed earlier for TLS material); taking the witness rather
     /// than a signer is what makes a plane over uncompared roles unconstructible. It takes
     /// no shutdown flag: the worker started here stops only when this plane is dropped.
-    pub fn materialize(
+    pub(crate) fn materialize(
         plan: &crate::startup_plan::SigningPlan,
         roots: crate::capability_materialization::MaterializedSigningRoles,
-        startup_now_unix: i64,
+        startup_reading: &crate::clock::StartupReading,
     ) -> Result<SigningPlane, String> {
-        Self::materialize_over(plan, roots, startup_now_unix)
+        Self::materialize_over(plan, roots, startup_reading.unix_seconds())
     }
 
     /// The materialization over any root signer; reachable outside this module only through
@@ -168,30 +168,30 @@ impl SigningPlane {
     ) -> Result<SigningPlane, String> {
         // Resolve the shared epoch BEFORE the custody exists: its first credential carries it.
         let epoch_watch =
-            build_delegated_epoch_watch(&plan.epoch, plan.custody.trust_epoch.clone())?;
+            build_delegated_epoch_watch(plan.epoch(), plan.custody().trust_epoch.clone())?;
         let mut minting = plan.clone();
         if let Some(watch) = epoch_watch.as_ref() {
             // FAIL CLOSED FOR MINTING: a configured kill switch whose state cannot be
             // read yields no epoch verifiers can compare, so nothing is issued.
-            minting.custody.trust_epoch = watch.epoch().map_err(|_| {
+            minting = plan.minting_under(watch.epoch().map_err(|_| {
                 "delegated-signing: --trust-epoch-redis-url is configured but the shared trust \
                  epoch could NOT be read at startup; refusing to start rather than mint keys the \
                  operator's kill switch cannot revoke (fail closed, ADR-MCPRE-052 §7)."
                     .to_string()
-            })?;
+            })?);
             eprintln!(
                 "mcp-re-proxy: delegated trust-epoch watch ACTIVE; minting under {:?}. \
                  `mcp-re-proxy trust-epoch advance` moves every replica to the next label, and a \
                  restarted replica resolves the SAME label as its peers; a raw INCR on the key is \
                  not a supported advance.",
-                minting.custody.trust_epoch.label()
+                minting.custody().trust_epoch.label()
             );
         } else {
             eprintln!(
                 "mcp-re-proxy: NO trust-epoch source is wired (--trust-epoch-redis-url): \
                  delegated keys are minted under the bare base {:?}, which never advances; \
                  short of a restart, a credential's exp is the only thing that ends it.",
-                plan.custody.trust_epoch.label()
+                plan.custody().trust_epoch.label()
             );
         }
         let crate::delegated_wiring::DelegatedSigningWiring {
@@ -716,8 +716,8 @@ mod rotation_owner_tests {
     }
 
     fn plan(epoch: TrustEpochPlan) -> SigningPlan {
-        SigningPlan {
-            custody: mcp_re_http_profile::CustodyConfig {
+        SigningPlan::from_parts(
+            mcp_re_http_profile::CustodyConfig {
                 issuer_kid: "root-kid".to_string(),
                 iss: "did:example:server".to_string(),
                 profile: mcp_re_http_profile::PROFILE_TAG.to_string(),
@@ -731,7 +731,7 @@ mod rotation_owner_tests {
                     .expect("0 < overlap < ttl"),
             },
             epoch,
-        }
+        )
     }
 
     /// Run the REAL rotation loop for `RUN_WINDOW`, then raise the deployment halt and

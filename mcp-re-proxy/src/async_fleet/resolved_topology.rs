@@ -12,14 +12,12 @@ use std::num::NonZeroUsize;
 
 use crate::config_state::topology::ShardTopologyRequest;
 
-use super::ShardDepth;
-
 /// Pool depth a shard is given when the operator does not choose one, capped.
 ///
 /// Depth past this bought nothing measurable and started costing: 8 workers/shard reached
 /// 44,803 rps and 16 reached 46,325 (+3.4%) while scheduler latency rose from 60us to
 /// 83us. The cap is where the curve flattens, not a hardware constant.
-pub(super) const DEFAULT_MAX_WORKERS_PER_SHARD: usize = 8;
+pub(super) const DEFAULT_MAX_WORKERS_PER_SHARD: NonZeroUsize = NonZeroUsize::MIN.saturating_add(7);
 
 /// The number of serving shards and each shard's pool depth, as this host resolved them.
 ///
@@ -28,7 +26,7 @@ pub(super) const DEFAULT_MAX_WORKERS_PER_SHARD: usize = 8;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolvedTopology {
     shards: NonZeroUsize,
-    depth: ShardDepth,
+    depth: NonZeroUsize,
 }
 
 impl ResolvedTopology {
@@ -68,16 +66,11 @@ impl ResolvedTopology {
     }
 
     /// Resolve `request` against a host with `available` cpus.
-    ///
-    /// The depth comes back as a [`ShardDepth`], not a number: an explicit `1` and a
-    /// single-cpu host's derived `1` are different facts, and the delegated-TLS refusal
-    /// turns on the difference.
     fn resolve_on(request: ShardTopologyRequest, available: NonZeroUsize) -> Self {
         let shards = request.shards().unwrap_or(available);
-        let depth = match request.workers_per_shard() {
-            Some(stated) => ShardDepth::stated(stated.get()),
-            None => ShardDepth::derived(DEFAULT_MAX_WORKERS_PER_SHARD.min(available.get())),
-        };
+        let depth = request
+            .workers_per_shard()
+            .unwrap_or(DEFAULT_MAX_WORKERS_PER_SHARD.min(available));
         ResolvedTopology { shards, depth }
     }
 
@@ -86,21 +79,20 @@ impl ResolvedTopology {
         self.shards
     }
 
-    /// Tokio worker threads inside each shard's runtime, and whose number it is.
+    /// Tokio worker threads inside each shard's runtime.
     ///
-    /// Depth parallelises POLLING; shards parallelise `accept`. Under delegated TLS custody
-    /// the provenance decides between a startup refusal and a derived depth — the four
-    /// cases are [`CorePool::for_core`](super::CorePool::for_core)'s.
-    pub fn depth(&self) -> ShardDepth {
+    /// Depth parallelises POLLING; shards parallelise `accept`. What a core under delegated
+    /// TLS custody does with a single worker is [`CorePool::for_core`](super::CorePool::for_core)'s.
+    pub fn depth(&self) -> NonZeroUsize {
         self.depth
     }
 
     /// A topology with the given shape, for tests that drive the fleet without a host.
     #[cfg(test)]
-    pub(crate) fn for_test(shards: usize, depth: ShardDepth) -> Self {
+    pub(crate) fn for_test(shards: usize, depth: usize) -> Self {
         ResolvedTopology {
             shards: NonZeroUsize::new(shards).expect("a test topology has at least one shard"),
-            depth,
+            depth: NonZeroUsize::new(depth).expect("a test topology has at least one worker"),
         }
     }
 }
@@ -131,39 +123,17 @@ mod tests {
         let host = cpus(64);
         assert_eq!(
             ResolvedTopology::resolve_on(request(4, 4), host),
-            ResolvedTopology::for_test(4, ShardDepth::stated(4))
+            ResolvedTopology::for_test(4, 4)
         );
         assert_eq!(
             ResolvedTopology::resolve_on(request(1, 16), host),
-            ResolvedTopology::for_test(1, ShardDepth::stated(16))
+            ResolvedTopology::for_test(1, 16)
         );
         // An explicit 1 restores the single-threaded share-nothing shard, so it must
         // survive as 1 and not be auto-filled to the default depth.
         assert_eq!(
             ResolvedTopology::resolve_on(request(8, 1), host),
-            ResolvedTopology::for_test(8, ShardDepth::stated(1))
-        );
-    }
-
-    /// OWNER RULING 7, at the resolver: a configured depth comes back as the OPERATOR'S
-    /// and an auto-filled one as the HOST'S, and the two stay distinguishable. This is the
-    /// fact `CorePool::for_core` refuses on.
-    #[test]
-    fn a_resolved_depth_says_whether_the_operator_or_the_host_chose_it() {
-        let stated = ResolvedTopology::resolve_on(request(0, 1), cpus(1)).depth();
-        assert!(
-            stated.is_operator_stated(),
-            "--workers-per-shard 1 is a request, not a default"
-        );
-        let derived = ResolvedTopology::resolve_on(request(0, 0), cpus(1)).depth();
-        assert!(
-            !derived.is_operator_stated(),
-            "an absent flag is the operator declining to choose"
-        );
-        assert_eq!(
-            stated.get(),
-            derived.get(),
-            "the same number, different facts"
+            ResolvedTopology::for_test(8, 1)
         );
     }
 
@@ -191,7 +161,7 @@ mod tests {
             let (shards, depth) = shape(ResolvedTopology::resolve_on(request(0, 0), cpus(n)));
             assert_eq!(shards, n, "cpus={n}");
             assert!(
-                (1..=DEFAULT_MAX_WORKERS_PER_SHARD).contains(&depth),
+                (1..=DEFAULT_MAX_WORKERS_PER_SHARD.get()).contains(&depth),
                 "cpus={n}"
             );
         }

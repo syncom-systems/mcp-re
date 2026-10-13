@@ -269,9 +269,22 @@ path = "mcp-re-proxy/src/app.rs"
 # destructures a four-field gate: 775 (measured at 6f2000c) -> 770.
 # MCPRE-197: the root resolves the shard topology once and hands the fleet the owners' values
 # whole, so it no longer projects the basis into `ServerLimits` or the topology into `0 = auto`:
-# 770 (measured at 75fae5e) -> 760. `baseline_sha` names that parent.
-baseline_prod_loc = 760
-baseline_sha = "75fae5e"
+# 770 (measured at 75fae5e) -> 760.
+# MCPRE-209: the trust and signing plans come from their one producer, so the root no longer
+# reads the issuer kid and the epoch and threads them into two constructors:
+# 760 (measured at c939c2f) -> 748.
+# MCPRE-203: the fleet states the shape it built, so the root no longer restates the rule
+# `CorePool::for_core` owns: 748 (measured at 61605e1) -> 737.
+# MCPRE-208: the channel-binding state projects its serving effects once, so the root no
+# longer derives the binding and identity policy itself or asks `startup_plan` for the
+# provenance: 737 (measured at 132f448) -> 698.
+# MCPRE-204: the connection-bounds owner hands the root a read timeout that is always present,
+# so the root no longer re-proves it: 698 (measured at 1c318c4) -> 697.
+# MCPRE-210: the startup clock reading is a value; the CRL freshness reference is the TLS
+# plane's own input, so the root no longer carries the fault refusal or reads the clock
+# twice: 697 (measured at a36c92f) -> 645. `baseline_sha` names that parent.
+baseline_prod_loc = 645
+baseline_sha = "a36c92f"
 status = "reviewed-exception"
 review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 
@@ -337,10 +350,12 @@ path = "sdk/python/src/lib.rs"
 # MCPRE-198: the binding marshals into `mcp-re-binding-core`, which holds the signing inputs,
 # the root anchor, the verify preamble and the verdict projection both bindings restated:
 # 767 (measured at 6f2000c) -> 686.
+# MCPRE-199: a refusal crosses into Python typed, and the refusal channel and device seam
+# are `refusal.rs`'s: 686 (measured at c198ef0) -> 683.
 # MCPRE-200: the version, profile-tag and skew-bound accessors are `core_facts.rs`, what the
-# core reports about itself: 686 (measured at c939c2f) -> 675. `baseline_sha` names that parent.
-baseline_prod_loc = 675
-baseline_sha = "c939c2f"
+# core reports about itself: 683 (measured at 75e64d0) -> 672. `baseline_sha` names that parent.
+baseline_prod_loc = 672
+baseline_sha = "75e64d0"
 status = "unreviewed"
 
 [[debt]]
@@ -373,10 +388,12 @@ path = "sdk/typescript/src/lib.rs"
 # MCPRE-198: the binding marshals into `mcp-re-binding-core`, which holds the signing inputs,
 # the root anchor, the verify preamble and the verdict projection both bindings restated:
 # 727 (measured at 6f2000c) -> 649.
+# MCPRE-199: a refusal crosses into JavaScript typed, and the refusal channel and device
+# seam are `refusal.rs`'s: 649 (measured at c198ef0) -> 645.
 # MCPRE-200: the version, profile-tag and skew-bound accessors are `core_facts.rs`, what the
-# core reports about itself: 649 (measured at c939c2f) -> 639. `baseline_sha` names that parent.
-baseline_prod_loc = 639
-baseline_sha = "c939c2f"
+# core reports about itself: 645 (measured at 75e64d0) -> 635. `baseline_sha` names that parent.
+baseline_prod_loc = 635
+baseline_sha = "75e64d0"
 status = "unreviewed"
 
 # MCPRE-175 gave the local listener an owner subtree. `serve.rs` mixed the accept loop with
@@ -398,10 +415,15 @@ status = "unreviewed"
 # rather than added to a file the ratchet holds at 712. The debt moves WITH the file —
 # dropping the entry because the path changed would launder 712 registered lines as
 # progress — and the number falls to 707 because the actor projection left with it.
+# MCPRE-212: the request-role handle has one owner, `RequestRoleEvidence::of_signed_request`,
+# so the bodyless copy of its derivation goes: 391 (measured at c939c2f) -> 370.
+# MCPRE-211: the delegated 202 emitter is crate-private and reads its signer from one window's
+# projection; the file measures 370 with both changes. `baseline_sha` names the parent where
+# 391 was measured.
 [[debt]]
 path = "mcp-re-http-profile/src/bodyless/mod.rs"
-baseline_prod_loc = 408
-baseline_sha = "255465e"
+baseline_prod_loc = 370
+baseline_sha = "c939c2f"
 status = "unreviewed"
 
 [[debt]]
@@ -479,9 +501,12 @@ status = "unreviewed"
 path = "mcp-re-proxy/src/async_fleet/mod.rs"
 # MCPRE-197: topology resolution moved to `async_fleet/resolved_topology.rs` and the share rule
 # to `InFlightLimitBasis`, so the `Option` x `Option` ceiling and its fleet-global rebuild are
-# gone: 510 (measured at bff0cb9) -> 374. `baseline_sha` names that parent.
-baseline_prod_loc = 374
-baseline_sha = "bff0cb9"
+# gone: 510 (measured at bff0cb9) -> 374.
+# MCPRE-203: the delegated-TLS depth pair is refused at configuration, so the fleet no longer
+# maps a refusal before the first bind: 374 (measured at e3918b3) -> 373. `baseline_sha`
+# names that parent.
+baseline_prod_loc = 373
+baseline_sha = "e3918b3"
 status = "unreviewed"
 
 # MCPRE-175: the checks that cannot be expressed in the type left for
@@ -527,8 +552,11 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/config_state/transport.rs"
-baseline_prod_loc = 488
-baseline_sha = "d1fc5fa"
+# MCPRE-207: EX-018's named action moves the CRL revocation machine to `crl_revocation.rs`
+# and the client-certificate lifetime ceiling to `client_credential_window.rs`: 419 (measured
+# at c939c2f) -> 263. `baseline_sha` names that parent.
+baseline_prod_loc = 263
+baseline_sha = "c939c2f"
 status = "reviewed-action-required"
 review_ref = "EX-018 in docs/architecture/review-dispositions.md"
 
@@ -541,15 +569,23 @@ status = "unreviewed"
 [[debt]]
 path = "mcp-re-proxy/src/startup_plan.rs"
 # MCPRE-197: the inner-plane ceiling and raise left with the `Option` x `Option` interface they
-# projected: 385 (measured at bff0cb9) -> 340. `baseline_sha` names that parent.
-baseline_prod_loc = 340
-baseline_sha = "bff0cb9"
+# projected: 385 (measured at bff0cb9) -> 340.
+# MCPRE-209: the response-authority plans have one producer here and the signing plan's
+# fields are private behind projections: 340 (measured at c939c2f) -> 338.
+# MCPRE-208: the peer-identity provenance is part of the channel-binding state's projection,
+# so its second exhaustive match here goes: 338 (measured at 132f448) -> 312.
+# MCPRE-210: the clock-fault rule moves to the clock owner: 312 (measured at a36c92f) -> 292.
+# `baseline_sha` names that parent.
+baseline_prod_loc = 292
+baseline_sha = "a36c92f"
 status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/config_state/validation/mod.rs"
-baseline_prod_loc = 474
-baseline_sha = "d1fc5fa"
+# MCPRE-204: the three residue calls become one owner's splice. With MCPRE-203's X10 clause
+# already spliced on main: 374 (measured at 0ba3db2) -> 362. `baseline_sha` names that parent.
+baseline_prod_loc = 362
+baseline_sha = "0ba3db2"
 status = "unreviewed"
 
 [[debt]]
@@ -567,10 +603,13 @@ baseline_prod_loc = 377
 baseline_sha = "bff0cb9"
 status = "unreviewed"
 
+# MCPRE-211: the two delegated emitters are crate-private and read their signer from one
+# window's projection, and the runtime keyid re-check is gone because the key value owns it:
+# 305 (measured at c939c2f, under a 408 baseline) -> 286. `baseline_sha` names that parent.
 [[debt]]
 path = "mcp-re-http-profile/src/sign.rs"
-baseline_prod_loc = 408
-baseline_sha = "d1fc5fa"
+baseline_prod_loc = 286
+baseline_sha = "c939c2f"
 status = "unreviewed"
 
 [[debt]]
@@ -664,18 +703,13 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/config_state/validation/residue.rs"
-baseline_prod_loc = 405
-baseline_sha = "99ff012"
+# MCPRE-204: the connection ceiling, drain-window and slow-loris rules leave for their owner,
+# `config_state::connection_bounds`: 405 (measured at 9734fe2) -> 316. `baseline_sha` names
+# that parent.
+baseline_prod_loc = 316
+baseline_sha = "9734fe2"
 status = "reviewed-exception"
 review_ref = "EX-017 in docs/architecture/review-dispositions.md"
-growth_from_prod_loc = 378
-growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
-
-[[debt]]
-path = "mcp-re-http-profile/src/rejection/mod.rs"
-baseline_prod_loc = 227
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/async_etcd_store.rs"

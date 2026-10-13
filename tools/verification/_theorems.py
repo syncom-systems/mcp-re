@@ -39,7 +39,7 @@ from __future__ import annotations
 import re
 
 import _registries
-from _manifest import SCHEMA_VERSION, ManifestError, _reject_unknown, _require
+from _manifest import SCHEMA_VERSION, ManifestError, reject_unknown, require
 from _evidence_class import severity_problem
 
 
@@ -147,8 +147,8 @@ def _check_ids(doc: dict) -> list[str]:
     for index, entry in enumerate(doc.get("theorem", [])):
         where = f"theorems.toml [[theorem]] #{index}"
         _reject_duplicated_authority(where, entry)
-        _reject_unknown(where, entry, _THEOREM_KEYS)
-        _require(where, entry, _REQUIRED_KEYS)
+        reject_unknown(where, entry, _THEOREM_KEYS)
+        require(where, entry, _REQUIRED_KEYS)
         problem = severity_problem(where, entry)
         if problem is not None:
             raise ManifestError(problem)
@@ -343,8 +343,8 @@ def validate_theorems(
 ) -> dict:
     """Validate a parsed theorem registry against the declared review units."""
     where = "theorems.toml"
-    _reject_unknown(where, doc, _TOP_KEYS)
-    _require(where, doc, {"schema_version", "root_theorems"})
+    reject_unknown(where, doc, _TOP_KEYS)
+    require(where, doc, {"schema_version", "root_theorems"})
     if doc["schema_version"] != SCHEMA_VERSION:
         raise ManifestError(
             f"{where}: schema_version {doc['schema_version']} but this tooling implements "

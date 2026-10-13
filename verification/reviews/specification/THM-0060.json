@@ -2,12 +2,12 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:993e13ab515e251b36a384bd4b92602f3bdad949d09f6196103b5b81fd621269",
+    "theorem_claim": "sha256:ec251b3c0bcfcb0dc2ddc76215a4af631cbe4ddd01da6d584e472c5b6f82bc66",
     "theorem_dependencies": {},
     "theorem_id": "THM-0060",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G11.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "notes": "Owner ruling of 2026-10-13 (verification/reviews/rulings/thm-0060-refuse-out-of-range-skew-2026-10-13.md, MCPRE-200 / #1125): an operator-supplied clock skew outside the profile bound is refused, not saturated or clamped; the owner approved the corrected claim that the skew is bounded by its type, an out-of-range configured value is refused, and verification does not silently clamp it. This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -21,24 +21,24 @@
         "governing_boundaries": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        "mutation_probes": "sha256:64cd41c28841e3ecde43cb82a1eacdd59b0ef1a3079b5bc412427f8a8d217ecd",
+        "mutation_probes": "sha256:b5d6e1f99a9153b23273ff740ab6405a4f3b1b08bcaf6a67902721024a1a0753",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:84c0747b736e203b3c25662ad622ec642ee381792f28b24cd93e434d0bc71f54",
+        "source_inputs": "sha256:735b43f9609030be5b9a506bf40869fdc4d9e37157bc017c5b1450be282c07e0",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:727e4b79e77d40c77ea2c2a527b161a69e245aacbd5956c9ce3760091c5fd83d",
-        "test_selection": "sha256:e04e88af0703fbbd8c47b7608160921258a8555291118abd464becc71f195230",
+        "test_selection": "sha256:44f3983ef669e5a4a9acca00e182f473f84296d1b8d52f9a9f9f34edba5bdfcc",
         "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "unit_id": "sha256:eed8a4fb4b41d2db81dbeb0ab5be62a8a6e863d1c1eb723bb83c8f9ada582968"
       }
     },
-    "theorem_claim": "sha256:993e13ab515e251b36a384bd4b92602f3bdad949d09f6196103b5b81fd621269",
+    "theorem_claim": "sha256:ec251b3c0bcfcb0dc2ddc76215a4af631cbe4ddd01da6d584e472c5b6f82bc66",
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:db8104d73e117988ceb5d7dd743fd9bb2fc87efd235676673a486116f7fc5110",
-  "reviewed_fingerprint": "sha256:2cc4ada98c89d03ffff46a5986414d32e9b0ccdb757369fc376734256f0ccf20",
+  "review_digest": "sha256:338d7df1170d468f423e44b022282c5fd5506f41b88406f1fc38b60ec595e334",
+  "reviewed_fingerprint": "sha256:c6ee58ebb47e29417cdcc01b9b93390f80b9376a37c776dd3a3bcb1de45250d6",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0060"
 }

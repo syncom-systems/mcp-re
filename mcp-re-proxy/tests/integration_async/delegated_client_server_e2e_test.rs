@@ -1109,13 +1109,8 @@ fn a_replayed_older_manifest_cannot_un_revoke_a_root() {
 fn signing_plan(
     config: &mcp_re_proxy::deployment_request::DeploymentRequest,
 ) -> mcp_re_proxy::startup_plan::SigningPlan {
-    use mcp_re_proxy::startup_plan::{response_issuer_kid, SigningPlan, TrustEpochPlan};
     let validated =
         mcp_re_proxy::config_state::validation::ValidatedDeployment::try_from(config.clone())
             .expect("the fixture config must validate");
-    SigningPlan::from_validated(
-        &validated,
-        response_issuer_kid(&validated),
-        TrustEpochPlan::from_validated(&validated),
-    )
+    mcp_re_proxy::startup_plan::response_authority_plans(&validated).1
 }

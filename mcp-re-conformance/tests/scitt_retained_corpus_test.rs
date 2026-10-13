@@ -49,11 +49,14 @@ use std::path::PathBuf;
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::chain::ChainLabel;
+use mcp_re_http_profile::custody::ActiveDelegatedKey;
+use mcp_re_http_profile::custody::SigningWindow;
 use mcp_re_http_profile::reconstruct_chain;
 use mcp_re_http_profile::scitt::verify_retained_evidence;
 use mcp_re_http_profile::scitt::EvidenceCommitment;
 use mcp_re_http_profile::scitt::RetainedCorrespondence;
 use mcp_re_http_profile::scitt::SignedStatement;
+use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -254,15 +257,19 @@ fn hop(
         body: body.as_bytes().to_vec(),
     };
     // DELEGATED, because that is the only response mode the serving path has.
-    mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key(
+    sign_delegated_response_full(
         &mut response,
         &request,
-        &server_signer(),
-        &credential(),
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                delegated_key(),
+                server_signer(),
+                credential(),
+                DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("response signs");
 

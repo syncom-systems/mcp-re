@@ -716,11 +716,11 @@ mod tests {
         };
         let plain = plain_error_from_rejection(
             Some(&json!("req-1")),
-            Some("mcp-re.upstream_unavailable"),
+            Some("mcp-re.inner_dispatch_indeterminate"),
             &execution,
         );
         let data = &plain["error"]["data"]["mcp_re_error"];
-        assert_eq!(data["wire_code"], "mcp-re.upstream_unavailable");
+        assert_eq!(data["wire_code"], "mcp-re.inner_dispatch_indeterminate");
         assert_eq!(data["execution_status"], "possibly_executed");
         assert_eq!(data["retry_safety"], "unsafe_without_reconciliation");
         assert_eq!(data["continuation_status"], "consumed");
@@ -745,11 +745,11 @@ mod tests {
     fn an_unstated_contract_produces_no_invented_disposition() {
         let plain = plain_error_from_rejection(
             Some(&json!(1)),
-            Some("mcp-re.request_signature_invalid"),
+            Some("mcp-re.invalid_signature"),
             &ExecutionContract::default(),
         );
         let data = &plain["error"]["data"]["mcp_re_error"];
-        assert_eq!(data["wire_code"], "mcp-re.request_signature_invalid");
+        assert_eq!(data["wire_code"], "mcp-re.invalid_signature");
         assert!(data.get("execution_status").is_none());
         assert!(data.get("retry_safety").is_none());
 

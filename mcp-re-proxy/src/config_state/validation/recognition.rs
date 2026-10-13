@@ -57,9 +57,22 @@ pub(super) struct MachineStates {
 }
 
 impl MachineStates {
-    /// The one state the cross-machine pass relates the others to.
+    /// The trust-revocation state the cross-machine pass relates delegated signing to (X9).
     pub(super) fn trust_revocation(&self) -> Option<&crate::config_state::TrustRevocationState> {
         self.refusable.trust_revocation.as_ref()
+    }
+
+    /// The channel-credential custody the cross-machine pass relates the shard request to
+    /// (X10).
+    pub(super) fn channel_credential_custody(
+        &self,
+    ) -> Option<&crate::config_state::ChannelCredentialCustodyState> {
+        self.refusable.channel_credential_custody.as_ref()
+    }
+
+    /// The shard request as the operator stated it (X10).
+    pub(super) fn shard_topology(&self) -> crate::config_state::ShardTopologyRequest {
+        self.total.shard_topology
     }
 
     /// Every machine named a state, or one of them did not and says which.
@@ -81,6 +94,9 @@ impl MachineStates {
             client_credential_window: r
                 .client_credential_window
                 .ok_or_else(|| unrecognised("client-credential-window"))?,
+            connection_bounds: r
+                .connection_bounds
+                .ok_or_else(|| unrecognised("connection-bounds"))?,
             continuation_control: r
                 .continuation_control
                 .ok_or_else(|| unrecognised("continuation-control"))?,

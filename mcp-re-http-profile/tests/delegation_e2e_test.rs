@@ -12,12 +12,14 @@
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::body::insert_meta_block;
+use mcp_re_http_profile::custody::ActiveDelegatedKey;
 use mcp_re_http_profile::custody::DelegatedKeyWindow;
+use mcp_re_http_profile::custody::SigningWindow;
 use mcp_re_http_profile::evidence::UnboundRequestDiagnostic;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_for_negative_test;
-use mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key;
-use mcp_re_http_profile::sign::sign_delegated_response_unbound_with_owned_key;
+use mcp_re_http_profile::sign_delegated_response_full;
+use mcp_re_http_profile::sign_delegated_response_unbound;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response_with_signer;
 use mcp_re_http_profile::ActorIdentity;
@@ -224,15 +226,19 @@ fn valid_delegated_response_verifies_under_cnf_key() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full_with_owned_key(
+    sign_delegated_response_full(
         &mut rsp,
         &req,
-        &server_signer(),
-        &valid_credential(),
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                delegated_key(),
+                server_signer(),
+                valid_credential(),
+                DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("sign delegated response");
 
@@ -385,15 +391,20 @@ fn response_signed_by_key_other_than_cnf_is_key_mismatch() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full_with_owned_key(
+    sign_delegated_response_full(
         &mut rsp,
         &req,
-        &server_signer(),
-        &valid_credential(),
-        &attacker,
-        DELEGATED_KID, // keyid matches, but the key is wrong
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            // keyid matches, but the key is wrong
+            ActiveDelegatedKey::stated(
+                attacker,
+                server_signer(),
+                valid_credential(),
+                DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("sign");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -412,15 +423,19 @@ fn body_tamper_is_caught_by_content_digest() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full_with_owned_key(
+    sign_delegated_response_full(
         &mut rsp,
         &req,
-        &server_signer(),
-        &valid_credential(),
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                delegated_key(),
+                server_signer(),
+                valid_credential(),
+                DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("sign");
     // Flip a byte in the covered body.
@@ -442,15 +457,20 @@ fn stale_epoch_rejected_end_to_end() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full_with_owned_key(
+    sign_delegated_response_full(
         &mut rsp,
         &req,
-        &server_signer(),
-        &valid_credential(), // minted under EPOCH
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            // the credential is minted under EPOCH
+            ActiveDelegatedKey::stated(
+                delegated_key(),
+                server_signer(),
+                valid_credential(),
+                DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("sign");
     // Verifier's accepted set has advanced past the credential's epoch.
@@ -533,15 +553,19 @@ fn revoked_delegated_key_rejected_end_to_end() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full_with_owned_key(
+    sign_delegated_response_full(
         &mut rsp,
         &req,
-        &server_signer(),
-        &valid_credential(),
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                delegated_key(),
+                server_signer(),
+                valid_credential(),
+                DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("sign");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -570,15 +594,19 @@ fn a_delegated_preflight_receipt_verifies_without_request_binding() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_unbound_with_owned_key(
+    sign_delegated_response_unbound(
         &mut rsp,
-        &server_signer(),
-        &valid_credential(),
         &UnboundRequestDiagnostic::received(&req.body),
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                delegated_key(),
+                server_signer(),
+                valid_credential(),
+                DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("sign unbound delegated receipt");
 
@@ -603,15 +631,19 @@ fn an_unbound_receipt_without_a_credential_is_refused() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_unbound_with_owned_key(
+    sign_delegated_response_unbound(
         &mut rsp,
-        &server_signer(),
-        &valid_credential(),
         &UnboundRequestDiagnostic::received(&req.body),
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                delegated_key(),
+                server_signer(),
+                valid_credential(),
+                DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("sign unbound delegated receipt");
     // Strip the credential from the covered block: the digest changes with it, so this is
@@ -738,15 +770,20 @@ fn an_unbound_receipt_signed_by_a_key_other_than_cnf_is_key_mismatch() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_unbound_with_owned_key(
+    sign_delegated_response_unbound(
         &mut rsp,
-        &server_signer(),
-        &valid_credential(),
         &UnboundRequestDiagnostic::received(&req.body),
-        &attacker,
-        DELEGATED_KID, // keyid matches the credential; the key does not
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            // keyid matches the credential; the key does not
+            ActiveDelegatedKey::stated(
+                attacker,
+                server_signer(),
+                valid_credential(),
+                DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("sign unbound receipt under the wrong key");
 
@@ -767,15 +804,19 @@ fn a_req_component_is_refused_on_the_delegated_unbound_path() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full_with_owned_key(
+    sign_delegated_response_full(
         &mut rsp,
         &req,
-        &server_signer(),
-        &valid_credential(),
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                delegated_key(),
+                server_signer(),
+                valid_credential(),
+                DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("sign a request-bound delegated response");
 
@@ -799,15 +840,19 @@ fn an_unbound_receipt_body_tamper_is_caught_by_content_digest() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_unbound_with_owned_key(
+    sign_delegated_response_unbound(
         &mut rsp,
-        &server_signer(),
-        &valid_credential(),
         &UnboundRequestDiagnostic::received(&req.body),
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                delegated_key(),
+                server_signer(),
+                valid_credential(),
+                DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("sign unbound delegated receipt");
     let last = rsp.body.len() - 2;
@@ -831,15 +876,19 @@ fn an_unbound_receipt_whose_root_is_unknown_to_the_seam_is_untrusted() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_unbound_with_owned_key(
+    sign_delegated_response_unbound(
         &mut rsp,
-        &server_signer(),
-        &valid_credential(),
         &UnboundRequestDiagnostic::received(&req.body),
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                delegated_key(),
+                server_signer(),
+                valid_credential(),
+                DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("sign unbound delegated receipt");
 
@@ -1000,15 +1049,19 @@ fn signed_delegated_bound() -> (HttpRequest, HttpResponse) {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full_with_owned_key(
+    sign_delegated_response_full(
         &mut rsp,
         &req,
-        &server_signer(),
-        &valid_credential(),
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                delegated_key(),
+                server_signer(),
+                valid_credential(),
+                DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("sign delegated response");
     (req, rsp)
@@ -1021,15 +1074,19 @@ fn signed_delegated_unbound() -> HttpResponse {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_unbound_with_owned_key(
+    sign_delegated_response_unbound(
         &mut rsp,
-        &server_signer(),
-        &valid_credential(),
         &UnboundRequestDiagnostic::received(&req.body),
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                delegated_key(),
+                server_signer(),
+                valid_credential(),
+                DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("sign unbound delegated receipt");
     rsp

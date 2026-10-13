@@ -1614,6 +1614,14 @@ proposition = "NP-015"
 recorded = "2026-09-19"
 
 [[disposition]]
+id = "CD-20482"
+project = "sdk/python"
+control = "pytest#tests/test_custody.py::TestDeviceFailsClosed::test_the_native_seam_does_not_report_a_device_failure_as_a_wire_code"
+decision = "new-proposition"
+proposition = "NP-015"
+recorded = "2026-10-13"
+
+[[disposition]]
 id = "CD-2008"
 project = "sdk/python"
 control = "pytest#tests/test_custody.py::TestNonExportingIsByteIdentical::test_the_device_is_the_sole_holder_of_the_key"
@@ -4024,10 +4032,18 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-10002"
 project = "mcp-re-proxy"
-control = "src/lib.rs#app::tests::a_faulted_clock_refuses_only_when_it_disables_the_crl_refusal"
+control = "src/lib.rs#tls_plane::crl_reference::tests::a_faulted_clock_refuses_only_when_it_disables_the_crl_refusal"
 decision = "new-proposition"
 proposition = "NP-065"
 recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-20487"
+project = "mcp-re-proxy"
+control = "src/lib.rs#tls_plane::crl_reference::tests::a_reference_checked_without_crls_does_not_serve_a_plan_that_loads_them"
+decision = "new-proposition"
+proposition = "NP-065"
+recorded = "2026-10-13"
 
 [[disposition]]
 id = "CD-10006"
@@ -4152,7 +4168,7 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-10029"
 project = "mcp-re-proxy"
-control = "src/lib.rs#startup_plan::tests::a_plausible_deployment_clock_is_not_a_fault"
+control = "src/lib.rs#clock::tests::a_plausible_deployment_clock_is_not_a_fault"
 decision = "new-proposition"
 proposition = "NP-065"
 recorded = "2026-09-19"
@@ -4160,7 +4176,7 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-10036"
 project = "mcp-re-proxy"
-control = "src/lib.rs#startup_plan::tests::an_epoch_or_pre_epoch_clock_reading_is_a_fault"
+control = "src/lib.rs#clock::tests::an_epoch_or_pre_epoch_clock_reading_is_a_fault"
 decision = "new-proposition"
 proposition = "NP-065"
 recorded = "2026-09-19"
@@ -6328,7 +6344,7 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-15100"
 project = "mcp-re-http-profile"
-control = "src/lib.rs#verify::bound_request::tests::a_request_with_no_signature_input_has_no_handle"
+control = "src/lib.rs#evidence::request_role::tests::a_request_with_no_signature_input_has_no_handle"
 decision = "new-proposition"
 proposition = "NP-098"
 recorded = "2026-09-19"
@@ -12337,7 +12353,7 @@ recorded = "2026-09-29"
 [[disposition]]
 id = "CD-20086"
 project = "mcp-re-proxy"
-control = "src/lib.rs#async_fleet::shard_depth::tests::the_refusal_names_both_settings_and_both_ways_out"
+control = "src/lib.rs#config_state::cross_machine::delegated_tls_depth::tests::the_depth_refusal_names_both_settings_and_both_ways_out"
 decision = "new-proposition"
 proposition = "NP-221"
 recorded = "2026-09-29"
@@ -12850,7 +12866,7 @@ record = "docs/architecture/control-dispositions.md#np-203"
 [[proposition]]
 id = "NP-204"
 title = "A delegated snapshot and its lifecycle audit name this issuance's own identity and credential id"
-carrier = "mcp-re-http-profile/src/custody/active_key.rs"
+carrier = "mcp-re-http-profile/src/custody/active_key/mod.rs"
 likely_owner = "http_profile.delegated_signing_custody: both carriers are in its paths, but its description covers only lifecycle clauses (root untouched, overlap rotation, epoch advance, window, fail-closed). Amending the description would let these four register beside the M97/M98 siblings."
 consequence = "high"
 root_relationship = "Beside the M97 (attested key) and M98 (echoed claim set) conjuncts already bound to http_profile.delegated_signing_custody; the third leg of 'the credential attests THIS issuance'."
@@ -12949,8 +12965,8 @@ record = "docs/architecture/control-dispositions.md#np-210"
 [[proposition]]
 id = "NP-221"
 title = "The delegated-TLS depth refusal names both conflicting settings and both remedies"
-carrier = "mcp-re-proxy/src/async_fleet/shard_depth.rs (impl Display for DelegatedTlsDepthRefusal)"
-likely_owner = "proxy.delegated_tls_depth_refusal owns the file, but states only that the pair is refused, 'There is no acknowledgement or unsafe flag'. The refusal holds whatever the sentence says, so this is operator-facing prose, the axis NP-123 and NP-145 were referred on."
+carrier = "mcp-re-proxy/src/config_state/cross_machine/delegated_tls_depth.rs (DELEGATED_TLS_DEPTH_REFUSAL, relation X10)"
+likely_owner = "proxy.delegated_tls_depth_refusal has the file in its paths, but states only that the pair is refused, 'There is no acknowledgement or unsafe flag'. The refusal holds whatever the sentence says, so this is operator-facing prose, the axis NP-123 and NP-145 were referred on."
 consequence = "medium"
 root_relationship = "An operator-facing promise about a startup refusal; no theorem states what a refusal must tell an operator."
 record = "docs/architecture/control-dispositions.md#np-221"
@@ -13426,7 +13442,7 @@ recorded = "2026-10-04"
 [[disposition]]
 id = "CD-20186"
 project = "mcp-re-proxy"
-control = "src/lib.rs#async_serve::http_limits::tests::the_read_bound_arms_the_h1_header_read_timeout"
+control = "src/lib.rs#async_serve::http_limits::tests::the_idle_bound_arms_the_h1_header_read_timeout"
 decision = "new-proposition"
 proposition = "NP-229"
 recorded = "2026-10-04"
@@ -14160,22 +14176,6 @@ proposition = "NP-092"
 recorded = "2026-10-04"
 
 [[disposition]]
-id = "CD-20300"
-project = "mcp-re-proxy"
-control = "src/lib.rs#config_state::validation::residue::tests::a_drain_window_shorter_than_the_request_deadline_is_refused"
-decision = "new-proposition"
-proposition = "NP-167"
-recorded = "2026-10-04"
-
-[[disposition]]
-id = "CD-20301"
-project = "mcp-re-proxy"
-control = "src/lib.rs#config_state::validation::residue::tests::an_unrepresentable_drain_window_is_refused"
-decision = "new-proposition"
-proposition = "NP-167"
-recorded = "2026-10-04"
-
-[[disposition]]
 id = "CD-20302"
 project = "mcp-re-proxy"
 control = "src/lib.rs#http_inner::selection::tests::an_open_backend_whose_trial_slot_is_already_taken_is_not_probed_twice"
@@ -14498,7 +14498,7 @@ record = "docs/architecture/control-dispositions.md#np-275"
 [[proposition]]
 id = "NP-276"
 title = "No profile signer signs over a request evidence block that fails validation"
-carrier = "mcp-re-http-profile/src/sign/request_block.rs (validate_carried, require_valid), called from sign/request.rs (sign_headers_as_given), sign.rs (sign_response_with_signer, sign_delegated_response_full_with_owned_key) and bodyless/mod.rs (sign_delegated_accepted_202_with_owned_key)"
+carrier = "mcp-re-http-profile/src/sign/request_block.rs (validate_carried, require_valid), called from sign/request.rs (sign_headers_as_given), sign.rs (sign_response_with_signer, emit_delegated_response_full) and bodyless/mod.rs (emit_delegated_accepted_202), whose public paths are the window emitters in custody/window_emission.rs"
 likely_owner = "http_profile.request_evidence_signing_boundary, owner Ruling 18.1"
 consequence = "medium"
 root_relationship = "owner Ruling 17.2 (0f0dc26c60f6d5be): HttpRequestEvidenceBlock keeps public fields under CF-007's precedent, and its boundary is validation at every signing entry point"
@@ -14998,6 +14998,14 @@ reason_family = "ND-016"
 recorded = "2026-10-11"
 
 [[disposition]]
+id = "CD-20486"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#custody::active_key::stated::tests::a_stated_key_carries_what_the_caller_stated"
+decision = "not-evidence"
+reason_family = "ND-016"
+recorded = "2026-10-13"
+
+[[disposition]]
 id = "CD-20419"
 project = ""
 control = "gate#scripts/install_pinned_verus.py"
@@ -15075,6 +15083,16 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#materializing_runtime::materialized_lifecycle::tests::reached_refuses_a_lifecycle_that_never_started_materializing"
 decision = "new-proposition"
 proposition = "NP-280"
+recorded = "2026-10-13"
+
+# MCPRE-203 — the fleet states the serving shape it built.
+
+[[disposition]]
+id = "CD-20481"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_fleet::core_runtime::tests::the_startup_line_names_the_built_pool_and_bound"
+decision = "new-proposition"
+proposition = "NP-153"
 recorded = "2026-10-13"
 
 [[disposition]]

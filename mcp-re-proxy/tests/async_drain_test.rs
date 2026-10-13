@@ -27,6 +27,7 @@ use std::time::Instant;
 use mcp_re_proxy::async_serve;
 use mcp_re_proxy::communication_assurance::AuthenticatedChannelPeer;
 use mcp_re_proxy::config_state::ClientCredentialWindow;
+use mcp_re_proxy::config_state::ConnectionBounds;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::ServerLimits;
 use mcp_re_proxy::ServerOptions;
@@ -318,10 +319,9 @@ where
                 // runs on, so the harness derives it from the same depth it just built (6)
                 // and the custody of the snapshot it serves.
                 let handshake_bound = mcp_re_proxy::async_fleet::CorePool::for_core(
-                    mcp_re_proxy::async_fleet::ShardDepth::stated(6),
+                    std::num::NonZeroUsize::new(6).expect("a non-zero depth"),
                     snapshot.key_exposure(),
                 )
-                .expect("a stated depth above one is a shape every custody has")
                 .handshake_bound();
                 async_serve::serve(
                     listener,
@@ -346,11 +346,12 @@ where
 
 fn options_with_drain(grace: Duration, request_deadline: Duration) -> ServerOptions {
     ServerOptions {
-        limits: ServerLimits {
+        connection_bounds: ConnectionBounds::from_limits(&ServerLimits {
             drain_grace: grace,
             request_deadline: Some(request_deadline),
             ..ServerLimits::default()
-        },
+        })
+        .expect("bounds in force"),
         ..ServerOptions::new(window())
     }
 }

@@ -21,11 +21,13 @@ from __future__ import annotations
 
 import argparse
 import sys
-import tomllib
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "verification"))
+
+import _toolchains  # noqa: E402
+
 #: The lock entry that owns the pin. Named once.
-LOCK = Path("verification/policy/toolchains.lock.toml")
 ENTRY = "typescript"
 #: Where a prepared runtime lives, relative to the SDK project. Mirrors
 #: `tools/verification/_ecosystems.NODE_RUNTIME_DIR` — by MAJOR, because Node's support
@@ -37,16 +39,13 @@ RUNTIME_DIR = ".node-v{major}"
 NODE_BIN = "node_modules/node/bin/node"
 
 
-def pinned_runtimes(lock_path: Path = LOCK) -> list[str]:
-    """The exact versions the lock pins for the TypeScript battery."""
-    doc = tomllib.loads(lock_path.read_text())
-    entry = doc.get(ENTRY)
-    if not isinstance(entry, dict):
-        raise SystemExit(f"{lock_path}: no [{ENTRY}] entry — the pin has no owner")
-    runtimes = entry.get("interpreters")
-    if not isinstance(runtimes, list) or not runtimes:
-        raise SystemExit(f"{lock_path}: [{ENTRY}].interpreters is absent or empty")
-    return [str(r) for r in runtimes]
+def pinned_runtimes() -> list[str]:
+    """The exact versions the lock pins for the TypeScript battery, in pin order."""
+    entry = _toolchains.load().get(ENTRY)
+    _, malformed = _toolchains.interpreters(entry, ENTRY)
+    if malformed is not None:
+        raise SystemExit(f"toolchains.lock.toml: {malformed}")
+    return [str(r) for r in entry["interpreters"]]
 
 
 def runtime_dir(runtime: str) -> str:

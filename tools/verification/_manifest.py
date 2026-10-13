@@ -34,6 +34,8 @@ from _evidence_class import severity_problem
 from _premise import class_problem, registration_problems
 from _premise import is_live
 import _registries
+import _toolchains
+from _toolchains import unresolved_pins
 from _registries import REPO_ROOT
 from _registries import ManifestError
 
@@ -51,7 +53,7 @@ ASSUMPTIONS_TOML = _registries.path("assumptions")
 #: tolerated.
 ASSUMPTIONS_SCHEMA_VERSION = 2
 TRUST_BOUNDARIES_TOML = _registries.path("trust-boundaries")
-TOOLCHAINS_LOCK_TOML = _registries.path("toolchains")
+TOOLCHAINS_LOCK_TOML = _toolchains.path()
 
 #: Bumped to 2 by ADR-MCPRE-068 Phase 0A, which made `evidence_class` and
 #: `direct_consequence_severity` required on every unit. The bump is not bookkeeping: the
@@ -406,7 +408,8 @@ _MOVED_AUTHORITY = {
 }
 
 
-def _reject_unknown(where: str, got, allowed: set[str]) -> None:
+def reject_unknown(where: str, got, allowed: set[str]) -> None:
+    """Refuse a key `allowed` does not name, and name the new authority of a moved one."""
     moved = sorted(set(got) & set(_MOVED_AUTHORITY))
     if moved:
         raise ManifestError(
@@ -422,7 +425,8 @@ def _reject_unknown(where: str, got, allowed: set[str]) -> None:
         )
 
 
-def _require(where: str, got: dict, required: set[str]) -> None:
+def require(where: str, got: dict, required: set[str]) -> None:
+    """Refuse a record that lacks a key `required` names."""
     missing = sorted(required - set(got))
     if missing:
         raise ManifestError(f"{where}: missing required key(s) {missing}")
@@ -453,8 +457,8 @@ def validate_edges(
     """
     for index, edge in enumerate(edges):
         ewhere = f"{where} [[edge]] #{index}"
-        _reject_unknown(ewhere, edge, _EDGE_KEYS)
-        _require(ewhere, edge, {"kind", "from", "to"})
+        reject_unknown(ewhere, edge, _EDGE_KEYS)
+        require(ewhere, edge, {"kind", "from", "to"})
         if edge["kind"] not in EDGE_KINDS:
             raise ManifestError(
                 f"{ewhere}: kind {edge['kind']!r} not one of {sorted(EDGE_KINDS)}"
@@ -465,7 +469,7 @@ def validate_edges(
                     f"{ewhere}: {endpoint} {edge[endpoint]!r} is not a declared unit"
                 )
         if edge["kind"] == "CONTRACT_CONSUMES":
-            _require(ewhere, edge, {"contract"})
+            require(ewhere, edge, {"contract"})
             # Exported by THIS edge's `from`, not by some unit somewhere. The previous check
             # ran only under `sealed` and compared against the union of every unit's exports,
             # so a seal could name a contract an unrelated unit published — a relation
@@ -484,15 +488,15 @@ def validate_edges(
                     f"means source-only dirtiness stops at a proved unchanged contract, "
                     f"which is meaningless without a contract."
                 )
-            _require(ewhere, edge, {"sealed_by", "rationale"})
+            require(ewhere, edge, {"sealed_by", "rationale"})
 
 
 def load_verification() -> dict:
     """Load and validate `verification/policy/verification.toml`."""
     doc = _load(VERIFICATION_TOML)
     where = "verification.toml"
-    _reject_unknown(where, doc, _VERIFICATION_TOP)
-    _require(
+    reject_unknown(where, doc, _VERIFICATION_TOP)
+    require(
         where,
         doc,
         {"schema_version", "policy_revision", "unknown_is_dirty"},
@@ -517,8 +521,8 @@ def load_verification() -> dict:
     exports: dict[str, set[str]] = {}
     for index, unit in enumerate(doc.get("unit", [])):
         uwhere = f"{where} [[unit]] #{index}"
-        _reject_unknown(uwhere, unit, _UNIT_KEYS)
-        _require(uwhere, unit, {"id", "class", "paths"})
+        reject_unknown(uwhere, unit, _UNIT_KEYS)
+        require(uwhere, unit, {"id", "class", "paths"})
         # ADR-MCPRE-068 §9.3, registry adequacy: declaring a class you do not satisfy is a
         # lie and is fatal here, at load, before anything reads the unit. Every rule
         # `class_problems` applies is computable from THIS record alone, which is what
@@ -652,8 +656,8 @@ def load_assumptions() -> dict:
     """Load and validate the trusted-assumption registry."""
     doc = _load(ASSUMPTIONS_TOML)
     where = "assumptions.toml"
-    _reject_unknown(where, doc, {"schema_version", "assumption"})
-    _require(where, doc, {"schema_version"})
+    reject_unknown(where, doc, {"schema_version", "assumption"})
+    require(where, doc, {"schema_version"})
     if doc["schema_version"] != ASSUMPTIONS_SCHEMA_VERSION:
         raise ManifestError(
             f"{where}: schema_version {doc['schema_version']} but this tooling implements "
@@ -663,8 +667,8 @@ def load_assumptions() -> dict:
     seen: set[str] = set()
     for index, entry in enumerate(doc.get("assumption", [])):
         awhere = f"{where} [[assumption]] #{index}"
-        _reject_unknown(awhere, entry, _ASSUMPTION_KEYS)
-        _require(awhere, entry, _ASSUMPTION_REQUIRED)
+        reject_unknown(awhere, entry, _ASSUMPTION_KEYS)
+        require(awhere, entry, _ASSUMPTION_REQUIRED)
         if entry["id"] in seen:
             raise ManifestError(
                 f"{awhere}: duplicate assumption id {entry['id']!r}. Ids are never reused "
@@ -773,12 +777,12 @@ def load_trust_boundaries() -> dict:
     """Load and validate the declared trust boundaries."""
     doc = _load(TRUST_BOUNDARIES_TOML)
     where = "trust-boundaries.toml"
-    _reject_unknown(where, doc, {"schema_version", "boundary"})
-    _require(where, doc, {"schema_version"})
+    reject_unknown(where, doc, {"schema_version", "boundary"})
+    require(where, doc, {"schema_version"})
     for index, entry in enumerate(doc.get("boundary", [])):
         bwhere = f"{where} [[boundary]] #{index}"
-        _reject_unknown(bwhere, entry, _BOUNDARY_KEYS)
-        _require(bwhere, entry, {"id", "description", "kind", "paths", "beyond"})
+        reject_unknown(bwhere, entry, _BOUNDARY_KEYS)
+        require(bwhere, entry, {"id", "description", "kind", "paths", "beyond"})
         cls = entry.get("max_class_without_assumption")
         if cls is not None and cls not in CLASSES:
             raise ManifestError(f"{bwhere}: max_class_without_assumption {cls!r} invalid")
@@ -1032,29 +1036,7 @@ def assumption_scope_defects(verification: dict, assumptions: dict) -> list[str]
 
 def load_toolchains() -> dict:
     """Load and validate the toolchain lock."""
-    doc = _load(TOOLCHAINS_LOCK_TOML)
-    where = "toolchains.lock.toml"
-    _require(where, doc, {"schema_version"})
-    for name, entry in doc.items():
-        if name == "schema_version":
-            continue
-        if not isinstance(entry, dict):
-            raise ManifestError(f"{where}: [{name}] must be a table")
-        state = entry.get("state")
-        if state not in {"resolved", "unresolved"}:
-            raise ManifestError(
-                f"{where}: [{name}] state must be 'resolved' or 'unresolved', got "
-                f"{state!r}. A tool with no state is a tool of unknown identity."
-            )
-        for sub_name, sub in entry.items():
-            if isinstance(sub, dict) and sub.get("state") not in {
-                "resolved",
-                "unresolved",
-            }:
-                raise ManifestError(
-                    f"{where}: [{name}.{sub_name}] state must be 'resolved' or "
-                    f"'unresolved'"
-                )
+    doc = _toolchains.load()
     # The extraction container's identity is COMPUTABLE from the inputs recorded beside it,
     # so it is computed here rather than trusted. Validating in the loader binds every
     # consumer at once — the gate, the Lean lane, the graph — instead of one script
@@ -1068,25 +1050,6 @@ def load_toolchains() -> dict:
     for problem in artifact_record_problems(doc):
         raise ManifestError(problem)
     return doc
-
-
-def unresolved_pins(toolchains: dict) -> list[str]:
-    """Every toolchain identity that is not pinned, as dotted names.
-
-    An unresolved pin means the tool's identity is unknown, and unknown is dirty. The
-    lanes that depend on it refuse to run rather than running against whatever is on
-    PATH — a proof checked by an unknown prover is not evidence.
-    """
-    out: list[str] = []
-    for name, entry in toolchains.items():
-        if name == "schema_version" or not isinstance(entry, dict):
-            continue
-        if entry.get("state") == "unresolved":
-            out.append(name)
-        for sub_name, sub in entry.items():
-            if isinstance(sub, dict) and sub.get("state") == "unresolved":
-                out.append(f"{name}.{sub_name}")
-    return sorted(out)
 
 
 def unpinned_identities(toolchains: dict, required: Iterable[str]) -> dict[str, str]:

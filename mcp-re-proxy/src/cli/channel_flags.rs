@@ -89,7 +89,7 @@ fn parse_cert_lifetime(value: &str) -> Result<Option<Duration>, String> {
     let secs = n.checked_mul(multiplier).ok_or_else(|| {
         format!(
             "--max-client-cert-lifetime '{value}' does not fit in seconds; the ceiling is {}s",
-            crate::config_state::transport::MAX_CLIENT_CERT_LIFETIME.as_secs()
+            crate::config_state::client_credential_window::MAX_CLIENT_CERT_LIFETIME.as_secs()
         )
     })?;
     Ok(if secs == 0 {

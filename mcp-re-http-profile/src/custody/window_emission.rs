@@ -2,22 +2,22 @@
 //! Emitting a delegated-key signature under a [`SigningWindow`].
 //!
 //! One authority: **a response is signed with the delegated key only through a window.**
-//! The delegated key is crate-private to [`ActiveDelegatedKey`], and the emitters here are
-//! the sole holders that read it, so the credential, the key, the identity naming it and
-//! the validity advertised are taken from ONE value and cannot be assembled from parts that
-//! disagree. The lower-level `*_with_owned_key` emitters take a caller-owned key and a raw
-//! `created`/`expires`; they cannot be handed a key out of an [`ActiveDelegatedKey`].
+//! The delegated key is crate-private to [`ActiveDelegatedKey`](super::ActiveDelegatedKey),
+//! and the emitters here are the only public path to a delegated signature. Each passes the
+//! window's [`DelegatedSigner`](super::DelegatedSigner) projection to a crate-private
+//! emitter, so the credential, the key, the identity naming it and the validity advertised
+//! are taken from ONE value and cannot be assembled from parts that disagree.
 
-use crate::bodyless::sign_delegated_accepted_202_with_owned_key;
+use crate::bodyless::emit_delegated_accepted_202;
 use crate::error::HttpProfileError;
 use crate::evidence::UnboundRequestDiagnostic;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
-use crate::rejection::build_delegated_rejection_preflight_with_owned_key;
-use crate::rejection::build_delegated_rejection_with_owned_key;
+use crate::rejection::emit_delegated_rejection;
+use crate::rejection::emit_delegated_rejection_preflight;
 use crate::rejection::RejectionReason;
-use crate::sign::sign_delegated_response_full_with_owned_key;
-use crate::sign::sign_delegated_response_unbound_with_owned_key;
+use crate::sign::emit_delegated_response_full;
+use crate::sign::emit_delegated_response_unbound;
 
 use super::SigningWindow;
 
@@ -32,17 +32,7 @@ pub fn sign_delegated_response_full(
     request: &HttpRequest,
     window: &SigningWindow,
 ) -> Result<Vec<u8>, HttpProfileError> {
-    let a = window.key();
-    sign_delegated_response_full_with_owned_key(
-        response,
-        request,
-        a.server_signer(),
-        a.credential(),
-        a.key(),
-        a.delegated_kid(),
-        window.created(),
-        window.expires(),
-    )
+    emit_delegated_response_full(response, request, &window.signer())
 }
 
 /// Response signing for the delegated-key path with NO request binding (the
@@ -53,17 +43,7 @@ pub fn sign_delegated_response_unbound(
     request_evidence_diagnostic: &UnboundRequestDiagnostic,
     window: &SigningWindow,
 ) -> Result<(), HttpProfileError> {
-    let a = window.key();
-    sign_delegated_response_unbound_with_owned_key(
-        response,
-        a.server_signer(),
-        a.credential(),
-        request_evidence_diagnostic,
-        a.key(),
-        a.delegated_kid(),
-        window.created(),
-        window.expires(),
-    )
+    emit_delegated_response_unbound(response, request_evidence_diagnostic, &window.signer())
 }
 
 /// A delegated bodyless `202 Accepted` for a notification, signed under `window` and
@@ -72,15 +52,7 @@ pub fn sign_delegated_accepted_202(
     request: &HttpRequest,
     window: &SigningWindow,
 ) -> Result<HttpResponse, HttpProfileError> {
-    let a = window.key();
-    sign_delegated_accepted_202_with_owned_key(
-        request,
-        a.credential(),
-        a.key(),
-        a.delegated_kid(),
-        window.created(),
-        window.expires(),
-    )
+    emit_delegated_accepted_202(request, &window.signer())
 }
 
 /// A request-bound delegated rejection signed under `window`: the request verified far
@@ -91,18 +63,7 @@ pub fn build_delegated_rejection(
     status: u16,
     window: &SigningWindow,
 ) -> Result<HttpResponse, HttpProfileError> {
-    let a = window.key();
-    build_delegated_rejection_with_owned_key(
-        request,
-        reason,
-        status,
-        a.server_signer(),
-        a.credential(),
-        a.key(),
-        a.delegated_kid(),
-        window.created(),
-        window.expires(),
-    )
+    emit_delegated_rejection(request, reason, status, &window.signer())
 }
 
 /// A preflight (unbound) delegated rejection signed under `window`: no trustworthy request
@@ -113,18 +74,7 @@ pub fn build_delegated_rejection_preflight(
     status: u16,
     window: &SigningWindow,
 ) -> Result<HttpResponse, HttpProfileError> {
-    let a = window.key();
-    build_delegated_rejection_preflight_with_owned_key(
-        received,
-        reason,
-        status,
-        a.server_signer(),
-        a.credential(),
-        a.key(),
-        a.delegated_kid(),
-        window.created(),
-        window.expires(),
-    )
+    emit_delegated_rejection_preflight(received, reason, status, &window.signer())
 }
 
 #[cfg(test)]

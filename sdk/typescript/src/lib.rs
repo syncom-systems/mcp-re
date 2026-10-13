@@ -11,8 +11,13 @@
 //! callback, so the private key never enters the SDK (non-exporting custody).
 //!
 //! This file marshals JavaScript values into `mcp-re-binding-core` and its results back;
-//! the signing inputs, the device check, the root anchor, the verify preamble and the
-//! verdict are that crate's, shared with the PyO3 binding.
+//! the signing inputs, the typed device failure, the root anchor, the verify preamble and
+//! the verdict are that crate's, shared with the PyO3 binding.
+//!
+//! A refusal crosses into JavaScript typed, never as prose to parse: a thrown error's
+//! `code` is the frozen `mcp-re.*` token for a wire refusal, [`SIGNING_DEVICE_FAILURE`]
+//! when the signing device could not sign (with what the device threw as its `cause`),
+//! and `"InvalidArg"` for any other refusal of the caller's arguments.
 
 mod core_facts;
 
@@ -20,7 +25,8 @@ use napi::bindgen_prelude::Buffer;
 use napi::bindgen_prelude::Function;
 use napi_derive::napi;
 
-use mcp_re_binding_core::BindingError;
+mod refusal;
+
 use mcp_re_binding_core::Call;
 use mcp_re_binding_core::ContinuationArgs;
 use mcp_re_binding_core::IssuerField;
@@ -31,6 +37,11 @@ use mcp_re_binding_core::Verdict;
 use mcp_re_binding_core::VerifyArgs;
 use mcp_re_client_core::HttpRequest;
 use mcp_re_client_core::HttpResponse;
+use refusal::device;
+use refusal::raise;
+use refusal::raise_signing;
+use refusal::Refusal;
+use refusal::INVALID_ARG;
 
 /// An issuer field by the key the TypeScript API takes it as.
 fn field_name(field: IssuerField) -> &'static str {
@@ -42,32 +53,17 @@ fn field_name(field: IssuerField) -> &'static str {
     }
 }
 
-/// A binding refusal as the error the TypeScript SDK throws.
-fn raise(e: BindingError) -> napi::Error {
-    napi::Error::from_reason(e.message(field_name))
-}
-
 /// A JS number as whole seconds. A saturating `as i64` would turn Infinity into an
 /// unbounded expiry or skew and NaN into 0, so a non-finite, fractional or
 /// beyond-`Number.MAX_SAFE_INTEGER` value is refused instead.
-fn whole_seconds(v: f64, what: &str) -> napi::Result<i64> {
+fn whole_seconds(v: f64, what: &str) -> Result<i64, Refusal> {
     if !(v.is_finite() && v.fract() == 0.0 && v.abs() <= 9_007_199_254_740_991.0) {
-        return Err(napi::Error::from_reason(format!(
-            "{what} must be a whole number of seconds, got {v}"
-        )));
+        return Err(napi::Error::new(
+            INVALID_ARG.to_owned(),
+            format!("{what} must be a whole number of seconds, got {v}"),
+        ));
     }
     Ok(v as i64)
-}
-
-/// A device callback as the core's device seam: the signature bytes, or `None` when the
-/// callback threw.
-fn device<'a, 'scope: 'a>(
-    sign_callback: &'a Function<'scope, Buffer, Buffer>,
-) -> impl FnOnce(&[u8]) -> Option<Vec<u8>> + 'a {
-    move |preimage: &[u8]| {
-        let out = sign_callback.call(Buffer::from(preimage.to_vec())).ok()?;
-        Some(out.to_vec())
-    }
 }
 
 /// One HTTP header (name/value pair) on the RFC 9421 request/response.
@@ -115,7 +111,7 @@ impl From<SignedParts> for SignedRequestJs {
 /// This is the same operation the software signing path performs internally, so a
 /// device-delegated signature is byte-identical to the in-process one.
 #[napi]
-pub fn sign_preimage(seed: Buffer, preimage: Buffer) -> napi::Result<Buffer> {
+pub fn sign_preimage(seed: Buffer, preimage: Buffer) -> Result<Buffer, Refusal> {
     mcp_re_binding_core::sign_preimage(seed.as_ref(), preimage.as_ref())
         .map(Buffer::from)
         .map_err(raise)
@@ -137,7 +133,7 @@ fn sign_args(
     created: f64,
     expires: f64,
     bindings_json: Option<String>,
-) -> napi::Result<SignArgs> {
+) -> Result<SignArgs, Refusal> {
     Ok(SignArgs {
         call,
         key_id,
@@ -202,7 +198,7 @@ pub fn sign_request(
     cont_irr_value: Option<String>,
     cont_request_state: Option<String>,
     bindings_json: Option<String>,
-) -> napi::Result<SignedRequestJs> {
+) -> Result<SignedRequestJs, Refusal> {
     let call = request_call(
         id_json,
         cont_prev_alg,
@@ -263,7 +259,7 @@ pub fn sign_request_with_signer(
     cont_irr_value: Option<String>,
     cont_request_state: Option<String>,
     bindings_json: Option<String>,
-) -> napi::Result<SignedRequestJs> {
+) -> Result<SignedRequestJs, Refusal> {
     let call = request_call(
         id_json,
         cont_prev_alg,
@@ -288,7 +284,7 @@ pub fn sign_request_with_signer(
     )?;
     mcp_re_binding_core::sign_with_device(args, device(&sign_callback))
         .map(SignedRequestJs::from)
-        .map_err(raise)
+        .map_err(raise_signing)
 }
 
 /// Sign a one-way MCP **notification** — a JSON-RPC message with a `method` and no
@@ -313,7 +309,7 @@ pub fn sign_notification(
     created: f64,
     expires: f64,
     bindings_json: Option<String>,
-) -> napi::Result<SignedRequestJs> {
+) -> Result<SignedRequestJs, Refusal> {
     let args = sign_args(
         Call::Notification,
         key_id,
@@ -350,7 +346,7 @@ pub fn sign_notification_with_signer(
     created: f64,
     expires: f64,
     bindings_json: Option<String>,
-) -> napi::Result<SignedRequestJs> {
+) -> Result<SignedRequestJs, Refusal> {
     let args = sign_args(
         Call::Notification,
         key_id,
@@ -367,7 +363,7 @@ pub fn sign_notification_with_signer(
     )?;
     mcp_re_binding_core::sign_with_device(args, device(&sign_callback))
         .map(SignedRequestJs::from)
-        .map_err(raise)
+        .map_err(raise_signing)
 }
 
 /// The outcome of verifying a delegated-signed bodyless `202 Accepted`.
@@ -472,7 +468,7 @@ fn verify_args(
     max_clock_skew: f64,
     revoked_identifiers: Vec<String>,
     now: f64,
-) -> napi::Result<VerifyArgs> {
+) -> Result<VerifyArgs, Refusal> {
     Ok(VerifyArgs {
         response: HttpResponse {
             status,
@@ -502,7 +498,7 @@ fn pinned(
     trust_domain: String,
     subject: String,
     retired_until: Option<f64>,
-) -> napi::Result<PinnedIssuer> {
+) -> Result<PinnedIssuer, Refusal> {
     Ok(PinnedIssuer {
         key_id,
         pubkey_b64url,
@@ -547,7 +543,7 @@ pub fn verify_accepted_202(
     revoked_identifiers: Vec<String>,
     now: f64,
     issuer_retired_until: Option<f64>,
-) -> napi::Result<AcceptedResultJs> {
+) -> Result<AcceptedResultJs, Refusal> {
     let issuer = pinned(
         issuer_key_id,
         issuer_pubkey_b64url,
@@ -607,7 +603,7 @@ pub fn verify_response(
     revoked_identifiers: Vec<String>,
     now: f64,
     issuer_retired_until: Option<f64>,
-) -> napi::Result<VerifyResultJs> {
+) -> Result<VerifyResultJs, Refusal> {
     let issuer = pinned(
         issuer_key_id,
         issuer_pubkey_b64url,

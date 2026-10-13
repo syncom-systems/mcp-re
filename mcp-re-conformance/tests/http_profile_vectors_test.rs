@@ -26,10 +26,14 @@ use mcp_re_core::SigningKey;
 use mcp_re_http_profile::block::AudienceTuple;
 use mcp_re_http_profile::bodyless::pre_052_fixtures::sign_pre_052_root_signed_202_for_negative_test;
 use mcp_re_http_profile::bodyless::pre_052_fixtures::verify_pre_052_root_signed_202_for_negative_test;
+use mcp_re_http_profile::custody::ActiveDelegatedKey;
+use mcp_re_http_profile::custody::SigningWindow;
 use mcp_re_http_profile::reconstruct_chain;
 use mcp_re_http_profile::rejection::pre_052_direct_root::build_pre_052_direct_root_rejection_for_negative_test;
 use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_base_for_negative_test;
 use mcp_re_http_profile::rejection::pre_052_direct_root_verifier::verify_pre_052_direct_root_rejection_for_negative_test;
+use mcp_re_http_profile::sign_delegated_accepted_202;
+use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::verify_artifact_binding;
@@ -1475,15 +1479,19 @@ fn chain_hop(
     // DELEGATED signing, because that is the only response mode the serving path has.
     // Signing these hops direct-root meant the frozen corpus exercised a mode removed
     // from the runtime surface, so a green suite said nothing about real evidence.
-    mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key(
+    sign_delegated_response_full(
         &mut response,
         &request,
-        &chain_server_signer(),
-        &chain_credential(),
-        &chain_delegated_key(),
-        CHAIN_DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                chain_delegated_key(),
+                chain_server_signer(),
+                chain_credential(),
+                CHAIN_DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("response signs");
     let rsp_evidence = mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -1759,6 +1767,15 @@ fn d202_delegated() -> SigningKey {
     SigningKey::from_seed_bytes(&[55u8; 32])
 }
 
+fn d202_server_signer() -> ActorIdentity {
+    ActorIdentity {
+        role: "server".into(),
+        trust_domain: "example.com".into(),
+        subject: "did:example:server".into(),
+        keyid: D202_DELEGATED_KID.into(),
+    }
+}
+
 fn d202_credential() -> String {
     let d = d202_delegated();
     let header = mcp_re_http_profile::DelegationHeader {
@@ -1766,12 +1783,7 @@ fn d202_credential() -> String {
         alg: mcp_re_http_profile::DELEGATION_ALG.into(),
         kid: D202_ROOT_KID.into(),
     };
-    let server_signer = ActorIdentity {
-        role: "server".into(),
-        trust_domain: "example.com".into(),
-        subject: "did:example:server".into(),
-        keyid: D202_DELEGATED_KID.into(),
-    };
+    let server_signer = d202_server_signer();
     let claims = mcp_re_http_profile::DelegationClaims {
         iss: "did:example:server".into(),
         iat: CREATED,
@@ -1849,13 +1861,18 @@ fn d202_fixture(name: &str, check: Delegated202Check, expected: &str) -> Fixture
 
 fn delegated_202_fixtures() -> Vec<Fixture> {
     let note = d202_notification();
-    let ack = mcp_re_http_profile::bodyless::sign_delegated_accepted_202_with_owned_key(
+    let ack = sign_delegated_accepted_202(
         &note,
-        &d202_credential(),
-        &d202_delegated(),
-        D202_DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                d202_delegated(),
+                d202_server_signer(),
+                d202_credential(),
+                D202_DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("PEP delegated-signs the 202");
 

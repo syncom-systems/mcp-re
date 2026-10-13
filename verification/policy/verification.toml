@@ -151,6 +151,21 @@ direct_consequence_severity = "medium"
 evidence = ["structural://proxy/materialized_lifecycle/sole_producer"]
 
 [[unit]]
+id = "proxy.crl_reference_sole_producer"
+class = "V0"
+description = "The boot-time client-CRL freshness refusal cannot compare against a faulted clock: `TlsPlane::materialize` takes a `CrlReference`, not a raw instant, and the reference's field is private to `tls_plane::crl_reference`, whose only producer `CrlReference::of` refuses a startup reading that is a host-clock fault while a client CRL is enforced. So the stale-CRL refusal runs against a sane reading or no CRL is loaded, by the plane's signature rather than by the composition root running a check first."
+# `materialize`'s signature is a fact about `tls_plane/mod.rs`, and the reference's
+# producer and private field are facts about `crl_reference.rs`.
+paths = [
+  "mcp-re-proxy/src/tls_plane/crl_reference.rs",
+  "mcp-re-proxy/src/tls_plane/mod.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "high"
+evidence = ["structural://proxy/crl_reference/sole_producer"]
+
+[[unit]]
 id = "http_profile.keyid"
 class = "V0"
 description = "The MCP-RE half of the keyid derivation: the RFC 7638 canonical JWK form, which embeds its operand verbatim between fixed affixes, and the base64url-no-pad encoding of the digest — neither of which introduces a collision of its own."
@@ -446,7 +461,6 @@ paths = [
   "mcp-re-core/src/error.rs",
   "mcp-re-core/src/encoding.rs",
   "mcp-re-http-profile/src/verify/floor/response.rs",
-  "mcp-re-http-profile/src/verify/bound_request.rs",
   "mcp-re-http-profile/src/verified_response/mod.rs",
   "mcp-re-http-profile/src/verified_response/facts.rs",
   "mcp-re-http-profile/src/verified_response/bound.rs",
@@ -691,7 +705,6 @@ paths = [
   "mcp-re-http-profile/src/verify/full/mod.rs",
   "mcp-re-http-profile/src/verify/full/response.rs",
   "mcp-re-http-profile/src/verified_response/bound.rs",
-  "mcp-re-http-profile/src/verify/bound_request.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -707,9 +720,9 @@ tested_symbols = [
   "//mcp-re-http-profile:full_profile_test#cryptographic_req_splice_still_fails_at_the_floor",
   "//mcp-re-http-profile:full_profile_test#a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request",
   "//mcp-re-http-profile:full_profile_test#two_requests_differing_only_in_a_signed_parameter_have_different_handles",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::bound_request::tests::a_derived_handle_agrees_with_the_signers_handle",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::bound_request::tests::a_request_differing_in_a_covered_component_derives_a_different_handle",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::bound_request::tests::a_thin_covered_set_cannot_reproduce_a_signed_handle",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#evidence::request_role::tests::a_derived_handle_agrees_with_the_signers_handle",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#evidence::request_role::tests::a_request_differing_in_a_covered_component_derives_a_different_handle",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#evidence::request_role::tests::a_thin_covered_set_cannot_reproduce_a_signed_handle",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::response_block_foreign_profile_fails_closed",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::response_block_unknown_field_fails_closed",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::response_block_round_trips_and_validates",
@@ -4517,8 +4530,11 @@ tested_symbols = [
 [[unit]]
 id = "proxy.cross_machine_legality"
 class = "V0"
-description = "Pass 2 of the layer-A legality boundary: the relations that join two configuration machines. No relation re-decides a state a machine already classified: X9 reads the recognised trust-revocation state's epoch decision and the topology machine's fleet decision and refuses a fleet with no networked trust-epoch source, X2a reads the signing-source and channel-key request selections, and X6 reads a deny-list field no machine classifies. Each illegal combination X2a, X6 and X9 declare is refused unconditionally rather than reinterpreted into a weaker posture."
-paths = ["mcp-re-proxy/src/config_state/cross_machine.rs"]
+description = "Pass 2 of the layer-A legality boundary: the relations that join two configuration machines. No relation re-decides a state a machine already classified: X9 reads the recognised trust-revocation state's epoch decision and the topology machine's fleet decision and refuses a fleet with no networked trust-epoch source, X2a reads the signing-source and channel-key request selections, and X6 reads a deny-list field no machine classifies. Each illegal combination X2a, X6 and X9 declare is refused unconditionally rather than reinterpreted into a weaker posture. X10, the fourth relation, is `proxy.delegated_tls_depth_refusal`'s claim; its module is measured here because this file declares it."
+paths = [
+  "mcp-re-proxy/src/config_state/cross_machine.rs",
+  "mcp-re-proxy/src/config_state/cross_machine/delegated_tls_depth.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
@@ -5323,10 +5339,11 @@ tested_symbols = [
   # Letting an exchange's exception escape would cancel every OTHER in-flight exchange, so
   # one flaky connection ends the session — a remotely triggerable session kill.
   "pytest#tests/test_transport.py::test_one_exchanges_network_error_does_not_take_down_the_session",
-  # ADR-MCPRE-069 `register`: the binding spells a core failure `"mcp-re: mcp-re.<token>"`,
-  # and what the taxonomy pins is the TOKEN. Four controls over that translation, claimed
-  # by nothing.
-  "pytest#tests/test_transport.py::test_the_bindings_prefixed_spelling_is_delivered_as_the_bare_token",
+  # ADR-MCPRE-069 `register`: the binding raises a core refusal as `WireRefusal` with the
+  # frozen token in `.wire_code`, and what the taxonomy pins is that TOKEN, read from the
+  # typed field and never from prose.
+  "pytest#tests/test_transport.py::test_a_core_refusal_is_delivered_as_its_wire_code",
+  "pytest#tests/test_transport.py::test_a_value_error_that_merely_says_a_token_is_a_local_condition",
   "pytest#tests/test_transport.py::test_a_value_error_that_is_not_a_token_is_labelled_a_local_condition",
   "pytest#tests/test_transport.py::test_a_notifications_wire_code_is_the_bare_token_too",
   "pytest#tests/test_transport.py::test_the_cores_own_fail_closed_error_is_delivered_rather_than_hanging",
@@ -5786,9 +5803,10 @@ tested_symbols = [
 [[unit]]
 id = "sdk_binding_core.adapter"
 class = "V0"
-description = "THE SDK BINDING CORE HANDS THE CALLER'S VALUES TO THE AUDITED CORE AND REPORTS ITS VERDICT WITHOUT RESTATING IT, ONCE FOR BOTH BINDINGS. Signing reads the call in one refusal order (id, params, provider bindings, then the DPoP credential and the continuation, whose refusals are `mcp-re-client-core`'s) and, under device custody, refuses a device that fails as `mcp-re.invalid_signature`, the HTTP profile's signer seam refusing an answer that is not 64 octets, so a device signature is byte-identical to the software one. Verification builds the pinned root anchor from the issuer values the caller supplied — an empty or whitespace issuer field is refused by name before any evidence is read, a retired root is judged at the caller's `now` through the core's own `TrustedIssuerSet` — builds the delegation policy and denylist from the caller's values — a clock skew outside the profile bound is refused, not clamped, as the sidecar's configuration refuses it — hands the request the caller TRANSMITTED to the core unchanged, and projects the verified outcome field for field: success or rejection, bound or unbound, and the four execution-contract members verbatim, an absent one staying absent. Every refusal the core makes is reported under its wire code. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about either host's marshalling (sdk_python.native_binding, sdk_typescript.native_binding, ASM-0087, ASM-0088), or about what either SDK does with the verdict."
+description = "THE SDK BINDING CORE HANDS THE CALLER'S VALUES TO THE AUDITED CORE AND REPORTS ITS VERDICT WITHOUT RESTATING IT, ONCE FOR BOTH BINDINGS. Signing reads the call in one refusal order (id, params, provider bindings, then the DPoP credential and the continuation, whose refusals are `mcp-re-client-core`'s) and, under device custody, reports a device that fails or answers anything but a 64-octet signature (the HTTP profile's signer seam refusing that answer) as a typed device failure carrying the host's own error, never as a wire code, since nothing was signed or sent; a refusal the device did not cause stays a refusal, and a device signature is byte-identical to the software one. Verification builds the pinned root anchor from the issuer values the caller supplied — an empty or whitespace issuer field is refused by name before any evidence is read, a retired root is judged at the caller's `now` through the core's own `TrustedIssuerSet` — builds the delegation policy and denylist from the caller's values — a clock skew outside the profile bound is refused, not clamped, as the sidecar's configuration refuses it — hands the request the caller TRANSMITTED to the core unchanged, and projects the verified outcome field for field: success or rejection, bound or unbound, and the four execution-contract members verbatim, an absent one staying absent. Every refusal the core makes is reported under its wire code, in a typed field. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about either host's marshalling (sdk_python.native_binding, sdk_typescript.native_binding, ASM-0087, ASM-0088), or about what either SDK does with the verdict."
 paths = [
   "sdk/binding-core/src/lib.rs",
+  "sdk/binding-core/src/device.rs",
   "sdk/binding-core/src/error.rs",
   "sdk/binding-core/src/pinned_issuer.rs",
   "sdk/binding-core/src/sign.rs",
@@ -5805,13 +5823,16 @@ evidence = [
   "mutation://sdk_binding_core/adapter/sign_anchor_and_projection",
 ]
 tested_symbols = [
-  "//sdk/binding-core:mcp_re_binding_core_test#error::tests::a_wire_refusal_renders_its_frozen_token_after_the_prefix",
+  "//sdk/binding-core:mcp_re_binding_core_test#device::tests::a_malformed_answer_names_its_length_and_a_failed_call_is_worded_by_the_host",
+  "//sdk/binding-core:mcp_re_binding_core_test#error::tests::a_wire_refusal_carries_its_frozen_token_and_says_only_that",
   "//sdk/binding-core:mcp_re_binding_core_test#error::tests::a_local_refusal_renders_its_reason_verbatim_and_a_field_by_the_host_name",
   "//sdk/binding-core:mcp_re_binding_core_test#pinned_issuer::tests::an_empty_issuer_field_is_refused_by_name",
   "//sdk/binding-core:mcp_re_binding_core_test#pinned_issuer::tests::an_empty_field_is_named_before_an_unreadable_key",
   "//sdk/binding-core:mcp_re_binding_core_test#pinned_issuer::tests::a_retired_root_resolves_through_its_deadline_and_not_after",
   "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_device_signature_is_byte_identical_to_the_software_one",
-  "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_device_that_fails_or_answers_anything_but_64_octets_fails_closed",
+  "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_device_that_fails_is_a_device_failure_carrying_the_host_error",
+  "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_device_answer_that_is_not_64_octets_is_a_malformed_device_answer",
+  "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_refusal_the_device_did_not_cause_is_not_blamed_on_it",
   "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_seed_that_is_not_32_bytes_is_refused",
   "//sdk/binding-core:mcp_re_binding_core_test#sign_args::tests::a_request_reads_its_id_and_a_notification_has_none",
   "//sdk/binding-core:mcp_re_binding_core_test#sign_args::tests::the_arguments_are_refused_in_order_with_the_messages_the_hosts_raise",
@@ -5832,8 +5853,8 @@ tested_symbols = [
 [[unit]]
 id = "sdk_python.native_binding"
 class = "V0"
-description = "THE PYTHON SDK'S NATIVE BINDING HANDS THE CALLER'S VALUES TO THE BINDING CORE UNCHANGED AND RAISES WHAT IT REPORTS. Each `#[pyfunction]` builds the core's signing or verification arguments from the keyword arguments it is handed — the five continuation keywords each reaching its own handle — passes the transmitted request bytes through untouched, and returns the core's verdict field for field; a refusal is raised as a `ValueError` carrying the core's message, an empty issuer field named by its Python keyword. The anchor, policy, device check and projection are sdk_binding_core.adapter's. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the interpreter, about PyO3's delivery of arguments and return value beyond the premise ASM-0088 states, or about what the Python layer does with the verdict (the sdk_python.* units)."
-paths = ["sdk/python/src/lib.rs", "sdk/python/src/core_facts.rs"]
+description = "THE PYTHON SDK'S NATIVE BINDING HANDS THE CALLER'S VALUES TO THE BINDING CORE UNCHANGED AND RAISES WHAT IT REPORTS. Each `#[pyfunction]` builds the core's signing or verification arguments from the keyword arguments it is handed — the five continuation keywords each reaching its own handle — passes the transmitted request bytes through untouched, and returns the core's verdict field for field; a wire refusal is raised as `WireRefusal` with the frozen token in `.wire_code`, a device failure as `SigningDeviceFailure` with no wire code and the device's own exception as `__cause__`, and any other refusal as a `ValueError` carrying the core's message, an empty issuer field named by its Python keyword. The anchor, policy, device failure and projection are sdk_binding_core.adapter's. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the interpreter, about PyO3's delivery of arguments and return value beyond the premise ASM-0088 states, or about what the Python layer does with the verdict (the sdk_python.* units)."
+paths = ["sdk/python/src/lib.rs", "sdk/python/src/core_facts.rs", "sdk/python/src/refusal.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -5845,6 +5866,7 @@ tested_symbols = [
   "//sdk/python:native_binding_test#tests::an_issuer_field_is_named_by_its_python_keyword",
   "//sdk/python:native_binding_test#tests::the_five_continuation_keywords_reach_their_own_handles",
   "//sdk/python:native_binding_test#core_facts::tests::each_fact_is_the_binding_cores_own",
+  "//sdk/python:native_binding_test#refusal::tests::a_device_answer_that_is_not_bytes_is_named_by_its_python_type",
 ]
 
 # THE TYPESCRIPT SDK'S NATIVE BINDING IS SHIPPED CODE ON THE PATH FROM A VERIFIED RESULT TO THE
@@ -5855,8 +5877,8 @@ tested_symbols = [
 [[unit]]
 id = "sdk_typescript.native_binding"
 class = "V0"
-description = "THE TYPESCRIPT SDK'S NATIVE BINDING HANDS THE CALLER'S VALUES TO THE BINDING CORE AND THROWS WHAT IT REPORTS. Each `#[napi]` function builds the core's signing or verification arguments from the values it is handed, refusing a time or skew that is not a whole in-range number of seconds instead of saturating it, passes the transmitted request bytes through untouched, and returns the core's verdict field for field; a refusal is thrown carrying the core's message, an empty issuer field named by its TypeScript key. The anchor, policy, device check and projection are sdk_binding_core.adapter's. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the Node runtime, about napi's delivery of arguments and return value beyond the premise ASM-0087 states, or about what the TypeScript layer does with the verdict (the sdk_typescript.* units)."
-paths = ["sdk/typescript/src/lib.rs", "sdk/typescript/src/core_facts.rs"]
+description = "THE TYPESCRIPT SDK'S NATIVE BINDING HANDS THE CALLER'S VALUES TO THE BINDING CORE AND THROWS WHAT IT REPORTS. Each `#[napi]` function builds the core's signing or verification arguments from the values it is handed, refusing a time or skew that is not a whole in-range number of seconds instead of saturating it, passes the transmitted request bytes through untouched, and returns the core's verdict field for field; a refusal is thrown with its kind in the error's `code` — the frozen token for a wire refusal, `SigningDeviceFailure` for a device that could not sign (what the device threw as its `cause`), `InvalidArg` otherwise — and the core's message, an empty issuer field named by its TypeScript key. The anchor, policy, device failure and projection are sdk_binding_core.adapter's. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the Node runtime, about napi's delivery of arguments and return value beyond the premise ASM-0087 states, or about what the TypeScript layer does with the verdict (the sdk_typescript.* units)."
+paths = ["sdk/typescript/src/lib.rs", "sdk/typescript/src/core_facts.rs", "sdk/typescript/src/refusal.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -5868,6 +5890,7 @@ tested_symbols = [
   "//sdk/typescript:native_binding_test#tests::a_time_that_is_not_whole_seconds_is_refused",
   "//sdk/typescript:native_binding_test#tests::an_issuer_field_is_named_by_its_typescript_key",
   "//sdk/typescript:native_binding_test#core_facts::tests::each_fact_is_the_binding_cores_own",
+  "//sdk/typescript:native_binding_test#refusal::tests::a_refusal_is_thrown_with_its_kind_in_the_code",
 ]
 
 # THE WHOLE RECORDED-SESSION BATTERY WAS UNREGISTERED. `transport_replay.test.ts` refuses
@@ -5945,6 +5968,7 @@ evidence = [
 tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > delivers a core failure as its frozen token, not as a local SDK error",
   "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > still labels a genuine local failure as one",
+  "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > does not read a wire code out of a message that merely says one",
   # ADR-MCPRE-069 `register`
   "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > delivers a wire failure as a JSON-RPC error carrying the frozen code",
   # ADR-MCPRE-069 `register`
@@ -5957,7 +5981,7 @@ tested_symbols = [
   # ADR-MCPRE-069 `register`
   "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > re-throws a non-Error, which is a defect rather than a protocol outcome",
   # ADR-MCPRE-069 `register`
-  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > reports the ack failure as the frozen token, not the binding's prefixed spelling",
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > reports the ack failure as the frozen token",
 ]
 
 # REBUILDING rather than editing is the proposition: the union schema accepts a request arm,
@@ -6290,6 +6314,7 @@ tested_symbols = [
   "vitest#test/custody.test.ts > a device that cannot sign fails closed > raises SignerUnavailable for a non-Buffer return",
   # ADR-MCPRE-069 `register`
   "vitest#test/custody.test.ts > a device that cannot sign fails closed > never emits unsigned evidence when the device misbehaves",
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > the native seam does not report a device failure as a wire code",
   # ADR-MCPRE-069 `register`
   "vitest#test/custody.test.ts > a device that cannot sign fails closed > does not blame the device for a core failure",
   # ADR-MCPRE-069 `register`
@@ -7066,8 +7091,9 @@ paths = [
   # `delegated_202_test` three measure the shipped one, is a disposition for the unit's
   # owner. See EX-015 in docs/architecture/review-dispositions.md.
   "mcp-re-http-profile/src/rejection/pre_052_direct_root.rs",
-  # The signing window the emission is bound under.
+  # The signing window the emission is bound under, and the projection the emitters read it through.
   "mcp-re-http-profile/src/custody/window_emission.rs",
+  "mcp-re-http-profile/src/custody/delegated_signer.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -7092,7 +7118,9 @@ tested_symbols = [
   # The emitted signature covers a digest and signature headers the emitter computed, never ones
   # the caller supplied, and the delegated evidence block is inside the digested body.
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::caller_supplied_digest_and_signature_headers_do_not_survive_emission",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_delegated_response_is_refused_when_the_signer_names_another_key",
+  # Every part a delegated emitter signs with is read from one window: the block's signer keyid
+  # and the signature keyid are one value.
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::delegated_signer::tests::every_part_is_read_from_the_one_window",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::the_delegated_response_block_is_inside_the_digested_body",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_bound_response_advertises_the_handle_of_the_request_it_answers",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::an_unsigned_request_cannot_be_answered_with_a_bound_response",
@@ -7175,7 +7203,7 @@ evidence = [
 ]
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#tls_plane::custody_agreement_tests::the_served_snapshot_carries_the_established_custody",
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::refusal_order_tests::the_delegated_tls_depth_refusal_precedes_the_first_bind",
+  "//mcp-re-proxy:proxy_unit_test#async_fleet::snapshot_custody_tests::the_core_shape_follows_the_served_snapshots_custody",
 ]
 
 # Owner Ruling 19.2: on the serving path, signed request metadata and the request body agree
@@ -8712,11 +8740,13 @@ paths = [
   "mcp-re-http-profile/src/custody/issuance_terms.rs",
   "mcp-re-http-profile/src/custody/key_window.rs",
   "mcp-re-http-profile/src/custody/lifecycle_event.rs",
-  "mcp-re-http-profile/src/custody/active_key.rs",
+  "mcp-re-http-profile/src/custody/active_key/mod.rs",
+  "mcp-re-http-profile/src/custody/active_key/stated.rs",
   "mcp-re-http-profile/src/custody/issuance_refusal.rs",
   "mcp-re-http-profile/src/custody/signing_window.rs",
   "mcp-re-http-profile/src/custody/trust_epoch.rs",
   "mcp-re-http-profile/src/custody/window_emission.rs",
+  "mcp-re-http-profile/src/custody/delegated_signer.rs",
 ]
 exported_contracts = []
 # TWO classes, for the reason each of the verifier's propositions carries two. The seal added by
@@ -9414,6 +9444,8 @@ paths = [
   "mcp-re-http-profile/src/bodyless/pre_052_fixtures.rs",
   "mcp-re-http-profile/src/bodyless/delegated_ack.rs",
   "mcp-re-http-profile/src/bodyless/delegated_credential.rs",
+  # The covered `mcp-re-request-evidence` value is `RequestRoleEvidence::of_signed_request`.
+  "mcp-re-http-profile/src/evidence/request_role.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -9428,6 +9460,7 @@ evidence = [
 # a bodied message still requires its content-type is as much a statement about the sets as
 # one that a bodyless message must not carry it.
 tested_symbols = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#bodyless::tests::the_acknowledgement_and_the_bound_response_derive_one_handle",
   "//mcp-re-http-profile:bodyless_202_test#signed_202_verifies_against_its_notification",
   "//mcp-re-http-profile:bodyless_202_test#an_acknowledgement_binds_to_one_transmission_not_to_content",
   "//mcp-re-http-profile:bodyless_202_test#a_forged_request_evidence_header_is_refused",
@@ -11627,7 +11660,11 @@ tested_symbols = [
 id = "proxy.transport_binding_and_crl_state"
 class = "V0"
 description = "WHICH PEER-IDENTITY BINDING AND WHICH OFFLINE-REVOCATION POSTURE THIS DEPLOYMENT RECOGNISES: both binding states and every legal CRL state form are classified and accepted, only an EXACT transport binding becomes a state and every other kind is refused aloud, attested ingress is refused BY NAME rather than passed over, the deprecated identity source names no state, the identity field names the state while the form decides whether there is one, a cadence with no list to re-read and a CRL list holding an empty path are refused, and a ZERO cadence is an unbounded reloader rather than a disabled one. The attested-ingress clause measures a DELIBERATE product refusal (ADR-MCPRE-050; the capability is refused, not removed), not an unimplemented mode."
-paths = ["mcp-re-proxy/src/config_state/transport.rs"]
+paths = [
+  "mcp-re-proxy/src/config_state/transport.rs",
+  "mcp-re-proxy/src/config_state/channel_binding_effects.rs",
+  "mcp-re-proxy/src/config_state/crl_revocation.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -11636,17 +11673,20 @@ evidence = [
   "mutation://proxy/transport_binding_and_crl_state/attested_ingress_refusal",
 ]
 tested_symbols = [
-  "//mcp-re-proxy:proxy_unit_test#config_state::transport::tests::a_cadence_with_no_list_to_re_read_is_refused",
-  "//mcp-re-proxy:proxy_unit_test#config_state::transport::tests::a_crl_list_holding_an_empty_path_is_refused",
-  "//mcp-re-proxy:proxy_unit_test#config_state::transport::tests::a_zero_cadence_is_an_unbounded_reloader_not_a_disabled_one",
+  "//mcp-re-proxy:proxy_unit_test#config_state::crl_revocation::tests::a_cadence_with_no_list_to_re_read_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::crl_revocation::tests::a_crl_list_holding_an_empty_path_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::crl_revocation::tests::a_zero_cadence_is_an_unbounded_reloader_not_a_disabled_one",
+  "//mcp-re-proxy:proxy_unit_test#config_state::crl_revocation::tests::every_legal_crl_state_form_is_classified_and_accepted",
   "//mcp-re-proxy:proxy_unit_test#config_state::transport::tests::attested_ingress_is_refused_by_name_rather_than_passed_over",
   "//mcp-re-proxy:proxy_unit_test#config_state::transport::tests::both_binding_states_are_classified_and_accepted",
-  "//mcp-re-proxy:proxy_unit_test#config_state::transport::tests::every_legal_crl_state_form_is_classified_and_accepted",
   "//mcp-re-proxy:proxy_unit_test#config_state::transport::tests::only_exact_binding_becomes_a_state_and_every_other_kind_is_refused_aloud",
   "//mcp-re-proxy:proxy_unit_test#config_state::transport::tests::the_identity_field_names_the_state_and_the_form_decides_whether_there_is_one",
+  # The recognised state's one projection onto the serving path: each state reads its own SAN
+  # and the identity from the verified peer certificate.
+  "//mcp-re-proxy:proxy_unit_test#config_state::channel_binding_effects::tests::each_state_projects_its_own_san_and_the_channel_credential",
   # ADR-MCPRE-069 CO-S3-6 (NP-153). Three clauses this owner already states, measured on a
   # `DeploymentRequest` that met no parser. The zero-cadence refusal is this module's own
-  # sentence (`transport.rs`: "--client-crl-reload-secs 0 makes the CRL reloader spin"), and
+  # sentence (`crl_revocation.rs`: "--client-crl-reload-secs 0 makes the CRL reloader spin"), and
   # the control carries the two negative cases — a positive cadence and no cadence at all —
   # so a module that refused every cadence would not satisfy it.
   "//mcp-re-proxy:integration_test#app_startup_characterization_test::a_programmatic_config_cannot_hot_spin_the_crl_reloader",
@@ -12065,7 +12105,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.startup_plan_provenance"
 class = "V0"
-description = "A STARTUP PLAN CARRIES THE DECISION IT WAS HANDED, NOT ONE IT RE-DERIVED: the signing plan carries the trust epoch it was GIVEN, the continuation plan carries its own endpoint verbatim, the channel plan carries the classified custody and the credential window, the epoch plan normalises the key ONCE, the issuer kid in the minted credential is the one that was planned — falling back to the server key id only where the resolution reads it — the audience scope defaults to the response audience and is overridable, both consumers of the epoch hold ONE decision, each CRL posture is projected as its own variant, and the paths accessor answers which FILES rather than which posture. Says nothing about what planning REFUSES, which is `proxy.startup_plan_legality`'s, and nothing about whether any named endpoint can be reached, which is materialization's."
+description = "A STARTUP PLAN CARRIES THE DECISION IT WAS HANDED, NOT ONE IT RE-DERIVED: the trust plan and the signing plan come from ONE producer that reads the issuer kid and the trust epoch once, and the signing plan cannot be given an epoch the trust plan does not hold, the continuation plan carries its own endpoint verbatim, the channel plan carries the classified custody and the credential window, the epoch plan normalises the key ONCE, the issuer kid in the minted credential is the one that was planned — falling back to the server key id only where the resolution reads it — the audience scope defaults to the response audience and is overridable, both consumers of the epoch hold ONE decision, each CRL posture is projected as its own variant, and the paths accessor answers which FILES rather than which posture. Says nothing about what planning REFUSES, which is `proxy.startup_plan_legality`'s, and nothing about whether any named endpoint can be reached, which is materialization's."
 paths = ["mcp-re-proxy/src/startup_plan.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -12084,7 +12124,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_issuer_kid_falls_back_to_the_server_key_id",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_issuer_kid_in_the_credential_is_the_one_that_was_planned",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_paths_accessor_answers_which_files_not_which_posture",
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_signing_plan_carries_the_epoch_it_was_given_not_one_it_found",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_signing_plan_cannot_be_given_a_different_epoch",
 ]
 
 [[unit]]
@@ -12157,6 +12197,35 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::evidence::tests::only_the_trusted_context_asserts_something_configuration_cannot_check",
   "//mcp-re-proxy:proxy_unit_test#config_state::evidence::tests::retention_is_selected_by_its_own_locator",
   "//mcp-re-proxy:proxy_unit_test#config_state::evidence::tests::the_on_state_carries_the_directory_that_selected_it",
+]
+
+[[unit]]
+id = "proxy.connection_bounds"
+class = "V0"
+description = "EVERY BOUND ON A CONNECTION'S LIFE IS IN FORCE: the read, write and request-deadline timeouts, the connection ceiling and the drain window resolve to values that cannot be absent or zero, a disabled one is refused BY THE FLAG THE OPERATOR TYPED, a drain window that is zero or beyond the one-day ceiling is refused, a DEPLOYMENT's drain window covers its request deadline, and the refusals arrive ceiling, then drain window, then timeouts. Says nothing about whether the serving path honours each bound once it holds them — that is the drain and connection controls' side of the seam."
+paths = [
+  "mcp-re-proxy/src/config_state/connection_bounds/mod.rs",
+  "mcp-re-proxy/src/config_state/connection_bounds/refusal.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/connection_bounds/every_bound_in_force",
+  "mutation://proxy/connection_bounds/no_bound_is_off",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::the_default_limits_resolve_to_the_default_bounds",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::a_resolved_bound_is_the_value_the_request_stated",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::a_zero_connection_ceiling_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::each_disabled_timeout_is_refused_by_its_own_flag",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::a_deployment_whose_drain_window_misses_the_request_deadline_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::a_zero_drain_window_is_refused_once",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::an_unrepresentable_drain_window_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::the_refusals_arrive_ceiling_then_drain_then_timeouts",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::tests::the_classifier_resolves_the_request_limits",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::refusal::tests::a_legal_request_raises_no_refusal",
+  "//mcp-re-proxy:proxy_unit_test#config_state::connection_bounds::refusal::tests::the_cover_rule_applies_only_where_it_is_required",
 ]
 
 [[unit]]
@@ -12911,9 +12980,7 @@ evidence = [
   "mutation://proxy/serving/core_pool_handshake_bound",
 ]
 tested_symbols = [
-  # The relation, over every depth a fleet can resolve and both signing custodies — and,
-  # since Owner Ruling 7, over both PROVENANCES, because a stated depth and a derived one
-  # are no longer the same input at 1.
+  # The relation, over every depth a fleet can resolve and both signing custodies.
   "//mcp-re-proxy:proxy_unit_test#async_serve::admission_bound_tests::the_handshake_bound_leaves_workers_for_the_rest_of_the_core",
   # The depth table, which is what separates "bounded" from "bounded CORRECTLY": it is the
   # only control that sees the ceiling being dropped, and the only one that sees depth 2
@@ -12924,11 +12991,11 @@ tested_symbols = [
   # everything, which would cost the exported-key path throughput for nothing.
   "//mcp-re-proxy:proxy_unit_test#async_fleet::core_runtime::tests::a_share_nothing_core_has_no_pool_and_no_handshake_bound",
   "//mcp-re-proxy:proxy_unit_test#async_fleet::core_runtime::tests::a_pool_without_delegated_tls_bounds_no_handshakes",
-  # The derived-depth arm, which is where a delegated-TLS deployment now gets its pool
-  # from. Ruling 7 removed the stated-1 path into this arm, so without this control the
-  # only remaining evidence that the arm fires at all would be the two above — and neither
-  # of them is about delegated custody.
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::core_runtime::tests::delegated_custody_over_a_derived_depth_derives_the_safe_one",
+  # The one-worker arm under delegated custody, which is where a delegated-TLS deployment
+  # on a host that derives a single worker gets its pool from. Without this control the
+  # only evidence that the arm fires at all would be the two above — and neither of them is
+  # about delegated custody.
+  "//mcp-re-proxy:proxy_unit_test#async_fleet::core_runtime::tests::delegated_custody_on_one_worker_gets_the_safe_depth",
   # The bound REACHING the semaphore, observed as a permit count rather than as a call.
   "//mcp-re-proxy:proxy_unit_test#async_serve::core_admission::tests::the_handshake_semaphore_carries_the_pools_bound",
 ]
@@ -12936,9 +13003,9 @@ tested_symbols = [
 [[unit]]
 id = "proxy.fleet_topology_provenance"
 class = "V0"
-description = "AN EXPLICITLY CONFIGURED FLEET TOPOLOGY IS RESOLVED UNCHANGED: a stated shard count and a stated worker depth survive topology resolution exactly as stated, including the explicit `1`, so the RESOLVER cannot disagree with the operator about the shape it was told to take. It is the provenance half of the resolver ONLY. What the automatic path computes when nothing was stated — a shard per cpu, the depth it adds on top, and the floor of one shard of one worker — is a throughput and availability policy rather than a security posture, and it stays in the ADR-069 census under NP-147. THE NAMED EXCEPTION IS WITHDRAWN, because the behaviour it named is gone. It read: under delegated TLS custody `CorePool::for_core` raises a resolved depth of 1 to a multi-worker pool, so a stated `1` reaches the resolver intact but does not reach the runtime. Owner Ruling 7 made that silent widening a STARTUP REFUSAL, so a stated `1` now either reaches the runtime as stated (exported key) or refuses the deployment (delegated custody) — it is never converted. What survives is that a DERIVED depth of 1 is still raised, which is the resolver filling in rather than overriding and is `proxy.delegated_tls_depth_refusal`'s to state. This unit still claims nothing about the per-shard runtime builder."
-# CLOSURE, NOT CLAIM. `core_runtime.rs` is here because `mod core_runtime;` in the file
-# above resolves to it and UC-1 requires a measured file's own modules to be measured —
+description = "AN EXPLICITLY CONFIGURED FLEET TOPOLOGY IS RESOLVED UNCHANGED: a stated shard count and a stated worker depth survive topology resolution exactly as stated, including the explicit `1`, so the RESOLVER cannot disagree with the operator about the shape it was told to take. It is the provenance half of the resolver ONLY. What the automatic path computes when nothing was stated — a shard per cpu, the depth it adds on top, and the floor of one shard of one worker — is a throughput and availability policy rather than a security posture, and it stays in the ADR-069 census under NP-147. THE NAMED EXCEPTION IS WITHDRAWN, because the behaviour it named is gone. It read: under delegated TLS custody `CorePool::for_core` raises a resolved depth of 1 to a multi-worker pool, so a stated `1` reaches the resolver intact but does not reach the runtime. Owner Ruling 7 made that silent widening a REFUSAL, and relation X10 makes it at configuration, so a stated `1` now either reaches the runtime as stated (exported key) or refuses the deployment (delegated custody) — it is never converted. What survives is that a DERIVED depth of 1 is still raised, which is the resolver filling in rather than overriding and is `proxy.delegated_tls_depth_refusal`'s to state. This unit still claims nothing about the per-shard runtime builder."
+# CLOSURE, NOT CLAIM. `core_runtime.rs` and `reuseport.rs` are here because `mod core_runtime;`
+# and `mod reuseport;` in the file above resolve to them and UC-1 requires a measured file's own modules to be measured —
 # a unit that fingerprinted the topology function while its sibling module could be
 # rewritten under a standing attestation would be measuring half of what it names. This
 # unit claims nothing about the per-shard runtime builder.
@@ -12946,6 +13013,7 @@ paths = [
   "mcp-re-proxy/src/async_fleet/resolved_topology.rs",
   "mcp-re-proxy/src/async_fleet/mod.rs",
   "mcp-re-proxy/src/async_fleet/core_runtime.rs",
+  "mcp-re-proxy/src/async_fleet/reuseport.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -12978,6 +13046,10 @@ tested_symbols = [
 # widen the depth to four workers and say nothing, which serves a topology the operator was
 # explicit about not wanting on the axis they were most explicit about.
 #
+# WHERE IT IS REFUSED. Both terms are facts about the request, so the refusal is relation
+# X10 at the layer-A boundary, before any plane materializes. The fleet once refused it
+# after every networked store had connected.
+#
 # WHY IT IS A UNIT AND NOT A CLAUSE. Neither half is a defect: an exported key with a
 # stated 1 is fine, and delegated custody over a DERIVED 1 is fine and is raised for the
 # same reason. Only the conjunction has no safe shape, and a proposition about a pair
@@ -12988,24 +13060,16 @@ tested_symbols = [
 [[unit]]
 id = "proxy.delegated_tls_depth_refusal"
 class = "V0"
-description = "A DEPLOYMENT WHOSE OPERATOR EXPLICITLY ASKED FOR THE SINGLE-THREADED SHARE-NOTHING RUNTIME AND WHOSE TLS CUSTODY IS DELEGATED IS REFUSED AT STARTUP, BEFORE ANY LISTENER IS BOUND OR RUNTIME BUILT, rather than being silently widened to a worker pool. The refusal turns on the PAIR: an exported key with a stated depth of 1 is served as asked, a derived depth of 1 under delegated custody is raised to the safe depth because `auto` is the operator declining to choose, and a stated depth of 2 or more is honoured exactly. The depth's provenance is carried by `ShardDepth` rather than reconstructed, so the resolver cannot collapse the two meanings of 1. There is no acknowledgement or unsafe flag. Says nothing about what the bound then is — that is `proxy.core_pool_handshake_bound`'s — and nothing about the automatic path's throughput policy, which stays in the ADR-069 census under NP-147."
+description = "A DEPLOYMENT WHOSE OPERATOR EXPLICITLY ASKED FOR THE SINGLE-THREADED SHARE-NOTHING RUNTIME AND WHOSE TLS CUSTODY IS DELEGATED IS REFUSED AT CONFIGURATION, by the layer-A boundary before any plane materializes, rather than being silently widened to a worker pool. The refusal is relation X10 over two owners' decisions — the recognised channel-credential custody's exposure and the shard request's stated depth — and it turns on the PAIR: an exported key with a stated depth of 1 is admitted, and delegated custody with a derived depth or a stated depth of 2 or more is admitted. Below the boundary, `CorePool::for_core` never serves a blocking signer on a current-thread runtime: the only depth of 1 that reaches it under delegated custody is the host's answer to `auto`, and it is raised to the safe depth because `auto` is the operator declining to choose. There is no acknowledgement or unsafe flag. Says nothing about what the bound then is — that is `proxy.core_pool_handshake_bound`'s — and nothing about the automatic path's throughput policy, which stays in the ADR-069 census under NP-147."
 paths = [
-  # Where the decision is, and the type that makes it possible.
+  # The relation, and the shape every admitted depth then gets.
+  "mcp-re-proxy/src/config_state/cross_machine/delegated_tls_depth.rs",
   "mcp-re-proxy/src/async_fleet/core_runtime.rs",
-  "mcp-re-proxy/src/async_fleet/shard_depth.rs",
-  # The ORDERING half: the resolver that produces the provenance, and the one call site
-  # that must consult the decision before it binds anything. A closure without these files
-  # would attest a refusal while the line that has to come first could move.
-  "mcp-re-proxy/src/async_fleet/resolved_topology.rs",
-  "mcp-re-proxy/src/async_fleet/mod.rs",
-  # CLOSURE, NOT CLAIM: the refusal must precede the first bind, and this file performs it.
-  "mcp-re-proxy/src/async_fleet/reuseport.rs",
 ]
 exported_contracts = []
-# TWO classes. The refusal is one `return Err` reached by a two-term condition, and the
-# ordering is one statement's position in a function — both are deletable while the tree
-# still builds and every other serving control stays green. M413 deletes the refusal; M414
-# turns the pair back into the silent widening by reading the depth without its provenance.
+# TWO classes. The refusal is one relation returning one sentence on a two-term condition,
+# and its splice is one statement's position in the clause list — both are deletable while
+# the tree still builds and every serving control stays green. M413 deletes the refusal.
 evidence_class = "tested"
 direct_consequence_severity = "high"
 evidence = [
@@ -13013,25 +13077,18 @@ evidence = [
   "mutation://proxy/async_fleet/delegated_tls_depth_refusal",
 ]
 tested_symbols = [
-  # THE FOUR CASES the ruling names, one control each.
+  # THE PAIR, refused, and stated as a pair: neither term refuses alone. Without the second
+  # the first is satisfied by a rule that refuses delegated custody outright, or every
+  # stated 1.
+  "//mcp-re-proxy:proxy_unit_test#config_state::cross_machine::delegated_tls_depth::tests::a_delegated_channel_key_on_a_stated_single_worker_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::cross_machine::delegated_tls_depth::tests::neither_half_of_the_refused_pair_refuses_on_its_own",
+  # AT THE BOUNDARY: a relation the boundary never splices refuses nothing.
+  "//mcp-re-proxy:proxy_unit_test#config_state::cross_machine::delegated_tls_depth::tests::the_boundary_refuses_the_pair_however_the_request_was_built",
+  # BELOW THE BOUNDARY: the shapes every admitted depth gets, one control each.
   "//mcp-re-proxy:proxy_unit_test#async_fleet::core_runtime::tests::a_share_nothing_core_has_no_pool_and_no_handshake_bound",
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::core_runtime::tests::delegated_custody_with_a_stated_single_thread_is_refused",
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::core_runtime::tests::delegated_custody_over_a_derived_depth_derives_the_safe_one",
+  "//mcp-re-proxy:proxy_unit_test#async_fleet::core_runtime::tests::delegated_custody_on_one_worker_gets_the_safe_depth",
   "//mcp-re-proxy:proxy_unit_test#async_fleet::core_runtime::tests::the_bound_follows_the_built_depth_and_is_capped_by_the_ceiling",
-  # THE PAIR, stated as a pair: neither term refuses alone. Without it the four above are
-  # satisfied by a rule that refuses delegated custody outright, or every stated 1.
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::core_runtime::tests::neither_half_of_the_refused_pair_refuses_on_its_own",
-  # THE PROVENANCE, at the resolver that spends `0 = auto`. This is the fact the refusal
-  # turns on, and it is established one layer before the refusal can see it.
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::resolved_topology::tests::a_resolved_depth_says_whether_the_operator_or_the_host_chose_it",
-  # BEFORE THE FIRST BIND, driven through `serve_fleet` itself against an address no host
-  # can bind — so a run that reached the listener loop fails with an OS error instead, and
-  # the two verdicts are distinguishable. The second is the positive control: an admitted
-  # configuration DOES reach the bind, which is what stops the first from being satisfied
-  # by a fleet that refuses everything.
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::refusal_order_tests::the_delegated_tls_depth_refusal_precedes_the_first_bind",
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::refusal_order_tests::an_admitted_configuration_reaches_the_listener_and_fails_there",
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::shard_depth::tests::the_same_depth_from_two_provenances_is_two_values",
+  "//mcp-re-proxy:proxy_unit_test#async_fleet::core_runtime::tests::a_delegated_tls_core_is_always_pooled_and_always_bounded",
 ]
 
 [[unit]]

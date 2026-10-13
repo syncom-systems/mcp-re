@@ -47,6 +47,7 @@ use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 
 mod active_key;
+mod delegated_signer;
 mod issuance_refusal;
 mod issuance_terms;
 mod key_window;
@@ -55,6 +56,7 @@ mod signing_window;
 mod trust_epoch;
 mod window_emission;
 pub use active_key::ActiveDelegatedKey;
+pub(crate) use delegated_signer::DelegatedSigner;
 pub use issuance_refusal::IssuanceRefusal;
 pub use key_window::{DelegatedKeyWindow, KeyWindowError};
 pub use lifecycle_event::{KeyLifecycle, KeyLifecycleEvent};

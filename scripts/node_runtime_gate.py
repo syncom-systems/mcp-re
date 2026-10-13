@@ -26,12 +26,15 @@ from __future__ import annotations
 import json
 import re
 import sys
-import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "tools" / "verification"))
+
+import _toolchains  # noqa: E402
+
 PACKAGE_JSON = REPO_ROOT / "sdk" / "typescript" / "package.json"
-LOCK = REPO_ROOT / "verification" / "policy" / "toolchains.lock.toml"
+ECOSYSTEM = "typescript"
 
 #: One clause of the supported form: `^20.0.0`, or `^20` — a caret over a major line.
 CLAUSE = re.compile(r"^\^(\d+)(?:\.0(?:\.0)?)?$")
@@ -79,27 +82,10 @@ def check(specifier: str | None, entry) -> tuple[str | None, str]:
     if unreadable is not None:
         return unreadable, ""
 
-    if not isinstance(entry, dict):
-        return "toolchains.lock.toml has no [typescript] runtime pin", ""
-    if entry.get("state") != "resolved":
-        return "[typescript] is unresolved, so no runtime identity backs the claim", ""
-
-    pinned: dict[int, str] = {}
-    for version in entry.get("interpreters", []):
-        parts = str(version).split(".")
-        if len(parts) != 3 or not all(part.isdigit() for part in parts):
-            return (
-                f"[typescript].interpreters entry {version!r} is not an exact "
-                f"major.minor.patch version. A major alone lets two different builds record "
-                f"one identity"
-            ), ""
-        major = int(parts[0])
-        if major in pinned:
-            return (
-                f"[typescript].interpreters names major {major} twice ({pinned[major]}, "
-                f"{version}); one support line is measured on one runtime"
-            ), ""
-        pinned[major] = str(version)
+    lines, malformed = _toolchains.interpreters(entry, ECOSYSTEM)
+    if malformed is not None:
+        return malformed, ""
+    pinned = {line[0]: version for line, version in lines.items()}
 
     missing = [str(major) for major in claimed if major not in pinned]
     extra = [f"{major} ({pinned[major]})" for major in sorted(pinned) if major not in claimed]
@@ -122,9 +108,10 @@ def check(specifier: str | None, entry) -> tuple[str | None, str]:
     )
 
 
-#: Every way the two facts can diverge, each paired with the positive case it must not
-#: reject. A gate that refuses everything measures as little as one that refuses nothing.
-SELFTEST_CASES = (
+#: The ways the support claim itself can be wrong or disagree with a well-formed pin, each
+#: paired with the positive case it must not reject. A gate that refuses everything measures
+#: as little as one that refuses nothing.
+CLAIM_CASES = (
     ("no engines.node at all", None, {"state": "resolved", "interpreters": ["20.20.2"]}, True),
     (
         "a range form this gate cannot read",
@@ -144,26 +131,14 @@ SELFTEST_CASES = (
         {"state": "resolved", "interpreters": ["20.20.2", "22.23.2"]},
         True,
     ),
-    (
-        "a major pinned without a patch version",
-        "^20.0.0",
-        {"state": "resolved", "interpreters": ["20.20"]},
-        True,
-    ),
-    (
-        "one major pinned twice",
-        "^20.0.0",
-        {"state": "resolved", "interpreters": ["20.20.2", "20.19.0"]},
-        True,
-    ),
-    ("an unresolved runtime pin", "^20.0.0", {"state": "unresolved"}, True),
-    ("no runtime pin at all", "^20.0.0", None, True),
-    (
-        "the claim and the pin agreeing exactly",
-        "^20.0.0 || ^22.0.0",
-        {"state": "resolved", "interpreters": ["20.20.2", "22.23.2"]},
-        False,
-    ),
+)
+
+#: The pin-shape cases the Python runtime gate runs too, from `_toolchains`, against a claim
+#: the well-formed pin satisfies exactly.
+PIN_CLAIM = "^20.0.0 || ^22.0.0"
+SELFTEST_CASES = CLAIM_CASES + tuple(
+    (name, PIN_CLAIM, entry, must_refuse)
+    for name, entry, must_refuse in _toolchains.pin_shape_cases(ECOSYSTEM, ["20.20.2", "22.23.2"])
 )
 
 
@@ -189,7 +164,7 @@ def main(argv: list[str]) -> int:
     if "--selftest" in argv:
         return selftest()
     package = json.loads(PACKAGE_JSON.read_text())
-    entry = tomllib.load(LOCK.open("rb")).get("typescript")
+    entry = _toolchains.load().get(ECOSYSTEM)
     refusal, summary = check(package.get("engines", {}).get("node"), entry)
     if refusal is not None:
         return fail(refusal)

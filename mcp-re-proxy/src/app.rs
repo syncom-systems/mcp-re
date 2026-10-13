@@ -15,14 +15,12 @@ use crate::async_serve::ServedHttpRequest;
 use crate::clock::now_unix;
 use crate::config_snapshot;
 use crate::config_state::validation::ValidatedDeployment;
-use crate::config_state::ChannelBindingState;
+use crate::config_state::ChannelBindingEffects;
 use crate::deployment_request::DeploymentRequest;
 use crate::http_inner::HttpInnerPool;
 use crate::key_source::ResponseSigner;
 use crate::startup_posture::PostureLog;
 use crate::startup_posture::Seam;
-use crate::transport::IdentityPolicy;
-use crate::transport::TransportBinding;
 use crate::HttpProfileProxy;
 use crate::ServerOptions;
 use mcp_re_http_profile::AudienceTuple;
@@ -91,41 +89,6 @@ pub fn build_actor_resolver(
     })
 }
 
-/// Whether a startup clock reading costs more than a warning, and why.
-///
-/// A faulted clock is tolerable where it only feeds per-request freshness: every request
-/// then fails closed, which is safe. It is NOT tolerable where the same reading is the
-/// reference time for a BOOT-TIME refusal. `startup_now_unix` is what the TLS plane
-/// compares each client CRL's `nextUpdate` against, and nothing is ever `Stale` relative
-/// to a clock reading zero — so with CRLs configured the refusal that exists to keep an
-/// expired CRL out of the serving path cannot fire, while the revocation-posture transcript
-/// still advertises the CRL as enforced.
-///
-/// Pure, so the decision is assertable without a broken host clock: it takes the reading
-/// and the CRL posture the owner classified, and returns the refusal.
-///
-/// The posture arrives as the owner's own value rather than as a count of paths. Whether
-/// this deployment enforces offline revocation is `CrlRevocationState`'s answer, and
-/// re-deriving it here from the length of a list is how composition ends up disagreeing
-/// with the transcript it prints.
-fn faulted_clock_refusal(
-    startup_now_unix: i64,
-    crl: &crate::config_state::CrlRevocationState,
-) -> Option<String> {
-    if !crl.is_enforced() || !crate::startup_plan::host_clock_is_faulted(startup_now_unix) {
-        return None;
-    }
-    let configured_crls = crl.paths().len();
-    Some(format!(
-        "mcp-re-proxy refuses to start: the system clock reads at/near the Unix epoch \
-         ({startup_now_unix} < {}s), so the boot-time client-CRL freshness refusal cannot be \
-         performed — every CRL compares as fresh against a zero clock, and the \
-         {configured_crls} configured CRL(s) would be advertised as enforced while an \
-         arbitrarily expired one was loaded. Fix the host clock (NTP/RTC) before starting.",
-        crate::startup_plan::EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
-    ))
-}
-
 /// Serve a validated deployment on the per-core async fleet until `shutdown` is flipped
 /// (SIGTERM/SIGINT in the binary; a test flag in tests). The argv path arrives with the proof
 /// [`crate::cli::parse_args`] produced, so it validates once.
@@ -148,39 +111,6 @@ pub fn run_request(config: DeploymentRequest, shutdown: Arc<AtomicBool>) -> Resu
 fn drained(outcome: Result<(), String>) -> Result<(), String> {
     crate::audit_sink::drain::at_shutdown();
     outcome
-}
-
-/// What a recognised [`ChannelBindingState`] installs on the serving path.
-///
-/// One value, because the two halves are one decision: the policy that compares the
-/// verified request signer with the channel identity, and the certificate field that
-/// identity is read from. Splitting them across two derivations is what lets them
-/// disagree.
-struct ChannelBindingEffects {
-    binding: TransportBinding,
-    identity_policy: IdentityPolicy,
-}
-
-/// Project the recognised channel-binding state onto the serving path.
-///
-/// The state is the authority: `config_state::transport` decides whether a deployment is
-/// channel-bound and how, and this is the only place that answer becomes an effect. A
-/// request the owner refuses to classify — a binding kind no deployment can be in —
-/// reaches no state, so there is nothing here to derive from and no exact-match policy
-/// can be installed over a binding the owner rejected.
-///
-/// Every state in the model binds exactly, so the policy does not vary; what the state
-/// carries is which SAN the identity comes from. A second binding mode would appear here
-/// as a second arm, not as a second reading of the request.
-fn channel_binding_effects(state: ChannelBindingState) -> ChannelBindingEffects {
-    let identity_policy = match state {
-        ChannelBindingState::ExactUriSan => IdentityPolicy::UriSan,
-        ChannelBindingState::ExactDnsSan => IdentityPolicy::DnsSan,
-    };
-    ChannelBindingEffects {
-        binding: TransportBinding::exact_match(),
-        identity_policy,
-    }
 }
 
 /// The serving path proper. Reachable only with a [`crate::config_state::validation::ValidatedDeployment`], which
@@ -219,39 +149,22 @@ fn channel_binding_effects(state: ChannelBindingState) -> ChannelBindingEffects 
 #[allow(clippy::too_many_lines)]
 fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Result<(), String> {
     let values = config.config();
-    // Clock-fault diagnosis (audit #94 F5). `now_unix()` deliberately maps a
-    // pre-epoch SystemTime error to 0 (fail CLOSED — every request then fails its
-    // freshness check rather than admitting a stale one), but a clock that reads
-    // at/near the Unix epoch would otherwise surface only as an unexplained flood of
-    // freshness denials. Emit a ONE-TIME loud startup warning so a broken/unset host
-    // clock is diagnosed at the source instead of masked. Where the reading only feeds
-    // per-request freshness the posture is already safe, so that case warns rather than
-    // refuses and the operator is told why every request will be denied.
-    //
-    // It is NOT safe where the same reading is the reference time for a BOOT-TIME refusal.
-    // `startup_now_unix` is handed to the TLS plane, which refuses to start on a client CRL
-    // whose `nextUpdate` has passed — a comparison against a clock reading zero declares
-    // every CRL fresh, so the one check that stops an arbitrarily expired CRL from reaching
-    // the serving path silently does not fire while the revocation-posture transcript still
-    // advertises the CRL as enforced. A fail-closed default cannot be inferred from a
-    // fail-closed neighbour: this one is refused.
-    //
-    // Read the clock ONCE so the comparison, the reported value and every plane handed
-    // `startup_now_unix` below agree on one instant. Whether that reading is a FAULT is
-    // the plan's rule; reading the clock and deciding what it costs is this function's.
-    let startup_now_unix = now_unix();
-    if let Some(refusal) = faulted_clock_refusal(startup_now_unix, config.state().crl_revocation())
-    {
-        return Err(refusal);
-    }
-    if crate::startup_plan::host_clock_is_faulted(startup_now_unix) {
+    // Clock-fault diagnosis (audit #94 F5). The host clock is read ONCE, and every startup
+    // consumer of the boot instant receives that reading. A faulted reading that only feeds
+    // per-request freshness fails closed, so it warns; where it would be the reference time
+    // for the boot-time stale-CRL refusal, `CrlReference::of` refuses, and the TLS plane
+    // cannot be materialized without the reference it produces.
+    let startup_reading = crate::clock::StartupReading::read();
+    let crl_reference =
+        crate::tls_plane::CrlReference::of(&startup_reading, config.state().crl_revocation())?;
+    if startup_reading.is_faulted() {
         eprintln!(
             "mcp-re-proxy: WARNING: the system clock reads at/near the Unix epoch ({} < {}s); this \
              almost certainly means the host clock is unset or broken. Freshness checks will \
              FAIL CLOSED (every request denied) until the clock is corrected — fix the host clock \
              (NTP/RTC) rather than treating the resulting denials as a load problem.",
-            startup_now_unix,
-            crate::startup_plan::EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
+            startup_reading.unix_seconds(),
+            crate::clock::EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
         );
     }
 
@@ -296,27 +209,15 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     // Trust (ADR-MCPRE-056 §8). The plane owns the store, the freshness flag and the
     // workers that refresh them; what comes back is two narrow live handles.
     //
-    // `response_kid` names the root issuer the delegated credential chains to
-    // (ADR-MCPRE-052). Derived once, in the plan, and handed to BOTH planes: trust must
-    // not enroll it as a request signer, and signing mints under it. Two derivations
-    // could disagree about which key that is.
-    let response_kid = crate::startup_plan::response_issuer_kid(config);
-    // The shared trust-epoch mechanism, interpreted ONCE and handed to both consumers
-    // (CF-09). Trust flushes its cache on an advance; delegated signing mints under the
-    // resulting label. Each used to read the configuration for itself.
-    let trust_epoch = crate::startup_plan::TrustEpochPlan::from_validated(config);
-    let trust_plan =
-        crate::startup_plan::TrustPlan::from_validated(config, response_kid.clone(), trust_epoch);
+    // The response authority (ADR-MCPRE-052; CF-09): the root issuer kid the delegated
+    // credential chains to and the shared trust epoch, each read once and paired into the
+    // trust plan and the signing plan by their one producer. Trust must not enroll the kid
+    // as a request signer and flushes its cache on an epoch advance; signing mints under
+    // both.
+    let (trust_plan, signing_plan) = crate::startup_plan::response_authority_plans(config);
     // Transport custody and the offline client-cert revocation posture, both already
     // classified by layer A (ADR-MCPRE-056 §8).
     let tls_plan = crate::startup_plan::ChannelEstablishmentPlan::from_validated(config);
-    // Response-signing custody. The SECOND consumer of both shared decisions, and it
-    // receives them the same way the first did — from here, not from its sibling.
-    let signing_plan = crate::startup_plan::SigningPlan::from_validated(
-        config,
-        response_kid.clone(),
-        trust_plan.epoch().clone(),
-    );
 
     // ADR-MCPRE-057 §3 and §9 — the lifecycle becomes a value here, owned by the runtime
     // it describes. Everything above this line is pure and the next statement is the
@@ -369,19 +270,21 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     let (authorization, authorization_state) = crate::authorization::capability::evaluator(
         config.state().authorization(),
         config.state().trust_document(),
-        &response_kid,
+        trust_plan.response_kid(),
         &values.audience,
         config.state().freshness().max_clock_skew(),
     )?
     .into_parts();
     posture.declare(Seam::Authorization, authorization_state);
 
-    // Mode-A transport binding and the certificate field the connection seam reads the
-    // identity from, both derived from the ONE state `config_state::transport` recognised.
+    // Mode-A transport binding, the certificate field the identity is read from and where
+    // the connection seam reads it, all projected from the ONE state `config_state::transport`
+    // recognised.
     let ChannelBindingEffects {
         binding,
         identity_policy,
-    } = channel_binding_effects(config.state().channel_binding());
+        peer_identity_provenance,
+    } = config.state().channel_binding().serving_effects();
     // ADR-MCPRE-051 §4: the AUTHORITATIVE async replay tier. The atomic
     // insert-if-absent is AWAITED on the per-core request path without blocking a
     // runtime worker. Shared selects a durable networked store — etcd (CP/linearizable)
@@ -418,7 +321,7 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     building.install_tls(crate::tls_plane::TlsPlane::materialize(
         &tls_plan,
         channel_credential,
-        startup_now_unix,
+        crl_reference,
         Arc::clone(&shutdown),
     )?)?;
     let client_revocation = building.tls()?.revocation();
@@ -454,23 +357,6 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
         );
     }
 
-    // The delegated-TLS custody paths sign the handshake through a KMS or a PKCS#11
-    // token, synchronously, inside rustls' `Signer::sign` — so the serving runtime
-    // shape has to account for a blocking signer (see `async_fleet`).
-    if config_snapshot.key_exposure() == crate::config_state::PrivateKeyExposure::NonExporting {
-        eprintln!(
-            "mcp-re-proxy: TLS custody = DELEGATED: the handshake signature is a blocking \
-             KMS/PKCS#11 call inside rustls' synchronous signer, so each core serves on a \
-             small worker pool rather than the single-threaded share-nothing default. A \
-             stalled signer then costs one worker instead of a whole core."
-        );
-    }
-    // Which field the connection seam reads the client's identity from. Decided purely,
-    // from configuration alone, in `startup_plan` — the three modes are mutually
-    // exclusive and `parse_args` already refused the combinations.
-    let peer_identity_provenance =
-        crate::startup_plan::peer_identity_provenance(config.state().channel_binding());
-
     // #4030 ONLINE OCSP client-cert revocation. Attached to `ServerOptions` below rather
     // than to the PEP, because revocation is decided during the TLS handshake.
     let (ocsp_checker, ocsp_state) = crate::serving_capabilities::online_ocsp().into_parts();
@@ -484,10 +370,13 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     // request, resolved ONCE: the inner plane and the fleet both size from these two values.
     let in_flight_limit = config.state().in_flight_limit();
     let topology = crate::async_fleet::ResolvedTopology::resolve(config.state().shard_topology());
+    let bounds = config.state().connection_bounds();
     let serve_options = ServerOptions {
         identity_policy,
         peer_identity_provenance,
         limits: values.limits.clone(),
+        // The owner's resolved bounds: serving reads every timeout and limit here, not the request.
+        connection_bounds: bounds,
         // The owner's sealed window; serving reads both bounds from it, not from the request.
         client_credential_window: config.state().client_credential_window(),
         client_revocation: client_revocation.clone(),
@@ -499,12 +388,8 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     // ADR-MCPRE-051 §3: the async inner plane — a per-core pooled hyper client to
     // the stateless Streamable-HTTP inner backends. Forwarding is AWAITED, never
     // blocking a per-core runtime worker.
-    // Unreachable — the boundary refuses an absent read timeout — and it REFUSES rather
-    // than defaulting, so dropping that clause is an outage, not a second opinion (R12-636).
-    let configured = &values.limits;
-    let inner_timeout = configured.read_timeout.ok_or("--read-timeout-secs unset")?;
     let backends = &values.inner_http_urls;
-    let pool = HttpInnerPool::from_url_strs(backends.expose().to_vec(), inner_timeout)?;
+    let pool = HttpInnerPool::from_url_strs(backends.expose().to_vec(), bounds.read_timeout())?;
     // Named where the pool that forwards to them is BUILT. Reporting them from the fleet
     // instead would mean carrying the URLs through serving purely to print them, and the
     // fleet does not forward — it accepts.
@@ -521,7 +406,7 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     building.install_signing(crate::signing_plane::SigningPlane::materialize(
         &signing_plan,
         roots,
-        startup_now_unix,
+        &startup_reading,
     )?)?;
     // ADR-MCPRE-050 + §5: assemble the RFC 9421 serving PEP with the async inner plane,
     // the authoritative replay tier, and the optional Mode-A channel binding.
@@ -760,9 +645,7 @@ pub(crate) fn serve_fleet(
 // Keeping the qualifier would compile these target-independent claims to ZERO tests elsewhere.
 #[cfg(test)]
 mod tests {
-    use super::faulted_clock_refusal;
     use crate::config_state::test_support::config_with;
-    use crate::config_state::test_support::crl_posture;
 
     /// R8-C123 (G10's finding, this group's call site): a record handed to the audit
     /// writer immediately before teardown must still reach stderr.
@@ -886,49 +769,6 @@ mod tests {
         );
     }
 
-    /// C117: a faulted host clock is only a warning while it costs nothing but
-    /// per-request fail-closed denials. With client CRLs configured it costs the
-    /// boot-time stale-CRL refusal — nothing is `Stale` against a zero clock — so the
-    /// deployment would load an arbitrarily expired CRL and still print that revocation
-    /// is enforced. That case refuses.
-    ///
-    /// The broken implementation this catches: warning unconditionally, and handing the
-    /// same faulted reading to `TlsPlane::materialize` as the CRL freshness reference.
-    #[test]
-    fn a_faulted_clock_refuses_only_when_it_disables_the_crl_refusal() {
-        use crate::startup_plan::EPOCH_CLOCK_FAULT_THRESHOLD_SECS;
-
-        let refusal = faulted_clock_refusal(0, &crl_posture(&["/a.crl"], None))
-            .expect("a faulted clock plus CRLs must refuse");
-        assert!(
-            refusal.contains("CRL") && refusal.contains("clock"),
-            "the refusal must name both halves of why it fired: {refusal}"
-        );
-        assert!(
-            faulted_clock_refusal(
-                EPOCH_CLOCK_FAULT_THRESHOLD_SECS - 1,
-                &crl_posture(&["/a.crl", "/b.crl"], None),
-            )
-            .is_some(),
-            "anything below the fault threshold disables the same refusal"
-        );
-        // The two negative controls. Without them a guard that refused unconditionally
-        // would satisfy the assertions above.
-        assert!(
-            faulted_clock_refusal(0, &crl_posture(&[], None)).is_none(),
-            "with no CRL configured there is no boot-time refusal to disable; the \
-             per-request posture is already fail-closed and warns"
-        );
-        assert!(
-            faulted_clock_refusal(
-                EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
-                &crl_posture(&["/a.crl", "/b.crl", "/c.crl"], None),
-            )
-            .is_none(),
-            "a sane clock must not be refused however many CRLs are configured"
-        );
-    }
-
     /// R10-F1. The serving path's channel-binding effects are a function of the state the
     /// `ChannelBinding` owner recognised — never of the raw selectors it classified.
     ///
@@ -986,7 +826,7 @@ mod tests {
             assert!(refusals.is_empty(), "{source:?} refused: {refusals:?}");
             assert_eq!(state, Some(expected_state));
 
-            let effects = super::channel_binding_effects(expected_state);
+            let effects = expected_state.serving_effects();
             assert_eq!(
                 effects.identity_policy, expected_policy,
                 "{expected_state:?} must read the identity from its own SAN"

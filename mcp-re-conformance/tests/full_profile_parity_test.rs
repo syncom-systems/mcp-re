@@ -11,7 +11,7 @@
 //!
 //! The response leg is the PRE-052 root-signed emitter, retained as a fixture: this
 //! battery pins the body-evidence and continuation bytes, not the shipped emission
-//! mode, which is `sign_delegated_response_full_with_owned_key`.
+//! mode, which is `sign_delegated_response_full` under a `SigningWindow`.
 //!
 //! — and proves the `se.syncom/mcp-re.http.request` / `.response` body evidence
 //! blocks, the five-tuple replay key, and the MRTR continuation binding are

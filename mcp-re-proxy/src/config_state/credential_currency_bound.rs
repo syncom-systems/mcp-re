@@ -12,7 +12,7 @@
 //! CRLs are what the sentence tells them to configure.
 
 use crate::config_state::client_credential_window::ClientCredentialWindow;
-use crate::config_state::transport::ClientRevocationPlan;
+use crate::config_state::crl_revocation::ClientRevocationPlan;
 
 /// What bounds the exposure of a withdrawn peer credential.
 ///

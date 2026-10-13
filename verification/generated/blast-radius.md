@@ -169,6 +169,7 @@ attestations this view cannot see.
 | unit://proxy.client_revocation_currency | source, contracts or evidence | THM-0131 | _no consumer_ |
 | unit://proxy.client_revocation_index_verdict | source, contracts or evidence | THM-0032 | _no consumer_ |
 | unit://proxy.client_revocation_snapshot | source, contracts or evidence | THM-0032 | _no consumer_ |
+| unit://proxy.connection_bounds | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.continuation_capacity | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.continuation_consume_contract | source, contracts or evidence | THM-0093 | _no consumer_ |
 | unit://proxy.continuation_control_subject_boundary | source, contracts or evidence | THM-0077 | _no consumer_ |
@@ -184,6 +185,7 @@ attestations this view cannot see.
 | unit://proxy.credential_currency_evidence_reporting | source, contracts or evidence | THM-0032 | _no consumer_ |
 | unit://proxy.credential_key_correspondence | source, contracts or evidence | THM-0026 | proxy.delegated_resolver_materialization (COMPILE_DEPENDENCY) |
 | unit://proxy.credential_key_correspondence_sole_producer | source, contracts or evidence | THM-0026 | _no consumer_ |
+| unit://proxy.crl_reference_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.cross_machine_legality | source, contracts or evidence | THM-0049, THM-0077 | _no consumer_ |
 | unit://proxy.currency_policy_classification | source, contracts or evidence | THM-0032 | _no consumer_ |
 | unit://proxy.current_authenticated_peer | source, contracts or evidence | THM-0033 | proxy.authenticated_channel_peer (COMPILE_DEPENDENCY) |

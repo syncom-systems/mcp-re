@@ -10,9 +10,10 @@ of its own, and why a script is not a control or not on the merge path. Its cons
     `scripts/*.py|*.sh` except a row marked `not_a_control`.
 
 This module reads and validates the rows, and checks what can be checked from the files
-alone: that every script has a row, that every row names a file, and that `selftest`
-matches the script's own argument handling. The checks against `local_gate.sh` and the
-workflows need the workflow reader and live in the merge-path gate.
+alone: that every script has a row, that every row names a file, that `selftest`
+matches the script's own argument handling, and that a control with no selftest says why.
+The checks against `local_gate.sh` and the workflows need the workflow reader and live in
+the merge-path gate.
 
 Run:  python3 tools/verification/_gates.py --selftest
 """
@@ -32,7 +33,9 @@ REGISTRY = "config/gates.toml"
 SCRIPTS = "scripts"
 SUFFIXES = (".py", ".sh")
 
-FIELDS = frozenset({"path", "stages", "ci", "selftest", "not_a_control", "off_merge_path"})
+FIELDS = frozenset(
+    {"path", "stages", "ci", "selftest", "selftest_exempt", "not_a_control", "off_merge_path"}
+)
 REQUIRED = frozenset({"path", "stages", "ci", "selftest"})
 
 #: A script that handles `--selftest` itself: the argument quoted as a literal, or a shell
@@ -51,6 +54,7 @@ class Gate:
     stages: tuple[int, ...]
     ci: tuple[str, ...]
     selftest: bool
+    selftest_exempt: str | None
     not_a_control: str | None
     off_merge_path: str | None
 
@@ -83,6 +87,7 @@ def _gate(row: dict) -> Gate:
         stages=tuple(sorted(stages)),
         ci=tuple(sorted(ci)),
         selftest=selftest,
+        selftest_exempt=_reason(row, "selftest_exempt"),
         not_a_control=_reason(row, "not_a_control"),
         off_merge_path=_reason(row, "off_merge_path"),
     )
@@ -161,7 +166,30 @@ def problems(rows: dict[str, Gate], root: Path = REPO) -> list[str]:
                 f"{path}: `selftest = {str(gate.selftest).lower()}` but the script "
                 f"{'handles' if actual else 'does not handle'} a `--selftest` argument of its own."
             )
+        found.extend(selftest_problems(gate))
     return found
+
+
+def selftest_problems(gate: Gate) -> list[str]:
+    """A control with no selftest must say why; an exemption must exempt something.
+
+    A gate whose only proof is that someone read it goes permissive with one edit and
+    nothing notices, so a row that is a control and has no `--selftest` fails unless it
+    carries `selftest_exempt` with the reason. A row that is not a control needs none.
+    """
+    if gate.selftest_exempt and (gate.selftest or gate.not_a_control):
+        why = "has a selftest" if gate.selftest else "is not a control"
+        return [
+            f"{gate.path} carries `selftest_exempt` and {why}. A dead exemption is a claim "
+            f"about nothing; remove it."
+        ]
+    if not gate.selftest and not gate.not_a_control and not gate.selftest_exempt:
+        return [
+            f"{gate.path} is a control with no `--selftest` and no `selftest_exempt`. Give it "
+            f"a selftest that injects the defect it exists to catch and proves red, or record "
+            f"in its row why it cannot have one."
+        ]
+    return []
 
 
 def selftest() -> int:
@@ -221,6 +249,17 @@ def selftest() -> int:
         found = problems(outside, root)
         case("a row outside scripts/ without off_merge_path fails", any("outside scripts/" in p for p in found), found)
         case("not_controls reads the marker", not_controls(parse(row + 'not_a_control = "a demo"\n')) == {"scripts/a.py"})
+        bare = parse(row.replace("selftest = true", "selftest = false"))["scripts/a.py"]
+        case("a control with no selftest and no exemption fails",
+             any("no `--selftest`" in p for p in selftest_problems(bare)), selftest_problems(bare))
+        exempt = parse(row.replace("selftest = true", "selftest = false") + 'selftest_exempt = "an installer"\n')
+        case("a stated selftest exemption passes", selftest_problems(exempt["scripts/a.py"]) == [])
+        case("a non-control needs no selftest",
+             selftest_problems(parse(row.replace("selftest = true", "selftest = false")
+                                     + 'not_a_control = "a demo"\n')["scripts/a.py"]) == [])
+        dead = parse(row + 'selftest_exempt = "stale"\n')["scripts/a.py"]
+        case("an exemption on a row with a selftest fails",
+             any("dead exemption" in p for p in selftest_problems(dead)), selftest_problems(dead))
 
     live = load(REPO)
     case("this tree's registry loads", bool(live), None)

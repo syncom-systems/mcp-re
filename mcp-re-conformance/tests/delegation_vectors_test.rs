@@ -30,11 +30,12 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::custody::ActiveDelegatedKey;
+use mcp_re_http_profile::custody::SigningWindow;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_for_negative_test;
-use mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key;
+use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::sign_response_with_signer;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -45,7 +46,6 @@ use mcp_re_http_profile::DelegatedJwk;
 use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationExpectations;
 use mcp_re_http_profile::DelegationHeader;
-use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
@@ -397,19 +397,16 @@ fn from_wire_response(w: &WireMessage) -> HttpResponse {
     }
 }
 
-/// Sign a fresh delegated response embedding `credential`, signed by
-/// `delegated_signing_key` under RFC 9421 `keyid`, with the block's
+/// Sign a fresh delegated response embedding `credential`, signed by the key
+/// `delegated_signing_key` makes under RFC 9421 `keyid`, with the block's
 /// `server_signer.keyid == block_signer_kid`.
 ///
-/// The library's delegated signer refuses a block naming another key than the one it
-/// signs under, so a vector where the two differ is forged: the block is emitted by the
-/// signer under `block_signer_kid`, then the signature is re-made under `keyid` over the
-/// same body. Ed25519 is deterministic, so the bytes are those a single emission under the
-/// two kids would have produced.
+/// A vector where the two kids differ is a response no product window signs: the window's
+/// key is stated here, so the block can name one kid and the signature another.
 fn delegated_response(
     req: &HttpRequest,
     credential: &str,
-    delegated_signing_key: &SigningKey,
+    delegated_signing_key: fn() -> SigningKey,
     keyid: &str,
     block_signer_kid: &str,
 ) -> HttpResponse {
@@ -418,31 +415,21 @@ fn delegated_response(
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full_with_owned_key(
+    sign_delegated_response_full(
         &mut rsp,
         req,
-        &server_signer_for(block_signer_kid),
-        credential,
-        delegated_signing_key,
-        block_signer_kid,
-        CREATED,
-        EXPIRES,
-    )
-    .expect("sign delegated response");
-    if keyid != block_signer_kid {
-        sign_response_with_signer(
-            &mut rsp,
-            req,
-            |base| {
-                mcp_re_core::b64url_decode(&delegated_signing_key.sign(base))
-                    .map_err(|_| HttpProfileError::InvalidSignature)
-            },
-            keyid,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                delegated_signing_key(),
+                server_signer_for(block_signer_kid),
+                credential,
+                keyid,
+            ),
             CREATED,
             EXPIRES,
-        )
-        .expect("re-sign under the wire keyid");
-    }
+        ),
+    )
+    .expect("sign delegated response");
     rsp
 }
 
@@ -479,7 +466,7 @@ fn build_fixtures() -> Vec<Fixture> {
     let valid_rsp = delegated_response(
         &req,
         &valid_credential(),
-        &delegated_key(),
+        delegated_key,
         DELEGATED_KID,
         DELEGATED_KID,
     );
@@ -498,7 +485,7 @@ fn build_fixtures() -> Vec<Fixture> {
     let rsp = delegated_response(
         &req,
         &mint(&root_key(), &good_header(), &c),
-        &delegated_key(),
+        delegated_key,
         DELEGATED_KID,
         DELEGATED_KID,
     );
@@ -517,7 +504,7 @@ fn build_fixtures() -> Vec<Fixture> {
     let rsp = delegated_response(
         &req,
         &mint(&root_key(), &good_header(), &c),
-        &delegated_key(),
+        delegated_key,
         DELEGATED_KID,
         DELEGATED_KID,
     );
@@ -535,7 +522,7 @@ fn build_fixtures() -> Vec<Fixture> {
     let rsp = delegated_response(
         &req,
         &mint(&root_key(), &good_header(), &c),
-        &delegated_key(),
+        delegated_key,
         DELEGATED_KID,
         DELEGATED_KID,
     );
@@ -553,7 +540,7 @@ fn build_fixtures() -> Vec<Fixture> {
     let rsp = delegated_response(
         &req,
         &mint(&root_key(), &good_header(), &c),
-        &delegated_key(),
+        delegated_key,
         DELEGATED_KID,
         DELEGATED_KID,
     );
@@ -652,7 +639,7 @@ fn build_fixtures() -> Vec<Fixture> {
     let rsp = delegated_response(
         &req,
         &valid_credential(),
-        &delegated_key(),
+        delegated_key,
         "some-other-kid",
         DELEGATED_KID,
     );
@@ -668,7 +655,7 @@ fn build_fixtures() -> Vec<Fixture> {
     let rsp = delegated_response(
         &req,
         &valid_credential(),
-        &attacker_key(),
+        attacker_key,
         DELEGATED_KID,
         DELEGATED_KID,
     );
@@ -716,13 +703,7 @@ fn build_fixtures() -> Vec<Fixture> {
         &good_header(),
         &good_claims(&delegated2_key(), DELEGATED2_KID),
     );
-    let rsp = delegated_response(
-        &req,
-        &foreign,
-        &delegated_key(),
-        DELEGATED_KID,
-        DELEGATED_KID,
-    );
+    let rsp = delegated_response(&req, &foreign, delegated_key, DELEGATED_KID, DELEGATED_KID);
     fx.push(fixture(
         "d15_credential_lifted_wrong_server_signer",
         "mcp-re.delegation_audience_mismatch",
@@ -739,7 +720,7 @@ fn build_fixtures() -> Vec<Fixture> {
     let rsp = delegated_response(
         &req,
         &mint(&root_key(), &h, &c),
-        &delegated_key(),
+        delegated_key,
         DELEGATED_KID,
         DELEGATED_KID,
     );
@@ -761,7 +742,7 @@ fn build_fixtures() -> Vec<Fixture> {
             &h,
             &good_claims(&delegated_key(), DELEGATED_KID),
         ),
-        &delegated_key(),
+        delegated_key,
         DELEGATED_KID,
         DELEGATED_KID,
     );
@@ -779,13 +760,7 @@ fn build_fixtures() -> Vec<Fixture> {
         &good_header(),
         &good_claims(&delegated_key(), DELEGATED_KID),
     );
-    let rsp = delegated_response(
-        &req,
-        &forged,
-        &delegated_key(),
-        DELEGATED_KID,
-        DELEGATED_KID,
-    );
+    let rsp = delegated_response(&req, &forged, delegated_key, DELEGATED_KID, DELEGATED_KID);
     fx.push(fixture(
         "d18_forged_root_signature",
         "mcp-re.delegation_credential_invalid",
@@ -812,7 +787,7 @@ fn build_fixtures() -> Vec<Fixture> {
     let rsp_b = delegated_response(
         &req,
         &cred_b,
-        &delegated2_key(),
+        delegated2_key,
         DELEGATED2_KID,
         DELEGATED2_KID,
     );
@@ -856,7 +831,7 @@ fn valid_rsp_clone(req: &HttpRequest) -> HttpResponse {
     delegated_response(
         req,
         &valid_credential(),
-        &delegated_key(),
+        delegated_key,
         DELEGATED_KID,
         DELEGATED_KID,
     )

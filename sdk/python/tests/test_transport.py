@@ -362,6 +362,15 @@ async def test_a_wire_failure_is_delivered_as_a_correlated_json_rpc_error():
     assert error.error.message == "mcp-re.replay_detected"
 
 
+def _wire_refusal(token: str) -> ValueError:
+    """A refusal shaped as the binding raises one."""
+    from mcp_re_sdk import _core
+
+    e = _core.WireRefusal(token)
+    e.wire_code = token
+    return e
+
+
 @pytest.mark.anyio
 async def test_a_local_signer_failure_is_delivered_without_claiming_a_wire_code():
     # The device broke on this side of the boundary; nothing was transmitted, so no peer
@@ -375,7 +384,7 @@ async def test_a_local_signer_failure_is_delivered_without_claiming_a_wire_code(
 @pytest.mark.anyio
 async def test_the_cores_own_fail_closed_error_is_delivered_rather_than_hanging():
     out = await _send(
-        _config(), _throwing_poster(ValueError("mcp-re.response_sig_invalid")), _request()
+        _config(), _throwing_poster(_wire_refusal("mcp-re.response_sig_invalid")), _request()
     )
     assert out[0].message.error.message == "mcp-re.response_sig_invalid"
 
@@ -873,24 +882,30 @@ def test_a_well_formed_denylist_and_the_empty_ttl_only_posture_are_accepted():
 
 # --- the frozen wire code --------------------------------------------------------
 #
-# The PyO3 binding spells every core failure `"mcp-re: mcp-re.<token>"`. What REQ-14/POL-6
-# make authoritative — and what a caller branches on without parsing prose — is the TOKEN,
-# so one wire event must have one spelling in both SDKs and on both message paths.
+# The PyO3 binding raises a core refusal as `WireRefusal`, with the frozen token in
+# `.wire_code`. What REQ-14/POL-6 make authoritative — and what a caller branches on
+# without parsing prose — is that TOKEN, so it is read from the typed field.
 
 
 @pytest.mark.anyio
-async def test_the_bindings_prefixed_spelling_is_delivered_as_the_bare_token():
-    """The real core's spelling, not a hand-made one.
-
-    A test that injects `ValueError("mcp-re.response_sig_invalid")` never exercises the
-    prefix the binding always emits, so it cannot see this.
-    """
+async def test_a_core_refusal_is_delivered_as_its_wire_code():
     out = await _send(
         _config(),
-        _throwing_poster(ValueError("mcp-re: mcp-re.response_sig_invalid")),
+        _throwing_poster(_wire_refusal("mcp-re.response_sig_invalid")),
         _request(),
     )
     assert out[0].message.error.message == "mcp-re.response_sig_invalid"
+
+
+@pytest.mark.anyio
+async def test_a_value_error_that_merely_says_a_token_is_a_local_condition():
+    # The wire code is read from the binding's typed field, never parsed out of prose: a
+    # `ValueError` from the caller's `poster` whose text happens to be a token is still
+    # the caller's own condition.
+    out = await _send(
+        _config(), _throwing_poster(ValueError("mcp-re.response_sig_invalid")), _request()
+    )
+    assert out[0].message.error.message.startswith("mcp-re-sdk: ValueError: ")
 
 
 @pytest.mark.anyio

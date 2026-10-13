@@ -163,7 +163,7 @@ fn sign_headers_as_given(
 /// (`se.syncom/mcp-re.http.request`) into the JSON-RPC body `_meta` FIRST, then
 /// sign — so `content-digest` (a covered component) protects the block. Returns
 /// the [`RequestRoleEvidence`] handle over the resulting signature base; pass it to
-/// [`sign_delegated_response_full_with_owned_key`] so the response can carry `request_evidence`.
+/// [`crate::custody::sign_delegated_response_full`] so the response can carry `request_evidence`.
 pub fn sign_request_full(
     request: &mut HttpRequest,
     block: &HttpRequestEvidenceBlock,

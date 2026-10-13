@@ -29,15 +29,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from _registries import (  # noqa: E402
-    ManifestError,
-    Registries,
-    load,
-    named_paths,
-    reader_problems,
-    reference_problems,
-    source_problems,
-)
+from _registries import ManifestError, reader_problems, source_problems  # noqa: E402
+from _registry_refs import Registries, load, named_paths, reference_problems  # noqa: E402
 
 
 def gate() -> int:
@@ -180,7 +173,8 @@ def selftest() -> int:
         ("a registry named as a string", 'UNITS = "verification/policy/verification.toml"\n', True),
         ("a registry read at a commit", 'git("show", f"{sha}:verification/policy/theorems.toml")\n', True),
         ("the policy directory as a Path", 'P = Path("verification/policy")\n', True),
-        ("the toolchain lock, which installers read", 'L = REPO / "verification" / "policy" / "toolchains.lock.toml"\n', False),
+        ("the toolchain lock built as a path", 'L = REPO / "verification" / "policy" / "toolchains.lock.toml"\n', True),
+        ("the toolchain lock named as a string", 'L = Path("verification/policy/toolchains.lock.toml")\n', True),
         ("a changed-path classifier", 'hit = c.startswith(("verification/policy/", "config/"))\n', False),
         ("prose naming a registry", 'msg = "register it in verification/policy/assumptions.toml first"\n', False),
         ("a docstring", '"""Reads verification/policy/theorems.toml."""\n', False),

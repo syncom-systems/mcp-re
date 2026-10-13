@@ -366,7 +366,9 @@ mod delegated_tests {
     use mcp_re_core::SigningKey;
     use mcp_re_http_profile::build_delegated_rejection;
     use mcp_re_http_profile::build_delegated_rejection_preflight;
+    use mcp_re_http_profile::custody::ActiveDelegatedKey;
     use mcp_re_http_profile::custody::DelegatedKeyWindow;
+    use mcp_re_http_profile::custody::SigningWindow;
     use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_for_negative_test;
     use mcp_re_http_profile::ActorIdentity;
     use mcp_re_http_profile::AudienceTuple;
@@ -753,7 +755,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason::new("mcp-re.request_signature_invalid", "bad request");
+        let reason = RejectionReason::new("mcp-re.invalid_signature", "bad request");
         let resp = build_delegated_rejection_preflight(
             Some(signed.request()),
             &reason,
@@ -777,7 +779,7 @@ mod delegated_tests {
         assert_eq!(
             out.outcome(),
             &DelegatedOutcome::Rejection {
-                wire_code: Some("mcp-re.request_signature_invalid".into()),
+                wire_code: Some("mcp-re.invalid_signature".into()),
                 execution: ExecutionContract::default(),
             }
         );
@@ -821,7 +823,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason::new("mcp-re.request_signature_invalid", "bad request");
+        let reason = RejectionReason::new("mcp-re.invalid_signature", "bad request");
         // The receipt the server genuinely emitted for the ATTACKER's request.
         let spliced = build_delegated_rejection_preflight(
             Some(theirs.request()),
@@ -881,7 +883,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason::new("mcp-re.request_signature_invalid", "bad request");
+        let reason = RejectionReason::new("mcp-re.invalid_signature", "bad request");
         let generic = build_delegated_rejection_preflight(
             None,
             &reason,
@@ -916,8 +918,9 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason::new("mcp-re.upstream_unavailable", "backend already ran")
-            .with_execution(mcp_re_http_profile::ExecutionDisposition::PossiblyExecuted);
+        let reason =
+            RejectionReason::new("mcp-re.inner_dispatch_indeterminate", "backend already ran")
+                .with_execution(mcp_re_http_profile::ExecutionDisposition::PossiblyExecuted);
         let resp = build_delegated_rejection(
             signed.request(),
             &reason,
@@ -1122,7 +1125,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason::new("mcp-re.request_signature_invalid", "x");
+        let reason = RejectionReason::new("mcp-re.invalid_signature", "x");
         // Build an UNBOUND signature but stamp a success status onto it.
         let mut resp = build_delegated_rejection_preflight(
             Some(signed.request()),
@@ -1426,20 +1429,24 @@ mod delegated_tests {
 
         // The receipt is signed AT `late`, so its RFC 9421 freshness window is current.
         let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
-        // Signed with the key the custody minted (the factory's first seed): a window opens
-        // over no expired credential, so this deliberately stale signature is built from
-        // parts the verifier's bounded window is then asked to refuse.
+        // Signed with the key the custody minted (the factory's first seed): a product window
+        // opens over no expired credential, so this deliberately stale signature is made
+        // under a window the test states, which the verifier's bounded window is then asked to refuse.
         let stale_key = SigningKey::from_seed_bytes(&[101u8; 32]);
-        let resp = mcp_re_http_profile::rejection::build_delegated_rejection_with_owned_key(
+        let resp = build_delegated_rejection(
             signed.request(),
             &reason,
             409,
-            snap.server_signer(),
-            snap.credential(),
-            &stale_key,
-            snap.delegated_kid(),
-            late,
-            late + 300,
+            &SigningWindow::stated(
+                ActiveDelegatedKey::stated(
+                    stale_key,
+                    snap.server_signer().clone(),
+                    snap.credential(),
+                    snap.delegated_kid(),
+                ),
+                late,
+                late + 300,
+            ),
         )
         .expect("server signs a fresh receipt off a stale credential");
 
