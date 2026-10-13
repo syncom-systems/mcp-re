@@ -6742,7 +6742,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.signing_credential_provenance"
 class = "V0"
-description = "Where the response-signing authority the serving path holds came from: the composition root opens one key source through the materializer, opens the role-separation witness once, constructs none of its own, and installs the signing plane from that same source."
+description = "Where the response-signing authority the serving path holds came from: the composition root opens one key source through the materializer, takes the witness's channel credential once, constructs none of its own, and installs the signing plane from that same source."
 # The composition root and the plane the signer is installed through — the closure the claim
 # actually reads. It deliberately does NOT include the receipt or window modules: what those
 # do with a signer is `proxy.response_signing`'s, and this says only which signer they get.
@@ -6765,8 +6765,8 @@ tested_symbols = [
   "//mcp-re-proxy:integration_test#signing_credential_provenance_test::the_composition_root_constructs_no_rival_key_source",
   "//mcp-re-proxy:integration_test#signing_credential_provenance_test::the_signing_plane_is_materialized_from_the_materialized_source",
   "//mcp-re-proxy:integration_test#signing_credential_provenance_test::the_rules_would_catch_each_regression",
-  # THM-0073's NotCompared arm rests on these two: the root reads the channel chain and the
-  # response key eagerly, after the witness opens, and a failure refuses composition.
+  # THM-0073's NotCompared arm rests on these two: the root takes the channel credential and
+  # reads the response key eagerly, after the witness opens, and a failure refuses composition.
   "//mcp-re-proxy:integration_test#signing_credential_provenance_test::the_composition_root_reads_both_signing_roles_eagerly_and_fallibly",
   "//mcp-re-proxy:integration_test#signing_credential_provenance_test::the_role_reads_follow_the_witness_exit",
 ]
@@ -6779,10 +6779,14 @@ description = "The relation between what the two custody machines materialized: 
 # closure because it is what makes the relation unavoidable: it opens the source privately
 # and returns only the witness, so a caller cannot obtain a source that skipped the
 # comparison.
+# `channel_credential.rs` is the witness's channel projection: its chain read is what refuses a
+# channel role that produced no key, which is the half of the NotCompared argument the type
+# now carries instead of the composition root.
 paths = [
   "mcp-re-proxy/src/capability_materialization/key_source/role_separation.rs",
   "mcp-re-proxy/src/capability_materialization/key_source/role_identity.rs",
   "mcp-re-proxy/src/capability_materialization/key_source/mod.rs",
+  "mcp-re-proxy/src/capability_materialization/key_source/channel_credential.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -6807,6 +6811,9 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_source::role_identity::tests::the_response_identity_round_trips_its_own_point",
   "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_source::role_identity::tests::two_different_keys_have_two_different_identities",
   "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_source::role_identity::tests::a_non_ed25519_credential_is_incomparable_rather_than_a_failure",
+  "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_source::channel_credential::tests::an_unreadable_channel_chain_refuses_establishment",
+  "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_source::channel_credential::tests::an_unreadable_exported_key_refuses_establishment",
+  "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_source::channel_credential::tests::a_delegated_signer_is_used_without_reading_an_exported_key",
 ]
 
 [[unit]]
@@ -11947,7 +11954,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::both_consumers_of_the_epoch_hold_one_decision",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::each_crl_posture_is_projected_as_its_own_variant",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_audience_scope_defaults_to_the_response_audience_and_is_overridable",
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_channel_plan_carries_the_classified_custody_and_the_credential_window",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_channel_plan_carries_the_credential_window",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_continuation_plan_carries_its_own_endpoint_verbatim",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_epoch_plan_normalizes_the_key_once",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_issuer_kid_falls_back_to_the_server_key_id",

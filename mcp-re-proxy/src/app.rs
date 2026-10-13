@@ -18,6 +18,7 @@ use crate::config_state::validation::ValidatedDeployment;
 use crate::config_state::ChannelBindingState;
 use crate::deployment_request::DeploymentRequest;
 use crate::http_inner::HttpInnerPool;
+use crate::key_source::ResponseSigner;
 use crate::startup_posture::PostureLog;
 use crate::startup_posture::Seam;
 use crate::transport::IdentityPolicy;
@@ -272,39 +273,19 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
 
     // Key material + trust.
     //
-    // Issue #3838 (ADR-MCPS-014): the response-signing key is NOT extracted here.
-    // We pull the TLS materials (still export accessors, by #3838 scope) and the
-    // client-CA roots from the key source, then hand the SAME boxed source to the
-    // proxy AS its response signer (`Box<dyn KeySource>: ResponseSigner`). The proxy
-    // signs by delegation (`sign_response`), so a non-exporting HSM/KMS source would
-    // never need to surrender its private key — there is deliberately no
-    // `signing_key()` export call on the wiring path anymore.
+    // Issue #3838 (ADR-MCPS-014): the response-signing key is NOT extracted here. The
+    // witness is handed to the signing plane AS the response signer, which signs by
+    // delegation (`sign_response`), so a non-exporting HSM/KMS source never surrenders its
+    // private key. The channel credential is the witness's own product: chain, peer trust
+    // anchors and handshake key, with the requested custody already compared against the
+    // custody they establish.
     let roots = crate::capability_materialization::build_key_source(
         admitted_key_files,
         &values.channel_credential.credential_chain,
         &values.peer_trust_anchors,
     )
     .map_err(|e| e.to_string())?;
-    let key_source = roots.key_source();
-    let server_chain = key_source
-        .tls_server_cert_chain()
-        .map_err(|e| e.to_string())?;
-    let client_ca = key_source.client_ca_roots().map_err(|e| e.to_string())?;
-    // ADR-MCPS-028 §G / issue #58: TLS signing is DELEGATED xor EXPORTED. When the
-    // source offers a delegated TLS signer the server private key never leaves the
-    // device — `tls_server_key()` is never called. The exported key is read ONLY on the
-    // non-delegated path. The CLI exclusivity guard (`cli::parse_args`) already rejected
-    // a config that asks for both.
-    //
-    // The sum type is built HERE, where custody becomes known, so the exclusivity is a
-    // property of the value rather than an agreement between two `Option`s that later
-    // code has to re-derive.
-    let tls_material = match key_source.tls_delegated_signer() {
-        Some(signer) => crate::tls_plane::TlsKeyMaterial::Delegated(signer),
-        None => crate::tls_plane::TlsKeyMaterial::Exported(
-            key_source.tls_server_key().map_err(|e| e.to_string())?,
-        ),
-    };
+    let channel_credential = roots.channel_credential().map_err(|e| e.to_string())?;
     // ADR-MCPRE-056 §9: there is no shared worker set here any more. EVERY long-lived
     // thread startup creates belongs to the plane that owns the resource it maintains, so
     // the ~38 fallible expressions between here and `serve_fleet` each halt and reclaim
@@ -373,9 +354,7 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     // by the credential alone). The root key source is only borrowed here (for its
     // public key); it is moved into the issuer at proxy build, so KMS-rooted delegated
     // signing works on the async serving path.
-    let response_pub = key_source
-        .response_public_key()
-        .map_err(|e| e.to_string())?;
+    let response_pub = roots.response_public_key().map_err(|e| e.to_string())?;
     // Derived once by the `ServerIdentity` owner, and handed over whole: the resolver reads
     // the server actor, its keyid and the trust domain through the owner's projections.
     let resolve_actor = build_actor_resolver(
@@ -454,18 +433,16 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     )?
     .into_parts();
 
-    // Materialized HERE, not where `tls_material` is built, so the CRL load and its
-    // stale-CRL refusal keep the position they had before the extraction: after the trust
-    // posture, before the revocation posture. A deployment with both a stale CRL and an
-    // unreadable trust file must still see the same diagnostic first.
+    // Materialized HERE, not where the channel credential is established, so the CRL load
+    // and its stale-CRL refusal sit after the trust posture and before the revocation
+    // posture: a deployment with both a stale CRL and an unreadable trust file sees the
+    // trust diagnostic first.
     // Transport custody (ADR-MCPRE-056 §8). The plane owns the serving TLS config, the
-    // per-request revocation index and the CRL reload worker; `tls_material` is MOVED in
-    // so no second copy of the key material can drift from the one a reload rebuilds.
+    // per-request revocation index and the CRL reload worker; the channel credential is MOVED
+    // in so no second copy of the key material can drift from the one a reload rebuilds.
     building.install_tls(crate::tls_plane::TlsPlane::materialize(
         &tls_plan,
-        tls_material,
-        server_chain,
-        client_ca,
+        channel_credential,
         startup_now_unix,
         Arc::clone(&shutdown),
     )?)?;
@@ -568,7 +545,7 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     // Response-signing custody (ADR-MCPRE-056 §8; ADR-MCPRE-052). The plane owns the
     // root issuer, the delegated snapshot and the worker that maintains it; what comes
     // back is the signer alone. `roots` is MOVED in here — it was only borrowed above, for
-    // TLS material and the response public key.
+    // the channel credential and the response public key.
     //
     // The plane must outlive the proxy that signs with it, and it does: both are locals
     // of this function, and `serve_fleet` returns before either is dropped.

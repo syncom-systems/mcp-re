@@ -10980,29 +10980,26 @@ with `{:?}` it is one escaped field however hostile.
 
 [[probe]]
 id = "M432-proxy-the-channel-role-read-is-swallowed"
-unit = "proxy.signing_credential_provenance"
+unit = "proxy.signing_role_separation"
 theorem = "THM-0073"
-conjunct = "a role that materialized no key contributes none to the comparison because the composition root reads both roles eagerly and fallibly straight afterwards"
-path = "mcp-re-proxy/src/app.rs"
+conjunct = "a role that materialized no key contributes none to the comparison because the witness's channel projection reads the served chain eagerly and fallibly, and the TLS plane takes only its product"
+path = "mcp-re-proxy/src/capability_materialization/key_source/channel_credential.rs"
 anchor = """
-    let server_chain = key_source
-        .tls_server_cert_chain()
-        .map_err(|e| e.to_string())?;
+        let server_chain = source.tls_server_cert_chain()?;
 """
 weakening = """
-    let server_chain = key_source
-        .tls_server_cert_chain()
-        .unwrap_or_default();
+        let server_chain = source.tls_server_cert_chain().unwrap_or_default();
 """
 expect_red = [
-  "//mcp-re-proxy:integration_test#signing_credential_provenance_test::the_composition_root_reads_both_signing_roles_eagerly_and_fallibly",
+  "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_source::channel_credential::tests::an_unreadable_channel_chain_refuses_establishment",
 ]
 note = """
 THE NOT-COMPARED ARM OF `RoleSeparation` IS SAFE ONLY BECAUSE OF THIS READ. A channel role that
 produced no key is admitted by `MaterializedSigningRoles::establish` on the argument that the
-root asks for the channel chain a moment later and refuses when it cannot be had. Swallowing
-that failure leaves a server that starts with an empty chain, and the comparison that was
-skipped is the only thing that would have said whether the two roles were one key.
+witness's channel projection reads the chain and refuses when it cannot be had, and the TLS
+plane accepts nothing but that projection's product. Swallowing the failure establishes a
+credential over an empty chain, and the comparison that was skipped is the only thing that
+would have said whether the two roles were one key.
 """
 
 [[probe]]

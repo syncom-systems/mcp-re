@@ -43,7 +43,9 @@
 //! where the response key lives; this is the relation between what they materialized, and
 //! it exists because neither machine can see the other's key.
 
+use super::channel_credential::EstablishedChannelCredential;
 use super::role_identity::{channel_role_identity, response_role_identity, RoleIdentity};
+use crate::config_state::PrivateKeyExposure;
 use crate::key_source::{KeyError, KeySource, ResponseSigner};
 
 /// A deployment's materialized signing capability, known not to have collapsed its two
@@ -58,6 +60,9 @@ use crate::key_source::{KeyError, KeySource, ResponseSigner};
 /// [`RoleSeparation`] for why the third value is not the negation of either other.
 pub struct MaterializedSigningRoles {
     source: Box<dyn KeySource + Send + Sync>,
+    /// The handshake custody the deployment requested for the channel role, held beside the
+    /// source so [`Self::channel_credential`] compares what the source establishes against it.
+    requested_channel: PrivateKeyExposure,
 }
 
 /// What the comparison of the two roles established.
@@ -85,16 +90,23 @@ impl MaterializedSigningRoles {
     /// The only producer. It asks each role for its own public key — the response signer
     /// directly, the channel credential through the leaf of the chain this deployment
     /// serves — and refuses when they are the same key.
-    pub(super) fn establish(source: Box<dyn KeySource + Send + Sync>) -> Result<Self, KeyError> {
-        match compare_roles(source.as_ref()) {
+    pub(super) fn establish(
+        source: Box<dyn KeySource + Send + Sync>,
+        requested_channel: PrivateKeyExposure,
+    ) -> Result<Self, KeyError> {
+        let roles = MaterializedSigningRoles {
+            source,
+            requested_channel,
+        };
+        match compare_roles(roles.source.as_ref()) {
             // Compared, and separate. The one outcome that establishes the proposition.
-            RoleSeparation::Distinct => Ok(MaterializedSigningRoles { source }),
+            RoleSeparation::Distinct => Ok(roles),
             // Not compared. Materializing is right and the reason is on
             // [`channel_role_identity`]: whether a backend answered belongs to the owner of
             // that material, which refuses a moment later and names the real fault. Written
             // as its own arm so that decision is one a reader can see being taken, rather
             // than a `_` that also catches whatever outcome is added next.
-            RoleSeparation::NotCompared => Ok(MaterializedSigningRoles { source }),
+            RoleSeparation::NotCompared => Ok(roles),
             RoleSeparation::Collapsed => Err(KeyError::Malformed(
                 "the response-signing key and the channel-signing key are the same key. The \
                  two roles are separately attributable only while they are separate keys: a \
@@ -105,14 +117,13 @@ impl MaterializedSigningRoles {
         }
     }
 
-    /// The materialized key source, read by reference for the TLS materials, the client-CA
-    /// roots and the response public key the serving path consumes.
+    /// The channel credential this source serves, with the custody the deployment requested.
     ///
-    /// Borrowed, so the witness stays with the source it was established over: the only
-    /// owning use is as the response signer ([`ResponseSigner`]), by the plane that
-    /// requires the witness itself.
-    pub fn key_source(&self) -> &(dyn KeySource + Send + Sync) {
-        self.source.as_ref()
+    /// The witness's one channel projection. The response role is reached only through
+    /// [`ResponseSigner`]; the source itself never leaves, so every read of it follows the
+    /// comparison above.
+    pub fn channel_credential(&self) -> Result<EstablishedChannelCredential, KeyError> {
+        EstablishedChannelCredential::establish(self.source.as_ref(), self.requested_channel)
     }
 }
 
@@ -203,9 +214,10 @@ mod tests {
             response: channel_key,
             channel_leaf: leaf,
         });
-        let refusal = MaterializedSigningRoles::establish(source)
-            .err()
-            .expect("one key serving both roles must be refused");
+        let refusal =
+            MaterializedSigningRoles::establish(source, PrivateKeyExposure::ProcessReadable)
+                .err()
+                .expect("one key serving both roles must be refused");
         assert!(
             format!("{refusal}").contains("same key"),
             "the refusal must name what is wrong: {refusal}"
@@ -222,7 +234,8 @@ mod tests {
             channel_leaf: leaf,
         });
         assert!(
-            MaterializedSigningRoles::establish(source).is_ok(),
+            MaterializedSigningRoles::establish(source, PrivateKeyExposure::ProcessReadable)
+                .is_ok(),
             "a deployment holding two different keys must materialize"
         );
     }
@@ -282,19 +295,28 @@ mod tests {
             }
         }
         let (leaf, key) = ed25519_leaf();
-        assert!(
-            MaterializedSigningRoles::establish(Box::new(Absent {
+        let without_chain = MaterializedSigningRoles::establish(
+            Box::new(Absent {
                 response: Some(key.clone()),
                 leaf: None,
-            }))
-            .is_ok(),
-            "an unreadable credential chain must not be reported as a signing-role collapse"
+            }),
+            PrivateKeyExposure::ProcessReadable,
+        )
+        .expect("an unreadable credential chain must not be reported as a signing-role collapse");
+        // Not compared, and not served either: the witness's channel projection reads the
+        // chain and refuses, so no listener is built over the role that produced no key.
+        assert!(
+            without_chain.channel_credential().is_err(),
+            "a channel role that produced no key must yield no channel credential"
         );
         assert!(
-            MaterializedSigningRoles::establish(Box::new(Absent {
-                response: None,
-                leaf: Some(leaf),
-            }))
+            MaterializedSigningRoles::establish(
+                Box::new(Absent {
+                    response: None,
+                    leaf: Some(leaf),
+                }),
+                PrivateKeyExposure::ProcessReadable,
+            )
             .is_ok(),
             "an unreadable response key must not be reported as a signing-role collapse"
         );
@@ -306,21 +328,16 @@ mod tests {
     fn the_witness_answers_as_the_source_it_compared() {
         let (_, response) = ed25519_leaf();
         let (other_leaf, _) = ed25519_leaf();
-        let roles = MaterializedSigningRoles::establish(Box::new(RolesFixture {
-            response: response.clone(),
-            channel_leaf: other_leaf,
-        }))
+        let roles = MaterializedSigningRoles::establish(
+            Box::new(RolesFixture {
+                response: response.clone(),
+                channel_leaf: other_leaf,
+            }),
+            PrivateKeyExposure::ProcessReadable,
+        )
         .expect("two keys materialize");
         assert_eq!(
             ResponseSigner::response_public_key(&roles)
-                .expect("a key")
-                .to_b64url(),
-            response.to_b64url()
-        );
-        assert_eq!(
-            roles
-                .key_source()
-                .response_public_key()
                 .expect("a key")
                 .to_b64url(),
             response.to_b64url()
@@ -336,7 +353,8 @@ mod tests {
             channel_leaf: vec![0x30, 0x03, 0x02, 0x01, 0x00],
         });
         assert!(
-            MaterializedSigningRoles::establish(source).is_ok(),
+            MaterializedSigningRoles::establish(source, PrivateKeyExposure::ProcessReadable)
+                .is_ok(),
             "a channel key that cannot BE the response key must not be refused as if it were"
         );
     }

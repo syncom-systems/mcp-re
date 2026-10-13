@@ -3739,17 +3739,19 @@ seams, in no unit's `paths`, and genuinely referred. One record cannot be both l
 referred: NP-004's own `likely_owner` field said its owner "owns ONE seam's conjunct and says
 so", which is the record documenting its own split.
 
-## NP-177 — the TLS plane refuses a key source that disagrees with the declared channel custody
+## NP-177 — the key-source owner refuses a channel credential that disagrees with the declared channel custody
 
-**Controls:** `mcp-re-proxy/src/tls_plane` (2) —
-`custody_agreement_tests::{a_key_source_that_disagrees_with_the_declared_custody_refuses,
-agreeing_custody_passes_the_check_and_fails_on_something_else}`.
-**Carrier:** `mcp-re-proxy/src/tls_plane/mod.rs` — the one place the REQUESTED custody and the
-ESTABLISHED custody meet.
-**Statement.** *A deployment configured for delegated handshake custody and handed an exported
-key materializes NO TLS plane, and the refusal names both sides; and agreement is not refused —
-an agreeing pair passes this check and fails later, on something else, so the diagnostic proves
-which check ran.*
+**Controls:** `mcp-re-proxy/src/capability_materialization/key_source/channel_credential.rs` (3) —
+`tests::{an_exported_key_under_requested_delegated_custody_refuses,
+a_delegated_signer_under_requested_exported_custody_refuses,
+agreeing_custody_establishes_the_credential}`.
+**Carrier:** `mcp-re-proxy/src/capability_materialization/key_source/channel_credential.rs` —
+`EstablishedChannelCredential::establish`, the one place the REQUESTED custody and the
+ESTABLISHED custody meet, and the only producer of the credential the TLS plane takes.
+**Statement.** *A deployment whose requested handshake custody differs from the custody its key
+source establishes — an exported key under delegated custody, or a device signer under exported
+custody — obtains NO channel credential, and the refusal names both sides; and agreement is not
+refused, in either custody.*
 **If false.** The deployment serves handshakes under weaker custody than its own transcript
 claims. Nothing else compares these two facts: layer A classifies the custody from the TLS key
 selectors, the key source produces an actual signer, and every startup line reports the

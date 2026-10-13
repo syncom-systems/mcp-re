@@ -104,7 +104,6 @@ mod tests {
     /// A plan that configures a reload cadence, so the posture has a promise to retract.
     fn plan_with_cadence(cadence_secs: u64) -> ChannelEstablishmentPlan {
         ChannelEstablishmentPlan {
-            custody: crate::config_state::test_support::channel_custody_exported("/key"),
             client_revocation: crate::config_state::test_support::crl_plan(
                 &["/crl.pem"],
                 Some(cadence_secs),

@@ -356,8 +356,6 @@ pub use crate::config_state::transport::ClientRevocationPlan;
 /// the plan carries one fact instead of two durations that could disagree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelEstablishmentPlan {
-    /// Whether this node's channel-establishment key can leave the signer holding it.
-    pub custody: crate::config_state::ChannelCredentialCustodyState,
     /// The offline peer-credential revocation posture.
     pub client_revocation: ClientRevocationPlan,
     /// How long a client credential authorizes traffic, and how long one connection may
@@ -377,7 +375,6 @@ impl ChannelEstablishmentPlan {
     /// materialization can say whether this executable can serve it.
     pub fn from_validated(config: &ValidatedDeployment) -> ChannelEstablishmentPlan {
         ChannelEstablishmentPlan {
-            custody: config.state().channel_credential_custody().clone(),
             client_revocation: config.state().crl_revocation().client_revocation_plan(),
             credential_window: config.state().client_credential_window(),
             handshake_signing: config.config().limits.tls_handshake_signing,
@@ -1100,14 +1097,9 @@ mod tests {
     /// configured lifetime. The plan now carries the pair as one owned fact, so the
     /// assertion is about a window rather than about two durations.
     #[test]
-    fn the_channel_plan_carries_the_classified_custody_and_the_credential_window() {
+    fn the_channel_plan_carries_the_credential_window() {
         let config = validated(&["--max-client-cert-lifetime", "3600"]);
         let plan = ChannelEstablishmentPlan::from_validated(&config);
-        assert_eq!(
-            plan.custody,
-            crate::config_state::test_support::channel_custody_exported("/nonexistent/key"),
-            "the fixture's TLS key is an exported file, and the plan carries its path"
-        );
         assert_eq!(
             plan.credential_window.cert_lifetime(),
             std::time::Duration::from_secs(3600)

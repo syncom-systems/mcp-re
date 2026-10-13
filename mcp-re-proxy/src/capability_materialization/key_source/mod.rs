@@ -11,6 +11,7 @@
 //! the executable rather than about the request (CF-05).
 
 mod aws;
+mod channel_credential;
 mod file;
 mod gcp;
 mod pin;
@@ -18,6 +19,7 @@ mod pkcs11;
 mod role_identity;
 mod role_separation;
 
+pub use channel_credential::EstablishedChannelCredential;
 pub use role_separation::MaterializedSigningRoles;
 
 use super::key_file_custody::{AdmittedKeyFiles, CheckedKeyFile};
@@ -69,6 +71,7 @@ pub fn build_key_source(
     client_ca: &str,
 ) -> Result<MaterializedSigningRoles, KeyError> {
     let custody = admitted.custody();
+    let requested_channel = admitted.channel_credential_custody().exposure();
     let channel = admitted.channel_credential_custody().material();
     let material = ChannelMaterial {
         cert: tls_cert,
@@ -79,7 +82,7 @@ pub fn build_key_source(
     // The relation between what the two custody machines materialized. Neither can see the
     // other's key, so neither can own it; and it is asked HERE because the decisive fact —
     // which key each role actually resolved to — exists only once both are open.
-    MaterializedSigningRoles::establish(source)
+    MaterializedSigningRoles::establish(source, requested_channel)
 }
 
 /// Open the key source the classified custody names.
