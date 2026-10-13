@@ -158,9 +158,11 @@ jobs:
       # target downstream of the proxy failed. Only a full `bazel test //...` caught
       # it, 30+ minutes in. This is the same check in one second. Fast, python-only.
       # The module tree both hand lists are checked against — the library srcs and the
-      # audit-vocabulary guard's source trees — is `_module_tree.py`'s, rustc's rules.
+      # audit-vocabulary guard's source trees — is `_module_tree.py`'s, rustc's rules, read
+      # from the production view `_rust_source.py` owns.
       - name: Bazel srcs gate (hand-listed srcs and source trees match the module tree)
         run: |
+          python3 tools/verification/_rust_source.py --selftest
           python3 tools/verification/_module_tree.py --selftest
           python3 scripts/bazel_srcs_gate.py --selftest
           python3 scripts/bazel_srcs_gate.py

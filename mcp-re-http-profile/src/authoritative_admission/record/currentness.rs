@@ -8,6 +8,7 @@
 //! publisher's `exp` to be read as the answer.
 
 use super::AdmissionStateClaims;
+use crate::delegation::jose::RootSignedClaims;
 
 /// Why a record present in the store is not the authority's current statement.
 ///
@@ -123,23 +124,17 @@ pub struct AdmissionStateCurrentness {
 /// `iat + max_record_age + skew`**, whatever window its issuer asked for. A publisher may
 /// choose a shorter life; it cannot choose a longer one.
 ///
-/// These operands come straight out of a JWS payload, so an extreme `iat` would wrap in a
-/// release build — silently passing the very cap the expression exists to enforce — and panic
-/// in any build with overflow checks. The window-edge comparisons saturate; the window width
-/// against the budget is compared exactly, because a saturating width clamps at the budget.
+/// The window width against the budget is compared exactly, because a saturating width
+/// clamps at the budget and the operands come straight out of a JWS payload.
 pub(super) fn check_currentness(
     claims: &AdmissionStateClaims,
     currentness: &AdmissionStateCurrentness,
     now: i64,
 ) -> Result<(), AdmissionRecordRefusal> {
-    let skew = currentness.max_clock_skew;
-    if claims.nbf.saturating_sub(skew) > now
-        || claims.exp.saturating_add(skew) <= now
-        || claims.exp <= claims.nbf
-        || claims.iat > now.saturating_add(skew)
-    {
-        return Err(AdmissionRecordRefusal::Expired);
-    }
+    claims
+        .window()
+        .check(now, currentness.max_clock_skew)
+        .map_err(|_| AdmissionRecordRefusal::Expired)?;
     // The issuer may ask for LESS than the deployment allows; it may not ask for more.
     // Together with the window clause above, this is what bounds a RESTORED record: its
     // signature is valid and nothing detected the substitution, and it stops being read

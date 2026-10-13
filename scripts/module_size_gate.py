@@ -89,8 +89,9 @@ Two details are load-bearing because each is a count this project got wrong:
   also a bypass anyone could reach for: a `#[cfg(test)] const` placed above an item hides
   that item from the count.
 
-A counter that silently undercounts is worse than no counter, so both details are exercised
-by `--selftest`, and the rule is PRINTED on every run so prose describing it cannot drift
+A counter that silently undercounts is worse than no counter, so every detail of the rule
+is exercised by `tools/verification/_rust_source.py --selftest`, the owner of the view this
+gate counts, and the rule is PRINTED on every run so prose describing it cannot drift
 from it unnoticed.
 
 # The two blindness failures this gate refuses to repeat
@@ -115,14 +116,12 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
     import tomli as tomllib  # type: ignore[no-redef]
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools" / "verification"))
+
+from _rust_source import crate_sources, production_view  # noqa: E402
+
 REGISTRY = REPO / "config" / "module-size-debt.toml"
 THRESHOLD = 200
-
-# ADR-MCPRE-061 §5.1. Both `#[cfg(test)]` and `#[cfg(all(test, ...))]` open a test region.
-TEST_ATTR = re.compile(r"^#\[cfg\((all\()?test\b")
-
-# Directories that are not this repository's production Rust.
-SKIP_DIRS = {"target", "node_modules", ".git", "bazel-out", "vendor"}
 
 #: ADR-MCPRE-061 §14 dispositions. Investigation status and disposition are separate facts:
 #: a completed census must stay distinguishable from an unperformed one EVEN WHEN its
@@ -166,189 +165,15 @@ PERMITTED_TRANSITIONS = {
 }
 
 
-class _BraceScan:
-    """A brace-counting scan over a sequence of Rust lines, with state carried ACROSS them.
-
-    A per-line, literal-blind count was this gate's measurement defect and it is the same
-    class as the truncation §5.1 describes: braces inside a string, a character literal or a
-    comment were counted as code. A raw byte string holding JSON —
-    ``br#"{"error":{"data":{...}}}"#``, which `execution_contract.rs` writes over five lines
-    inside a test module — closed the region three lines early, so test code below it was
-    counted as PRODUCTION and the file measured larger than it is.
-
-    Mirrors `mcp-re-test-paths/src/rust_source.rs`, which is the same definition on the Rust
-    side. The two must not drift: they decide the same fact for different gates.
-    """
-
-    CODE, STR, RAW, BLOCK = 0, 1, 2, 3
-
-    def __init__(self) -> None:
-        self.mode = self.CODE
-        self.hashes = 0
-        self.depth = 0
-
-    def feed(self, line: str) -> str:
-        """`line` with literals and comments blanked, continuing what `line` began inside."""
-        out: list[str] = []
-        i = 0
-        n = len(line)
-        while i < n:
-            if self.mode == self.CODE:
-                i = self._code(line, i, n, out)
-            elif self.mode == self.STR:
-                i = self._str(line, i)
-            elif self.mode == self.RAW:
-                i = self._raw(line, i, n)
-            else:
-                i = self._block(line, i)
-        return "".join(out)
-
-    def _code(self, line: str, i: int, n: int, out: list[str]) -> int:
-        two = line[i : i + 2]
-        if two == "//":
-            return n
-        if two == "/*":
-            self.mode, self.depth = self.BLOCK, 1
-            return i + 2
-        opened = self._open_raw(line, i)
-        if opened is not None:
-            return opened
-        c = line[i]
-        if c == '"':
-            self.mode = self.STR
-            return i + 1
-        if c == "'":
-            return self._char_literal(line, i, out)
-        out.append(c)
-        return i + 1
-
-    def _open_raw(self, line: str, i: int) -> int | None:
-        """Enter a raw string if one opens at `i`, else None.
-
-        The prefix must not be the tail of an identifier: `for` and `char` end in the
-        letters an opener starts with.
-        """
-        if i > 0 and (line[i - 1].isalnum() or line[i - 1] == "_"):
-            return None
-        j = i
-        if line[j : j + 1] == "b":
-            j += 1
-        if line[j : j + 1] != "r":
-            return None
-        j += 1
-        start = j
-        while line[j : j + 1] == "#":
-            j += 1
-        if line[j : j + 1] != '"':
-            return None
-        self.mode, self.hashes = self.RAW, j - start
-        return j + 1
-
-    def _str(self, line: str, i: int) -> int:
-        c = line[i]
-        if c == "\\":
-            return i + 2
-        if c == '"':
-            self.mode = self.CODE
-        return i + 1
-
-    def _raw(self, line: str, i: int, n: int) -> int:
-        if line[i] != '"':
-            return i + 1
-        if line[i + 1 : i + 1 + self.hashes] != "#" * self.hashes:
-            return i + 1
-        self.mode = self.CODE
-        return i + 1 + self.hashes
-
-    def _block(self, line: str, i: int) -> int:
-        two = line[i : i + 2]
-        if two == "/*":
-            self.depth += 1
-            return i + 2
-        if two == "*/":
-            self.depth -= 1
-            if self.depth <= 0:
-                self.mode = self.CODE
-            return i + 2
-        return i + 1
-
-    @staticmethod
-    def _char_literal(line: str, i: int, out: list[str]) -> int:
-        """Skip `'x'` / `'\\n'`, or emit the tick of a lifetime and move on."""
-        if line[i + 1 : i + 2] == "\\":
-            j = i + 3
-            while j < len(line) and line[j] != "'":
-                j += 1
-            return j + 1
-        if line[i + 2 : i + 3] == "'":
-            return i + 3
-        out.append("'")
-        return i + 1
-
-
-def production_source(text: str) -> list[str]:
-    """The lines of a Rust source that are NOT inside a test region.
-
-    The definition `production_lines` counts and `scripts/unit_closure_gate.py` reads items
-    from. Both need the same answer to "which lines are production", and a second scan
-    would be a second opinion about where a test region ends.
-    """
-    lines = text.splitlines()
-    kept: list[str] = []
-    i = 0
-    while i < len(lines):
-        if TEST_ATTR.match(lines[i].lstrip()):
-            scan = _BraceScan()
-            depth = 0
-            opened = False
-            while i < len(lines):
-                code = scan.feed(lines[i])
-                depth += code.count("{") - code.count("}")
-                if "{" in code:
-                    opened = True
-                i += 1
-                if opened and depth <= 0:
-                    break
-                # An item with no brace-delimited body — a `const`, a `use`, a type alias —
-                # ends at its own `;`. Scanning past it swallows the NEXT item, which is
-                # production code, into the test region.
-                if not opened and depth <= 0 and ";" in code:
-                    break
-            continue
-        kept.append(lines[i])
-        i += 1
-    return kept
-
-
 def production_lines(text: str) -> int:
     """Every line of a Rust source that is NOT inside a test region.
 
-    A test region runs from its `#[cfg(test)]`-family attribute to the end of the module it
-    introduces, tracked by brace depth over CODE characters only — a brace inside a string,
-    a raw string, a character literal or a comment is not a brace. Counting resumes
-    afterwards, and a file may contain several regions: a file that puts a helper module
-    below its tests is not thereby exempt.
-
-    This is deliberately NOT "lines before the first test module" — that rule discards every
-    production item below the tests, and measured `trust_plane.rs` at 134 lines when it is
-    690. This function is the definition; the prose in ADR-MCPRE-061 §5.1 describes it.
+    The region rule is `tools/verification/_rust_source.py`'s: a region runs from its
+    `#[cfg(test)]`-family attribute to the end of the item it introduces, tracked by brace
+    depth over code characters only, and counting resumes afterwards. This gate asks the
+    owner for the view and counts it; the prose in ADR-MCPRE-061 §5.1 describes the rule.
     """
-    return len(production_source(text))
-
-
-def rust_sources(root: Path) -> list[Path]:
-    out: list[Path] = []
-    for p in sorted(root.rglob("*.rs")):
-        rel = p.relative_to(root)
-        if any(part in SKIP_DIRS for part in rel.parts):
-            continue
-        # Tests, benches, examples and build scripts are not production modules.
-        if any(part in {"tests", "benches", "examples"} for part in rel.parts):
-            continue
-        if p.name == "build.rs":
-            continue
-        out.append(p)
-    return out
+    return len(production_view(text))
 
 
 def load_registry(path: Path) -> dict[str, dict]:
@@ -371,7 +196,7 @@ def check(
     over the tree are two chances for the two numbers to differ.
     """
     problems: list[str] = []
-    sources = rust_sources(root)
+    sources = crate_sources(root)
     measured: dict[str, int] = out_measured if out_measured is not None else {}
 
     for p in sources:
@@ -478,61 +303,6 @@ def validate_registry(registry: dict[str, dict], root: Path | None = None) -> li
 
 
 def selftest() -> int:
-    cases: list[tuple[str, str, int]] = [
-        ("no test module", "fn a() {}\nfn b() {}\n", 2),
-        (
-            "narrow #[cfg(test)]",
-            "fn a() {}\n#[cfg(test)]\nmod tests {\n    fn t() {}\n}\n",
-            1,
-        ),
-        (
-            "#[cfg(all(test, unix))] — the form that broke the first census",
-            "fn a() {}\nfn b() {}\n#[cfg(all(test, unix))]\nmod tests {\n    fn t() {}\n}\n",
-            2,
-        ),
-        (
-            "production code AFTER the test region is counted",
-            "fn a() {}\n#[cfg(test)]\nmod tests {\n    fn t() {}\n}\nfn b() {}\nfn c() {}\n",
-            3,
-        ),
-        (
-            "nested braces inside the test module do not end it early",
-            "fn a() {}\n#[cfg(test)]\nmod tests {\n    fn t() { if x { y(); } }\n    fn u() {}\n}\n",
-            1,
-        ),
-        (
-            "two test regions",
-            "fn a() {}\n#[cfg(test)]\nmod t1 {\n}\nfn b() {}\n#[cfg(all(test, feature = \"x\"))]\nmod t2 {\n}\nfn c() {}\n",
-            3,
-        ),
-        (
-            "#[cfg(test)] on a const closes at its `;` — the item BELOW it is production",
-            '#[cfg(test)]\nconst K: &str = "k";\nimpl Drop for T {\n    fn drop(&mut self) {}\n}\n',
-            3,
-        ),
-        (
-            "#[cfg(test)] on a `use` closes at its `;`",
-            "#[cfg(test)]\nuse std::x::Y;\nfn a() {}\nfn b() {}\n",
-            2,
-        ),
-        (
-            "a multi-line #[cfg(test)] const still closes at its own `;`",
-            '#[cfg(test)]\nconst K: &[&str] = &[\n    "a",\n];\nfn a() {}\n',
-            1,
-        ),
-        (
-            "an attribute followed by a comment still reaches the item it introduces",
-            "#[cfg(test)]\n// a note\nmod tests {\n    fn t() {}\n}\nfn a() {}\n",
-            1,
-        ),
-        ("empty file", "", 0),
-    ]
-    for name, text, expected in cases:
-        got = production_lines(text)
-        if got != expected:
-            print(f"selftest FAIL: {name}: expected {expected} production lines, got {got}")
-            return 1
-
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
 
@@ -729,7 +499,7 @@ def selftest() -> int:
     if selftest_baseline_growth() != 0:
         return 1
 
-    print("module-size gate selftest: PASS (11 counter cases, ratchet in both directions, "
+    print("module-size gate selftest: PASS (ratchet in both directions, "
           "empty scope, stale + malformed registry entries, the §14 disposition lifecycle "
           "and its refusals, the pre-rename `exception_ref` field, and the one-shot upward "
           "baseline authorization, and the measurement correction that buys nothing — "
@@ -1077,7 +847,7 @@ def emit_registry() -> int:
     sha = baseline_sha()
     existing = load_registry(REGISTRY)
     rows = []
-    for p in rust_sources(REPO):
+    for p in crate_sources(REPO):
         prod = production_lines(p.read_text(encoding="utf-8", errors="replace"))
         if prod > THRESHOLD:
             rows.append((str(p.relative_to(REPO)), prod))

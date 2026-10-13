@@ -90,6 +90,7 @@ attestations this view cannot see.
 | unit://http_profile.evidence_role_construction_boundary | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.fleet_strict_store_class | source, contracts or evidence | THM-0092 | _no consumer_ |
 | unit://http_profile.freshness_window | source, contracts or evidence | THM-0001, THM-0014, THM-0016, THM-0017, THM-0021, THM-0022 | _no consumer_ |
+| unit://http_profile.jose_statement | source, contracts or evidence | THM-0019, THM-0020, THM-0039, THM-0053, THM-0129 | _no consumer_ |
 | unit://http_profile.keyid | source, contracts or evidence | THM-0055 | _no consumer_ |
 | unit://http_profile.keyid_selector | source, contracts or evidence | THM-0050 | _no consumer_ |
 | unit://http_profile.mcp_transport_contract | source, contracts or evidence | _no theorem_ | _no consumer_ |

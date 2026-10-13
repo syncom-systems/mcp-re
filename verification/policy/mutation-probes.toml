@@ -2143,15 +2143,15 @@ conjunct = "the signature verified under the key the trust seam resolved for the
 # The resolver is the deployment's statement of which authorities may DECIDE. Deleting the
 # refusal makes an unresolvable kid fall through to whatever the next step does with it,
 # which is the shape of a kid introducing its own trust.
+# The resolution itself is the shared codec's (`delegation/jose`), whose own battery pins that
+# an unresolvable kid is refused; what this kind owns is NAMING that refusal as the trust
+# seam's answer, which is what an operator rolling out a new authority needs to read.
 path = "mcp-re-http-profile/src/pdp_decision/verify.rs"
 anchor = """
-    let root = resolve_issuer(&claims.issuer_kid).ok_or(PdpDecisionRefusal::IssuerUntrusted)?;
+        JwsDefect::IssuerUntrusted => PdpDecisionRefusal::IssuerUntrusted,
 """
 weakening = """
-    let root = match resolve_issuer(&claims.issuer_kid) {
-        Some(k) => k,
-        None => return Ok(claims),
-    };
+        JwsDefect::IssuerUntrusted => PdpDecisionRefusal::SignatureInvalid,
 """
 expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#pdp_decision::verify::tests::an_untrusted_issuer_is_named_as_one_not_as_a_bad_signature",
@@ -3867,16 +3867,16 @@ conjunct = "the state is authenticated as issued by the configured admission aut
 # probe does not turn a control red the authentication conjunct rests on nothing.
 path = "mcp-re-http-profile/src/authoritative_admission/record/verified.rs"
 anchor = """
-    verify_ed25519_with(
-        signing_input.as_bytes(),
-        &normalize_signature(s_seg)?,
-        &authority,
-        McpReError::InvalidSignature,
-    )
-    .map_err(|_| AdmissionRecordRefusal::SignatureInvalid)?;
+    let RootVerified { claims, .. } = CompactJws::split(compact_jws)
+        .and_then(|jws| {
+            jws.verify_root::<AdmissionStateClaims>(ADMISSION_STATE_TYP, resolve_issuer)
+        })
+        .map_err(refuse_record)?;
 """
 weakening = """
-    let _ = (&signing_input, &authority);
+    let jws = CompactJws::split(compact_jws).map_err(refuse_record)?;
+    let claims: AdmissionStateClaims = jws.claims().map_err(refuse_record)?;
+    let _ = resolve_issuer;
 """
 expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#authoritative_admission::record::verified::tests::a_changed_status_in_the_stored_bytes_is_refused",
@@ -6383,17 +6383,16 @@ composition across layers, not defence in depth within one.
 id = "M233-http-profile-an-assertion-older-than-the-budget-is-refused"
 unit = "http_profile.admission_assertion"
 theorem = "THM-0053"
-conjunct = "an assertion outside the verifier's own independent staleness budget, or dated ahead of the verifier, is refused"
+conjunct = "an assertion outside the verifier's own independent staleness budget is refused"
 path = "mcp-re-http-profile/src/admission/mod.rs"
 anchor = """
-    if assertion_age_exceeded(policy, now, claims.iat) || claims.iat > now.saturating_add(skew) {
+    if assertion_age_exceeded(policy, now, claims.iat) {
 """
 weakening = """
     if false {
 """
 expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_assertion_older_than_the_verifiers_own_budget_is_rejected",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_assertion_dated_ahead_of_the_verifier_is_rejected",
 ]
 note = """
 THE ISSUER'S TTL IS NOT A SECOND CARRIER, and §5.2 says why: `[nbf, exp]` is the ISSUER's
@@ -6402,10 +6401,74 @@ authority that issues year-long assertions is not misbehaving; an enforcement po
 on a year-old snapshot of an authorization decision is. The window check above therefore
 passes on exactly the assertions this one exists to refuse.
 
-The `iat`-ahead half travels with it because a future issuance floors BOTH age computations
--- this N cap and the §5.2 degraded P window -- at zero under saturation, and so passes them
-for the assertion's whole TTL. Two halves of one refusal, one anchor.
+The `iat`-ahead refusal is the shared claim window's and is probed there (M571): a future
+issuance floors BOTH age computations -- this N cap and the §5.2 degraded P window -- at zero
+under saturation, and so passes them for the assertion's whole TTL.
 """
+
+[[probe]]
+id = "M571-http-profile-an-assertion-dated-ahead-of-the-verifier-is-refused"
+unit = "http_profile.admission_assertion"
+theorem = "THM-0053"
+conjunct = "an assertion dated ahead of the verifier is refused"
+# The shared claim window's clause. Every age the assertion verifier measures from `iat` is
+# `now - iat` against an upper bound only, so with this deleted a future issuance passes the
+# N cap and the §5.2 degraded window for its whole TTL; the control feeds exactly that.
+path = "mcp-re-http-profile/src/delegation/jose/claim_window.rs"
+anchor = """
+        if self.iat > now.saturating_add(skew) {
+"""
+weakening = """
+        if false {
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_assertion_dated_ahead_of_the_verifier_is_rejected",
+]
+
+[[probe]]
+id = "M572-jose-exp-plus-skew-is-the-first-stale-instant"
+unit = "http_profile.jose_statement"
+theorem = "THM-0053"
+conjunct = "the upper edge of the shared claim window is exclusive: `exp + skew` is the first stale instant"
+# The edge rule stated once for four kinds of statement. The weakening restores the edge the
+# delegation credential used to apply on its own, `now > exp + skew`, which accepted a
+# statement one second longer than the other three kinds did; the window's own control and
+# the cross-verifier control both go red.
+path = "mcp-re-http-profile/src/delegation/jose/claim_window.rs"
+anchor = """
+        if self.nbf.saturating_sub(skew) > now || self.exp.saturating_add(skew) <= now {
+"""
+weakening = """
+        if self.nbf.saturating_sub(skew) > now || self.exp.saturating_add(skew) < now {
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::claim_window::tests::exp_plus_skew_is_the_first_stale_instant",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::tests::the_four_verifiers_share_one_window_rule",
+]
+
+[[probe]]
+id = "M573-jose-a-root-signature-is-verified-under-the-resolved-root"
+unit = "http_profile.jose_statement"
+theorem = "THM-0053"
+conjunct = "the signature verified under the key the trust seam resolved for the issuer kid"
+# The one signature check behind four verifiers. With it deleted every statement whose
+# header and claims parse is root-verified, whoever signed it.
+path = "mcp-re-http-profile/src/delegation/jose/compact_jws.rs"
+anchor = """
+        verify_ed25519_with(
+            signing_input.as_bytes(),
+            self.signature,
+            &root,
+            McpReError::InvalidSignature,
+        )
+        .map_err(|_| JwsDefect::SignatureInvalid)?;
+"""
+weakening = """
+        let _ = signing_input;
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::compact_jws::tests::a_signature_by_another_key_or_a_tampered_one_is_invalid",
+]
 
 [[probe]]
 id = "M234-core-the-resolver-key-is-injective"

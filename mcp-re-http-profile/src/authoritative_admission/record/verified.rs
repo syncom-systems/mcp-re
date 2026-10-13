@@ -16,21 +16,17 @@
 //! and `mod.rs` is this file's ancestor, so the seal holds against the whole crate and not
 //! merely against other crates.
 
-use mcp_re_core::b64url_decode;
-use mcp_re_core::b64url_encode;
-use mcp_re_core::verify_ed25519_with;
-use mcp_re_core::McpReError;
 use mcp_re_core::VerificationKey;
-use serde::Deserialize;
 
 use crate::authoritative_admission::AuthoritativeAdmission;
+use crate::delegation::jose::CompactJws;
+use crate::delegation::jose::JwsDefect;
+use crate::delegation::jose::RootVerified;
 
 use super::currentness::check_currentness;
 use super::AdmissionRecordRefusal;
 use super::AdmissionStateClaims;
 use super::AdmissionStateCurrentness;
-use super::AdmissionStateHeader;
-use super::ADMISSION_STATE_ALG;
 use super::ADMISSION_STATE_TYP;
 
 /// An authoritative admission state that was AUTHENTICATED and found current.
@@ -86,26 +82,11 @@ pub fn verify_admission_state_record(
     now: i64,
     resolve_issuer: impl Fn(&str) -> Option<VerificationKey>,
 ) -> Result<CurrentAdmissionState, AdmissionRecordRefusal> {
-    let (h_seg, p_seg, s_seg) = split_compact(compact_jws)?;
-    let header: AdmissionStateHeader = decode_json(h_seg)?;
-    if header.typ != ADMISSION_STATE_TYP || header.alg != ADMISSION_STATE_ALG {
-        return Err(AdmissionRecordRefusal::Malformed);
-    }
-    let claims: AdmissionStateClaims = decode_json(p_seg)?;
-    if header.kid != claims.issuer_kid {
-        return Err(AdmissionRecordRefusal::Malformed);
-    }
-
-    let authority =
-        resolve_issuer(&claims.issuer_kid).ok_or(AdmissionRecordRefusal::IssuerUntrusted)?;
-    let signing_input = format!("{h_seg}.{p_seg}");
-    verify_ed25519_with(
-        signing_input.as_bytes(),
-        &normalize_signature(s_seg)?,
-        &authority,
-        McpReError::InvalidSignature,
-    )
-    .map_err(|_| AdmissionRecordRefusal::SignatureInvalid)?;
+    let RootVerified { claims, .. } = CompactJws::split(compact_jws)
+        .and_then(|jws| {
+            jws.verify_root::<AdmissionStateClaims>(ADMISSION_STATE_TYP, resolve_issuer)
+        })
+        .map_err(refuse_record)?;
 
     if claims.mcp_re_profile != expected_profile {
         return Err(AdmissionRecordRefusal::ProfileMismatch);
@@ -134,34 +115,31 @@ pub fn verify_admission_state_record(
     })
 }
 
-fn split_compact(jws: &str) -> Result<(&str, &str, &str), AdmissionRecordRefusal> {
-    let mut it = jws.split('.');
-    match (it.next(), it.next(), it.next(), it.next()) {
-        (Some(h), Some(p), Some(s), None) if !h.is_empty() && !p.is_empty() && !s.is_empty() => {
-            Ok((h, p, s))
-        }
-        _ => Err(AdmissionRecordRefusal::Malformed),
+/// The record's refusal vocabulary over the codec's defects: anything wrong with the
+/// record's own shape is `Malformed`; trust and signature keep their own definitive
+/// negatives.
+fn refuse_record(defect: JwsDefect) -> AdmissionRecordRefusal {
+    match defect {
+        JwsDefect::Shape
+        | JwsDefect::Base64Url
+        | JwsDefect::Json
+        | JwsDefect::MediaType
+        | JwsDefect::KidDisagrees => AdmissionRecordRefusal::Malformed,
+        JwsDefect::IssuerUntrusted => AdmissionRecordRefusal::IssuerUntrusted,
+        JwsDefect::SignatureInvalid => AdmissionRecordRefusal::SignatureInvalid,
     }
-}
-
-fn decode_json<T: for<'de> Deserialize<'de>>(seg: &str) -> Result<T, AdmissionRecordRefusal> {
-    let bytes = b64url_decode(seg).map_err(|_| AdmissionRecordRefusal::Malformed)?;
-    serde_json::from_slice(&bytes).map_err(|_| AdmissionRecordRefusal::Malformed)
-}
-
-/// The signature segment is already base64url; decode/re-encode normalizes it to the exact
-/// form the core verifier consumes and rejects a malformed one.
-fn normalize_signature(s_seg: &str) -> Result<String, AdmissionRecordRefusal> {
-    let bytes = b64url_decode(s_seg).map_err(|_| AdmissionRecordRefusal::Malformed)?;
-    Ok(b64url_encode(&bytes))
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::issue_admission_state_record;
     use super::super::test_support::{claims, KID, PROFILE};
+    use super::super::ADMISSION_STATE_ALG;
     use super::*;
     use crate::admission::AdmissionStatus;
+    use crate::delegation::jose::ProtectedHeader;
+    use mcp_re_core::b64url_decode;
+    use mcp_re_core::b64url_encode;
     use mcp_re_core::SigningKey;
 
     fn authority() -> SigningKey {
@@ -315,7 +293,7 @@ mod tests {
             segments.next().expect("p"),
             segments.next().expect("s"),
         );
-        let header = AdmissionStateHeader {
+        let header = ProtectedHeader {
             typ: ADMISSION_STATE_TYP.to_owned(),
             alg: ADMISSION_STATE_ALG.to_owned(),
             kid: "someone/else/1".to_owned(),

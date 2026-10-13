@@ -34,6 +34,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 SRC = REPO / "mcp-re-proxy" / "src"
+sys.path.insert(0, str(REPO / "tools" / "verification"))
+
+from _rust_source import production_view  # noqa: E402
 
 # --- planes -------------------------------------------------------------------------
 #
@@ -141,44 +144,6 @@ MISPLACED_OWNERSHIP: dict[str, tuple[str, str]] = {
 }
 
 
-def strip_cfg_test_items(text: str) -> str:
-    """Remove every `#[cfg(test)]`-attributed item, individually.
-
-    Truncating at the first occurrence looks equivalent and is not: an inline attribute
-    on a test helper sits at trust_plane.rs:78, signing_plane.rs:62, tls_plane.rs:137 and
-    ocsp.rs:248, hundreds of lines above the real test module.
-    """
-    lines = text.split("\n")
-    out: list[str] = []
-    i = 0
-    while i < len(lines):
-        if not lines[i].strip().startswith("#[cfg(test)]"):
-            out.append(lines[i])
-            i += 1
-            continue
-        j = i + 1
-        while j < len(lines) and "{" not in lines[j] and not lines[j].rstrip().endswith(";"):
-            j += 1
-        if j < len(lines) and "{" not in lines[j] and lines[j].rstrip().endswith(";"):
-            i = j + 1
-            continue
-        depth, seen = 0, False
-        while j < len(lines):
-            s = re.sub(r'"(?:\\.|[^"\\])*"', '""', lines[j])
-            s = re.sub(r"//.*", "", s)
-            for ch in s:
-                if ch == "{":
-                    depth += 1
-                    seen = True
-                elif ch == "}":
-                    depth -= 1
-            if seen and depth <= 0:
-                break
-            j += 1
-        i = j + 1
-    return "\n".join(out)
-
-
 def code_only(text: str) -> str:
     """Production code with test items, comments and string literals neutralised.
 
@@ -186,15 +151,7 @@ def code_only(text: str) -> str:
     not a dependency. Comments are dropped because a rustdoc intra-doc link is a
     reference for the reader; counting one would reward deleting documentation.
     """
-    text = strip_cfg_test_items(text)
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
-    kept = []
-    for line in text.split("\n"):
-        if line.lstrip().startswith(("///", "//!")):
-            continue
-        line = re.sub(r'"(?:\\.|[^"\\])*"', '""', line)
-        kept.append(re.sub(r"//.*", "", line))
-    return "\n".join(kept)
+    return production_view(text).code()
 
 
 def edges_for(name: str, src: str, known: set[str]) -> dict[str, set[str]]:

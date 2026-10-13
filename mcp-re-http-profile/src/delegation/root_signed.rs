@@ -8,8 +8,7 @@
 
 use mcp_re_core::VerificationKey;
 
-use super::decode_json;
-use super::split_compact_jws;
+use super::jose::CompactJws;
 use super::verify::check_root_signature;
 use crate::error::HttpProfileError;
 
@@ -19,11 +18,8 @@ pub(crate) fn root_signed(
     kid: &str,
     root: &VerificationKey,
 ) -> Result<(), HttpProfileError> {
-    let segments = split_compact_jws(jws)?;
-    let (header, claims) = (decode_json(segments.0)?, decode_json(segments.1)?);
-    check_root_signature(segments, &header, &claims, |k: &str| {
-        (k == kid).then(|| root.clone())
-    })
+    let jws = CompactJws::split(jws).map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
+    check_root_signature(&jws, |k: &str| (k == kid).then(|| root.clone())).map(|_| ())
 }
 
 #[cfg(test)]

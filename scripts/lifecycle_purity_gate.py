@@ -64,6 +64,9 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "tools" / "verification"))
+
+from _rust_source import production_view  # noqa: E402
 #: The state machines that are values. Each depends on no production module, so "is this
 #: transition legal?" cannot answer differently on two calls with the same arguments.
 TARGETS = (
@@ -78,7 +81,6 @@ TARGETS = (
 #: Truncating at the first marker instead would state "test code begins here and never
 #: ends", which Rust does not say: an inline `#[cfg(test)]` helper may sit far above the
 #: test module, and production items may follow it.
-TEST_ATTR = re.compile(r"^#\[cfg\((all\()?test\b")
 
 #: Standard-library paths the relation may depend on, each with the reason it cannot
 #: introduce behaviour. Adding an entry is a deliberate edit, which is the point.
@@ -102,52 +104,13 @@ PATH_ROOT = re.compile(r"(?<![:\w])(?P<root>\w+)::")
 
 
 def production_half(text: str) -> list[tuple[int, str]]:
-    """Every line outside a test region, 1-indexed, comments and blanks dropped.
+    """Every production line that carries code, 1-indexed, comments and literals blanked.
 
     Comments are dropped because the module's doc comments reference `crate::app` in prose
-    and rustdoc links. The gate is about code.
-
-    A test region runs from its `#[cfg(test)]`-family attribute to the end of the item that
-    attribute introduces, tracked by brace depth, and counting RESUMES afterwards. A file
-    may contain several. This is the definition, not "lines before the first test module":
-    that rule reports a clean pass over every production item written below the tests.
+    and rustdoc links; literals because a path inside an error string is text. The gate is
+    about code, and the test region is the owner's: `_rust_source` decides where it ends.
     """
-    raw = text.splitlines()
-    lines: list[tuple[int, str]] = []
-    i = 0
-    while i < len(raw):
-        if TEST_ATTR.match(raw[i].lstrip()):
-            i = _end_of_test_region(raw, i)
-            continue
-        number, line = i + 1, raw[i]
-        i += 1
-        stripped = line.strip()
-        if not stripped or stripped.startswith("//"):
-            continue
-        code = line.split("//", 1)[0]
-        if code.strip():
-            lines.append((number, code))
-    return lines
-
-
-def _end_of_test_region(lines: list[str], start: int) -> int:
-    """The index just past the region opened at `start`.
-
-    A braced item ends at its matching close; an attributed `;`-terminated item — the
-    `#[cfg(test)] use super::*;` form — ends at that semicolon.
-    """
-    depth, opened, i = 0, False, start
-    while i < len(lines):
-        code = re.sub(r"//.*", "", re.sub(r'"(?:\\.|[^"\\])*"', '""', lines[i]))
-        depth += code.count("{") - code.count("}")
-        if "{" in code:
-            opened = True
-        i += 1
-        if opened and depth <= 0:
-            return i
-        if not opened and code.rstrip().endswith(";"):
-            return i
-    return i
+    return production_view(text).numbered_code()
 
 
 def local_names(text: str, body: list[tuple[int, str]]) -> set[str]:

@@ -102,12 +102,14 @@ Run:  python3 scripts/refusal_provenance_gate.py
 
 from __future__ import annotations
 
-import os
 import re
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools" / "verification"))
+
+from _rust_source import crate_sources, production_view  # noqa: E402
 
 REFUSAL = ["mcp-re-proxy/src/refusal/mod.rs", "mcp-re-proxy/src/refusal/cause.rs"]
 #: The serving path. A DIRECTORY since MCPRE-175 split the assembly into one module per
@@ -140,10 +142,6 @@ SERVED_JSON = "ServedHttpResponse::json"
 #: Where `ServedHttpResponse::json` is DEFINED. Not a refusal site.
 SERVED_RESPONSE_OWNER = "mcp-re-proxy/src/async_serve/mod.rs"
 
-#: Directories the workspace walk never descends into. Pruned during the walk rather than
-#: filtered after it: `target/` holds hundreds of thousands of generated files on a built
-#: tree, and globbing them before discarding them was the whole cost of this gate.
-PRUNED = {"target", "node_modules", ".git"}
 
 
 def workspace_rust_files() -> list[str]:
@@ -162,36 +160,11 @@ def workspace_rust_files() -> list[str]:
     exemption is visible rather than silent: `main` prints how many files were examined, and
     a scope that collapsed to nothing shows as a number, not as an OK.
     """
-    out = []
-    for root, dirs, files in os.walk(REPO):
-        dirs[:] = sorted(d for d in dirs if d not in PRUNED)
-        if "src" not in Path(root).relative_to(REPO).parts:
-            continue
-        for name in sorted(files):
-            if name.endswith(".rs"):
-                out.append(str((Path(root) / name).relative_to(REPO)))
-    return sorted(out)
-
-TEST_REGION = re.compile(r"^#\[cfg\((all\()?test")
-
-
-def production(src: str) -> str:
-    """Drop `#[cfg(test)]` regions, brace-counting so code below a test module survives."""
-    out, lines, i = [], src.split("\n"), 0
-    while i < len(lines):
-        if TEST_REGION.match(lines[i].strip()):
-            depth, seen = 0, False
-            while i < len(lines):
-                depth += lines[i].count("{") - lines[i].count("}")
-                seen = seen or "{" in lines[i]
-                i += 1
-                if seen and depth <= 0:
-                    break
-            continue
-        out.append(lines[i])
-        i += 1
-    return "\n".join(out)
-
+    return [
+        str(p.relative_to(REPO))
+        for p in crate_sources(REPO)
+        if "src" in p.relative_to(REPO).parts
+    ]
 
 def read(rel: str, overrides: dict[str, str] | None = None) -> str:
     """The production half of `rel`, or a loud failure.
@@ -200,14 +173,14 @@ def read(rel: str, overrides: dict[str, str] | None = None) -> str:
     nothing: an empty scope printing OK is how a control stops covering its subject.
     """
     if overrides and rel in overrides:
-        return production(overrides[rel])
+        return production_view(overrides[rel]).text()
     path = REPO / rel
     if not path.is_file():
         raise SystemExit(
             f"refusal-provenance gate: FAIL — {rel} is not there. The gate's scope has moved; "
             f"fix the scope rather than the symptom."
         )
-    return production(path.read_text())
+    return production_view(path).text()
 
 
 def body_of(src: str, fn: str) -> str:
@@ -247,14 +220,14 @@ def read_unit(rel: str, overrides: dict[str, str] | None) -> str:
     region cannot swallow the next file's production code.
     """
     if overrides and rel in overrides:
-        return production(overrides[rel])
+        return production_view(overrides[rel]).text()
     target = REPO / rel
     if target.is_file():
         return read(rel, overrides)
-    members = sorted(m for m in target.rglob("*.rs") if m.is_file())
+    members = crate_sources(target)
     if not members:
         raise SystemExit(f"{rel}: an owner subtree with no Rust source is not measurable")
-    return "\n".join(production(m.read_text(encoding="utf-8")) for m in members)
+    return "\n".join(production_view(m).text() for m in members)
 
 
 def check(overrides: dict[str, str] | None = None) -> list[str]:

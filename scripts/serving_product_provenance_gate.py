@@ -54,6 +54,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "tools" / "verification"))
 
 import _module_tree  # noqa: E402
+from _rust_source import crate_sources, production_view  # noqa: E402
 import _rust_targets  # noqa: E402
 
 #: The serving path, read as an owner subtree: MCPRE-175 split the assembly into one module
@@ -66,39 +67,6 @@ PROXY = "mcp-re-proxy/src"
 PRODUCT = "VerifiedMcpRequest"
 STAGE = "verify_stage"
 CARRIER = "Exchange"
-
-# ADR-MCPRE-061 §5.1 — both `#[cfg(test)]` and `#[cfg(all(test, ...))]` open a test region.
-TEST_ATTR = re.compile(r"^#\[cfg\((all\()?test\b")
-
-LINE_COMMENT = re.compile(r"^\s*(///|//!|//).*$", re.M)
-
-
-def code_only(text: str) -> str:
-    """`text` with line comments removed. The claim is about the ROUTE, not the prose."""
-    return LINE_COMMENT.sub("", text)
-
-
-def production_text(text: str) -> str:
-    """The source with every test region removed, by brace depth from the attribute."""
-    lines = text.splitlines()
-    kept: list[str] = []
-    i = 0
-    while i < len(lines):
-        if TEST_ATTR.match(lines[i].lstrip()):
-            depth = 0
-            opened = False
-            while i < len(lines):
-                depth += lines[i].count("{") - lines[i].count("}")
-                if "{" in lines[i]:
-                    opened = True
-                i += 1
-                if opened and depth <= 0:
-                    break
-            continue
-        kept.append(lines[i])
-        i += 1
-    return "\n".join(kept)
-
 
 def signature_re(name: str) -> re.Pattern:
     return re.compile(r"fn\s+" + name + r"\s*\((?P<params>.*?)\)\s*->[^{]*\{", re.S)
@@ -158,7 +126,7 @@ def test_only_modules(crate_roots: list[Path]) -> set[Path]:
 def shipped_files(root: Path, crate_roots: list[Path]) -> list[Path]:
     """Every `.rs` under `root` except those `crate_roots` reach only under `#[cfg(test)]`."""
     excluded = test_only_modules(crate_roots)
-    return [p for p in sorted(root.rglob("*.rs")) if p.resolve() not in excluded]
+    return [p for p in crate_sources(root) if p.resolve() not in excluded]
 
 
 def production_sources(root: Path) -> dict[str, str]:
@@ -166,7 +134,7 @@ def production_sources(root: Path) -> dict[str, str]:
     prefix = root.resolve().relative_to(REPO.resolve()).as_posix() + "/"
     crate_roots = [REPO / r for r in sorted(_rust_targets.crate_roots()) if r.startswith(prefix)]
     return {
-        str(p.relative_to(REPO)): code_only(production_text(p.read_text(encoding="utf-8")))
+        str(p.relative_to(REPO)): production_view(p).without_comments()
         for p in shipped_files(root, crate_roots)
     }
 
