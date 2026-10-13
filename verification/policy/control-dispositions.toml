@@ -4032,10 +4032,18 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-10002"
 project = "mcp-re-proxy"
-control = "src/lib.rs#app::tests::a_faulted_clock_refuses_only_when_it_disables_the_crl_refusal"
+control = "src/lib.rs#tls_plane::crl_reference::tests::a_faulted_clock_refuses_only_when_it_disables_the_crl_refusal"
 decision = "new-proposition"
 proposition = "NP-065"
 recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-20487"
+project = "mcp-re-proxy"
+control = "src/lib.rs#tls_plane::crl_reference::tests::a_reference_checked_without_crls_does_not_serve_a_plan_that_loads_them"
+decision = "new-proposition"
+proposition = "NP-065"
+recorded = "2026-10-13"
 
 [[disposition]]
 id = "CD-10006"
@@ -4160,7 +4168,7 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-10029"
 project = "mcp-re-proxy"
-control = "src/lib.rs#startup_plan::tests::a_plausible_deployment_clock_is_not_a_fault"
+control = "src/lib.rs#clock::tests::a_plausible_deployment_clock_is_not_a_fault"
 decision = "new-proposition"
 proposition = "NP-065"
 recorded = "2026-09-19"
@@ -4168,7 +4176,7 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-10036"
 project = "mcp-re-proxy"
-control = "src/lib.rs#startup_plan::tests::an_epoch_or_pre_epoch_clock_reading_is_a_fault"
+control = "src/lib.rs#clock::tests::an_epoch_or_pre_epoch_clock_reading_is_a_fault"
 decision = "new-proposition"
 proposition = "NP-065"
 recorded = "2026-09-19"

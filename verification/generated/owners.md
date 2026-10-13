@@ -181,6 +181,7 @@ not an omission to hide.
 | proxy.credential_currency_evidence_reporting | V0 | _none_ | 0 |
 | proxy.credential_key_correspondence | V0 | THM-0026 | 1 |
 | proxy.credential_key_correspondence_sole_producer | V0 | _none_ | 0 |
+| proxy.crl_reference_sole_producer | V0 | _none_ | 0 |
 | proxy.cross_machine_legality | V0 | THM-0049 | 0 |
 | proxy.currency_policy_classification | V0 | _none_ | 0 |
 | proxy.current_authenticated_peer | V0 | THM-0033 | 0 |

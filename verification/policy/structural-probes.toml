@@ -2121,3 +2121,76 @@ module-tree-visibility = "`build` is `pub` at the crate root, the widest positio
 alternate-constructors = "the listener takes a `BindScope` (`serve::bind`), which the validated configuration projects; no entry point takes a raw `ClientConfig` or `LocalConfig`"
 generated-or-deserialization = "`ValidatedClientConfig` has no Deserialize; a document becomes one only through `from_json`, which runs the checks"
 test-only-construction = "the crate's tests build through `ValidatedClientConfig::from_json`; no test-gated `build` overload exists"
+
+# --- proxy.crl_reference_sole_producer (MCPRE-210) --------------------------------------
+# The boot-time CRL freshness refusal reads its instant from a `CrlReference`. S59 is the
+# call the composition root used to make: the TLS plane handed a raw clock reading, which
+# compiled on the tree before MCPRE-210. S60 closes the reference's other route, a literal.
+
+[[probe]]
+id = "S59"
+unit = "proxy.crl_reference_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "`TlsPlane::materialize` takes a `CrlReference`: crate code cannot hand the plane a raw clock reading as the stale-CRL comparison instant"
+insertion_parent = "mcp-re-proxy/src/lib.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0308"
+note = """
+THE BYPASS MCPRE-210 NAMED, and the falsifier: restore `startup_now_unix: i64` and this is
+exactly the old, legal call, which the lane reports as the boundary open. The instant is `0`,
+the reading a pre-epoch clock clamps to, against which every client CRL compares as fresh.
+On the tree before MCPRE-210 this probe compiled.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S59. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+pub fn hostile(
+    plan: &crate::startup_plan::ChannelEstablishmentPlan,
+    credential: crate::capability_materialization::EstablishedChannelCredential,
+) -> bool {
+    crate::tls_plane::TlsPlane::materialize(
+        plan,
+        credential,
+        0, // STRUCTURAL-PROBE-SITE
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    )
+    .is_ok()
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`materialize` is `pub(crate)`, so the crate root is the widest position any caller occupies; its third parameter is `CrlReference`"
+alternate-constructors = "no other function establishes a `TlsPlane`; the plane's tests reach `materialize` with a reference produced by `CrlReference::of`"
+generated-or-deserialization = "`TlsPlane` has no Default, Clone or Deserialize"
+test-only-construction = "the plane's tests build their reference through `CrlReference::of` over a posture that enforces no CRL; no test-gated `materialize` overload exists"
+
+[[probe]]
+id = "S60"
+unit = "proxy.crl_reference_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside `tls_plane::crl_reference` can write a `CrlReference` literal, so every reference came from `CrlReference::of`, which refuses a faulted reading under an enforced CRL"
+insertion_parent = "mcp-re-proxy/src/lib.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE HOSTILE VALUE IS THE ONE THE PRODUCER REFUSES: an instant of `0`, a faulted reading. What
+is illegal is holding it as a reference without running the check, which is the content of
+the claim.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S60. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+pub fn hostile() -> crate::tls_plane::CrlReference {
+    crate::tls_plane::CrlReference {
+        unix: 0, // STRUCTURAL-PROBE-SITE
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the field is bare-private to `tls_plane::crl_reference`; `tls_plane` re-exports the TYPE `pub(crate)`. The probe sits at the crate root, a position that can name the type and is refused the field"
+alternate-constructors = "`CrlReference::of(&StartupReading, &CrlRevocationState)` is the only associated function returning `Self`; `unix_seconds` is `pub(super)` and returns a copy"
+generated-or-deserialization = "the derives are Debug, Clone and Copy; no Default, From or Deserialize"
+test-only-construction = "the owner's tests build references only through `of`; no test-gated constructor exists"

@@ -23,26 +23,6 @@ use crate::config_state::validation::ValidatedDeployment;
 /// Planning composes the facts the owners state; it does not restate their semantics.
 pub use crate::config_state::replay::{PlannedStore, ReplayPlan};
 
-/// A wall-clock reading below this Unix-seconds threshold is treated as a host-clock
-/// fault: 2000-01-01 UTC, far below any plausible real deployment time, so a legitimate
-/// clock never trips it while a 0/epoch clock always does.
-pub const EPOCH_CLOCK_FAULT_THRESHOLD_SECS: i64 = 946_684_800;
-
-/// Whether `now_unix` indicates the host clock is unset or broken rather than merely
-/// inaccurate (audit #94 F5).
-///
-/// The reading comes from the environment, but deciding that a given reading is a FAULT
-/// is a rule, and it is the part that had to be testable: the caller cannot conjure a
-/// broken host clock to exercise it. A wall clock at/near the epoch makes every freshness
-/// check fail closed, so the whole deployment denies every request; that is safe but
-/// indistinguishable from a load or policy problem unless startup names the cause.
-///
-/// `now_unix()` clamps a pre-epoch `SystemTime` error to 0, so 0 is the sentinel this must
-/// catch, and any negative value that ever reached here is a fault by the same argument.
-pub fn host_clock_is_faulted(now_unix: i64) -> bool {
-    now_unix < EPOCH_CLOCK_FAULT_THRESHOLD_SECS
-}
-
 /// The trust plan and the signing plan, produced together: the one producer of both.
 ///
 /// Both planes consume the root issuer kid delegated credentials chain to (ADR-MCPRE-052)
@@ -1077,27 +1057,5 @@ mod tests {
             ),
             "admission must not need the replay tier to have asked first"
         );
-    }
-
-    /// The sentinel `now_unix()` produces for a pre-epoch `SystemTime` error, and the
-    /// unset-clock reading it stands in for, must both be faults. A predicate that only
-    /// caught literal 0 would pass a host reading a few days past the epoch.
-    #[test]
-    fn an_epoch_or_pre_epoch_clock_reading_is_a_fault() {
-        assert!(host_clock_is_faulted(0));
-        assert!(host_clock_is_faulted(-1));
-        assert!(host_clock_is_faulted(86_400));
-        assert!(host_clock_is_faulted(EPOCH_CLOCK_FAULT_THRESHOLD_SECS - 1));
-    }
-
-    /// The threshold is far enough below any real deployment time that a correct clock
-    /// never trips it — otherwise the warning would fire on every start and stop meaning
-    /// anything.
-    #[test]
-    fn a_plausible_deployment_clock_is_not_a_fault() {
-        assert!(!host_clock_is_faulted(EPOCH_CLOCK_FAULT_THRESHOLD_SECS));
-        // 2026-01-01 UTC.
-        assert!(!host_clock_is_faulted(1_767_225_600));
-        assert!(!host_clock_is_faulted(i64::MAX));
     }
 }

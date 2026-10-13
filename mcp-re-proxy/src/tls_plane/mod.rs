@@ -197,10 +197,14 @@ mod client_revocation_posture;
 /// Keeping that posture fresh without a restart.
 mod crl_reload_worker;
 
+/// The instant the boot-time CRL freshness refusal compares against.
+mod crl_reference;
+
 use client_revocation_posture::build_revocation_index;
 use client_revocation_posture::load_and_check_crls;
 
 pub(crate) use client_revocation_posture::revocation_posture_lines;
+pub(crate) use crl_reference::CrlReference;
 use crl_reload_worker::start_reload_worker;
 
 impl TlsPlane {
@@ -212,20 +216,24 @@ impl TlsPlane {
     /// what is left here is loading the bytes, building the verifier and starting the
     /// worker the posture calls for.
     ///
+    /// `crl_reference` is the instant the stale-CRL refusal compares against, and holding
+    /// one is the proof that the startup reading may serve as it (see
+    /// [`CrlReference::of`]); [`CrlReference::for_paths`] refuses one checked without CRLs.
+    ///
     /// `credential` is MOVED in — the reload worker rebuilds the verifier from the same
     /// immutable key material, so nothing outside this plane may keep a second copy. The
     /// key-source owner established it with the custody the deployment requested, so the
     /// custody this plane serves under is that one.
-    pub fn materialize(
+    pub(crate) fn materialize(
         plan: &crate::startup_plan::ChannelEstablishmentPlan,
         credential: crate::capability_materialization::EstablishedChannelCredential,
-        startup_now_unix: i64,
+        crl_reference: CrlReference,
         deployment: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<TlsPlane, String> {
         let (material, server_chain, client_ca) = credential.into_parts();
         let established = material.exposure();
         let crl_paths = plan.client_revocation.paths();
-        let crls = load_and_check_crls(crl_paths, &client_ca, startup_now_unix)?;
+        let crls = load_and_check_crls(crl_paths, &client_ca, crl_reference.for_paths(crl_paths)?)?;
         // Cloned because the initial build below consumes the original; the reload
         // re-reads only the CRLs, never this.
         let reload_chain = server_chain.clone();
@@ -270,14 +278,6 @@ impl TlsPlane {
     }
 }
 
-/// ADR-MCPRE-051 §6 (MCPRE-116): the in-process CRL hot-reload task. Every
-/// `interval_secs` it re-reads the `--client-crl` files and rebuilds the direct-TLS
-/// verifier from the SAME immutable server key material, atomically swapping the
-/// result into `snapshot`. A read/parse/build failure keeps the last-good config
-/// (which still fails closed once its CRL passes `nextUpdate`), so a bad reload
-/// never widens what is accepted. The task observes `SHUTDOWN` between naps so it
-/// exits promptly on a rolling deploy. Spawned only when `--client-crl-reload-secs`
-/// is set with a non-empty `--client-crl` on the direct-TLS path.
 /// The TLS server key the verifier is rebuilt around, under either custody.
 ///
 /// A CRL reload re-reads only the CRLs; this is carried verbatim across the rebuild.
@@ -520,6 +520,16 @@ mod handle_lifetime_tests {
 /// The plane serves under the custody of the credential it was handed.
 #[cfg(test)]
 mod custody_agreement_tests {
+    /// A CRL freshness reference for a deployment that enforces no client CRL, through the
+    /// one producer: these fixtures load no CRL, so the reading never reaches a comparison.
+    fn no_crl_reference() -> super::CrlReference {
+        super::CrlReference::of(
+            &crate::clock::StartupReading::at(0),
+            &crate::config_state::test_support::crl_posture(&[], None),
+        )
+        .expect("no client CRL is enforced")
+    }
+
     use super::*;
     use crate::capability_materialization::EstablishedChannelCredential;
     use crate::startup_plan::ChannelEstablishmentPlan;
@@ -545,7 +555,7 @@ mod custody_agreement_tests {
                 chain.clone(),
                 chain,
             ),
-            0,
+            no_crl_reference(),
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .expect("agreeing delegated custody over corresponding material materializes");
@@ -617,7 +627,7 @@ mod custody_agreement_tests {
                 chain.clone(),
                 chain.clone(),
             ),
-            0,
+            no_crl_reference(),
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .expect("agreeing delegated custody over corresponding material materializes");

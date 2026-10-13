@@ -1956,8 +1956,9 @@ raw; this is about what it does with the one that decides the listener.
 
 ## NP-065 — a faulted deployment clock refuses exactly where it would disable a refusal
 
-**Controls:** `mcp-re-proxy/src/app.rs::a_faulted_clock_refuses_only_when_it_disables_the_crl_refusal`,
-`mcp-re-proxy/src/startup_plan.rs::an_epoch_or_pre_epoch_clock_reading_is_a_fault`,
+**Controls:** `mcp-re-proxy/src/tls_plane/crl_reference.rs::a_faulted_clock_refuses_only_when_it_disables_the_crl_refusal`,
+`::a_reference_checked_without_crls_does_not_serve_a_plan_that_loads_them`,
+`mcp-re-proxy/src/clock.rs::an_epoch_or_pre_epoch_clock_reading_is_a_fault`,
 `::a_plausible_deployment_clock_is_not_a_fault`.
 **Statement.** *An epoch or pre-epoch clock reading is a fault and a plausible one is not;
 and a faulted clock refuses startup exactly where the fault would otherwise disable a
@@ -4227,7 +4228,7 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 
 **Controls:** `mcp-re-proxy` `lib#aws_kms_keysource::tests::a_faulted_host_clock_is_refused_rather_than_signed_as_1970`.
 **Carrier:** `mcp-re-proxy/src/aws_kms_keysource.rs`.
-**Statement.** *`amz_date_at` refuses a clock reading that is negative or that `startup_plan::host_clock_is_faulted` marks faulted (epoch, pre-2000), naming the host clock. A plausible reading is formatted as its SigV4 date.*
+**Statement.** *`amz_date_at` refuses a clock reading that is negative or that `clock::reading_is_faulted` marks faulted (epoch, pre-2000), naming the host clock. A plausible reading is formatted as its SigV4 date.*
 **If false.** A credential-bearing KMS request is signed and sent with a 1970 X-Amz-Date. KMS rejects it for skew, and the operator sees an AWS signature error instead of a refusal naming the host clock.
 **Likely owner:** none. proxy.aws_kms_adapter states 'minimal audited SigV4' but no clock clause. NP-065 is about startup refusal ('and not elsewhere'), and NP-128 is about the clock's own readings.
 **Severity:** `medium` (the ADR-MCPRE-068 §4.1 floor).

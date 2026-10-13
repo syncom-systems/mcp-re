@@ -151,12 +151,12 @@ impl SigningPlane {
     /// `roots` is MOVED in (borrowed earlier for TLS material); taking the witness rather
     /// than a signer is what makes a plane over uncompared roles unconstructible. It takes
     /// no shutdown flag: the worker started here stops only when this plane is dropped.
-    pub fn materialize(
+    pub(crate) fn materialize(
         plan: &crate::startup_plan::SigningPlan,
         roots: crate::capability_materialization::MaterializedSigningRoles,
-        startup_now_unix: i64,
+        startup_reading: &crate::clock::StartupReading,
     ) -> Result<SigningPlane, String> {
-        Self::materialize_over(plan, roots, startup_now_unix)
+        Self::materialize_over(plan, roots, startup_reading.unix_seconds())
     }
 
     /// The materialization over any root signer; reachable outside this module only through

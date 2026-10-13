@@ -277,10 +277,12 @@ path = "mcp-re-proxy/src/app.rs"
 # longer derives the binding and identity policy itself or asks `startup_plan` for the
 # provenance: 737 (measured at 132f448) -> 698.
 # MCPRE-204: the connection-bounds owner hands the root a read timeout that is always present,
-# so the root no longer re-proves it: 698 (measured at 1c318c4) -> 697. `baseline_sha` names that
-# parent.
-baseline_prod_loc = 697
-baseline_sha = "1c318c4"
+# so the root no longer re-proves it: 698 (measured at 1c318c4) -> 697.
+# MCPRE-210: the startup clock reading is a value; the CRL freshness reference is the TLS
+# plane's own input, so the root no longer carries the fault refusal or reads the clock
+# twice: 697 (measured at a36c92f) -> 645. `baseline_sha` names that parent.
+baseline_prod_loc = 645
+baseline_sha = "a36c92f"
 status = "reviewed-exception"
 review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 
@@ -564,10 +566,11 @@ path = "mcp-re-proxy/src/startup_plan.rs"
 # MCPRE-209: the response-authority plans have one producer here and the signing plan's
 # fields are private behind projections: 340 (measured at c939c2f) -> 338.
 # MCPRE-208: the peer-identity provenance is part of the channel-binding state's projection,
-# so its second exhaustive match here goes: 338 (measured at 132f448) -> 312. `baseline_sha`
-# names that parent.
-baseline_prod_loc = 312
-baseline_sha = "132f448"
+# so its second exhaustive match here goes: 338 (measured at 132f448) -> 312.
+# MCPRE-210: the clock-fault rule moves to the clock owner: 312 (measured at a36c92f) -> 292.
+# `baseline_sha` names that parent.
+baseline_prod_loc = 292
+baseline_sha = "a36c92f"
 status = "unreviewed"
 
 [[debt]]
