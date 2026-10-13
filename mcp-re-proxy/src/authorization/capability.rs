@@ -40,7 +40,7 @@ pub(crate) fn evaluator(
     trust: &TrustDocumentSource,
     response_kid: &str,
     audience_id: &str,
-    max_clock_skew: i64,
+    max_clock_skew: mcp_re_core::MaxClockSkew,
 ) -> Result<Established<Arc<dyn AuthorizationEvaluator>>, String> {
     let Some(enforced) = state.enforced() else {
         return Ok(Established::off(AUTHORIZATION_OFF));
@@ -66,7 +66,7 @@ pub(crate) fn evaluator(
         trust.path(),
         scope_name(enforced.accepted_scope()),
         enforced.max_decision_age_secs(),
-        max_clock_skew,
+        max_clock_skew.secs(),
     );
     let max_decision_age = i64::try_from(enforced.max_decision_age_secs().get()).map_err(|_| {
         format!(
@@ -84,7 +84,7 @@ pub(crate) fn evaluator(
             // policy identity, so the deployment's one `--max-clock-skew` governs here as
             // it does the RFC 9421 freshness gate. Reusing it keeps a deployment from
             // agreeing with a peer's clock on the request and disagreeing on the decision.
-            max_clock_skew,
+            max_clock_skew: max_clock_skew.secs(),
             // The owner's bound is a `NonZeroU64` and the verifier reads an `i64`, so a
             // bound the verifier cannot represent refuses startup rather than widening to
             // unbounded.
@@ -121,6 +121,10 @@ mod tests {
     use crate::startup_posture::SeamState;
     use mcp_re_core::SigningKey;
     use mcp_re_http_profile::pdp_decision::DecisionScope;
+
+    fn skew() -> mcp_re_core::MaxClockSkew {
+        mcp_re_core::MaxClockSkew::new(30).expect("a test skew inside the bound")
+    }
 
     /// A trust file written for one test, removed when it ends.
     struct TrustFile(std::path::PathBuf);
@@ -183,7 +187,7 @@ mod tests {
             &file.source(),
             "response-kid",
             "verifier-1",
-            30,
+            skew(),
         )
         .expect("off never refuses");
         let (artifact, posture) = established.into_parts();
@@ -205,7 +209,7 @@ mod tests {
             &file.source(),
             "response-kid",
             "verifier-1",
-            30,
+            skew(),
         )
         .expect("a complete profile installs")
         .into_parts();
@@ -239,7 +243,7 @@ mod tests {
             &file.source(),
             "response-kid",
             "verifier-1",
-            30,
+            skew(),
         ) else {
             panic!("an authority-less profile must fail closed at boot")
         };
@@ -263,7 +267,7 @@ mod tests {
                 &file.source(),
                 "response-kid",
                 "verifier-1",
-                30,
+                skew(),
             )
             .is_err(),
             "a request-slot key must not answer as an authorization authority"
@@ -374,7 +378,7 @@ mod tests {
             &file.source(),
             "response-kid",
             "verifier-1",
-            30,
+            skew(),
         )
         .expect("a complete profile installs")
         .into_parts();

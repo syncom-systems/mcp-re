@@ -258,7 +258,9 @@ fn future_dated_request_within_the_skew_bound_is_accepted() {
 fn strict_tier_policy_restores_exact_freshness() {
     use mcp_re_http_profile::VerifierPolicy;
     let (req, _) = signed(&unique_test_nonce(), CALL);
-    let strict = VerifierPolicy::new(&["ed25519"], 0).expect("strict tier is a valid bound");
+    let strict = VerifierPolicy::default().with_max_clock_skew(
+        mcp_re_core::MaxClockSkew::new(0).expect("strict tier is a valid bound"),
+    );
     assert!(
         Verifier::new(&strict, &resolver())
             .verify_request_floor(&req, EXPIRES)

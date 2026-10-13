@@ -124,17 +124,21 @@ impl VerifierPolicy {
     /// over the SDKs' own 300 s default request TTL while keeping retention bounded.
     pub const DEFAULT_MAX_SIGNATURE_VALIDITY: i64 = 3600;
 
-    /// Build a policy, failing closed on any configuration that would be unsafe
+    /// Build a policy, failing closed on any algorithm set that would be unsafe
     /// or meaningless:
     ///
     /// - an algorithm token with **no implemented verifier** — the algorithm-
     ///   confusion guard. Allowlisting `ml-dsa-65` while only Ed25519 dispatch
     ///   exists would let an Ed25519 signature be accepted under an ML-DSA claim;
-    /// - a negative skew (it would NARROW the window asymmetrically) or one above
-    ///   [`Self::MAX_CLOCK_SKEW_BOUND`];
     /// - an empty algorithm set, which rejects every message and reads as a
     ///   misconfiguration rather than a policy.
-    pub fn new(algorithms: &[&str], max_clock_skew: i64) -> Result<Self, HttpProfileError> {
+    ///
+    /// The skew is a [`MaxClockSkew`], so a negative one (it would NARROW the window
+    /// asymmetrically) or one above [`Self::MAX_CLOCK_SKEW_BOUND`] never reaches here.
+    pub fn new(
+        algorithms: &[&str],
+        max_clock_skew: MaxClockSkew,
+    ) -> Result<Self, HttpProfileError> {
         if algorithms.is_empty() {
             return Err(HttpProfileError::MalformedEvidence("empty algorithm set"));
         }
@@ -150,11 +154,6 @@ impl VerifierPolicy {
                 resolved.push(alg);
             }
         }
-        let Some(max_clock_skew) = MaxClockSkew::new(max_clock_skew) else {
-            return Err(HttpProfileError::MalformedEvidence(
-                "clock skew out of bounds",
-            ));
-        };
         Ok(VerifierPolicy {
             algorithms: resolved,
             max_clock_skew: max_clock_skew.secs(),
@@ -190,6 +189,12 @@ impl VerifierPolicy {
     pub fn accepted_algorithm(&self, token: &str) -> Option<ProfileAlgorithm> {
         let alg = ProfileAlgorithm::from_token(token)?;
         self.algorithms.contains(&alg).then_some(alg)
+    }
+
+    /// The same policy under another bounded skew tolerance.
+    pub fn with_max_clock_skew(mut self, max_clock_skew: MaxClockSkew) -> Self {
+        self.max_clock_skew = max_clock_skew.secs();
+        self
     }
 
     /// Narrow the accepted signature-validity window. The default is also the ceiling:
@@ -230,7 +235,7 @@ mod tests {
             p.max_signature_validity(),
             VerifierPolicy::DEFAULT_MAX_SIGNATURE_VALIDITY
         );
-        let p = VerifierPolicy::new(&["ed25519"], 30).expect("policy");
+        let p = VerifierPolicy::new(&["ed25519"], skew(30)).expect("policy");
         assert_eq!(
             p.max_signature_validity(),
             VerifierPolicy::DEFAULT_MAX_SIGNATURE_VALIDITY
@@ -262,6 +267,10 @@ mod tests {
     }
     use super::*;
 
+    fn skew(secs: i64) -> MaxClockSkew {
+        MaxClockSkew::new(secs).expect("a test skew inside the bound")
+    }
+
     #[test]
     fn default_is_ed25519_only_with_bounded_skew() {
         let p = VerifierPolicy::default();
@@ -282,9 +291,11 @@ mod tests {
 
     #[test]
     fn default_policy_is_one_new_would_build() {
-        let built =
-            VerifierPolicy::new(&DEFAULT_ALGORITHMS, VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW)
-                .expect("the defaults are inside new()'s band");
+        let built = VerifierPolicy::new(
+            &DEFAULT_ALGORITHMS,
+            skew(VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW),
+        )
+        .expect("the default algorithm set builds");
         let d = VerifierPolicy::default();
         assert_eq!(d.algorithms, built.algorithms);
         assert_eq!(d.max_clock_skew(), built.max_clock_skew());
@@ -298,7 +309,8 @@ mod tests {
     fn an_algorithm_without_a_verifier_cannot_be_allowlisted() {
         for registered_but_unimplemented in ["ml-dsa-65", "rsa-pss-sha512", "ecdsa-p256-sha256"] {
             assert_eq!(
-                VerifierPolicy::new(&["ed25519", registered_but_unimplemented], 30).unwrap_err(),
+                VerifierPolicy::new(&["ed25519", registered_but_unimplemented], skew(30))
+                    .unwrap_err(),
                 HttpProfileError::UnsupportedAlgorithm,
                 "{registered_but_unimplemented}: allowlisting it would enable algorithm confusion"
             );
@@ -309,25 +321,38 @@ mod tests {
 
     #[test]
     fn out_of_bounds_configuration_fails_closed() {
-        assert!(VerifierPolicy::new(&["ed25519"], -1).is_err());
         assert!(
-            VerifierPolicy::new(&["ed25519"], VerifierPolicy::MAX_CLOCK_SKEW_BOUND + 1).is_err(),
-            "skew above the cap is a configuration error, not a wider window"
+            VerifierPolicy::new(&[], skew(30)).is_err(),
+            "empty algorithm set"
         );
-        assert!(VerifierPolicy::new(&[], 30).is_err(), "empty algorithm set");
-        assert!(VerifierPolicy::new(&["ed25519"], VerifierPolicy::MAX_CLOCK_SKEW_BOUND).is_ok());
-        assert!(VerifierPolicy::new(&["ed25519"], 0).is_ok(), "strict tier");
+        assert!(
+            VerifierPolicy::new(&["ed25519"], skew(VerifierPolicy::MAX_CLOCK_SKEW_BOUND)).is_ok()
+        );
+        assert!(
+            VerifierPolicy::new(&["ed25519"], skew(0)).is_ok(),
+            "strict tier"
+        );
+    }
+
+    /// The skew a policy is built or re-skewed with is the skew it reads back.
+    #[test]
+    fn the_skew_a_policy_is_given_is_the_skew_it_applies() {
+        let built = VerifierPolicy::new(&["ed25519"], skew(17)).expect("policy");
+        assert_eq!(built.max_clock_skew(), 17);
+        let reskewed = VerifierPolicy::default().with_max_clock_skew(skew(0));
+        assert_eq!(reskewed.max_clock_skew(), 0);
+        assert_eq!(reskewed.algorithms, VerifierPolicy::default().algorithms);
     }
 
     /// The agility seam is real but narrow: it maps a token to a VERIFIER, so the
     /// only thing a deployment can turn on today is the algorithm that exists.
     #[test]
     fn the_registry_maps_tokens_to_implemented_verifiers() {
-        let p = VerifierPolicy::new(&["ed25519"], 30).expect("valid");
+        let p = VerifierPolicy::new(&["ed25519"], skew(30)).expect("valid");
         assert_eq!(p.accepted_algorithm("ed25519").unwrap().token(), "ed25519");
         assert_eq!(p.accepted_algorithm("ml-dsa-65"), None);
         assert!(
-            VerifierPolicy::new(&["ed25519", "ed25519"], 30).is_ok(),
+            VerifierPolicy::new(&["ed25519", "ed25519"], skew(30)).is_ok(),
             "duplicates collapse"
         );
     }

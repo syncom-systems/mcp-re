@@ -285,16 +285,12 @@ pub(crate) struct AdmissionGate {
 /// workload has been revoked, because currency is a comparison against state only the
 /// deployment can supply.
 ///
-/// # Why one scalar travels beside the state
-///
-/// `max_clock_skew` is a validated request parameter with three unrelated consumers — the
-/// replay tier's skew-folded retain-until, the request `VerifierPolicy`, and this policy —
-/// and no admission-specific rule. It belongs to no machine, so it is passed rather than
-/// owned.
+/// `max_clock_skew` is the freshness owner's bounded skew: the record and assertion windows
+/// get the same tolerance as the request and the replay horizon.
 #[cfg(feature = "redis_replay")]
 pub(crate) fn admission_currency(
     state: &crate::config_state::AdmissionState,
-    max_clock_skew: i64,
+    max_clock_skew: mcp_re_core::MaxClockSkew,
     control: &crate::control_runtime::ControlRuntimeProvision,
 ) -> Result<Established<AdmissionGate>, String> {
     use crate::config_state::{AdmissionAvailability, AdmissionPosture};
@@ -342,7 +338,7 @@ pub(crate) fn admission_currency(
                 mcp_re_http_profile::PROFILE_TAG,
                 mcp_re_http_profile::authoritative_admission::record::AdmissionStateCurrentness {
                     max_record_age: gate.record_currentness().max_age_secs(),
-                    max_clock_skew,
+                    max_clock_skew: max_clock_skew.secs(),
                 },
             ),
         ))
@@ -369,7 +365,7 @@ pub(crate) fn admission_currency(
             source: Arc::new(source),
             policy: mcp_re_http_profile::AdmissionPolicy {
                 max_assertion_age: 300,
-                max_clock_skew,
+                max_clock_skew: max_clock_skew.secs(),
                 degraded_propagation_bound,
                 allow_degraded_mode,
             },
@@ -389,7 +385,7 @@ pub(crate) fn admission_currency(
 #[cfg(not(feature = "redis_replay"))]
 pub(crate) fn admission_currency(
     state: &crate::config_state::AdmissionState,
-    _max_clock_skew: i64,
+    _max_clock_skew: mcp_re_core::MaxClockSkew,
     _control: &crate::control_runtime::ControlRuntimeProvision,
 ) -> Result<Established<AdmissionGate>, String> {
     if state.is_enforced() {

@@ -6688,8 +6688,8 @@ expect_red = [
 ]
 note = """
 THE SIGNATURE GATE IS NOT A SECOND CARRIER, and the historical defect is exactly that
-mistake. `VerifierPolicy::new` refuses a skew outside the profile bound, so the RFC 9421
-freshness window was always bounded -- and `DelegationExpectations` carries this number
+mistake. `VerifierPolicy` takes its skew as a `MaxClockSkew`, which holds nothing outside the
+profile bound, so the RFC 9421 freshness window was always bounded -- and `DelegationExpectations` carries this number
 STRAIGHT THROUGH to `DelegationVerifyParams.max_clock_skew`, which widens the credential's
 `nbf`/`exp` with no cap of its own. A policy of 604800 therefore accepted a delegated
 credential a week past its `exp` while the signature gate silently clamped the same number,

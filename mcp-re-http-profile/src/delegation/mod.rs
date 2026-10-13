@@ -149,9 +149,9 @@ pub struct VerifiedDelegation {
 /// the credential window.
 ///
 /// The credential window and the RFC 9421 signature window are configured from one
-/// operator value in every caller, but only the signature side runs it through
-/// [`VerifierPolicy::new`], where `0..=MAX_CLOCK_SKEW_BOUND` is enforced. Applied
-/// raw here, `max_clock_skew: 86400` yielded a 300 s signature gate beside a
+/// operator value in every caller, but only the signature side runs it through a
+/// [`MaxClockSkew`](mcp_re_core::MaxClockSkew), which holds only `0..=MAX_CLOCK_SKEW_BOUND`.
+/// Applied raw here, `max_clock_skew: 86400` yielded a 300 s signature gate beside a
 /// 24-hour credential-acceptance gate — an exfiltrated or de-listed delegated key
 /// staying acceptable a day past its `exp`, with nothing in the operator's view
 /// saying so. The two gates are now bounded by the same constant, and a negative

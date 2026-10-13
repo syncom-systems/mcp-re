@@ -618,8 +618,8 @@ mod tests {
         );
     }
 
-    /// The bound has to be the profile's, or the config admits a value
-    /// `VerifierPolicy::new` will reject and silently replace with its default.
+    /// The bound has to be the profile's, or the config admits a value no
+    /// `MaxClockSkew` can hold, and the verifier policy silently keeps its default.
     #[test]
     fn a_config_skew_bound_matches_the_profile_bound() {
         assert_eq!(

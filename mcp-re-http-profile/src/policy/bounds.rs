@@ -53,10 +53,13 @@ mod tests {
 
     #[test]
     fn each_bound_reads_the_value_the_policy_was_built_with() {
-        let policy = VerifierPolicy::new(&["ed25519"], 12)
-            .expect("a legal policy")
-            .with_max_signature_validity(90)
-            .expect("a legal window");
+        let policy = VerifierPolicy::new(
+            &["ed25519"],
+            mcp_re_core::MaxClockSkew::new(12).expect("bounded"),
+        )
+        .expect("a legal policy")
+        .with_max_signature_validity(90)
+        .expect("a legal window");
         assert_eq!(policy.max_clock_skew(), 12);
         assert_eq!(policy.max_signature_validity(), 90);
     }

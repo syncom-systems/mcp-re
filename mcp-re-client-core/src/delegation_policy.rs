@@ -65,8 +65,8 @@ impl DelegationPolicy {
     /// The clock-skew tolerance this policy actually applies: the configured value
     /// clamped to the profile's `0..=MAX_CLOCK_SKEW_BOUND` range.
     ///
-    /// The bound is the profile's, not this crate's ([`VerifierPolicy::new`] refuses
-    /// anything outside it), and it has to be applied HERE because the delegation
+    /// The bound is the profile's, not this crate's ([`MaxClockSkew`] cannot hold anything
+    /// outside it), and it has to be applied HERE because the delegation
     /// credential's freshness check consumes the number raw: `DelegationExpectations`
     /// carries it straight through to `DelegationVerifyParams.max_clock_skew`, which
     /// widens `nbf`/`exp` with no cap of its own. Passing the configured value there
@@ -78,7 +78,7 @@ impl DelegationPolicy {
     /// response unverifiable, and unlike the previous fallback it leaves the two windows
     /// equal: one number, bounded, on both gates.
     ///
-    /// [`VerifierPolicy::new`]: mcp_re_http_profile::VerifierPolicy::new
+    /// [`MaxClockSkew`]: mcp_re_core::MaxClockSkew
     fn bounded_clock_skew(&self) -> i64 {
         self.clock_skew
     }
@@ -88,18 +88,13 @@ impl DelegationPolicy {
     /// Built from the profile's own implemented algorithm set and
     /// [`bounded_clock_skew`](Self::bounded_clock_skew), so verification never runs under a
     /// skew this policy did not carry.
-    // `VerifierPolicy::new` errs only on an empty or unresolvable algorithm set or a skew
-    // outside `0..=MAX_CLOCK_SKEW_BOUND`. `DEFAULT_ALGORITHMS` is the profile's own
-    // implemented set (non-empty, every token resolves; pinned by the profile's
-    // `default_policy_is_one_new_would_build`), and `DelegationPolicy::new` clamps the skew
-    // against the same `MAX_CLOCK_SKEW_BOUND` that `VerifierPolicy::new` checks.
+    // `MaxClockSkew::new` refuses only a skew outside `0..=BOUND_SECS`, and
+    // `DelegationPolicy::new` clamps the skew to `MAX_CLOCK_SKEW_BOUND`, which is that bound.
     #[allow(clippy::expect_used)]
     fn verifier_policy(&self) -> mcp_re_http_profile::VerifierPolicy {
-        mcp_re_http_profile::VerifierPolicy::new(
-            &mcp_re_http_profile::DEFAULT_ALGORITHMS,
-            self.bounded_clock_skew(),
-        )
-        .expect("default algorithms and a clamped skew always build a VerifierPolicy")
+        let skew = mcp_re_core::MaxClockSkew::new(self.bounded_clock_skew())
+            .expect("the clamp in `new` keeps the skew inside the profile bound");
+        mcp_re_http_profile::VerifierPolicy::default().with_max_clock_skew(skew)
     }
 
     /// Build a delegation policy, bounding the configured clock skew as it goes.
