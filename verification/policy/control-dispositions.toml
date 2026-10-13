@@ -15149,3 +15149,11 @@ control = "src/lib.rs#control_runtime::tests::the_first_request_starts_the_runti
 decision = "new-proposition"
 proposition = "NP-124"
 recorded = "2026-10-13"
+
+[[disposition]]
+id = "CD-20441"
+project = "mcp-re-proxy"
+control = "src/lib.rs#control_runtime::tests::concurrent_first_requests_share_the_one_runtime_the_provision_owns"
+decision = "new-proposition"
+proposition = "NP-124"
+recorded = "2026-10-13"
