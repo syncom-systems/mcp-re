@@ -59,6 +59,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
+from _lanes import BY_NAME, claims  # noqa: E402
 import _registries  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
@@ -87,16 +88,7 @@ from _unit_selection import (  # noqa: E402
 
 REGISTRY = _registries.path("structural-probes")
 
-SCHEME = "structural://"
-
-
-def claims_structural(unit: dict) -> bool:
-    """Whether a `structural://` URI puts this unit inside the lane's attestation closure.
-
-    `_evidence.required_lanes` reads every declared scheme, so a unit carrying this URI
-    cannot be attested without a structural record measured at its exact fingerprint.
-    """
-    return any(str(e).startswith(SCHEME) for e in unit.get("evidence", []))
+SCHEME = BY_NAME["structural"].scheme
 
 
 #: The rustc diagnostics this lane reads are JSON. The setting is rules_rust's; it applies to
@@ -273,7 +265,7 @@ def main() -> int:
             f"measures the LANE and says nothing about the repository's declarations"
         )
     declaring = (
-        sorted(uid for uid, unit in units.items() if claims_structural(unit)) if official else []
+        sorted(uid for uid, unit in units.items() if claims(unit, "structural")) if official else []
     )
     registered = {probe["unit"] for probe in probes}
     registered_probes = list(probes)
@@ -391,7 +383,7 @@ def main() -> int:
         # iterating the whole registry would write a pass for units no probe ran against.
         for unit_id in sorted({probe["unit"] for probe in selected}):
             unit = units.get(unit_id)
-            if unit is None or not claims_structural(unit):
+            if unit is None or not claims(unit, "structural"):
                 continue
             mine = [p["id"] for p in selected if p["unit"] == unit_id]
             failed = [pid for pid in mine if pid in failures]

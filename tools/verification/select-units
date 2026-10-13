@@ -51,7 +51,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _compose import FORMAL_LANES, requirements  # noqa: E402
+from _compose import requirements  # noqa: E402
+from _lanes import FORMAL  # noqa: E402
 from _evidence import PREREQUISITE_KINDS  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
@@ -183,7 +184,7 @@ def main() -> int:
         help=f"defer a scope larger than this (default {DEFAULT_MAX_UNITS})",
     )
     parser.add_argument(
-        "--lane", choices=sorted(FORMAL_LANES),
+        "--lane", choices=sorted(lane.name for lane in FORMAL),
         help="keep only the affected units this lane is required for",
     )
     parser.add_argument(

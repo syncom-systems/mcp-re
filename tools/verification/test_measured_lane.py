@@ -305,7 +305,7 @@ def test_every_declaring_unit_has_a_measurement_and_every_measurement_a_declarin
     graph — `decide_issuance` refuses a claimed lane with no record — and a measurement whose
     unit does not declare the scheme produces a number no claim rests on."""
     registered = {m["unit"] for m in load_measurements(REGISTRY)}
-    declaring = {uid for uid, unit in UNITS.items() if lane.claims_measured(unit)}
+    declaring = {uid for uid, unit in UNITS.items() if lane.claims(unit, "measured")}
     assert declaring, "0D declared the first one; an empty set means the reclassification was lost"
     assert declaring <= registered, sorted(declaring - registered)
     assert registered <= set(UNITS), sorted(registered - set(UNITS))

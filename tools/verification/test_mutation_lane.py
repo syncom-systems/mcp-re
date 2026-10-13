@@ -393,7 +393,7 @@ def test_the_unit_declares_mutation_evidence_so_attestation_depends_on_it():
     from _evidence import required_lanes
 
     unit = UNITS["http_profile.request_floor_result"]
-    assert lane.claims_mutation_evidence(unit)
+    assert lane.claims(unit, "mutation")
     assert "mutation" in required_lanes(unit)
 
 

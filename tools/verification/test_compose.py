@@ -21,16 +21,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _compose import (  # noqa: E402
-    EXTRACTION_LANES,
-    FORMAL_LANES,
-    HOST_LANES,
-    compose,
-    contradictions,
-    requirements,
-)
+from _compose import compose, contradictions, requirements  # noqa: E402
+from _lanes import EXTRACTION_LANES, FORMAL, HOST_LANES, HYGIENE, PHASES  # noqa: E402
 from _evidence import EvidenceRecord, write_record  # noqa: E402
-from _load_tool import load_tool  # noqa: E402
 
 ARTIFACT = f"sha256:{'d' * 64}"
 
@@ -381,10 +374,9 @@ def test_a_lane_declaring_NOT_REQUIRED_for_a_required_lane_is_a_contradiction():
 
 def test_a_phase_refuses_a_lane_that_declares_NOT_REQUIRED_for_a_required_lane():
     """The executor holds the rule, so it must actually consult it."""
-    verify = load_tool("verify")
     source = (Path(__file__).resolve().parent / "verify").read_text()
     assert "contradictions(" in source, "the phase never asks"
-    assert hasattr(verify, "_phase_outcome")
+    assert "def _phase_outcome(" in source
 
 
 def test_a_hygiene_lane_cannot_carry_the_aggregate():
@@ -410,26 +402,31 @@ def test_a_failing_hygiene_lane_outranks_complete_evidence():
 
 def test_every_formal_lane_belongs_to_exactly_one_phase():
     """A formal lane in no phase is a lane nothing executes; one in both is two authorities
-    for a single measurement. `verify` asserts the same over its own table."""
-    verify = load_tool("verify")
-    formal = {name for name, _script, is_formal in verify.LANES if is_formal}
-    assert set().union(*verify.PHASES.values()) == formal
-    assert not (verify.PHASES["host"] & verify.PHASES["extraction"])
-    # And `_compose` must agree about which environment each one belongs to: two answers
-    # would let the composer demand an artifact identity of a lane no container ran.
-    assert verify.PHASES["host"] == HOST_LANES
-    assert verify.PHASES["extraction"] == EXTRACTION_LANES
-    assert HOST_LANES | EXTRACTION_LANES == set(FORMAL_LANES)
+    for a single measurement."""
+    formal = {lane.name for lane in FORMAL}
+    assert set().union(*PHASES.values()) == formal
+    assert not (HOST_LANES & EXTRACTION_LANES)
+    assert PHASES == {"host": HOST_LANES, "extraction": EXTRACTION_LANES}
+
+
+def test_the_dispatcher_and_the_composer_read_one_lane_table():
+    """Two tables would let the composer demand an artifact identity of a lane no container
+    ran. `verify` and `_compose` import the catalogue and declare no lane table of their own."""
+    here = Path(__file__).resolve().parent
+    for name in ("verify", "_compose.py"):
+        source = (here / name).read_text()
+        assert "from _lanes import" in source, name
+        for table in ("\nLANES =", "\nPHASES =", "\nFORMAL_LANES", "\nHOST_LANES =", "\nSCOPABLE_LANES ="):
+            assert table not in source, (name, table)
 
 
 def test_the_aggregate_executes_no_formal_lane():
     """The composer must not be able to synthesize the evidence it composes — and the
     hygiene lanes it does execute must be exactly the ones no phase runs."""
-    verify = load_tool("verify")
-    formal = {name for name, _s, is_formal in verify.LANES if is_formal}
-    hygiene = {name for name, _s, is_formal in verify.LANES if not is_formal}
+    formal = {lane.name for lane in FORMAL}
+    hygiene = {lane.name for lane in HYGIENE}
     assert hygiene & formal == set()
-    assert hygiene & set().union(*verify.PHASES.values()) == set()
+    assert hygiene & set().union(*PHASES.values()) == set()
     assert hygiene, "a control over an empty hygiene set proves nothing"
 
 

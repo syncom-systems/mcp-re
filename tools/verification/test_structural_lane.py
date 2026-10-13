@@ -446,7 +446,7 @@ def test_every_declaring_unit_has_a_probe_and_every_probe_a_declaring_unit():
     """Phase 0D. A `structural://` URI with no probe takes its unit OUT of the graph —
     `decide_issuance` refuses a claimed lane with no record — and a probe whose unit does
     not declare the scheme measures something no claim rests on."""
-    declaring = {uid for uid, unit in UNITS.items() if lane.claims_structural(unit)}
+    declaring = {uid for uid, unit in UNITS.items() if lane.claims(unit, "structural")}
     probed = {probe["unit"] for probe in load_probes(REGISTRY)}
     assert declaring, "0D declared the first one; an empty set means the reclassification was lost"
     assert declaring <= probed, f"declares the scheme with no probe: {sorted(declaring - probed)}"

@@ -28,6 +28,7 @@ import _rust_targets
 from _ecosystems import unit_ecosystem
 from _ecosystems import unit_projects
 from _evidence_class import MEASUREMENT_KEYS
+from _lanes import claims
 from _evidence_class import class_problems
 from _evidence_class import severity_problem
 from _premise import class_problem, registration_problems
@@ -145,68 +146,6 @@ def _unit_packages(unit: dict) -> list[str]:
     (issue #745).
     """
     return unit_projects(unit)
-
-
-def claims_mutation_evidence(unit: dict) -> bool:
-    """Whether a `mutation://` URI claims this unit's probe battery.
-
-    Declaring it is what puts the probes inside the ATTESTATION closure: `required_lanes`
-    reads every scheme, so the unit refuses attestation without a mutation record at its
-    exact fingerprint.
-    """
-    return any(str(entry).startswith("mutation://") for entry in unit.get("evidence", []))
-
-
-def claims_structural_evidence(unit: dict) -> bool:
-    """Whether a `structural://` URI claims this unit's compile-refusal probes.
-
-    Same argument as `claims_mutation_evidence`, for the class whose falsifier is a
-    COMPILATION the compiler must refuse: declaring the scheme is what puts the probes
-    inside the attestation closure and makes a probe suite CI could quietly shrink into
-    something the fingerprint can see.
-    """
-    return any(str(entry).startswith("structural://") for entry in unit.get("evidence", []))
-
-
-def claims_measured_evidence(unit: dict) -> bool:
-    """Whether a `measured://` URI claims this unit's measurement and its apparatus control."""
-    return any(str(entry).startswith("measured://") for entry in unit.get("evidence", []))
-
-
-def claims_lean_evidence(unit: dict) -> bool:
-    """Whether a `lean://` URI claims this unit's extracted-model theorems.
-
-    One predicate for BOTH extraction lanes. `generated-model` has no URI of its own —
-    `_compose` derives it from `lean://`, and the manifest refuses a unit that carries the
-    extraction selection keys without the scheme — so "does this unit ask the extraction
-    lanes for evidence" has exactly one answer and this is it.
-
-    Same reason `claims_test_evidence` is defined here rather than in its lane: the
-    FINGERPRINT and the lanes must agree about which units have extraction evidence, or a
-    unit's instrument is measured by nobody.
-    """
-    return any(str(entry).startswith("lean://") for entry in unit.get("evidence", []))
-
-
-def claims_verus_evidence(unit: dict) -> bool:
-    """Whether a `verus://` URI claims this unit's machine-checked proof.
-
-    Defined here, beside its five siblings, for the reason each of them is: the FINGERPRINT
-    and the lane must agree about which units the Verus lane owes evidence for. A unit the
-    fingerprint treated as unproved and the lane verified would have its PROVER measured by
-    nobody — which is exactly the state this predicate was added to end.
-    """
-    return any(str(entry).startswith("verus://") for entry in unit.get("evidence", []))
-
-
-def claims_test_evidence(unit: dict) -> bool:
-    """Whether any `test://` URI claims this unit's battery.
-
-    Defined once here rather than in the lane, because the FINGERPRINT and the lane must
-    agree about which units have test evidence: a unit the fingerprint treats as untested
-    and the lane runs would have its battery measured by nobody.
-    """
-    return any(str(entry).startswith("test://") for entry in unit.get("evidence", []))
 
 
 @functools.lru_cache(maxsize=None)
@@ -639,9 +578,7 @@ def load_verification() -> dict:
             # selection keys above and no `lean://` entry would be ISSUED an attestation on
             # its test battery alone while claiming extracted-model evidence, because the
             # issuer would see no lean lane to check.
-            if not any(
-                str(entry).startswith("lean://") for entry in unit.get("evidence", [])
-            ):
+            if not claims(unit, "lean"):
                 raise ManifestError(
                     f"{uwhere}: class {unit['class']} declares an extraction selection but "
                     f"no `lean://` evidence entry. The class says the Lean lane must "
@@ -658,7 +595,7 @@ def load_verification() -> dict:
         # The same argument one class down. A `test://` URI names a battery, and a battery
         # with no declared members is a description: the lane would have nothing to select,
         # and "the tests passed" would mean "no test was asked for".
-        if any(str(entry).startswith("test://") for entry in unit.get("evidence", [])):
+        if claims(unit, "test"):
             if not unit.get("tested_symbols"):
                 raise ManifestError(
                     f"{uwhere}: declares test:// evidence but no `tested_symbols`. A "
@@ -699,7 +636,7 @@ def load_verification() -> dict:
         # positive one: the probes' `expect_red` names members of `tested_symbols`. A unit
         # claiming mutation evidence without test evidence would declare controls that are
         # not evidence for anything.
-        if claims_mutation_evidence(unit) and not claims_test_evidence(unit):
+        if claims(unit, "mutation") and not claims(unit, "test"):
             raise ManifestError(
                 f"{uwhere}: declares mutation:// evidence without test:// evidence. A "
                 f"mutation probe asserts that a DECLARED control goes red; with no "

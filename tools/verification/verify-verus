@@ -59,6 +59,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
+from _lanes import BY_NAME  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
     ManifestError,
@@ -326,7 +327,7 @@ def main() -> int:
     verus = toolchains.get(pin_name, {})
     unpinned = unpinned_identities(toolchains, required_pins(pin_name))
     missing = sorted(unpinned)
-    verus_units = [unit for unit in doc.get("unit", []) if unit["class"] in {"V1", "V3"}]
+    verus_units = [unit for unit in doc.get("unit", []) if unit["class"] in BY_NAME["verus"].tiers]
     total = len(verus_units)
     if args.unit:
         declared = {unit["id"] for unit in doc.get("unit", [])}

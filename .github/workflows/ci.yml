@@ -565,6 +565,7 @@ jobs:
       # next instance of this class would be missed.
       - name: Assurance platform self-tests (ADR-MCPRE-059)
         run: |
+          python3 tools/verification/_lanes.py --selftest
           python3 tools/verification/test_verdict_algebra.py
           python3 tools/verification/test_invalidation.py
           python3 tools/verification/test_attest.py

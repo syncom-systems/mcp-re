@@ -151,13 +151,8 @@ from _lean_sources import generated_model_paths, LAKEFILE, theorem_source_paths
 import _registries
 import _rust_targets
 from _premise import is_model_registration
+from _lanes import claims
 from _manifest import (
-    claims_lean_evidence,
-    claims_verus_evidence,
-    claims_measured_evidence,
-    claims_mutation_evidence,
-    claims_structural_evidence,
-    claims_test_evidence,
     ASSUMPTIONS_TOML,
     expand_paths,
     FORMAL_CLASSES,
@@ -415,7 +410,7 @@ def _test_selection(unit: dict) -> dict:
     re-rooted at another crate selects different code. The label alone would not move when
     either happened; its row does.
     """
-    if not claims_test_evidence(unit):
+    if not claims(unit, "test"):
         return {}
     _record(RUST_TARGETS_TABLE)
     labels = sorted({str(s).partition("#")[0] for s in unit.get("tested_symbols", [])})
@@ -433,7 +428,7 @@ def _test_selection(unit: dict) -> dict:
 
 def test_source_patterns(unit: dict) -> list[str]:
     """The globs naming the integration-test targets this unit's selectors run."""
-    if not claims_test_evidence(unit):
+    if not claims(unit, "test"):
         return []
     _record(RUST_TARGETS_TABLE)
     patterns: set[str] = set()
@@ -471,11 +466,14 @@ TEST_LANE_INPUTS = (
     # What a Rust label resolves to — its crate root, sources and features — is read from
     # the build-graph table through this module.
     "tools/verification/_rust_targets.py",
+    # Which units the lane covers: the scheme that claims it and the tiers it applies to are
+    # read from the lane catalogue.
+    "tools/verification/_lanes.py",
 )
 
 
 def _test_lane_identity(unit: dict) -> dict[str, str]:
-    if not claims_test_evidence(unit):
+    if not claims(unit, "test"):
         return {}
     return _digest_paths(list(TEST_LANE_INPUTS))
 
@@ -529,11 +527,14 @@ MUTATION_LANE_INPUTS = (
     # reads the result. Either one changing changes what a recorded red means.
     "tools/verification/_rust_targets.py",
     "tools/verification/_ecosystems.py",
+    # Which units the lane covers: the scheme that claims it and the tiers it applies to are
+    # read from the lane catalogue.
+    "tools/verification/_lanes.py",
 )
 
 
 def _mutation_lane_identity(unit: dict) -> dict[str, str]:
-    if not claims_mutation_evidence(unit):
+    if not claims(unit, "mutation"):
         return {}
     return _digest_paths(list(MUTATION_LANE_INPUTS))
 
@@ -584,6 +585,9 @@ VERUS_LANE_INPUTS = (
     # Whether the artifact verifiers' postconditions constrain at all: the lane refuses unless
     # the probe's negatives fail, and that adjudication lives here.
     "tools/verification/_verus_nonvacuity.py",
+    # Which units the lane covers: the scheme that claims it and the tiers it applies to are
+    # read from the lane catalogue.
+    "tools/verification/_lanes.py",
 )
 
 #: The lane that decides what "the compiler refused the hostile construction" means.
@@ -593,12 +597,18 @@ STRUCTURAL_LANE_INPUTS = (
     # boundary the probe attacks, and a change there changes what every structural record
     # means without touching the runner.
     "tools/verification/_structural.py",
+    # Which units the lane covers: the scheme that claims it and the tiers it applies to are
+    # read from the lane catalogue.
+    "tools/verification/_lanes.py",
 )
 
 #: The lane that decides what "the apparatus can still MOVE" means.
 MEASURED_LANE_INPUTS = (
     "tools/verification/verify-measured",
     "tools/verification/_measured.py",
+    # Which units the lane covers: the scheme that claims it and the tiers it applies to are
+    # read from the lane catalogue.
+    "tools/verification/_lanes.py",
 )
 
 
@@ -631,6 +641,9 @@ LEAN_LANE_INPUTS = (
     # class rules. It rides in on `test_lane_identity` today only because the one lean unit
     # ALSO claims `test://`; a lean-only unit would have it measured by nobody.
     "tools/verification/_manifest.py",
+    # Which units the lane covers: the scheme that claims it and the tiers it applies to are
+    # read from the lane catalogue.
+    "tools/verification/_lanes.py",
 )
 
 #: `_lean_probe.py` is deliberately NOT above, and the reason is the criterion rather than
@@ -652,10 +665,13 @@ GENERATED_MODEL_LANE_INPUTS = (
     "tools/verification/regenerate-lean",
     "tools/verification/_lean_model.py",
     "tools/verification/_extraction_identity.py",
+    # Which units the lane covers: the scheme that claims it and the tiers it applies to are
+    # read from the lane catalogue.
+    "tools/verification/_lanes.py",
 )
 
 
-#: Unlike the four lane identities above, these two carry no `claims_…` guard: they are
+#: Unlike the four lane identities above, these two carry no `claims` guard: they are
 #: added to the component map only where the unit declares the scheme, so an empty return
 #: would be an unreachable second answer to a question the call site has already asked.
 def _generated_inputs(unit: dict) -> dict[str, str]:
@@ -673,7 +689,7 @@ def _generated_inputs(unit: dict) -> dict[str, str]:
     `regenerate-lean` produces and what `lake build` elaborates.
     """
     declared = [p for p in unit["paths"] if p.startswith(GENERATED_ROOT)]
-    if not claims_lean_evidence(unit):
+    if not claims(unit, "lean"):
         return _digest_paths(declared)
     return _digest_paths(sorted({*declared, *generated_model_paths()}))
 
@@ -687,19 +703,19 @@ def _generated_model_lane_identity() -> dict[str, str]:
 
 
 def _verus_lane_identity(unit: dict) -> dict[str, str]:
-    if not claims_verus_evidence(unit):
+    if not claims(unit, "verus"):
         return {}
     return _digest_paths(list(VERUS_LANE_INPUTS))
 
 
 def _structural_lane_identity(unit: dict) -> dict[str, str]:
-    if not claims_structural_evidence(unit):
+    if not claims(unit, "structural"):
         return {}
     return _digest_paths(list(STRUCTURAL_LANE_INPUTS))
 
 
 def _measured_lane_identity(unit: dict) -> dict[str, str]:
-    if not claims_measured_evidence(unit):
+    if not claims(unit, "measured"):
         return {}
     return _digest_paths(list(MEASURED_LANE_INPUTS))
 
@@ -796,7 +812,7 @@ def fingerprint_unit(
         "test_sources": _test_sources(unit),
         "test_lane_identity": _test_lane_identity(unit),
         "mutation_probes": (
-            _mutation_probes(unit["id"]) if claims_mutation_evidence(unit) else {}
+            _mutation_probes(unit["id"]) if claims(unit, "mutation") else {}
         ),
         "mutation_lane_identity": _mutation_lane_identity(unit),
         # ADR-MCPRE-068 Phase 0D. The same closure the mutation components give the negative
@@ -806,13 +822,13 @@ def fingerprint_unit(
         # spent a whole re-attestation on nothing.
         "structural_probes": (
             _registry_entries("structural-probes", "probe", unit["id"])
-            if claims_structural_evidence(unit)
+            if claims(unit, "structural")
             else {}
         ),
         "structural_lane_identity": _structural_lane_identity(unit),
         "measurements": (
             _registry_entries("measurements", "measurement", unit["id"])
-            if claims_measured_evidence(unit)
+            if claims(unit, "measured")
             else {}
         ),
         "measured_lane_identity": _measured_lane_identity(unit),
@@ -858,9 +874,9 @@ def fingerprint_unit(
     # never had. The population it does reach is the repository's entire machine-checked
     # surface — the same six units that declare `proved_symbols`, export a `contract://`, and
     # carry class V1.
-    if claims_verus_evidence(unit):
+    if claims(unit, "verus"):
         components["verus_lane_identity"] = _verus_lane_identity(unit)
-    if claims_lean_evidence(unit):
+    if claims(unit, "lean"):
         components["lean_lane_identity"] = _lean_lane_identity()
         components["generated_model_lane_identity"] = _generated_model_lane_identity()
         # The BYTES the declared `lean_theorems` are stated in. `lean_theorems` is a list of

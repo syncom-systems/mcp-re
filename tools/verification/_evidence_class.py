@@ -35,6 +35,10 @@ Stdlib only, like the rest of this layer.
 
 from __future__ import annotations
 
+#: The scheme a class's establishing evidence must include is a column of the lane catalogue
+#: (ADR-MCPRE-068 §4.1, N4), beside the falsifier scheme `_assurance_graph` reads.
+from _lanes import ESTABLISHING_SCHEME
+
 #: How MCP-RE establishes a proposition — ADR-MCPRE-068 §4.1, owner Ruling 2.
 #:
 #: Four, not six. `assumed`, `external-boundary` and `review-obligation` answer a different
@@ -68,28 +72,6 @@ MEASUREMENT_KEYS = (
     "measurement_artifact",
     "measurement_control",
 )
-
-#: Which evidence scheme each class's falsifier speaks — ADR-MCPRE-068 §4.1, N4.
-#:
-#: `measured` is absent from this map and that absence is the rule, not an omission: Ruling
-#: 4 says a measured proposition does NOT inherit the mutation-falsifier obligation, and its
-#: apparatus control is a declared field rather than a probe URI.
-FALSIFIER_SCHEME = {
-    "proved": ("verus://", "lean://"),
-    "structural": ("structural://",),
-    "tested": ("mutation://",),
-}
-
-#: The scheme a class's ESTABLISHING evidence must include. Distinct from the falsifier: a
-#: `proved` unit's prover run and its proof-obligation probe are the same lane, while a
-#: `tested` unit's battery and its mutation probe are two.
-ESTABLISHING_SCHEME = {
-    "proved": ("verus://", "lean://"),
-    "structural": ("structural://",),
-    "tested": ("test://",),
-    "measured": ("measured://",),
-}
-
 
 def severity_problem(where: str, entry: dict, field: str = "direct_consequence_severity"):
     """Why `entry[field]` is not a severity, or None.
