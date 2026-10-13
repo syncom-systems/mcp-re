@@ -19,7 +19,7 @@ It lives here rather than in the Rust suite for two reasons: `sdk/` is not Bazel
 addressable, so a hermetic test cannot see the SDK bindings at all; and a whole-tree scan
 is what the other repo gates in this directory already do.
 
-Exit 0 clean, 1 on a violation.
+Exit 0 clean, 1 on a violation. `--selftest` runs the scan over a temporary tree.
 """
 from __future__ import annotations
 
@@ -67,8 +67,8 @@ FIXTURE_MARKERS = ("/tests/", "/test/", "/vectors/", "/fixtures/")
 LITERAL = '"input_required"'
 
 
-def iter_sources():
-    stack = [REPO]
+def iter_sources(root: Path = REPO):
+    stack = [root]
     while stack:
         current = stack.pop()
         try:
@@ -86,12 +86,13 @@ def iter_sources():
                 yield entry
 
 
-def main() -> int:
+def scan(root: Path = REPO) -> tuple[bool, list[str]]:
+    """`(canonical copy found, offenders)` for the tree under `root`."""
     offenders: list[str] = []
     found_canonical = False
 
-    for path in iter_sources():
-        rel = path.relative_to(REPO).as_posix()
+    for path in iter_sources(root):
+        rel = path.relative_to(root).as_posix()
         is_fixture = any(marker in f"/{rel}" for marker in FIXTURE_MARKERS)
         if is_fixture and rel != CANONICAL and rel not in DATA_ONLY:
             continue
@@ -105,6 +106,56 @@ def main() -> int:
             found_canonical = True
         elif rel not in DATA_ONLY:
             offenders.append(rel)
+    return found_canonical, offenders
+
+
+def selftest() -> int:
+    """A sixth open-coded copy and a missing canonical copy each go red, in a temp tree."""
+    import tempfile
+
+    canonical = f"pub const INPUT_REQUIRED: &str = {LITERAL};\n"
+    cases = [
+        ("only the canonical copy", {CANONICAL: canonical}, True, []),
+        (
+            "a copy open-coded in shipped source",
+            {CANONICAL: canonical, "mcp-re-proxy/src/open_leg.rs": f"if kind == {LITERAL} {{}}\n"},
+            True,
+            ["mcp-re-proxy/src/open_leg.rs"],
+        ),
+        (
+            "a copy in an SDK binding",
+            {CANONICAL: canonical, "sdk/typescript/src/transport.ts": f"x === {LITERAL}\n"},
+            True,
+            ["sdk/typescript/src/transport.ts"],
+        ),
+        (
+            "the literal in a test fixture",
+            {CANONICAL: canonical, "mcp-re-proxy/tests/fixture.rs": f"let k = {LITERAL};\n"},
+            True,
+            [],
+        ),
+        ("the canonical copy removed", {"mcp-re-proxy/src/lib.rs": "fn f() {}\n"}, False, []),
+    ]
+    failures = 0
+    for label, files, want_canonical, want_offenders in cases:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel, text in files.items():
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text(text, encoding="utf-8")
+            got_canonical, got_offenders = scan(root)
+        ok = got_canonical == want_canonical and sorted(got_offenders) == want_offenders
+        print(f"  {'ok  ' if ok else 'FAIL'}  {label}: canonical={got_canonical} offenders={got_offenders}")
+        failures += not ok
+    if failures:
+        print(f"discriminator gate selftest: FAIL ({failures})")
+        return 1
+    print("discriminator gate selftest: PASS")
+    return 0
+
+
+def main() -> int:
+    found_canonical, offenders = scan()
 
     if not found_canonical:
         print(
@@ -133,4 +184,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(selftest() if "--selftest" in sys.argv else main())

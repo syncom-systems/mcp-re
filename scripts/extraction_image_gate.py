@@ -36,12 +36,14 @@ from __future__ import annotations
 
 import re
 import sys
-import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools" / "verification"))
+
+import _toolchains  # noqa: E402
+
 DOCKERFILE = REPO / "verification" / "extraction" / "Dockerfile"
-LOCK = REPO / "verification" / "policy" / "toolchains.lock.toml"
 
 #: Build argument -> (lock table, lock key). Digests are recorded `sha256:<hex>` in the lock
 #: and bare hex in the definition, where `sha256sum -c` reads them.
@@ -160,7 +162,7 @@ def problems(dockerfile: str, lock: dict) -> list[str]:
 
 def selftest() -> int:
     good = DOCKERFILE.read_text(encoding="utf-8")
-    lock = tomllib.loads(LOCK.read_text(encoding="utf-8"))
+    lock = _toolchains.load()
     if problems(good, lock):
         print(f"extraction-image gate selftest: FAIL — the tree's own definition is refused: {problems(good, lock)}")
         return 1
@@ -202,7 +204,7 @@ def main(argv: list[str]) -> int:
         return selftest()
     found = problems(
         DOCKERFILE.read_text(encoding="utf-8"),
-        tomllib.loads(LOCK.read_text(encoding="utf-8")),
+        _toolchains.load(),
     )
     if found:
         print(f"extraction-image gate: FAIL — {len(found)} problem(s)")

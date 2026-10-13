@@ -31,6 +31,7 @@ skips itself on the machine where it matters is the same defect it exists to
 catch.
 
 Run:  python3 scripts/helm_render_gate.py
+      python3 scripts/helm_render_gate.py --selftest   # the text checks, no helm
 """
 
 from __future__ import annotations
@@ -62,7 +63,7 @@ KEY_SOURCE_FEATURES: dict[str, str] = {
 }
 
 
-def default_image_features() -> set[str]:
+def default_image_features(root: Path = REPO) -> set[str]:
     """The crate features of the proxy binary the image the chart points at carries.
 
     The image copies a Bazel-built `mcp-re-proxy`; `stage_image_binaries.sh` names the
@@ -70,17 +71,18 @@ def default_image_features() -> set[str]:
     features. Empty when either cannot be read, which the caller refuses.
     """
     label = ""
-    for line in STAGE_SCRIPT.read_text(encoding="utf-8").splitlines():
+    for line in (root / STAGE_SCRIPT.relative_to(REPO)).read_text(encoding="utf-8").splitlines():
         stripped = line.strip().strip('"')
         if stripped.startswith("mcp-re-proxy //"):
             label = stripped.split()[1]
     if not label:
         return set()
-    row = json.loads(TARGET_TABLE.read_text(encoding="utf-8"))["targets"].get(label)
+    table = root / TARGET_TABLE.relative_to(REPO)
+    row = json.loads(table.read_text(encoding="utf-8"))["targets"].get(label)
     return set(row["features"]) if row else set()
 
 
-def check_image_declares_non_root() -> list[str]:
+def check_image_declares_non_root(root: Path = REPO) -> list[str]:
     """The proxy IMAGE must declare the same non-root uid the chart pins.
 
     Carried by the chart alone, the non-root posture is a property of one deployment
@@ -92,7 +94,7 @@ def check_image_declares_non_root() -> list[str]:
     delivered 0440 owned by `fsGroup` and the proxy reads it through group membership
     — a drift between the two numbers is a pod that cannot read its own key.
     """
-    text = DOCKERFILE.read_text(encoding="utf-8")
+    text = (root / DOCKERFILE.relative_to(REPO)).read_text(encoding="utf-8")
     stage, declared = None, {}
     for line in text.splitlines():
         stripped = line.strip()
@@ -107,7 +109,7 @@ def check_image_declares_non_root() -> list[str]:
     if not uid.isdigit() or uid == "0":
         return [f"{DOCKERFILE.name}: the `proxy` stage runs as {declared['proxy']!r}; "
                 "it must be a NUMERIC non-root uid for runAsNonRoot to admit against"]
-    values = (CHART / "values.yaml").read_text(encoding="utf-8")
+    values = (root / CHART.relative_to(REPO) / "values.yaml").read_text(encoding="utf-8")
     for field in ("runAsUser", "runAsGroup", "fsGroup"):
         expected = [ln.split(":", 1)[1].strip() for ln in values.splitlines()
                     if ln.strip().startswith(f"{field}:")]
@@ -117,7 +119,7 @@ def check_image_declares_non_root() -> list[str]:
     return []
 
 
-def check_documented_in_flight_default() -> list[str]:
+def check_documented_in_flight_default(root: Path = REPO) -> list[str]:
     """The absent-flag in-flight ceiling the chart DOCUMENTS must be the code's.
 
     This number is what an operator sizes the boundary against, and the chart is
@@ -136,7 +138,7 @@ def check_documented_in_flight_default() -> list[str]:
     # to, which `ServerLimits::default()` also reads. Following the constant rather
     # than a literal in `ServerLimits` is what keeps this coupled to the value both
     # paths actually use.
-    owner = (REPO / "mcp-re-proxy" / "src" / "config_state" / "in_flight_limit.rs")
+    owner = (root / "mcp-re-proxy" / "src" / "config_state" / "in_flight_limit.rs")
     actual = ""
     for line in owner.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
@@ -151,7 +153,7 @@ def check_documented_in_flight_default() -> list[str]:
     # `_helpers.tpl` is the third place the number reaches an operator, and the only
     # one they hit while the render is refusing them.
     for name in ("values.yaml", "templates/deployment.yaml", "templates/_helpers.tpl"):
-        raw = (CHART / name).read_text(encoding="utf-8")
+        raw = (root / CHART.relative_to(REPO) / name).read_text(encoding="utf-8")
         # Comment markers and line wrapping carry no meaning here, and the phrase
         # being asserted is long enough to straddle a wrap. Normalise both away so
         # the check reads the sentence rather than the layout.
@@ -166,7 +168,7 @@ def check_documented_in_flight_default() -> list[str]:
     return problems
 
 
-def check_documented_handshake_signing_bounds() -> list[str]:
+def check_documented_handshake_signing_bounds(root: Path = REPO) -> list[str]:
     """The defaults and bounds `values.yaml` states for the handshake-signing capacity
     are `HandshakeSignCapacity`'s.
 
@@ -174,7 +176,7 @@ def check_documented_handshake_signing_bounds() -> list[str]:
     numbers in its comment are prose an operator sizes against, and nothing else couples
     them to the type that enforces them.
     """
-    owner = REPO / "mcp-re-proxy" / "src" / "delegated_tls" / "sign_capacity.rs"
+    owner = root / "mcp-re-proxy" / "src" / "delegated_tls" / "sign_capacity.rs"
     consts = {}
     for line in owner.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
@@ -184,9 +186,9 @@ def check_documented_handshake_signing_bounds() -> list[str]:
     wanted = ("DEFAULT_RATE_PER_SEC", "DEFAULT_BURST", "MAX_RATE_PER_SEC", "MAX_BURST")
     missing = [n for n in wanted if n not in consts]
     if missing:
-        return [f"{owner.relative_to(REPO)} declares no {', '.join(missing)}; the chart's "
+        return [f"{owner.relative_to(root)} declares no {', '.join(missing)}; the chart's "
                 "documented capacity can no longer be checked against the code"]
-    text = " ".join((CHART / "values.yaml").read_text(encoding="utf-8").replace("#", " ").split())
+    text = " ".join((root / CHART.relative_to(REPO) / "values.yaml").read_text(encoding="utf-8").replace("#", " ").split())
     problems = []
     for phrase in (f"({consts['DEFAULT_RATE_PER_SEC']}/s, burst {consts['DEFAULT_BURST']})",
                    f"rate 1..={consts['MAX_RATE_PER_SEC']}",
@@ -196,17 +198,17 @@ def check_documented_handshake_signing_bounds() -> list[str]:
     return problems
 
 
-def check_documented_continuation_bound() -> list[str]:
+def check_documented_continuation_bound(root: Path = REPO) -> list[str]:
     """The default and range `values.yaml` states for `continuationControl.maxLiveEntries`
     are `ContinuationCapacity`'s, for the same reason as the handshake-signing capacity."""
-    owner = REPO / "mcp-re-proxy" / "src" / "continuation_store" / "capacity.rs"
+    owner = root / "mcp-re-proxy" / "src" / "continuation_store" / "capacity.rs"
     code = owner.read_text(encoding="utf-8")
     default = re.search(r"max_live_entries: ([0-9_]+),", code)
     ceiling = re.search(r"pub const MAX_LIVE_ENTRIES: u32 = ([0-9_]+);", code)
     if not default or not ceiling:
-        return [f"{owner.relative_to(REPO)} declares no default or ceiling; the chart's "
+        return [f"{owner.relative_to(root)} declares no default or ceiling; the chart's "
                 "documented continuation bound can no longer be checked against the code"]
-    text = " ".join((CHART / "values.yaml").read_text(encoding="utf-8").replace("#", " ").split())
+    text = " ".join((root / CHART.relative_to(REPO) / "values.yaml").read_text(encoding="utf-8").replace("#", " ").split())
     problems = []
     for phrase in (f"default ({default.group(1).replace('_', '')})",
                    f"range (1..={ceiling.group(1).replace('_', '')})"):
@@ -215,7 +217,7 @@ def check_documented_continuation_bound() -> list[str]:
     return problems
 
 
-def check_audit_flush_budget() -> list[str]:
+def check_audit_flush_budget(root: Path = REPO) -> list[str]:
     """The seconds the chart budgets for the post-serve audit flush must be the code's.
 
     Serving ending is not the process exiting. `audit_sink::drain::at_shutdown` then waits
@@ -231,7 +233,7 @@ def check_audit_flush_budget() -> list[str]:
     knob: the value bounds an obligation the proxy owns, not a policy the deployment
     chooses, which is why it is a literal in `_helpers.tpl` and not a key in values.yaml.
     """
-    owner = REPO / "mcp-re-proxy" / "src" / "audit_sink" / "drain.rs"
+    owner = root / "mcp-re-proxy" / "src" / "audit_sink" / "drain.rs"
     actual = ""
     for line in owner.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
@@ -242,13 +244,13 @@ def check_audit_flush_budget() -> list[str]:
         return ["mcp-re-proxy/src/audit_sink/drain.rs declares no `AUDIT_FLUSH_TIMEOUT`; "
                 "the chart's drain arithmetic can no longer be checked against the code"]
     problems = []
-    helpers = (CHART / "templates" / "_helpers.tpl").read_text(encoding="utf-8")
+    helpers = (root / CHART.relative_to(REPO) / "templates" / "_helpers.tpl").read_text(encoding="utf-8")
     if f"$auditFlush := {actual}" not in helpers:
         problems.append(
             f"_helpers.tpl does not budget the proxy's {actual}s audit flush "
             f"($auditFlush := {actual}); the drain invariant is short by that much"
         )
-    values = " ".join((CHART / "values.yaml").read_text(encoding="utf-8")
+    values = " ".join((root / CHART.relative_to(REPO) / "values.yaml").read_text(encoding="utf-8")
                       .replace("#", " ").split())
     if f"+ {actual} < drainGracePeriodSeconds" not in values:
         problems.append(
@@ -258,16 +260,16 @@ def check_audit_flush_budget() -> list[str]:
     return problems
 
 
-def check_image_serves_every_key_source() -> list[str]:
+def check_image_serves_every_key_source(root: Path = REPO) -> list[str]:
     """Every custody mode the chart's `keySource` comment offers must be compiled in."""
     problems: list[str] = []
-    features = default_image_features()
+    features = default_image_features(root)
     if not features:
         return [
             f"{STAGE_SCRIPT.name} names no proxy target the build graph holds; cannot tell "
             "what the image serves"
         ]
-    values = (CHART / "values.yaml").read_text(encoding="utf-8")
+    values = (root / CHART.relative_to(REPO) / "values.yaml").read_text(encoding="utf-8")
     offered = [mode for mode in KEY_SOURCE_FEATURES if mode in values]
     if not offered:
         return ["values.yaml offers no KMS keySource; this check has stopped measuring anything"]
@@ -1067,7 +1069,128 @@ MANIFEST_CASES: list[tuple[str, dict, list[str], list[str]]] = [
 ]
 
 
+#: The checks that read the tree's text rather than a render, by what each asserts.
+TEXT_CHECKS = (
+    ("the default image serves every offered keySource", check_image_serves_every_key_source),
+    ("the proxy image declares the chart's non-root uid", check_image_declares_non_root),
+    ("the documented in-flight default is the code's", check_documented_in_flight_default),
+    ("the documented handshake-signing capacity is the code's",
+     check_documented_handshake_signing_bounds),
+    ("the documented continuation bound is the code's", check_documented_continuation_bound),
+    ("the drain arithmetic budgets the code's audit flush", check_audit_flush_budget),
+)
+
+#: The files the text checks read, repository-relative.
+TEXT_INPUTS = (
+    "deploy/docker/Dockerfile",
+    "deploy/helm/mcp-re-proxy/values.yaml",
+    "deploy/helm/mcp-re-proxy/templates/deployment.yaml",
+    "deploy/helm/mcp-re-proxy/templates/_helpers.tpl",
+    "mcp-re-proxy/src/config_state/in_flight_limit.rs",
+    "mcp-re-proxy/src/delegated_tls/sign_capacity.rs",
+    "mcp-re-proxy/src/continuation_store/capacity.rs",
+    "mcp-re-proxy/src/audit_sink/drain.rs",
+    "scripts/stage_image_binaries.sh",
+    "verification/generated/rust-targets.json",
+)
+
+
+def _without_feature(table: str, feature: str) -> str:
+    """The target table with `feature` removed from every row that carries it."""
+    data = json.loads(table)
+    for row in data["targets"].values():
+        if feature in row.get("features", []):
+            row["features"] = [f for f in row["features"] if f != feature]
+    return json.dumps(data)
+
+
+def selftest() -> int:
+    """Each text check goes red on a copy of the tree with the drift it exists to catch.
+
+    The six checks run over a temporary copy of the files they read, first unchanged, then
+    with one edit each: the image running as root, and a code constant the chart documents
+    changed under it. No `helm` render runs; the render matrix needs the binary.
+    """
+    edits = {
+        "the default image serves every offered keySource": (
+            "verification/generated/rust-targets.json",
+            lambda text: _without_feature(text, "gcp_kms_keysource"),
+        ),
+        "the proxy image declares the chart's non-root uid": (
+            "deploy/docker/Dockerfile", lambda text: text.replace("USER 65532:65532", "USER 0:0"),
+        ),
+        "the documented in-flight default is the code's": (
+            "mcp-re-proxy/src/config_state/in_flight_limit.rs",
+            lambda text: re.sub(r"(DEFAULT_PER_CORE_IN_FLIGHT: usize = )(\d+)",
+                                lambda m: f"{m.group(1)}{int(m.group(2)) + 1}", text),
+        ),
+        "the documented handshake-signing capacity is the code's": (
+            "mcp-re-proxy/src/delegated_tls/sign_capacity.rs",
+            lambda text: re.sub(r"(pub const DEFAULT_BURST: u32 = )(\d+)",
+                                lambda m: f"{m.group(1)}{int(m.group(2)) + 1}", text),
+        ),
+        "the documented continuation bound is the code's": (
+            "mcp-re-proxy/src/continuation_store/capacity.rs",
+            lambda text: re.sub(r"(pub const MAX_LIVE_ENTRIES: u32 = )([0-9_]+)",
+                                lambda m: f"{m.group(1)}{int(m.group(2).replace('_', '')) + 1}", text),
+        ),
+        "the drain arithmetic budgets the code's audit flush": (
+            "mcp-re-proxy/src/audit_sink/drain.rs",
+            lambda text: re.sub(r"(AUDIT_FLUSH_TIMEOUT: Duration = Duration::from_secs\()(\d+)",
+                                lambda m: f"{m.group(1)}{int(m.group(2)) + 1}", text),
+        ),
+    }
+    failures = 0
+
+    def case(label: str, ok: bool, detail: object) -> None:
+        nonlocal failures
+        print(f"  {'ok  ' if ok else 'FAIL'}  {label}: {detail}")
+        failures += not ok
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for rel in TEXT_INPUTS:
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(REPO / rel, root / rel)
+        for label, check in TEXT_CHECKS:
+            problems = check(root)
+            case(f"clean: {label}", not problems, problems or "clean")
+        for label, check in TEXT_CHECKS:
+            rel, edit = edits[label]
+            path = root / rel
+            original = path.read_text(encoding="utf-8")
+            edited = edit(original)
+            if edited == original:
+                case(f"drift: {label}", False, f"the edit to {rel} changed nothing")
+                continue
+            path.write_text(edited, encoding="utf-8")
+            problems = check(root)
+            path.write_text(original, encoding="utf-8")
+            case(f"drift: {label}", bool(problems), problems or "NOT refused")
+
+        # Root in the image AND the chart agrees with itself, so only the non-root rule
+        # can refuse it; the uid-equality rule would pass it.
+        dockerfile = root / "deploy/docker/Dockerfile"
+        values = root / "deploy/helm/mcp-re-proxy/values.yaml"
+        saved = dockerfile.read_text(encoding="utf-8"), values.read_text(encoding="utf-8")
+        dockerfile.write_text(saved[0].replace("USER 65532:65532", "USER 0:0"), encoding="utf-8")
+        values.write_text(re.sub(r"^(\s*(?:runAsUser|runAsGroup|fsGroup):\s*)65532",
+                                 r"\g<1>0", saved[1], flags=re.M), encoding="utf-8")
+        problems = check_image_declares_non_root(root)
+        dockerfile.write_text(saved[0], encoding="utf-8")
+        values.write_text(saved[1], encoding="utf-8")
+        case("drift: an image and a chart that agree on uid 0", bool(problems), problems or "NOT refused")
+
+    if failures:
+        print(f"helm render gate selftest: FAIL ({failures})")
+        return 1
+    print("helm render gate selftest: PASS")
+    return 0
+
+
 def main() -> int:
+    if "--selftest" in sys.argv:
+        return selftest()
     if shutil.which("helm") is None:
         print("FAIL: helm not found on PATH; this gate cannot verify the chart guards")
         return 2
@@ -1079,15 +1202,7 @@ def main() -> int:
 
     # Image-vs-chart couplings. Neither is visible in a render: the chart can be
     # perfect and the artifact still unable to run what it describes.
-    for label, check in (
-        ("the default image serves every offered keySource", check_image_serves_every_key_source),
-        ("the proxy image declares the chart's non-root uid", check_image_declares_non_root),
-        ("the documented in-flight default is the code's", check_documented_in_flight_default),
-        ("the documented handshake-signing capacity is the code's",
-         check_documented_handshake_signing_bounds),
-        ("the documented continuation bound is the code's", check_documented_continuation_bound),
-        ("the drain arithmetic budgets the code's audit flush", check_audit_flush_budget),
-    ):
+    for label, check in TEXT_CHECKS:
         problems = check()
         failures.extend(f"{label}: {p}" for p in problems)
         print(f"  {'FAIL' if problems else 'ok  '} {label}")

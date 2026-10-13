@@ -104,7 +104,7 @@ use mcp_re_http_profile::pdp_decision::PdpDecisionClaims;
 use mcp_re_http_profile::pdp_decision::PdpDecisionOutcome;
 use mcp_re_http_profile::Audience;
 use mcp_re_http_profile::PROFILE_TAG;
-use mcp_re_proxy::config_state::transport::MAX_CLIENT_CERT_LIFETIME;
+use mcp_re_proxy::config_state::client_credential_window::MAX_CLIENT_CERT_LIFETIME;
 
 use rcgen::BasicConstraints;
 use rcgen::CertificateParams;
@@ -645,7 +645,7 @@ fn spawn_proxy(
 
     // The proxy always runs the maximal-security posture, so the bench config must be
     // production-valid. The cert-lifetime arg is the SAME constant the proxy enforces
-    // (`config_state::transport::MAX_CLIENT_CERT_LIFETIME`), and the client leaf `build_client_config`
+    // (`config_state::client_credential_window::MAX_CLIENT_CERT_LIFETIME`), and the client leaf `build_client_config`
     // mints has a span within it — no hand-picked magic number. The per-core async
     // serving plane refuses node-local replay (memory + file), so the ONLY valid
     // replay backend is a shared store; this bench is `#[ignore]` infra-lane and, when

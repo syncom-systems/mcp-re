@@ -63,6 +63,7 @@ pub mod client_credential_window;
 pub mod continuation_control;
 pub(crate) mod coordinate;
 pub mod credential_currency_bound;
+pub mod crl_revocation;
 pub(crate) mod cross_machine;
 pub mod custody;
 pub mod delegated_signing;
@@ -88,6 +89,7 @@ pub use channel_key_material::ChannelKeyMaterial;
 pub use client_credential_window::ClientCredentialWindow;
 pub use continuation_control::ContinuationControlState;
 pub use credential_currency_bound::{credential_currency_bound, CredentialCurrencyBound};
+pub use crl_revocation::CrlRevocationState;
 pub use custody::{AwsCredentialMode, CustodyMaterial, CustodyState, PrivateKeyExposure};
 pub use delegated_signing::DelegatedSigningFacts;
 pub use evidence::{AuditState, RetentionState, VerifiedContextState};
@@ -99,7 +101,7 @@ pub use mcp_transport_contract::McpTransportContractState;
 pub use replay::ReplayState;
 pub use replica_clock::ReplicaClockDivergence;
 pub use topology::{DeploymentTopology, ShardTopologyRequest};
-pub use transport::{ChannelBindingState, CrlRevocationState};
+pub use transport::ChannelBindingState;
 pub use trust_document::TrustDocumentSource;
 pub use trust_revocation::TrustRevocationState;
 
@@ -598,7 +600,7 @@ pub(crate) mod test_support {
         let mut config = legal_config();
         config.peer_revocation.lists.paths = paths.iter().map(|p| p.to_string()).collect();
         config.peer_revocation.lists.reload_secs = cadence_secs;
-        super::transport::classify_and_validate_crl(&config)
+        super::crl_revocation::classify_and_validate_crl(&config)
             .0
             .expect("the fixture CRL posture is legal")
     }
@@ -607,7 +609,7 @@ pub(crate) mod test_support {
     pub(crate) fn crl_plan(
         paths: &[&str],
         cadence_secs: Option<u64>,
-    ) -> super::transport::ClientRevocationPlan {
+    ) -> super::crl_revocation::ClientRevocationPlan {
         crl_posture(paths, cadence_secs).client_revocation_plan()
     }
 

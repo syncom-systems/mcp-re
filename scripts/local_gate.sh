@@ -86,7 +86,9 @@ stage_static() {
   rm -rf "$MCP_RE_EVIDENCE_DIR" && mkdir -p "$MCP_RE_EVIDENCE_DIR" || return 1
   python3 scripts/jcs_vocabulary_gate.py --selftest \
     && python3 scripts/jcs_vocabulary_gate.py \
+    && python3 scripts/check_port_registry.py --selftest \
     && python3 scripts/check_port_registry.py \
+    && python3 scripts/discriminator_gate.py --selftest \
     && python3 scripts/discriminator_gate.py \
     && python3 scripts/tracked_secrets_gate.py --selftest \
     && python3 scripts/tracked_secrets_gate.py \
@@ -141,6 +143,8 @@ stage_static() {
     && python3 scripts/workflow_reader.py \
     && python3 scripts/verification_trigger_gate.py --selftest \
     && python3 scripts/verification_trigger_gate.py \
+    `# The one reader of the toolchain lock; both runtime gates apply its pin shape.` \
+    && python3 tools/verification/_toolchains.py --selftest \
     `# The Python support claim may not exceed the Python evidence: requires-python and` \
     `# the pinned interpreter set are two facts in two files, and they had drifted.` \
     && python3 scripts/python_runtime_gate.py --selftest \
@@ -364,6 +368,15 @@ stage_static() {
     `# The membership check is pure text; the --probe that proves the table is enforced` \
     `# rather than merely present needs a build and runs in stage 2.` \
     && python3 scripts/workspace_lints_gate.py \
+    `# The selftests of gates whose real run needs helm, Bazel, the network or a` \
+    `# disposable checkout: each proves its gate refuses the defect it exists for.` \
+    && python3 scripts/helm_render_gate.py --selftest \
+    && python3 scripts/bazel_gazelle_gate.py --selftest \
+    && python3 scripts/workspace_lints_gate.py --selftest \
+    && tools/verification/rust-targets --selftest \
+    && tools/verification/evidence-graph --selftest \
+    && python3 scripts/install_pinned_verus.py --selftest \
+    && python3 scripts/hosted_negative_controls.py --selftest \
     && fmt_check \
     || return 1
   if command -v helm >/dev/null 2>&1; then

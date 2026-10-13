@@ -280,7 +280,7 @@ impl SigningPlan {
 ///
 /// Owned by the CRL machine and re-exported here: the plan is that machine's projection of
 /// its own validated state, not a value planning rebuilds from the state's paths.
-pub use crate::config_state::transport::ClientRevocationPlan;
+pub use crate::config_state::crl_revocation::ClientRevocationPlan;
 
 /// What must hold for this node to establish authenticated channels (ADR-MCPRE-056 §8).
 ///
