@@ -116,7 +116,7 @@ def interpreters(entry, ecosystem: str) -> tuple[dict[tuple[int, ...], str], str
     pinned: dict[tuple[int, ...], str] = {}
     for version in versions:
         parts = str(version).split(".")
-        if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        if len(parts) != 3 or not all(part.isascii() and part.isdigit() for part in parts):
             return {}, (
                 f"[{ecosystem}].interpreters entry {version!r} is not an exact "
                 f"major.minor.patch version. A {line} alone lets two different builds record "
@@ -153,6 +153,11 @@ def pin_shape_cases(ecosystem: str, good: list[str]) -> list[tuple[str, dict | N
         (
             f"a {line} pinned without a patch version",
             {"state": "resolved", "interpreters": [*good[:-1], truncated]},
+            True,
+        ),
+        (
+            f"a {line} whose patch is a non-ASCII digit",
+            {"state": "resolved", "interpreters": [*good[:-1], ".".join([*last[:2], "\u00b2"])]},
             True,
         ),
         (
