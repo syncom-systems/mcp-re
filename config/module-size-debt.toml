@@ -256,8 +256,10 @@ path = "mcp-re-proxy/src/app.rs"
 # MCPRE-188: a networked arm asks the control-runtime provision the builder holds from
 # `begin`, so the root no longer starts and installs the runtime from a planned requirement:
 # 815 (measured at 5f7a4ca) -> 804.
-baseline_prod_loc = 804
-baseline_sha = "5f7a4ca"
+# MCPRE-191: the freshness owner projects the verifier policy, so the root no longer builds it
+# or maps a skew refusal that cannot occur: 804 (measured at 1a20771) -> 789.
+baseline_prod_loc = 789
+baseline_sha = "1a20771"
 status = "reviewed-exception"
 review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 

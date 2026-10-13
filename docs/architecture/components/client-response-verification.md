@@ -102,7 +102,7 @@ disposition tokens in `ExecutionContract`.
   result. **Any decomposition must preserve the single discriminator.**
 
 **A divergence worth recording separately:** for an out-of-range clock skew the profile's
-`VerifierPolicy::new` **refuses**, while `DelegationPolicy::bounded_clock_skew` **clamps**. Two
+`MaxClockSkew::new` **refuses** (a `VerifierPolicy` takes only a `MaxClockSkew`), while `DelegationPolicy::bounded_clock_skew` **clamps**. Two
 dispositions for one illegal input. The clamp is deliberate and documented (a misconfiguration
 should not make every response unverifiable, and both windows must read one number), but the two
 owners state different things about the same value.

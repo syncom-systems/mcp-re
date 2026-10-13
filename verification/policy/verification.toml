@@ -1335,6 +1335,7 @@ tested_symbols = [
   "//mcp-re-http-profile:proof_path_test#degenerate_window_fails_closed_regardless_of_skew",
   "//mcp-re-http-profile:proof_path_test#the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not",
   "//mcp-re-http-profile:mcp_re_http_profile_test#policy::tests::default_policy_is_one_new_would_build",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#policy::tests::the_skew_a_policy_is_given_is_the_skew_it_applies",
 ]
 proved_symbols = [
   "mcp_re_http_profile::verify::floor::params::check_params",

@@ -106,7 +106,11 @@ fn signed_declaring(alg: &str) -> HttpRequest {
 #[test]
 fn a_policy_enabling_algorithm_confusion_cannot_be_constructed() {
     assert_eq!(
-        VerifierPolicy::new(&["ed25519", "ml-dsa-65"], 30).unwrap_err(),
+        VerifierPolicy::new(
+            &["ed25519", "ml-dsa-65"],
+            mcp_re_core::MaxClockSkew::new(30).expect("bounded")
+        )
+        .unwrap_err(),
         HttpProfileError::UnsupportedAlgorithm,
         "allowlisting an algorithm with no verifier is what enabled the confusion"
     );

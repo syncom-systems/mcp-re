@@ -203,8 +203,8 @@ fn refused_at_the_boundary() {
 
     // The numeric ranges the parser bounded and the boundary did not. `max_clock_skew` is
     // the freshness tolerance applied to every verified request AND to the replay
-    // `retain_until`, so outside its bound the gate stops bounding anything; it was left to
-    // `VerifierPolicy::new`, which is reached after two planes have started.
+    // `retain_until`, so outside its bound the gate stops bounding anything, and the boundary
+    // refuses it before any plane starts.
     for (name, mutate) in [
         (
             "max_clock_skew above the bound",

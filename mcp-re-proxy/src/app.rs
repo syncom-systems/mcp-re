@@ -385,7 +385,7 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
         config.state().trust_document(),
         &response_kid,
         &values.audience,
-        config.state().freshness().verifier_skew_secs(),
+        config.state().freshness().max_clock_skew(),
     )?
     .into_parts();
     posture.declare(Seam::Authorization, authorization_state);
@@ -554,25 +554,10 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
         300,
         building.signing()?.signer(),
     );
-    // §5.1/§13.1: attach the verifier-local acceptance policy so the operator's
-    // `--max-clock-skew` governs the FRESHNESS GATE, not only replay retention.
-    // `VerifierPolicy::new` is the validating constructor: a skew outside
-    // `0..=MAX_CLOCK_SKEW_BOUND` refuses to build and startup fails closed rather
-    // than serving a window the operator did not get. One value drives both the
-    // acceptance window and the replay `retain_until`, so an admitted nonce is
+    // §5.1/§13.1: the verifier-local acceptance policy, projected by the freshness owner
+    // from the same skew that drives the replay `retain_until`, so an admitted nonce is
     // retained for exactly as long as its signature can still be accepted.
-    let mut verifier_policy = mcp_re_http_profile::VerifierPolicy::new(
-        &["ed25519"],
-        config.state().freshness().verifier_skew_secs(),
-    )
-    .map_err(|_| {
-        format!(
-            "--max-clock-skew {} is out of bounds: the RFC 9421 freshness gate accepts \
-                     0..={} seconds (§5.1 bounded skew)",
-            config.state().freshness().verifier_skew_secs(),
-            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
-        )
-    })?;
+    let mut verifier_policy = config.state().freshness().verifier_policy();
     let (mcp_transport, transport_state) = crate::serving_capabilities::mcp_transport_contract(
         config.state().mcp_transport_contract(),
     );
@@ -580,7 +565,7 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     posture.declare(Seam::McpTransportContract, transport_state);
     eprintln!(
         "mcp-re-proxy: freshness gate = created-{skew}s .. expires+{skew}s (RFC 9421 §5.1)",
-        skew = config.state().freshness().verifier_skew_secs()
+        skew = verifier_policy.max_clock_skew()
     );
     proxy = proxy.with_verifier_policy(verifier_policy);
     proxy = proxy.with_transport_binding(binding);
@@ -638,7 +623,7 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
 
     let (admission, admission_state) = crate::serving_capabilities::admission_currency(
         config.state().admission(),
-        config.state().freshness().verifier_skew_secs(),
+        config.state().freshness().max_clock_skew(),
         building.control(),
     )?
     .into_parts();

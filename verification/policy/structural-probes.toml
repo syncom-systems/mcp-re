@@ -1795,7 +1795,7 @@ nearest neighbour, and still refused. `E0423` because the tuple field is private
 """
 [probe.producer_paths]
 module-tree-visibility = "the tuple field of `MaxClockSkew` is private to `time::clock_skew`, which has no submodules besides its tests"
-alternate-constructors = "`MaxClockSkew::new` is the only constructor and refuses a value outside `0..=BOUND_SECS`; `InMemoryReplayCache::new`, `FreshnessWindow::new` and `VerifierPolicy::new` reach a tolerance only through it"
+alternate-constructors = "`MaxClockSkew::new` is the only constructor and refuses a value outside `0..=BOUND_SECS`; `InMemoryReplayCache::new` and `FreshnessWindow::new` reach a tolerance only through it, and `VerifierPolicy::new` and `VerifierPolicy::with_max_clock_skew` take one"
 generated-or-deserialization = "`MaxClockSkew` derives Debug, Clone, Copy, PartialEq and Eq only; no Default, From or Deserialize exists"
 test-only-construction = "tests build one through `MaxClockSkew::new`; no `#[cfg(test)]` constructor exists"
 [[probe.relaxation]]

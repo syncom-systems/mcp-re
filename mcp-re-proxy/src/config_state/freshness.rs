@@ -81,9 +81,13 @@ impl FreshnessWindow {
         self.replica_clock_divergence
     }
 
-    /// The skew the RFC 9421 verifier applies to `created` and `expires` (§5.1).
-    pub fn verifier_skew_secs(&self) -> i64 {
-        self.max_clock_skew.secs()
+    /// The RFC 9421 acceptance policy (§5.1): the profile's algorithm set under this
+    /// window's skew, applied to `created` and `expires`.
+    ///
+    /// A projection, not a construction the root performs: the skew is already bounded, so
+    /// there is no refusal left for a caller to map.
+    pub fn verifier_policy(&self) -> mcp_re_http_profile::VerifierPolicy {
+        mcp_re_http_profile::VerifierPolicy::default().with_max_clock_skew(self.max_clock_skew)
     }
 
     /// The bounded skew itself, for a replay store that derives its own retain-until.
@@ -155,9 +159,12 @@ mod tests {
             mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
         ] {
             let w = window(skew).expect("a bounded skew resolves");
-            let policy =
-                mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], w.verifier_skew_secs())
-                    .expect("a resolved skew is within the verifier's bound");
+            let policy = w.verifier_policy();
+            assert_eq!(
+                policy.max_clock_skew(),
+                skew,
+                "the policy applies the window's skew"
+            );
             for expires in [1_i64, 1_000, 1_787_000_000, i64::MAX - 1, i64::MAX] {
                 let created = expires.checked_sub(1).expect("expires is at least 1");
                 let retain = w.replay_retain_until(expires);
@@ -187,7 +194,7 @@ mod tests {
     #[test]
     fn the_two_projections_are_derived_from_the_same_skew() {
         let w = window(45).expect("a bounded skew resolves");
-        assert_eq!(w.verifier_skew_secs(), 45);
+        assert_eq!(w.verifier_policy().max_clock_skew(), 45);
         assert_eq!(w.replay_retain_until(1_000), 1_045);
     }
 
@@ -211,7 +218,8 @@ mod tests {
         assert_eq!(
             FreshnessWindow::new(30)
                 .expect("30s is bounded")
-                .verifier_skew_secs(),
+                .max_clock_skew()
+                .secs(),
             30
         );
     }
@@ -230,8 +238,8 @@ mod tests {
         let declared = classify_and_validate(&config).0.expect("legal");
         assert_eq!(declared.replica_clock_divergence().secs(), 11);
         assert_eq!(
-            declared.verifier_skew_secs(),
-            undeclared.verifier_skew_secs(),
+            declared.max_clock_skew().secs(),
+            undeclared.max_clock_skew().secs(),
             "the divergence widens store retention and never the verifier's window"
         );
         config.replay.replica_clock_divergence_secs = Some(-1);
