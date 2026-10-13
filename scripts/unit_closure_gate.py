@@ -111,10 +111,9 @@ REGISTER = REPO / "config" / "unit-closure-exclusions.toml"
 sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "tools" / "verification"))
 
-# The module walk is IMPORTED, not re-written. `declared_mods` reads `mod` declarations from
-# code only — a `mod` inside a comment or a string literal compiles nothing — and a second
-# copy of that walk would be a second opinion about what a module is.
-from bazel_srcs_gate import declared_mods, strip_noncode  # noqa: E402
+# Module resolution is IMPORTED, not re-written: `_module_tree` is the one owner of which
+# file a `mod` names, and a second copy would be a second opinion about what a module is.
+from _module_tree import children, code_only, is_mod_rs_name  # noqa: E402
 from module_size_gate import production_source  # noqa: E402
 
 #: A Rust item declared at the start of a line, after any visibility and any of the
@@ -184,28 +183,18 @@ def closure(root: Path, units) -> dict[str, list[str]]:
     return covered
 
 
-def _child_dir(rel: str) -> str:
-    """The directory a module file's children live in, as rustc looks for them."""
-    path = Path(rel)
-    if path.name in ("mod.rs", "lib.rs", "main.rs"):
-        return path.parent.as_posix()
-    return (path.parent / path.stem).as_posix()
-
-
 def module_children(root: Path, rel: str) -> list[tuple[str, str]]:
     """`(module name, file)` for every `mod <name>;` in `rel` that resolves on disk.
 
-    A declaration that resolves to neither form is not this gate's finding: cargo cannot
+    A declaration that resolves to no file is not this gate's finding: rustc cannot
     compile it either, and `bazel_srcs_gate.py` is the control that says so.
     """
-    out: list[tuple[str, str]] = []
-    base = _child_dir(rel)
-    for name in declared_mods(root / rel):
-        for candidate in (f"{base}/{name}.rs", f"{base}/{name}/mod.rs"):
-            if (root / candidate).is_file():
-                out.append((name, candidate))
-                break
-    return out
+    path = root / rel
+    return [
+        (child.declaration.name, child.file.relative_to(root).as_posix())
+        for child in children(path, mod_rs=is_mod_rs_name(path))
+        if child.file is not None
+    ]
 
 
 def parent_module(root: Path, rel: str) -> str | None:
@@ -233,7 +222,10 @@ def parent_module(root: Path, rel: str) -> str | None:
     for candidate in candidates:
         if not candidate.is_absolute():
             candidate = root / candidate
-        if candidate.is_file() and name in declared_mods(candidate):
+        if candidate.is_file() and any(
+            child.file is not None and child.file.resolve() == (root / rel).resolve()
+            for child in children(candidate, mod_rs=is_mod_rs_name(candidate))
+        ):
             return candidate.relative_to(root).as_posix()
     return None
 
@@ -247,7 +239,7 @@ def declares_items(root: Path, rel: str) -> bool:
     item named in prose is not an item.
     """
     text = (root / rel).read_text(errors="replace")
-    return bool(ITEM.search(strip_noncode("\n".join(production_source(text)))))
+    return bool(ITEM.search(code_only("\n".join(production_source(text)))))
 
 
 # --------------------------------------------------------------------------------------

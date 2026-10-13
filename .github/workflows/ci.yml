@@ -157,8 +157,11 @@ jobs:
       # added, so cargo built a module Bazel could not find (E0583) and every Bazel
       # target downstream of the proxy failed. Only a full `bazel test //...` caught
       # it, 30+ minutes in. This is the same check in one second. Fast, python-only.
-      - name: Bazel srcs gate (hand-listed srcs matches lib.rs)
+      # The module tree both hand lists are checked against — the library srcs and the
+      # audit-vocabulary guard's source trees — is `_module_tree.py`'s, rustc's rules.
+      - name: Bazel srcs gate (hand-listed srcs and source trees match the module tree)
         run: |
+          python3 tools/verification/_module_tree.py --selftest
           python3 scripts/bazel_srcs_gate.py --selftest
           python3 scripts/bazel_srcs_gate.py
 

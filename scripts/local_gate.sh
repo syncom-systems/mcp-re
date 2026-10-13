@@ -116,6 +116,7 @@ stage_static() {
     `# and to nobody else.` \
     && python3 scripts/doc_path_gate.py --selftest \
     && python3 scripts/doc_path_gate.py \
+    && python3 tools/verification/_module_tree.py --selftest \
     && python3 scripts/bazel_srcs_gate.py --selftest \
     && python3 scripts/startup_backedges.py --selftest \
     && python3 scripts/module_map.py --selftest \

@@ -50,6 +50,10 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools" / "verification"))
+
+import _module_tree  # noqa: E402
+import _rust_targets  # noqa: E402
 
 #: The serving path, read as an owner subtree: MCPRE-175 split the assembly into one module
 #: per region, so a gate reading only `mod.rs` would count zero.
@@ -64,12 +68,6 @@ CARRIER = "Exchange"
 
 # ADR-MCPRE-061 §5.1 — both `#[cfg(test)]` and `#[cfg(all(test, ...))]` open a test region.
 TEST_ATTR = re.compile(r"^#\[cfg\((all\()?test\b")
-
-#: A module declared under `#[cfg(test)]` in its PARENT. The file itself carries no test
-#: attribute, so a per-file scan reads all of it as production — which is how a harness that
-#: fabricates evidence for controls looks like a production route. The parent is the
-#: authority on whether the module exists in a shipped binary, so the parent is what is read.
-TEST_MOD_DECL = re.compile(r"#\[cfg\((?:all\()?test\b[^\]]*\]\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;")
 
 LINE_COMMENT = re.compile(r"^\s*(///|//!|//).*$", re.M)
 
@@ -138,26 +136,25 @@ def struct_body(text: str, name: str) -> str | None:
 
 
 def test_only_modules(root: Path) -> set[Path]:
-    """Every file whose `mod` declaration is `#[cfg(test)]` in its parent.
+    """Every file under `root` that its crate roots reach only through `#[cfg(test)]`.
 
-    Measured rather than listed. `authorization/action_harness.rs` fabricates verified
-    requests for controls and carries no attribute of its own — the gate that missed this
-    would report three production fabrications that do not exist in any shipped binary, and
-    the fix for a false report is always to loosen the rule.
+    Measured rather than listed. A module declared under `#[cfg(test)]` in its PARENT
+    carries no attribute of its own, so a per-file scan reads all of it as production —
+    `authorization/action_harness.rs` fabricates verified requests for controls, and a gate
+    that missed this would report production fabrications that exist in no shipped binary.
+    The parent is the authority on whether the module exists in a shipped binary, and
+    `_module_tree` is the one reader of parents: a file reached by any non-test path from
+    any crate root stays production.
     """
-    excluded: set[Path] = set()
-    for parent in root.rglob("*.rs"):
-        text = parent.read_text(encoding="utf-8")
-        for name in TEST_MOD_DECL.findall(text):
-            for candidate in (
-                parent.parent / f"{name}.rs",
-                parent.parent / name / "mod.rs",
-                parent.with_suffix("") / f"{name}.rs",
-                parent.with_suffix("") / name / "mod.rs",
-            ):
-                if candidate.is_file():
-                    excluded.add(candidate.resolve())
-    return excluded
+    prefix = root.resolve().relative_to(REPO.resolve()).as_posix() + "/"
+    test_only: set[Path] = set()
+    production: set[Path] = set()
+    for crate_root in sorted(_rust_targets.crate_roots()):
+        if not crate_root.startswith(prefix):
+            continue
+        for module in _module_tree.walk(REPO / crate_root).files:
+            (test_only if module.test_only else production).add(module.path.resolve())
+    return test_only - production
 
 
 def production_sources(root: Path) -> dict[str, str]:
