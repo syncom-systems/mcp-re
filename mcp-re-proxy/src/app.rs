@@ -494,16 +494,14 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     // the artifact is uninhabited and goes nowhere.
     #[cfg(not(feature = "online_ocsp"))]
     let _ = ocsp_checker;
-    // The admission limit the boundary resolved. The request states it once, at whichever
-    // altitude the operator chose; `ServerLimits` carries the per-core answer, and a
-    // fleet-wide basis leaves it for the fleet to divide once the core count is resolved.
+    // The admission limit the boundary resolved, and the shard shape this host gives the
+    // request, resolved ONCE: the inner plane and the fleet both size from these two values.
     let in_flight_limit = config.state().in_flight_limit();
-    let mut limits = values.limits.clone();
-    limits.max_in_flight_requests = in_flight_limit.per_core();
+    let topology = crate::async_fleet::ResolvedTopology::resolve(config.state().shard_topology());
     let serve_options = ServerOptions {
         identity_policy,
         peer_identity_provenance,
-        limits,
+        limits: values.limits.clone(),
         // The owner's sealed window; serving reads both bounds from it, not from the request.
         client_credential_window: config.state().client_credential_window(),
         client_revocation: client_revocation.clone(),
@@ -525,11 +523,7 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     // instead would mean carrying the URLs through serving purely to print them, and the
     // fleet does not forward — it accepts.
     eprintln!("mcp-re-proxy: HTTP inner backends {backends}");
-    let pool = crate::inner_plane_bound::raised_to_fleet_ceiling(
-        pool,
-        in_flight_limit,
-        config.state().shard_topology(),
-    );
+    let pool = crate::inner_plane_bound::raised_to_fleet_ceiling(pool, in_flight_limit, topology);
 
     // Response-signing custody (ADR-MCPRE-056 §8; ADR-MCPRE-052). The plane owns the
     // root issuer, the delegated snapshot and the worker that maintains it; what comes
@@ -660,7 +654,7 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     // Composed BEFORE the runtime exists. `--bind` resolution can fail, and a failure
     // after `finish` would drop a materialized runtime instead of tearing it down in the
     // order it owns — the one thing that type is for.
-    let fleet_cfg = fleet_config(values, config.state().shard_topology(), in_flight_limit)?;
+    let fleet_cfg = fleet_config(values, topology, in_flight_limit)?;
 
     building.install_proxy(proxy)?;
     let (runtime, lifecycle) = building.finish()?;
@@ -681,12 +675,12 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
 /// place that legitimately holds the deployment request: what serving needs is a topology,
 /// and handing it the request instead would give it every other field as well.
 ///
-/// The admission limit arrives as the RESOLVED basis rather than as request fields: the
-/// fleet needs the fleet-wide half of it, and which half exists is the boundary's answer.
+/// The topology and the admission basis arrive as their owners' values and are carried
+/// whole: the fleet applies the share rule, the root does not.
 fn fleet_config(
     values: &DeploymentRequest,
-    shard_topology: crate::config_state::ShardTopologyRequest,
-    in_flight_limit: crate::config_state::InFlightLimitBasis,
+    topology: crate::async_fleet::ResolvedTopology,
+    in_flight: crate::config_state::InFlightLimitBasis,
 ) -> Result<crate::async_fleet::FleetConfig, String> {
     use std::net::ToSocketAddrs;
 
@@ -699,13 +693,9 @@ fn fleet_config(
 
     Ok(crate::async_fleet::FleetConfig {
         addr,
-        cores: shard_topology.shards_or_auto(),
-        workers_per_shard: shard_topology.workers_per_shard_or_auto(),
+        topology,
         listen_backlog: crate::async_fleet::DEFAULT_LISTEN_BACKLOG,
-        // MCPRE-114: a fleet-wide basis, divided evenly per core by
-        // `async_fleet::apply_global_admission`. `None` when the limit is stated per core,
-        // which `ServerLimits` already carries.
-        max_in_flight_total: in_flight_limit.fleet_total(),
+        in_flight,
     })
 }
 
@@ -1048,28 +1038,19 @@ mod tests {
         }
     }
 
-    /// The fleet's input is the serving TOPOLOGY REQUEST, projected into the runtime's
-    /// `0 = auto` encoding. No normalization happens here: substituting a resolved count at
-    /// this point would hide whether the operator chose it or the host did.
+    /// The fleet's input is the owners' values, carried whole, and the resolved bind.
     #[test]
-    fn the_fleet_config_carries_the_topology_and_resolves_the_bind() {
+    fn the_fleet_config_carries_the_owners_values_and_resolves_the_bind() {
         let config = config_with("file", "/seed", "/key");
         let basis = crate::config_state::in_flight_limit::classify(&config);
         let (_, shard_topology) = crate::config_state::topology::classify(&config);
-        let fleet = super::fleet_config(&config, shard_topology, basis)
+        let topology = crate::async_fleet::ResolvedTopology::resolve(shard_topology);
+        let fleet = super::fleet_config(&config, topology, basis)
             .expect("the fixture binds a literal address");
 
         assert_eq!(fleet.addr, "127.0.0.1:8443".parse().expect("literal"));
-        assert_eq!(fleet.cores, shard_topology.shards_or_auto());
-        assert_eq!(
-            fleet.workers_per_shard,
-            shard_topology.workers_per_shard_or_auto()
-        );
-        assert_eq!(
-            fleet.max_in_flight_total,
-            basis.fleet_total(),
-            "the fleet is handed the fleet-wide half of the basis, and only that"
-        );
+        assert_eq!(fleet.topology, topology);
+        assert_eq!(fleet.in_flight, basis);
         assert_eq!(
             fleet.listen_backlog,
             crate::async_fleet::DEFAULT_LISTEN_BACKLOG
@@ -1088,7 +1069,9 @@ mod tests {
 
         let refusal = super::fleet_config(
             &config,
-            crate::config_state::topology::classify(&config).1,
+            crate::async_fleet::ResolvedTopology::resolve(
+                crate::config_state::topology::classify(&config).1,
+            ),
             crate::config_state::in_flight_limit::classify(&config),
         )
         .expect_err("no port, no socket address");

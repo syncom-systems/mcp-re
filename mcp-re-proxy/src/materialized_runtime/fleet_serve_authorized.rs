@@ -54,10 +54,14 @@ mod tests {
     fn the_authorized_fleet_is_the_issued_fleet() {
         let fleet = FleetConfig {
             addr: "127.0.0.1:0".parse().expect("a literal socket address"),
-            cores: 3,
-            workers_per_shard: 2,
+            topology: crate::async_fleet::ResolvedTopology::for_test(
+                3,
+                crate::async_fleet::ShardDepth::stated(2),
+            ),
             listen_backlog: 64,
-            max_in_flight_total: Some(7),
+            in_flight: crate::config_state::InFlightLimitBasis::FleetTotal {
+                requests: std::num::NonZeroUsize::new(7).expect("non-zero"),
+            },
         };
         let issued = format!("{fleet:?}");
         let served = FleetServeAuthorized::issue(fleet).into_fleet_config();

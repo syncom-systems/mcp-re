@@ -21,19 +21,13 @@
 //! Classifying the resolved count as a layer-A fact would state as knowable-from-the-request
 //! something that depends on the machine, which is the distinction ADR-MCPRE-056 §5.1
 //! exists to keep. So layer A owns the REQUEST — did the operator choose, or defer? — and
-//! resolution stays where the host is: [`crate::async_fleet::resolve_core_count`].
+//! resolution stays where the host is: [`crate::async_fleet::ResolvedTopology::resolve`],
+//! called once by the composition root, whose result every consumer of the shard count
+//! takes.
 //!
 //! That is also why `0` is modelled as a variant rather than kept as a sentinel. A `usize`
 //! where zero means something else entirely is a value every reader has to remember to
 //! interpret, and the composition root was the reader remembering it.
-//!
-//! # Known: the resolved count is established twice
-//!
-//! `app.rs` resolves it to size the inner-plane ceiling, and `serve_fleet` resolves it
-//! again from `FleetConfig`. Both call the same function with the same request, so they
-//! agree today — but nothing makes them agree, and a resolved count is runtime evidence
-//! that ought to be established once and carried. Recorded rather than fixed here: that is
-//! a change to the serving runtime's shape, not to configuration ownership.
 
 use std::num::NonZeroUsize;
 
@@ -80,20 +74,6 @@ impl ShardTopologyRequest {
     /// The pinned per-shard worker depth, or `None` where the operator deferred.
     pub fn workers_per_shard(&self) -> Option<NonZeroUsize> {
         self.workers_per_shard
-    }
-
-    /// The shard count in the serving runtime's encoding, where `0` means auto.
-    ///
-    /// Named, so the sentinel is spelled once here instead of at each call site. The
-    /// runtime keeps that encoding because it is what performs the host discovery; this is
-    /// the projection into it, not a second representation of the choice.
-    pub fn shards_or_auto(&self) -> usize {
-        self.shards.map_or(0, NonZeroUsize::get)
-    }
-
-    /// The worker depth in the serving runtime's encoding, where `0` means auto.
-    pub fn workers_per_shard_or_auto(&self) -> usize {
-        self.workers_per_shard.map_or(0, NonZeroUsize::get)
     }
 }
 
@@ -155,18 +135,6 @@ mod tests {
         let (_, request) = classify_with(false, 4, 8);
         assert_eq!(request.shards().map(NonZeroUsize::get), Some(4));
         assert_eq!(request.workers_per_shard().map(NonZeroUsize::get), Some(8));
-    }
-
-    /// The runtime projection round-trips the encoding it is named for.
-    #[test]
-    fn the_runtime_projection_spells_auto_as_zero() {
-        let (_, auto) = classify_with(false, 0, 0);
-        assert_eq!(auto.shards_or_auto(), 0);
-        assert_eq!(auto.workers_per_shard_or_auto(), 0);
-
-        let (_, pinned) = classify_with(false, 4, 8);
-        assert_eq!(pinned.shards_or_auto(), 4);
-        assert_eq!(pinned.workers_per_shard_or_auto(), 8);
     }
 
     /// The two facts are independent: a pinned shard count says nothing about whether this

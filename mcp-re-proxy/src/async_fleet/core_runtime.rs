@@ -116,7 +116,8 @@ impl CorePool {
     ///
     /// The share-nothing default is unchanged for the exported-key path, where signing is
     /// in-memory and never blocks. A configured pool depth gives the shard a work-stealing
-    /// runtime; see `FleetConfig::workers_per_shard` for why depth beats shard count.
+    /// runtime; see [`ResolvedTopology::resolve`](super::ResolvedTopology::resolve) for why
+    /// depth and shard count are both kept.
     ///
     /// The custody is the served snapshot's
     /// ([`ServerConfigSnapshot::key_exposure`](crate::config_snapshot::ServerConfigSnapshot::key_exposure)),

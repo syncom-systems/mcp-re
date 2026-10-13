@@ -8992,17 +8992,17 @@ id = "M314-proxy-the-inner-pool-ceiling-saturates"
 unit = "proxy.startup_plan_pool_ceiling"
 theorem = "THM-0077"
 conjunct = "a per-core ceiling that would overflow SATURATES rather than wrapping"
-path = "mcp-re-proxy/src/startup_plan.rs"
-anchor = "        .map(|n| n.saturating_mul(cores.max(1)))\n"
-weakening = "        .map(|n| n.wrapping_mul(cores.max(1)))\n"
+path = "mcp-re-proxy/src/config_state/in_flight_limit.rs"
+anchor = "        self.per_core_ceiling(shards).saturating_mul(shards)\n"
+weakening = "        NonZeroUsize::new(self.per_core_ceiling(shards).get().wrapping_mul(shards.get())).unwrap_or(NonZeroUsize::MIN)\n"
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::a_ceiling_that_would_overflow_saturates_rather_than_wrapping",
+  "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::an_aggregate_that_would_overflow_saturates",
 ]
 note = """
 A WRAPPED CEILING IS SMALLER THAN THE DEFAULT, NOT LARGER, which is what makes this a silent
 weakening rather than a crash. The product is taken over an operator-supplied number and the
-host's core count; wrapping turns a very large requested bound into a small one, and
-`inner_plane_raise` then declines to raise the pool at all — so the deployment runs at the
+host's core count; wrapping turns a very large requested bound into a smaller one, and
+`raised_to_fleet_ceiling` then raises the pool to less than the gate admits, or not at all — so the deployment runs at the
 default bound while every flag and every startup line says otherwise, and requests that
 passed every security gate meet a capacity cliff at the inner pool instead of at the
 admission gate where shedding is deliberate and measured.
@@ -9961,23 +9961,15 @@ conjunct = "a serving component cannot disagree with the owner about what was co
 # RE-ADJUDICATED at the new implementation, not restored: Owner Ruling 7 made the resolver
 # return a `ShardDepth` so the depth's provenance survives it. The conjunct is unchanged and
 # the weakening is the same clamp, now applied inside the stated arm.
-path = "mcp-re-proxy/src/async_fleet/mod.rs"
+path = "mcp-re-proxy/src/async_fleet/resolved_topology.rs"
 anchor = """
-    let workers = if configured_workers != 0 {
-        ShardDepth::stated(configured_workers)
-    } else {
-        ShardDepth::derived(DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1))
-    };
+            Some(stated) => ShardDepth::stated(stated.get()),
 """
 weakening = """
-    let workers = if configured_workers != 0 {
-        ShardDepth::stated(DEFAULT_MAX_WORKERS_PER_SHARD.min(configured_workers))
-    } else {
-        ShardDepth::derived(DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1))
-    };
+            Some(stated) => ShardDepth::stated(DEFAULT_MAX_WORKERS_PER_SHARD.min(stated.get())),
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::topology_tests::explicit_topology_is_never_overridden",
+  "//mcp-re-proxy:proxy_unit_test#async_fleet::resolved_topology::tests::explicit_topology_is_never_overridden",
 ]
 note = """
 THE OVERRIDE, IN ITS PLAUSIBLE FORM. It does not replace the operator's topology with the
@@ -9987,7 +9979,7 @@ indistinguishable from the operator's own choice everywhere below the default. A
 that measured its hardware and stated sixteen workers per shard silently runs eight, and the
 startup transcript is not where it would be noticed.
 
-The weakening is deterministic and host-independent: `resolve_topology(1, 16)` yields `(1, 8)`
+The weakening is deterministic and host-independent: a stated `(1, 16)` resolves to `(1, 8)`
 whatever `available_parallelism` reports, so this probe measures the code and not the machine
 it ran on. The explicit `1` and the explicit `4` are unaffected, which is why a control
 asserting only that an explicit shard count survives would report this as no change.
@@ -10919,15 +10911,15 @@ conjunct = "the resolver preserves WHOSE number the depth is, so an operator's e
 # turns on: every resolved depth comes back as the host's, so no depth is ever
 # operator-stated and the condition can never be true. A refusal that cannot fire reads as
 # a refusal in every place a reader looks except the one that matters.
-path = "mcp-re-proxy/src/async_fleet/mod.rs"
+path = "mcp-re-proxy/src/async_fleet/resolved_topology.rs"
 anchor = """
-        ShardDepth::stated(configured_workers)
+            Some(stated) => ShardDepth::stated(stated.get()),
 """
 weakening = """
-        ShardDepth::derived(configured_workers)
+            Some(stated) => ShardDepth::derived(stated.get()),
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#async_fleet::topology_tests::a_resolved_depth_says_whether_the_operator_or_the_host_chose_it",
+  "//mcp-re-proxy:proxy_unit_test#async_fleet::resolved_topology::tests::a_resolved_depth_says_whether_the_operator_or_the_host_chose_it",
   "//mcp-re-proxy:proxy_unit_test#async_fleet::refusal_order_tests::the_delegated_tls_depth_refusal_precedes_the_first_bind",
 ]
 note = """
@@ -11912,11 +11904,11 @@ unit = "proxy.handshake_custody_snapshot"
 conjunct = "the serving fleet decides its runtime shape from the custody of the snapshot it serves"
 path = "mcp-re-proxy/src/async_fleet/mod.rs"
 anchor = """
-    let pool = CorePool::for_core(workers_per_shard, config.key_exposure())
+    let pool = CorePool::for_core(cfg.topology.depth(), config.key_exposure())
 """
 weakening = """
     let pool = CorePool::for_core(
-        workers_per_shard,
+        cfg.topology.depth(),
         crate::config_state::PrivateKeyExposure::ProcessReadable,
     )
 """

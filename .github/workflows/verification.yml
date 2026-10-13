@@ -400,6 +400,7 @@ on:
       # in no unit's `paths` at all until its three propositions got units.
       - "mcp-re-proxy/src/config_state/evidence.rs"
       - "mcp-re-proxy/src/config_state/in_flight_limit.rs"
+      - "mcp-re-proxy/src/inner_plane_bound.rs"
       - "mcp-re-proxy/src/config_state/mcp_transport_contract.rs"
       - "mcp-re-proxy/src/config_state/topology.rs"
       - "mcp-re-proxy/src/startup_plan.rs"
@@ -815,6 +816,7 @@ on:
       # in no unit's `paths` at all until its three propositions got units.
       - "mcp-re-proxy/src/config_state/evidence.rs"
       - "mcp-re-proxy/src/config_state/in_flight_limit.rs"
+      - "mcp-re-proxy/src/inner_plane_bound.rs"
       - "mcp-re-proxy/src/config_state/mcp_transport_contract.rs"
       - "mcp-re-proxy/src/config_state/topology.rs"
       - "mcp-re-proxy/src/startup_plan.rs"
