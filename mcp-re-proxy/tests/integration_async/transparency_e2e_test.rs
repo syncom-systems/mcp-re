@@ -45,7 +45,7 @@ use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
-use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
+use mcp_re_proxy::http_profile_dispatch::{ReplayAdmission, ReplayPosture};
 use mcp_re_proxy::transparency::attest_chain;
 use mcp_re_proxy::transparency::EvidenceRetention;
 use mcp_re_proxy::ActorResolver;
@@ -206,14 +206,13 @@ fn build_server_counting(
     let proxy = HttpProfileProxy::new_delegated(
         resolver(),
         expected_audience,
-        AsyncReplayTier::new(
-            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ReplayAdmission::new(
+            AsyncReplayTier::new(
+                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+            ),
+            ReplayPosture::SingleProcess,
         ),
-        ProxyDispatchConfig {
-            fleet_strict: false,
-            tier: None,
-        },
         Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
             move |_forwarded: &[u8]| -> Vec<u8> {
                 dispatches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -244,14 +243,13 @@ fn build_server(retention: Option<Arc<EvidenceRetention>>) -> HttpProfileProxy {
     let proxy = HttpProfileProxy::new_delegated(
         resolver(),
         expected_audience,
-        AsyncReplayTier::new(
-            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ReplayAdmission::new(
+            AsyncReplayTier::new(
+                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+            ),
+            ReplayPosture::SingleProcess,
         ),
-        ProxyDispatchConfig {
-            fleet_strict: false,
-            tier: None,
-        },
         Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
             |_forwarded: &[u8]| -> Vec<u8> {
                 br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
@@ -555,14 +553,13 @@ fn build_server_refusing(
     let proxy = HttpProfileProxy::new_delegated(
         resolver(),
         expected_audience,
-        AsyncReplayTier::new(
-            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ReplayAdmission::new(
+            AsyncReplayTier::new(
+                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+            ),
+            ReplayPosture::SingleProcess,
         ),
-        ProxyDispatchConfig {
-            fleet_strict: false,
-            tier: None,
-        },
         Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
             move |_forwarded: &[u8]| -> Vec<u8> {
                 dispatches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -848,14 +845,13 @@ fn build_server_breaking_store_on_dispatch(
     HttpProfileProxy::new_delegated(
         resolver(),
         expected_audience,
-        AsyncReplayTier::new(
-            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ReplayAdmission::new(
+            AsyncReplayTier::new(
+                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+            ),
+            ReplayPosture::SingleProcess,
         ),
-        ProxyDispatchConfig {
-            fleet_strict: false,
-            tier: None,
-        },
         Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
             move |_forwarded: &[u8]| -> Vec<u8> {
                 let _ = std::fs::remove_dir_all(&evidence);

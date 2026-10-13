@@ -2908,32 +2908,32 @@ expect_red = [
 id = "M139-the-serving-paths-declared-tier-gate-is-load-bearing"
 unit = "proxy.replay_admission_gate"
 theorem = "THM-0092"
-conjunct = "A fleet-strict deployment whose declared replay tier is undeclared or below the strict-production minimum is refused before the store is touched"
-# The controls named below drive `dispatch_request_with_async_tier`, the dispatch
+conjunct = "A fleet-strict deployment whose declared replay tier is below the strict-production minimum is refused before the store is touched"
+# The controls named below drive `ReplayAdmission::admit`, the admission
 # `answering_commitment` calls, so the probe measures the production arm.
 path = "mcp-re-proxy/src/http_profile_dispatch.rs"
 anchor = """
-        match &self.tier {
-            Some(tier) if tier.meets_strict_production_minimum() => Ok(()),
-            Some(tier) => Err(ProxyDispatchError::SubMinimumReplayTier(tier.clone())),
-            None => Err(ProxyDispatchError::NoDeclaredReplayTier),
+        match self {
+            ReplayPosture::SingleProcess => Ok(()),
+            ReplayPosture::FleetStrict(tier) if tier.meets_strict_production_minimum() => Ok(()),
+            ReplayPosture::FleetStrict(tier) => {
+                Err(ProxyDispatchError::SubMinimumReplayTier(tier.clone()))
+            }
         }
 """
 weakening = """
-        let _ = &self.tier;
+        let _ = self;
         Ok(())
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::the_serving_path_refuses_an_undeclared_tier_before_the_store_is_touched",
   "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::the_serving_path_refuses_a_sub_minimum_tier_before_the_store_is_touched",
   # ADR-MCPRE-069 NP-161. The same weakening, read at the adapter the integration lane
-  # drives through the real profile seam. These do not replace the two above — the serving
+  # drives through the real profile seam. These do not replace the one above — the serving
   # path stays required — they establish that the `tests/integration` battery registered
   # with them is load-bearing rather than merely green. `fleet_strict_admits_*` is
   # deliberately absent: a gate that always returns `Ok` admits, so the admitting direction
   # cannot see this weakening and naming it would make the probe unsatisfiable for the
   # wrong reason.
-  "//mcp-re-proxy:integration_test#http_profile_dispatch_test::fleet_strict_refuses_undeclared_tier",
   "//mcp-re-proxy:integration_test#http_profile_dispatch_test::fleet_strict_refuses_redis_async_tier",
   "//mcp-re-proxy:integration_test#http_profile_dispatch_test::fleet_strict_refuses_single_store_fail_closed_tier",
 ]
@@ -2956,14 +2956,14 @@ conjunct = "A store that self-reports the single-process reference class is refu
 # fleet-strict. Same shape as M323 one crate over, and the same reason.
 path = "mcp-re-proxy/src/http_profile_dispatch.rs"
 anchor = """
-    let posture = DispatchConfig {
-        fleet_strict: config.fleet_strict,
-    };
+        let posture = DispatchConfig {
+            fleet_strict: self.posture.fleet_strict(),
+        };
 """
 weakening = """
-    let posture = DispatchConfig {
-        fleet_strict: false,
-    };
+        let posture = DispatchConfig {
+            fleet_strict: false,
+        };
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::a_strong_declared_tier_does_not_excuse_a_single_process_async_store",

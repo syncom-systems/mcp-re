@@ -38,7 +38,7 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
-use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
+use mcp_re_proxy::http_profile_dispatch::{ReplayAdmission, ReplayPosture};
 use mcp_re_proxy::ActorResolver;
 use mcp_re_proxy::HttpProfileProxy;
 
@@ -213,14 +213,13 @@ fn build_server_with_kid() -> (HttpProfileProxy, String) {
     let proxy = HttpProfileProxy::new_delegated(
         server_resolver(),
         expected_audience,
-        AsyncReplayTier::new(
-            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ReplayAdmission::new(
+            AsyncReplayTier::new(
+                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+            ),
+            ReplayPosture::SingleProcess,
         ),
-        ProxyDispatchConfig {
-            fleet_strict: false,
-            tier: None,
-        },
         canned_inner(),
         300,
         Arc::clone(&wiring.signer),
@@ -679,14 +678,13 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
             target_uri: config.target_uri.clone(),
             route: config.route.clone(),
         },
-        AsyncReplayTier::new(
-            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ReplayAdmission::new(
+            AsyncReplayTier::new(
+                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+            ),
+            ReplayPosture::SingleProcess,
         ),
-        ProxyDispatchConfig {
-            fleet_strict: false,
-            tier: None,
-        },
         canned_inner(),
         300,
         Arc::clone(&wiring.signer),

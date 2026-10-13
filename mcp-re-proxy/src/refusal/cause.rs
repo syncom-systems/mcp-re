@@ -164,6 +164,7 @@ impl From<AuthorizationRefusal> for RefusalCause {
 mod tests {
     use super::*;
     use crate::authorization::AuthorizationActionRefusal;
+    use crate::replay_tier::ReplayDurabilityTier;
     use mcp_re_policy::PolicyError;
 
     #[test]
@@ -214,7 +215,9 @@ mod tests {
         for c in [
             RefusalCause::from(McpReError::ReplayDetected),
             RefusalCause::from(HttpProfileError::InvalidSignature),
-            RefusalCause::from(ProxyDispatchError::NoDeclaredReplayTier),
+            RefusalCause::from(ProxyDispatchError::SubMinimumReplayTier(
+                ReplayDurabilityTier::AsyncReplicatedBounded,
+            )),
         ] {
             assert_eq!(
                 c.authorization_facet(None),
@@ -234,7 +237,9 @@ mod tests {
         for c in [
             RefusalCause::from(McpReError::ReplayDetected),
             RefusalCause::from(HttpProfileError::InvalidSignature),
-            RefusalCause::from(ProxyDispatchError::NoDeclaredReplayTier),
+            RefusalCause::from(ProxyDispatchError::SubMinimumReplayTier(
+                ReplayDurabilityTier::AsyncReplicatedBounded,
+            )),
         ] {
             assert_eq!(c.authorization_facet(Some(&permitted)), permitted);
         }
@@ -307,7 +312,9 @@ mod tests {
         for c in [
             RefusalCause::from(McpReError::ReplayDetected),
             RefusalCause::from(HttpProfileError::InvalidSignature),
-            RefusalCause::from(ProxyDispatchError::NoDeclaredReplayTier),
+            RefusalCause::from(ProxyDispatchError::SubMinimumReplayTier(
+                ReplayDurabilityTier::AsyncReplicatedBounded,
+            )),
         ] {
             let verdict = c.core_verdict().expect("a Core producer reached a verdict");
             assert_eq!(c.wire_code(), verdict.wire_code());
@@ -316,7 +323,9 @@ mod tests {
 
     #[test]
     fn a_dispatch_failure_is_a_core_verdict_and_keeps_its_own_token() {
-        let c = RefusalCause::from(ProxyDispatchError::NoDeclaredReplayTier);
+        let c = RefusalCause::from(ProxyDispatchError::SubMinimumReplayTier(
+            ReplayDurabilityTier::AsyncReplicatedBounded,
+        ));
         assert!(matches!(c, RefusalCause::Core(CoreVerdict::Dispatch(_))));
         assert_eq!(c.wire_code(), "mcp-re.replay_cache_unavailable");
     }
@@ -334,7 +343,9 @@ mod tests {
                 "mcp-re.invalid_signature",
             ),
             (
-                CoreVerdict::Dispatch(ProxyDispatchError::NoDeclaredReplayTier),
+                CoreVerdict::Dispatch(ProxyDispatchError::SubMinimumReplayTier(
+                    ReplayDurabilityTier::AsyncReplicatedBounded,
+                )),
                 "mcp-re.replay_cache_unavailable",
             ),
         ] {

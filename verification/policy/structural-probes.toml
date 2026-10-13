@@ -200,7 +200,7 @@ module a reader would assume can see inside it, and cannot.
 construction = "// ADR-MCPRE-068 structural probe S06. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\n//\n// `todo!()` supplies each field. Its type is `!`, so it coerces to whatever the field\n// needs and the literal is otherwise well typed \u2014 which leaves the PRIVACY error as the\n// only thing the compiler can complain about. A probe whose construction also fails to\n// typecheck would be refused by a type error and prove nothing about the boundary.\nuse crate::delegated_tls::DelegatedCertResolver;\n\npub fn hostile() -> DelegatedCertResolver {\n    DelegatedCertResolver {\n        certified: todo!(), // STRUCTURAL-PROBE-SITE\n        budget: todo!(),\n        _correspondence: todo!(),\n    }\n}\n"
 
 [probe.producer_paths]
-module-tree-visibility = "all three fields are bare-private to `delegated_tls::resolver`: no `pub(crate)`, no `pub(super)`. The parent declares `mod resolver;` (private) and re-exports the TYPE only, via `pub use resolver::DelegatedCertResolver`, so the widest thing any other module obtains is the name"
+module-tree-visibility = "both fields are bare-private to `delegated_tls::resolver`: no `pub(crate)`, no `pub(super)`. The parent declares `mod resolver;` (private) and re-exports the TYPE only, via `pub use resolver::DelegatedCertResolver`, so the widest thing any other module obtains is the name"
 alternate-constructors = "`materialize` is the only associated function returning Self, and it is fallible. There is no `new`, no `From`, no `Default` and no builder; the projections are `budget()` and the rustls `ResolvesServerCert` impl, neither returning `&mut` or the representation"
 generated-or-deserialization = "the only derive is `Debug`. No Serialize, no Deserialize, and nothing decodes a resolver — the credential chain and signer arrive as rustls and key-source values that `materialize` then adjudicates"
 test-only-construction = "the correspondence-gate and budget-continuity tests construct only through `materialize`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
@@ -942,21 +942,21 @@ literal walked straight past — apply the operational test and deleting the gua
 nothing unconstructible that a literal could not already build.
 
 TWO REFUSALS, AND BOTH ARE THE POINT. Injected as a sibling of the owner, the compiler
-answers with `E0451` on all three fields AND `type DurabilityWitness is private`. The second
+answers with `E0451` on both fields AND `type DurabilityWitness is private`. The second
 is what survives the obvious regression: field privacy alone is undone by someone restoring
 `pub`, so the checked path returns a witness this module does not export, and the literal
 stays unwritable whatever the fields say. The module doc at `materialized.rs:22-31` claims
 exactly that; this is where the claim is measured.
 
 The probe is a SIBLING inside `replay_plane` rather than another crate, because that is who
-would forge one — `backends.rs` builds the halves, and the owner is deliberately its sibling
-so the halves' module cannot assemble the whole.
+would forge one — `backends.rs` builds the tier, and the owner is deliberately its sibling
+so the tier's module cannot assemble the whole.
 """
-construction = "// ADR-MCPRE-068 structural probe S29. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build — which is the\n// proposition it witnesses.\nuse super::materialized::MaterializedReplay;\n\npub fn hostile() -> MaterializedReplay {\n    MaterializedReplay {\n        tier: todo!(), // STRUCTURAL-PROBE-SITE\n        dispatch: todo!(),\n        _durable: todo!(),\n    }\n}\n"
+construction = "// ADR-MCPRE-068 structural probe S29. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build — which is the\n// proposition it witnesses.\nuse super::materialized::MaterializedReplay;\n\npub fn hostile() -> MaterializedReplay {\n    MaterializedReplay {\n        admission: todo!(), // STRUCTURAL-PROBE-SITE\n        _durable: todo!(),\n    }\n}\n"
 
 [probe.producer_paths]
-module-tree-visibility = "all three fields are bare-private to `replay_plane::materialized`, and `_durable`'s type `DurabilityWitness` is a private struct in the same module. The parent re-exports `MaterializedReplay` so consumers can name the value, never its representation"
-alternate-constructors = "`MaterializedReplay::materialize` and the private `accept` it shares with the guard batteries are the only producers, and `accept` calls `assert_durable` before the literal it returns — producing the value and checking it are one step. There is no `new`, `From`, `Default` or builder. The handover is `into_parts`, which MOVES both halves out together rather than projecting them separately, so a caller cannot carry one half onward beside a posture from elsewhere"
+module-tree-visibility = "both fields are bare-private to `replay_plane::materialized`, and `_durable`'s type `DurabilityWitness` is a private struct in the same module. The parent re-exports `MaterializedReplay` so consumers can name the value, never its representation"
+alternate-constructors = "`MaterializedReplay::materialize` and the private `accept` it shares with the guard batteries are the only producers, and `accept` calls `assert_durable` before the literal it returns — producing the value and checking it are one step. There is no `new`, `From`, `Default` or builder. The handover is `into_admission`, which MOVES the tier out still paired with its posture inside one `ReplayAdmission`, so a caller cannot carry the tier onward beside a posture from elsewhere"
 generated-or-deserialization = "no derives that construct, and no Serialize/Deserialize — the value is established from a plan at startup, never decoded. A derived decoder would be a producer that never meets `assert_durable`"
 test-only-construction = "the owner's `#[cfg(test)] mod tests` reaches the value through `materialize` and through `accept`, which is the CHECKED path and not a bypass — it is private to this module and calls `assert_durable` itself. No test-gated constructor and no test-gated field visibility exists"
 
@@ -1316,7 +1316,7 @@ pub fn hostile() -> CurrentAuthenticatedRelationshipPeerFacts {
 }
 """
 [probe.producer_paths]
-module-tree-visibility = "all three fields are bare-private to the owner module, which declares no child module but the `#[cfg(test)] mod tests`"
+module-tree-visibility = "both fields are bare-private to the owner module, which declares no child module but the `#[cfg(test)] mod tests`"
 alternate-constructors = "the owner's currency operation is the only producer; accessors return projections; no From, Default or builder exists, and Clone copies an existing inhabitant"
 generated-or-deserialization = "derives Debug, Clone, PartialEq and Eq only; no Serialize or Deserialize"
 test-only-construction = "the owner's tests build values through the currency operation; no test-gated constructor or field visibility exists"

@@ -8083,9 +8083,12 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#replay_plane::materialized::tests::a_volatile_tier_under_a_linearizable_posture_cannot_be_built",
   "//mcp-re-proxy:proxy_unit_test#replay_plane::materialized::tests::a_volatile_tier_is_never_handed_over",
   # The mirror. Without it the two above are satisfied by a constructor that refuses
-  # everything, which would establish nothing about the tier that IS selected. It reads
-  # the result back through `into_parts`, the only projection.
-  "//mcp-re-proxy:proxy_unit_test#replay_plane::materialized::tests::a_durable_tier_produces_the_handover_value_with_its_posture",
+  # everything, which would establish nothing about the tier that IS selected. It admits a
+  # request through the handed-over value, the only projection.
+  "//mcp-re-proxy:proxy_unit_test#replay_plane::materialized::tests::a_durable_tier_produces_the_handover_value",
+  # The pairing, in the default lane: the handed-over value admits under the tier it was
+  # declared at and no other, so the declaration travels with the store into every admission.
+  "//mcp-re-proxy:proxy_unit_test#replay_plane::materialized::tests::the_handed_over_value_admits_under_the_tier_it_was_declared_at",
   # A backend the build lacks is refused BY NAME rather than substituted — the refusal
   # class that belongs to materialization because it is a fact about the build.
   "//mcp-re-proxy:proxy_unit_test#replay_plane::materialized::tests::a_backend_the_build_lacks_is_refused_and_named",
@@ -8117,7 +8120,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.replay_materialization_sole_producer"
 class = "V0"
-description = "No code outside `replay_plane::materialized` can assemble a `MaterializedReplay`, so possession of one IS the statement that `assert_durable` accepted the tier it was built around. Two mechanisms, and the second is why field privacy alone would not do: the three fields are bare-private, AND the checked path returns a `DurabilityWitness` the module does not export, so the struct literal stays unwritable even if someone restored `pub` on the fields. The handover is `into_parts`, which moves both halves out together rather than projecting them separately, so the validated pairing cannot be split back into independently replaceable arguments."
+description = "No code outside `replay_plane::materialized` can assemble a `MaterializedReplay`, so possession of one IS the statement that `assert_durable` accepted the tier it was built around. Two mechanisms, and the second is why field privacy alone would not do: both fields are bare-private, AND the checked path returns a `DurabilityWitness` the module does not export, so the struct literal stays unwritable even if someone restored `pub` on the fields. The handover is `into_admission`, which moves the tier out still paired with its posture inside one `ReplayAdmission`, so the pairing cannot be split back into independently replaceable arguments."
 paths = [
   "mcp-re-proxy/src/replay_plane/materialized.rs",
 ]
@@ -8939,7 +8942,7 @@ evidence = ["structural://proxy/delegated_signer/write_authority"]
 [[unit]]
 id = "proxy.replay_admission_gate"
 class = "V0"
-description = "The fail-closed order of replay admission, measured on the dispatch entry point the serving path runs: an undeclared or sub-minimum tier and a store that self-reports the single-process class are refused before the store is touched, the atomic admission is the last step, and a store that does not answer refuses rather than admitting."
+description = "The fail-closed order of replay admission, measured on the dispatch entry point the serving path runs: a sub-minimum declared tier and a store that self-reports the single-process class are refused before the store is touched, the atomic admission is the last step, and a store that does not answer refuses rather than admitting."
 paths = [
   "mcp-re-proxy/src/http_profile_dispatch.rs",
   "mcp-re-proxy/src/http_profile_dispatch/core_projection.rs",
@@ -8961,14 +8964,13 @@ evidence = [
 # theorem — per mechanism, because what a Redis `WAIT` acknowledgement establishes is not
 # what an etcd transaction success establishes.
 tested_symbols = [
-  # The projection: the two tier failures are one fact about the store, and the delegating
-  # arm does not re-decide a verdict the dispatcher already gave.
-  "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::core_projection::tests::an_unusable_tier_and_an_undeclared_one_are_one_verdict",
+  # The projection: a sub-minimum tier is an outage verdict about the store, and the
+  # delegating arm does not re-decide a verdict the dispatcher already gave.
+  "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::core_projection::tests::a_sub_minimum_tier_is_an_unavailable_replay_cache",
   "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::core_projection::tests::a_delegated_failure_keeps_the_dispatchers_verdict",
-  # THE SERVING PATH: `dispatch_request_with_async_tier`, which `answering_commitment` calls.
+  # THE SERVING PATH: `ReplayAdmission::admit`, which `answering_commitment` calls.
   # Refused BEFORE the store is touched — the witness store makes "before" observable, so
   # these are not satisfied by a refusal that already spent the side effect.
-  "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::the_serving_path_refuses_an_undeclared_tier_before_the_store_is_touched",
   "//mcp-re-proxy:proxy_unit_test#http_profile_dispatch::tests::the_serving_path_refuses_a_sub_minimum_tier_before_the_store_is_touched",
   # Defense in depth: a strong DECLARATION does not excuse a store that says it cannot
   # prevent a cross-node replay.
@@ -8992,10 +8994,9 @@ tested_symbols = [
   # a battery addition and not a widening: no line below asserts anything the description
   # does not already claim.
   #
-  # The three refusals are named in M139's `expect_red`, so the integration lane is measured
+  # The two refusals are named in M139's `expect_red`, so the integration lane is measured
   # rather than merely listed. The two admissions are the mirrors, and they must stay green
   # under that weakening — a gate that refuses everything would satisfy the refusals alone.
-  "//mcp-re-proxy:integration_test#http_profile_dispatch_test::fleet_strict_refuses_undeclared_tier",
   "//mcp-re-proxy:integration_test#http_profile_dispatch_test::fleet_strict_refuses_redis_async_tier",
   "//mcp-re-proxy:integration_test#http_profile_dispatch_test::fleet_strict_refuses_single_store_fail_closed_tier",
   "//mcp-re-proxy:integration_test#http_profile_dispatch_test::fleet_strict_admits_redis_wait_quorum_tier",

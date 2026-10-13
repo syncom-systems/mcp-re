@@ -72,7 +72,7 @@ use mcp_re_proxy::async_inner::AsyncInnerServer;
 use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
-use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
+use mcp_re_proxy::http_profile_dispatch::{ReplayAdmission, ReplayPosture};
 use mcp_re_proxy::http_profile_serve::AdmissionAuthorityResolver;
 use mcp_re_proxy::redis_admission_source::RedisAdmissionSource;
 use mcp_re_proxy::ActorResolver;
@@ -345,14 +345,13 @@ fn replica(source: Arc<dyn AsyncAdmissionSource>, calls: Arc<AtomicUsize>) -> Ht
     HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(
-            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ReplayAdmission::new(
+            AsyncReplayTier::new(
+                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+            ),
+            ReplayPosture::SingleProcess,
         ),
-        ProxyDispatchConfig {
-            fleet_strict: false,
-            tier: None,
-        },
         inner(calls),
         300,
         ready_signer(),

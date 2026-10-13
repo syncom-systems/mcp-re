@@ -59,7 +59,7 @@ use mcp_re_proxy::authorization::AuthorizationRefusalFacet;
 use mcp_re_proxy::authorization::EnrolledAuthority;
 use mcp_re_proxy::authorization::PdpDecisionEvaluator;
 use mcp_re_proxy::authorization::PdpDecisionPolicy;
-use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
+use mcp_re_proxy::http_profile_dispatch::{ReplayAdmission, ReplayPosture};
 use mcp_re_proxy::ActorResolver;
 use mcp_re_proxy::DelegatedRotor;
 use mcp_re_proxy::DelegatedServerSigner;
@@ -402,14 +402,13 @@ fn proxy_resolving(
     HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(
-            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ReplayAdmission::new(
+            AsyncReplayTier::new(
+                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+            ),
+            ReplayPosture::SingleProcess,
         ),
-        ProxyDispatchConfig {
-            fleet_strict: false,
-            tier: None,
-        },
         counting_inner(calls),
         300,
         ready_signer(),
@@ -787,14 +786,13 @@ async fn a_deployment_running_no_decision_profile_is_unaffected() {
     let base = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(
-            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ReplayAdmission::new(
+            AsyncReplayTier::new(
+                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+            ),
+            ReplayPosture::SingleProcess,
         ),
-        ProxyDispatchConfig {
-            fleet_strict: false,
-            tier: None,
-        },
         counting_inner(Arc::clone(&calls)),
         300,
         ready_signer(),

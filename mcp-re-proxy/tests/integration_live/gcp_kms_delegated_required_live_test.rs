@@ -83,7 +83,7 @@ use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
 use mcp_re_proxy::async_serve::ServedHttpResponse;
-use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
+use mcp_re_proxy::http_profile_dispatch::{ReplayAdmission, ReplayPosture};
 use mcp_re_proxy::ActorResolver;
 use mcp_re_proxy::GcpKmsConfig;
 use mcp_re_proxy::GcpKmsEd25519Backend;
@@ -411,14 +411,13 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
     let proxy = HttpProfileProxy::new_delegated(
         actor_resolver,
         expected_audience,
-        AsyncReplayTier::new(
-            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ReplayAdmission::new(
+            AsyncReplayTier::new(
+                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+            ),
+            ReplayPosture::SingleProcess,
         ),
-        ProxyDispatchConfig {
-            fleet_strict: false,
-            tier: None,
-        },
         canned_inner(),
         300,
         Arc::clone(&wiring.signer),
