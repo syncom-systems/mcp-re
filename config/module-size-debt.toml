@@ -271,8 +271,11 @@ path = "mcp-re-proxy/src/app.rs"
 # MCPRE-209: the trust and signing plans come from their one producer, so the root no longer
 # reads the issuer kid and the epoch and threads them into two constructors:
 # 760 (measured at c939c2f) -> 748. `baseline_sha` names that parent.
-baseline_prod_loc = 748
-baseline_sha = "c939c2f"
+# MCPRE-210: the startup clock reading is a value; the CRL freshness reference is the TLS
+# plane's own input, so the root no longer carries the fault refusal or reads the clock
+# twice: 748 (measured at 4dc1510) -> 696. `baseline_sha` names that parent.
+baseline_prod_loc = 696
+baseline_sha = "4dc1510"
 status = "reviewed-exception"
 review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 
@@ -545,8 +548,10 @@ path = "mcp-re-proxy/src/startup_plan.rs"
 # MCPRE-209: the response-authority plans have one producer here and the signing plan's
 # fields are private behind projections: 340 (measured at c939c2f) -> 338. `baseline_sha`
 # names that parent.
-baseline_prod_loc = 338
-baseline_sha = "c939c2f"
+# MCPRE-210: the clock-fault rule moves to the clock owner: 338 (measured at 4dc1510) -> 318.
+# `baseline_sha` names that parent.
+baseline_prod_loc = 318
+baseline_sha = "4dc1510"
 status = "unreviewed"
 
 [[debt]]

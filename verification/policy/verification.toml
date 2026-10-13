@@ -151,6 +151,21 @@ direct_consequence_severity = "medium"
 evidence = ["structural://proxy/materialized_lifecycle/sole_producer"]
 
 [[unit]]
+id = "proxy.crl_reference_sole_producer"
+class = "V0"
+description = "The boot-time client-CRL freshness refusal cannot compare against a faulted clock: `TlsPlane::materialize` takes a `CrlReference`, not a raw instant, and the reference's field is private to `tls_plane::crl_reference`, whose only producer `CrlReference::of` refuses a startup reading that is a host-clock fault while a client CRL is enforced. So the stale-CRL refusal runs against a sane reading or no CRL is loaded, by the plane's signature rather than by the composition root running a check first."
+# `materialize`'s signature is a fact about `tls_plane/mod.rs`, and the reference's
+# producer and private field are facts about `crl_reference.rs`.
+paths = [
+  "mcp-re-proxy/src/tls_plane/crl_reference.rs",
+  "mcp-re-proxy/src/tls_plane/mod.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "high"
+evidence = ["structural://proxy/crl_reference/sole_producer"]
+
+[[unit]]
 id = "http_profile.keyid"
 class = "V0"
 description = "The MCP-RE half of the keyid derivation: the RFC 7638 canonical JWK form, which embeds its operand verbatim between fixed affixes, and the base64url-no-pad encoding of the digest — neither of which introduces a collision of its own."

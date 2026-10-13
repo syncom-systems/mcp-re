@@ -91,41 +91,6 @@ pub fn build_actor_resolver(
     })
 }
 
-/// Whether a startup clock reading costs more than a warning, and why.
-///
-/// A faulted clock is tolerable where it only feeds per-request freshness: every request
-/// then fails closed, which is safe. It is NOT tolerable where the same reading is the
-/// reference time for a BOOT-TIME refusal. `startup_now_unix` is what the TLS plane
-/// compares each client CRL's `nextUpdate` against, and nothing is ever `Stale` relative
-/// to a clock reading zero — so with CRLs configured the refusal that exists to keep an
-/// expired CRL out of the serving path cannot fire, while the revocation-posture transcript
-/// still advertises the CRL as enforced.
-///
-/// Pure, so the decision is assertable without a broken host clock: it takes the reading
-/// and the CRL posture the owner classified, and returns the refusal.
-///
-/// The posture arrives as the owner's own value rather than as a count of paths. Whether
-/// this deployment enforces offline revocation is `CrlRevocationState`'s answer, and
-/// re-deriving it here from the length of a list is how composition ends up disagreeing
-/// with the transcript it prints.
-fn faulted_clock_refusal(
-    startup_now_unix: i64,
-    crl: &crate::config_state::CrlRevocationState,
-) -> Option<String> {
-    if !crl.is_enforced() || !crate::startup_plan::host_clock_is_faulted(startup_now_unix) {
-        return None;
-    }
-    let configured_crls = crl.paths().len();
-    Some(format!(
-        "mcp-re-proxy refuses to start: the system clock reads at/near the Unix epoch \
-         ({startup_now_unix} < {}s), so the boot-time client-CRL freshness refusal cannot be \
-         performed — every CRL compares as fresh against a zero clock, and the \
-         {configured_crls} configured CRL(s) would be advertised as enforced while an \
-         arbitrarily expired one was loaded. Fix the host clock (NTP/RTC) before starting.",
-        crate::startup_plan::EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
-    ))
-}
-
 /// Serve a validated deployment on the per-core async fleet until `shutdown` is flipped
 /// (SIGTERM/SIGINT in the binary; a test flag in tests). The argv path arrives with the proof
 /// [`crate::cli::parse_args`] produced, so it validates once.
@@ -219,39 +184,22 @@ fn channel_binding_effects(state: ChannelBindingState) -> ChannelBindingEffects 
 #[allow(clippy::too_many_lines)]
 fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Result<(), String> {
     let values = config.config();
-    // Clock-fault diagnosis (audit #94 F5). `now_unix()` deliberately maps a
-    // pre-epoch SystemTime error to 0 (fail CLOSED — every request then fails its
-    // freshness check rather than admitting a stale one), but a clock that reads
-    // at/near the Unix epoch would otherwise surface only as an unexplained flood of
-    // freshness denials. Emit a ONE-TIME loud startup warning so a broken/unset host
-    // clock is diagnosed at the source instead of masked. Where the reading only feeds
-    // per-request freshness the posture is already safe, so that case warns rather than
-    // refuses and the operator is told why every request will be denied.
-    //
-    // It is NOT safe where the same reading is the reference time for a BOOT-TIME refusal.
-    // `startup_now_unix` is handed to the TLS plane, which refuses to start on a client CRL
-    // whose `nextUpdate` has passed — a comparison against a clock reading zero declares
-    // every CRL fresh, so the one check that stops an arbitrarily expired CRL from reaching
-    // the serving path silently does not fire while the revocation-posture transcript still
-    // advertises the CRL as enforced. A fail-closed default cannot be inferred from a
-    // fail-closed neighbour: this one is refused.
-    //
-    // Read the clock ONCE so the comparison, the reported value and every plane handed
-    // `startup_now_unix` below agree on one instant. Whether that reading is a FAULT is
-    // the plan's rule; reading the clock and deciding what it costs is this function's.
-    let startup_now_unix = now_unix();
-    if let Some(refusal) = faulted_clock_refusal(startup_now_unix, config.state().crl_revocation())
-    {
-        return Err(refusal);
-    }
-    if crate::startup_plan::host_clock_is_faulted(startup_now_unix) {
+    // Clock-fault diagnosis (audit #94 F5). The host clock is read ONCE, and every startup
+    // consumer of the boot instant receives that reading. A faulted reading that only feeds
+    // per-request freshness fails closed, so it warns; where it would be the reference time
+    // for the boot-time stale-CRL refusal, `CrlReference::of` refuses, and the TLS plane
+    // cannot be materialized without the reference it produces.
+    let startup_reading = crate::clock::StartupReading::read();
+    let crl_reference =
+        crate::tls_plane::CrlReference::of(&startup_reading, config.state().crl_revocation())?;
+    if startup_reading.is_faulted() {
         eprintln!(
             "mcp-re-proxy: WARNING: the system clock reads at/near the Unix epoch ({} < {}s); this \
              almost certainly means the host clock is unset or broken. Freshness checks will \
              FAIL CLOSED (every request denied) until the clock is corrected — fix the host clock \
              (NTP/RTC) rather than treating the resulting denials as a load problem.",
-            startup_now_unix,
-            crate::startup_plan::EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
+            startup_reading.unix_seconds(),
+            crate::clock::EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
         );
     }
 
@@ -406,7 +354,7 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     building.install_tls(crate::tls_plane::TlsPlane::materialize(
         &tls_plan,
         channel_credential,
-        startup_now_unix,
+        crl_reference,
         Arc::clone(&shutdown),
     )?)?;
     let client_revocation = building.tls()?.revocation();
@@ -509,7 +457,7 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     building.install_signing(crate::signing_plane::SigningPlane::materialize(
         &signing_plan,
         roots,
-        startup_now_unix,
+        &startup_reading,
     )?)?;
     // ADR-MCPRE-050 + §5: assemble the RFC 9421 serving PEP with the async inner plane,
     // the authoritative replay tier, and the optional Mode-A channel binding.
@@ -748,9 +696,7 @@ pub(crate) fn serve_fleet(
 // Keeping the qualifier would compile these target-independent claims to ZERO tests elsewhere.
 #[cfg(test)]
 mod tests {
-    use super::faulted_clock_refusal;
     use crate::config_state::test_support::config_with;
-    use crate::config_state::test_support::crl_posture;
 
     /// R8-C123 (G10's finding, this group's call site): a record handed to the audit
     /// writer immediately before teardown must still reach stderr.
@@ -871,49 +817,6 @@ mod tests {
         assert!(
             stderr.contains(&format!("audit stream drained at shutdown run={run}:")),
             "{stderr}"
-        );
-    }
-
-    /// C117: a faulted host clock is only a warning while it costs nothing but
-    /// per-request fail-closed denials. With client CRLs configured it costs the
-    /// boot-time stale-CRL refusal — nothing is `Stale` against a zero clock — so the
-    /// deployment would load an arbitrarily expired CRL and still print that revocation
-    /// is enforced. That case refuses.
-    ///
-    /// The broken implementation this catches: warning unconditionally, and handing the
-    /// same faulted reading to `TlsPlane::materialize` as the CRL freshness reference.
-    #[test]
-    fn a_faulted_clock_refuses_only_when_it_disables_the_crl_refusal() {
-        use crate::startup_plan::EPOCH_CLOCK_FAULT_THRESHOLD_SECS;
-
-        let refusal = faulted_clock_refusal(0, &crl_posture(&["/a.crl"], None))
-            .expect("a faulted clock plus CRLs must refuse");
-        assert!(
-            refusal.contains("CRL") && refusal.contains("clock"),
-            "the refusal must name both halves of why it fired: {refusal}"
-        );
-        assert!(
-            faulted_clock_refusal(
-                EPOCH_CLOCK_FAULT_THRESHOLD_SECS - 1,
-                &crl_posture(&["/a.crl", "/b.crl"], None),
-            )
-            .is_some(),
-            "anything below the fault threshold disables the same refusal"
-        );
-        // The two negative controls. Without them a guard that refused unconditionally
-        // would satisfy the assertions above.
-        assert!(
-            faulted_clock_refusal(0, &crl_posture(&[], None)).is_none(),
-            "with no CRL configured there is no boot-time refusal to disable; the \
-             per-request posture is already fail-closed and warns"
-        );
-        assert!(
-            faulted_clock_refusal(
-                EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
-                &crl_posture(&["/a.crl", "/b.crl", "/c.crl"], None),
-            )
-            .is_none(),
-            "a sane clock must not be refused however many CRLs are configured"
         );
     }
 

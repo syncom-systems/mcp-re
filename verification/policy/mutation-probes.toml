@@ -7107,7 +7107,7 @@ anchor = """
     building.install_signing(crate::signing_plane::SigningPlane::materialize(
         &signing_plan,
         roots,
-        startup_now_unix,
+        &startup_reading,
     )?)?;
 """
 weakening = """
@@ -7115,7 +7115,7 @@ weakening = """
     building.install_signing(crate::signing_plane::SigningPlane::materialize(
         &signing_plan,
         rival,
-        startup_now_unix,
+        &startup_reading,
     )?)?;
 """
 expect_red = [
