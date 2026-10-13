@@ -9,6 +9,8 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::delegation::jose::ClaimWindow;
+use crate::delegation::jose::RootSignedClaims;
 use crate::delegation::Audience;
 
 /// Hard size bound on the inline authorization decision in the request evidence block, for
@@ -22,7 +24,7 @@ pub const MAX_AUTHORIZATION_DECISION_LEN: usize = 8192;
 pub const PDP_DECISION_TYP: &str = "mcp-re-authorization-decision+jws";
 
 /// The JWS `alg` — EdDSA, as everywhere in this profile.
-pub const PDP_DECISION_ALG: &str = "EdDSA";
+pub const PDP_DECISION_ALG: &str = crate::delegation::jose::ALG_EDDSA;
 
 /// What the authority decided.
 ///
@@ -108,16 +110,9 @@ pub enum DecisionScope {
     Credential,
 }
 
-/// The JWS protected header of an authorization decision.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PdpDecisionHeader {
-    pub typ: String,
-    pub alg: String,
-    /// The issuing authority's root key id — resolved through the trust seam, never trusted
-    /// because it is named here.
-    pub kid: String,
-}
+/// The JWS protected header of an authorization decision; `kid` is the issuing authority's
+/// root key id.
+pub type PdpDecisionHeader = crate::delegation::jose::ProtectedHeader;
 
 /// The claims of an authorization decision.
 ///
@@ -167,6 +162,19 @@ pub struct PdpDecisionClaims {
     pub mcp_re_policy_version: String,
     /// The issuer root `key_id` — equals the header `kid`.
     pub issuer_kid: String,
+}
+
+impl RootSignedClaims for PdpDecisionClaims {
+    fn issuer_kid(&self) -> &str {
+        &self.issuer_kid
+    }
+    fn window(&self) -> ClaimWindow {
+        ClaimWindow {
+            iat: self.iat,
+            nbf: self.nbf,
+            exp: self.exp,
+        }
+    }
 }
 
 #[cfg(test)]

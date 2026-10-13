@@ -22,7 +22,6 @@
 //! under `cnf.jwk` (§3 step 8) are the response-verifier's job — this module
 //! returns the delegated key it needs. `alg` is pinned to `EdDSA`; no agility.
 
-use mcp_re_core::verify_ed25519_with;
 use mcp_re_core::VerificationKey;
 use serde::Deserialize;
 use serde::Serialize;
@@ -32,25 +31,17 @@ use crate::policy::VerifierPolicy;
 /// The frozen credential media type (ADR-MCPRE-052 §1; vocabulary firewall).
 pub const DELEGATION_TYP: &str = "mcp-re-delegation+jwt";
 /// The ONLY accepted JWS algorithm — Ed25519 per RFC 8037. No agility, no `none`.
-pub const DELEGATION_ALG: &str = "EdDSA";
+pub const DELEGATION_ALG: &str = jose::ALG_EDDSA;
 /// The ONLY key use this credential authorizes (ADR-MCPRE-052 §1).
 pub const KEY_USE_RESPONSE_SIGNING: &str = "response-signing";
 /// The `cnf.jwk` key type / curve for an Ed25519 delegated key (RFC 8037).
 pub const JWK_KTY_OKP: &str = "OKP";
 pub const JWK_CRV_ED25519: &str = "Ed25519";
 
-/// The protected header of the delegation JWS (ADR-MCPRE-052 §1).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DelegationHeader {
-    /// Frozen media type — must equal [`DELEGATION_TYP`].
-    pub typ: String,
-    /// Signature algorithm — must equal [`DELEGATION_ALG`] (`EdDSA`).
-    pub alg: String,
-    /// The ROOT/identity `key_id` that signed this credential; must equal the
-    /// claims' `issuer_kid`.
-    pub kid: String,
-}
+/// The protected header of the delegation JWS (ADR-MCPRE-052 §1): `typ` must equal
+/// [`DELEGATION_TYP`], `alg` [`DELEGATION_ALG`], and `kid` the ROOT/identity `key_id`
+/// that signed the credential, which must equal the claims' `issuer_kid`.
+pub type DelegationHeader = jose::ProtectedHeader;
 
 /// The Ed25519 public JWK carried in `cnf` (RFC 7800 / RFC 8037).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,13 +151,16 @@ fn bounded_skew(configured: i64) -> i64 {
     configured.clamp(0, VerifierPolicy::MAX_CLOCK_SKEW_BOUND)
 }
 
-/// ADR-MCPRE-052 §3 steps 2–8: what must hold before a delegated key may be believed.
-/// The credential's ENCODING — splitting a compact JWS and decoding its segments. A
-/// different authority from deciding whether what they say may be believed.
+/// Root-signed compact JWS statements: the codec, header and claim window every kind of
+/// statement in this profile shares, consumed by the other kinds as they consume [`Audience`].
+pub mod jose;
+
+/// The credential's ENCODING — reading a compact JWS as a credential's own statement of
+/// itself. A different authority from deciding whether what it says may be believed.
 mod parse;
 pub(crate) use parse::parse_credential;
-use parse::{decode_json, split_compact_jws};
 
+/// ADR-MCPRE-052 §3 steps 2–8: what must hold before a delegated key may be believed.
 mod verify;
 /// `pub(crate)` for the issuance side. The `cnf` consistency rule — a wrong key type, a
 /// wrong curve, or a `jwk.kid` that is not the credential's own `delegated_kid` makes the
@@ -414,11 +408,17 @@ mod tests {
             HttpProfileError::DelegationCredentialExpired
         );
 
-        // And the cap is a ceiling, not a replacement: exactly at the bound the
-        // credential is still accepted, so nothing legitimate was narrowed away.
+        // And the cap is a ceiling, not a replacement: the capped window still applies in
+        // full, so `exp + cap` is the first stale instant and the one before it is accepted.
         let mut at_bound = params(&[AUD], &[EPOCH]);
         at_bound.max_clock_skew = 86_400;
         at_bound.now = claims.exp + VerifierPolicy::MAX_CLOCK_SKEW_BOUND;
+        assert_eq!(
+            verify(&jws, &at_bound, r.public_key()).unwrap_err(),
+            HttpProfileError::DelegationCredentialExpired,
+            "exp + skew is the first stale instant, not the last fresh one"
+        );
+        at_bound.now = claims.exp + VerifierPolicy::MAX_CLOCK_SKEW_BOUND - 1;
         verify(&jws, &at_bound, r.public_key()).expect("the capped window still applies");
     }
 
@@ -430,8 +430,10 @@ mod tests {
         let claims = good_claims(&d.public_key());
         let mut p = params(&[AUD], &[EPOCH]);
         p.max_clock_skew = -1_000;
-        p.now = claims.exp;
-        verify(&jws, &p, r.public_key()).expect("exp itself is inside the window");
+        p.now = claims.exp - 1;
+        verify(&jws, &p, r.public_key()).expect("the last instant before exp is inside");
+        p.now = claims.nbf;
+        verify(&jws, &p, r.public_key()).expect("nbf itself is inside");
     }
 
     #[test]

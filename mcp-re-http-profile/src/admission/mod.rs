@@ -27,10 +27,7 @@
 //! — serving within P on the last-known state — only if it explicitly opted in.
 //! Silent indefinite fallback would turn push-invalidation into a suggestion.
 
-use mcp_re_core::b64url_decode;
 use mcp_re_core::b64url_encode;
-use mcp_re_core::verify_ed25519_with;
-use mcp_re_core::McpReError;
 use mcp_re_core::VerificationKey;
 use serde::Deserialize;
 use serde::Serialize;
@@ -41,6 +38,13 @@ use crate::admission_policy::AdmissionPolicy;
 use crate::admission_policy::{assertion_age_exceeded, degraded_age_exceeded};
 use crate::authoritative_admission::AuthoritativeAdmission;
 use crate::block::BindingType;
+use crate::delegation::jose::ClaimWindow;
+use crate::delegation::jose::CompactJws;
+use crate::delegation::jose::IssueDefect;
+use crate::delegation::jose::JwsDefect;
+use crate::delegation::jose::ProtectedHeader;
+use crate::delegation::jose::RootSignedClaims;
+use crate::delegation::jose::RootVerified;
 use crate::delegation::Audience;
 use crate::error::HttpProfileError;
 #[cfg(feature = "verify")]
@@ -54,9 +58,7 @@ use vstd::prelude::*;
 pub const ADMISSION_TYP: &str = "mcp-re-admission+jws";
 
 /// The JWS `alg` — EdDSA, as everywhere in this profile.
-pub const ADMISSION_ALG: &str = "EdDSA";
-/// Raw Ed25519 signature octets; the external `sign_root` seam must return exactly this.
-const ED25519_SIGNATURE_LEN: usize = 64;
+pub const ADMISSION_ALG: &str = crate::delegation::jose::ALG_EDDSA;
 
 /// Admission status (§4.3). Only `Admitted` permits a call to proceed. `Suspended`
 /// (recoverable) and `Revoked` (terminal) are distinct in the signed artifacts; every
@@ -72,17 +74,6 @@ pub enum AdmissionStatus {
     /// Revoked — terminal.
     #[serde(rename = "revoked")]
     Revoked,
-}
-
-/// The JWS protected header of an admission assertion.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AdmissionHeader {
-    pub typ: String,
-    pub alg: String,
-    /// The issuer (admission authority) root key id — resolved through the trust
-    /// seam, never trusted because it is named here.
-    pub kid: String,
 }
 
 /// The claims of an admission assertion (§4.3).
@@ -130,6 +121,19 @@ pub struct AdmissionClaims {
     pub mcp_re_admission_status: AdmissionStatus,
     /// The issuer root `key_id` — equals the header `kid`.
     pub issuer_kid: String,
+}
+
+impl RootSignedClaims for AdmissionClaims {
+    fn issuer_kid(&self) -> &str {
+        &self.issuer_kid
+    }
+    fn window(&self) -> ClaimWindow {
+        ClaimWindow {
+            iat: self.iat,
+            nbf: self.nbf,
+            exp: self.exp,
+        }
+    }
 }
 
 /// The commitment carried in the request evidence block (§7): the call declares
@@ -222,37 +226,30 @@ pub fn issue_admission_assertion(
     claims: &AdmissionClaims,
     sign_root: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
 ) -> Result<String, HttpProfileError> {
-    let header = AdmissionHeader {
-        typ: ADMISSION_TYP.to_owned(),
-        alg: ADMISSION_ALG.to_owned(),
-        kid: claims.issuer_kid.clone(),
-    };
-    let refuse = |what: &'static str| HttpProfileError::MalformedEvidence(what);
-    let unformable = |_| refuse("admission assertion");
-    let h = b64url_encode(&serde_json::to_vec(&header).map_err(unformable)?);
-    let p = b64url_encode(&serde_json::to_vec(claims).map_err(unformable)?);
-    let sig = sign_root(format!("{h}.{p}").as_bytes())?;
-    if sig.len() != ED25519_SIGNATURE_LEN {
-        return Err(refuse("admission signature length"));
-    }
-    Ok(format!("{h}.{p}.{}", b64url_encode(&sig)))
-}
-
-fn split_compact(jws: &str) -> Result<(&str, &str, &str), HttpProfileError> {
-    let mut it = jws.split('.');
-    match (it.next(), it.next(), it.next(), it.next()) {
-        (Some(h), Some(p), Some(s), None) if !h.is_empty() && !p.is_empty() && !s.is_empty() => {
-            Ok((h, p, s))
+    let header = ProtectedHeader::eddsa(ADMISSION_TYP, &claims.issuer_kid);
+    CompactJws::issue(&header, claims, sign_root).map_err(|defect| match defect {
+        IssueDefect::Unformable => HttpProfileError::MalformedEvidence("admission assertion"),
+        IssueDefect::SignatureLength => {
+            HttpProfileError::MalformedEvidence("admission signature length")
         }
-        _ => Err(HttpProfileError::MalformedEvidence("admission jws shape")),
-    }
+        IssueDefect::Signer(e) => e,
+    })
 }
 
-fn decode_json<T: for<'de> Deserialize<'de>>(seg: &str) -> Result<T, HttpProfileError> {
-    let bytes =
-        b64url_decode(seg).map_err(|_| HttpProfileError::MalformedEvidence("admission b64url"))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|_| HttpProfileError::MalformedEvidence("admission json"))
+/// The assertion's refusal vocabulary over the codec's defects: an assertion that does not
+/// read is malformed evidence, naming the part; one that reads as something other than an
+/// assertion this authority signed is invalid; an issuer the trust seam does not resolve
+/// is untrusted.
+fn refuse_assertion(defect: JwsDefect) -> HttpProfileError {
+    match defect {
+        JwsDefect::Shape => HttpProfileError::MalformedEvidence("admission jws shape"),
+        JwsDefect::Base64Url => HttpProfileError::MalformedEvidence("admission b64url"),
+        JwsDefect::Json => HttpProfileError::MalformedEvidence("admission json"),
+        JwsDefect::MediaType | JwsDefect::KidDisagrees | JwsDefect::SignatureInvalid => {
+            HttpProfileError::AdmissionAssertionInvalid
+        }
+        JwsDefect::IssuerUntrusted => HttpProfileError::AdmissionIssuerUntrusted,
+    }
 }
 
 /// Verify an admission assertion's signature, shape, and freshness — WITHOUT the
@@ -277,27 +274,9 @@ fn verify_admission_assertion(
     now: i64,
     resolve_issuer: impl Fn(&str) -> Option<VerificationKey>,
 ) -> Result<AdmissionClaims, HttpProfileError> {
-    let (h_seg, p_seg, s_seg) = split_compact(compact_jws)?;
-    let header: AdmissionHeader = decode_json(h_seg)?;
-    if header.typ != ADMISSION_TYP || header.alg != ADMISSION_ALG {
-        return Err(HttpProfileError::AdmissionAssertionInvalid);
-    }
-    let claims: AdmissionClaims = decode_json(p_seg)?;
-    if header.kid != claims.issuer_kid {
-        return Err(HttpProfileError::AdmissionAssertionInvalid);
-    }
-
-    // Issuer → trusted authority root (a kid never introduces trust).
-    let root =
-        resolve_issuer(&claims.issuer_kid).ok_or(HttpProfileError::AdmissionIssuerUntrusted)?;
-    let signing_input = format!("{h_seg}.{p_seg}");
-    verify_ed25519_with(
-        signing_input.as_bytes(),
-        &s_seg_to_b64url(s_seg)?,
-        &root,
-        McpReError::InvalidSignature,
-    )
-    .map_err(|_| HttpProfileError::AdmissionAssertionInvalid)?;
+    let RootVerified { claims, .. } = CompactJws::split(compact_jws)
+        .and_then(|jws| jws.verify_root::<AdmissionClaims>(ADMISSION_TYP, resolve_issuer))
+        .map_err(refuse_assertion)?;
 
     if claims.mcp_re_profile != expected_profile {
         return Err(HttpProfileError::AdmissionAssertionInvalid);
@@ -306,38 +285,20 @@ fn verify_admission_assertion(
         return Err(HttpProfileError::AdmissionAssertionInvalid);
     }
 
-    // Freshness: within [nbf, exp] ± skew, AND not older than the declared budget
-    // N (§5.2). The TTL alone is the issuer's choice; N is the verifier's own cap
-    // on how stale a snapshot it will act on.
-    // These operands come straight out of a JWS payload, so a bare `now - claims.iat`
-    // with an extreme `iat` wraps in a release build and panics in any build with
-    // overflow checks. The window is SATURATING, matching the primary freshness gate
-    // (verify.rs); the age against N is compared exactly by `assertion_age_exceeded`,
-    // because a saturating age clamps to the same `i64::MAX` a saturating budget does.
-    let skew = policy.max_clock_skew;
-    if claims.nbf.saturating_sub(skew) > now
-        || claims.exp.saturating_add(skew) <= now
-        || claims.exp <= claims.nbf
-    {
-        return Err(HttpProfileError::AdmissionAssertionExpired);
-    }
-    // An `iat` ahead of the verifier is refused outright. `iat` is an independent claim
-    // from `[nbf, exp]`, and BOTH age computations that bound how stale a snapshot may be
-    // — the N cap here and the §5.2 degraded P window in `check_admission` — are
-    // `now - iat` against an upper bound only, so a future issuance makes both ages
-    // negative and passes them for the assertion's whole TTL. The skew term is the same
-    // tolerance the window above gets, no wider.
-    if assertion_age_exceeded(policy, now, claims.iat) || claims.iat > now.saturating_add(skew) {
+    // Freshness: inside the claim window under the policy's skew — which also refuses an
+    // `iat` ahead of the verifier, the one input that would floor BOTH age computations
+    // below at zero — AND not older than the declared budget N (§5.2). The TTL alone is
+    // the issuer's choice; N is the verifier's own cap on how stale a snapshot it will act
+    // on, compared exactly by `assertion_age_exceeded` because a saturating age clamps to
+    // the same `i64::MAX` a saturating budget does.
+    claims
+        .window()
+        .check(now, policy.max_clock_skew)
+        .map_err(|_| HttpProfileError::AdmissionAssertionExpired)?;
+    if assertion_age_exceeded(policy, now, claims.iat) {
         return Err(HttpProfileError::AdmissionAssertionExpired);
     }
     Ok(claims)
-}
-
-fn s_seg_to_b64url(s_seg: &str) -> Result<String, HttpProfileError> {
-    // The signature segment is already base64url; decode/re-encode normalizes it
-    // to the exact form the core verifier consumes and rejects a malformed one.
-    let bytes = b64url_decode(s_seg).map_err(|_| HttpProfileError::AdmissionAssertionInvalid)?;
-    Ok(b64url_encode(&bytes))
 }
 
 /// The §7 CURRENCY check: compare an [`AuthenticatedAdmission`] against the authoritative
@@ -459,6 +420,7 @@ pub fn check_admission(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mcp_re_core::b64url_decode;
     use mcp_re_core::SigningKey;
 
     const NOW: i64 = 1_700_000_100;
@@ -501,10 +463,16 @@ mod tests {
         |kid: &str| (kid == ISSUER_KID).then(|| root().public_key())
     }
 
+    fn segments(jws: &str) -> (&str, &str, &str) {
+        let parts: Vec<&str> = jws.split('.').collect();
+        assert_eq!(parts.len(), 3, "{jws}");
+        (parts[0], parts[1], parts[2])
+    }
+
     /// A compact JWS with a chosen header, signed by the genuine authority root. Lets a
     /// test vary the header alone, which `issue_admission_assertion` never will.
     fn issue_with_header(typ: &str, alg: &str, c: &AdmissionClaims) -> String {
-        let header = AdmissionHeader {
+        let header = ProtectedHeader {
             typ: typ.to_owned(),
             alg: alg.to_owned(),
             kid: c.issuer_kid.clone(),
@@ -884,7 +852,7 @@ mod tests {
     fn an_assertion_the_authority_did_not_sign_is_rejected() {
         let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
         let genuine = issue(&c);
-        let (h, p, s) = split_compact(&genuine).expect("compact jws");
+        let (h, p, s) = segments(&genuine);
         let mut sig = b64url_decode(s).expect("signature bytes");
         sig[0] ^= 0x01;
         let forged = format!("{h}.{p}.{}", b64url_encode(&sig));
@@ -900,7 +868,7 @@ mod tests {
     #[test]
     fn a_malformed_compact_assertion_is_refused_as_malformed() {
         let genuine = issue(&claims(5, AdmissionStatus::Admitted, NOW - 10));
-        let (h, p, s) = split_compact(&genuine).expect("compact jws");
+        let (h, p, s) = segments(&genuine);
         let not_json = b64url_encode(b"not json");
         for bad in [
             String::new(),
@@ -950,7 +918,7 @@ mod tests {
     #[test]
     fn an_assertion_whose_header_kid_disagrees_with_its_claims_is_rejected() {
         let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
-        let header = AdmissionHeader {
+        let header = ProtectedHeader {
             typ: ADMISSION_TYP.to_owned(),
             alg: ADMISSION_ALG.to_owned(),
             kid: "admission-root-2".to_owned(),

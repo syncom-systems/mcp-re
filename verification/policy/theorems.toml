@@ -383,6 +383,7 @@ owner = "http_profile.admission_state_provenance"
 review_requirement = "Owner security-specification review"
 supported_by = [
   "unit://http_profile.admission_state_provenance",
+  "unit://http_profile.jose_statement",
   "unit://proxy.admission_state_source",
   "unit://proxy.admission_record_addressing",
 ]
@@ -1068,6 +1069,7 @@ review_requirement = "Owner security-specification review"
 supported_by = [
   "unit://http_profile.delegated_bound_result",
   "unit://http_profile.delegated_credential_chain",
+  "unit://http_profile.jose_statement",
 ]
 depends_on = ["THM-0021"]
 
@@ -1112,6 +1114,7 @@ review_requirement = "Owner security-specification review"
 supported_by = [
   "unit://http_profile.delegated_unbound_result",
   "unit://http_profile.delegated_credential_chain",
+  "unit://http_profile.jose_statement",
 ]
 depends_on = ["THM-0022"]
 
@@ -2250,7 +2253,10 @@ about what a valid signature means cryptographically.
 """
 owner = "http_profile.pdp_decision_authentication"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://http_profile.pdp_decision_authentication"]
+supported_by = [
+  "unit://http_profile.pdp_decision_authentication",
+  "unit://http_profile.jose_statement",
+]
 depends_on = []
 
 [[theorem]]
@@ -2877,7 +2883,10 @@ THM-0004.
 """
 owner = "http_profile.admission_assertion"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://http_profile.admission_assertion"]
+supported_by = [
+  "unit://http_profile.admission_assertion",
+  "unit://http_profile.jose_statement",
+]
 depends_on = []
 
 [[theorem]]

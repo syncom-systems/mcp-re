@@ -823,10 +823,57 @@ tested_symbols = [
 # and no theorem is invented for it here — `verifier-results-decomposition-2026-09-18.md` P2-V2
 # is the obligation.
 [[unit]]
+id = "http_profile.jose_statement"
+class = "V0"
+description = "What every root-signed compact JWS statement in this profile shares before its own kind judges it: exactly three non-empty segments; a protected header naming the kind's media type and EdDSA whose kid is the issuer kid the claims name; a signature that verifies under the root the trust seam resolved for that kid; and one claim window under one edge rule, nbf - skew <= now < exp + skew with nbf < exp and iat <= now + skew, which the admission assertion, the authorization decision, the authoritative admission record and the delegation credential all judge by."
+# One codec and one window rule for four kinds of statement. Each kind's unit lists these
+# paths too, because each kind's claim about its own window and root signature now rests
+# on this code; this unit carries the battery that pins the shared rule itself, and the
+# cross-verifier control that holds the four kinds to one verdict.
+paths = [
+  "mcp-re-http-profile/src/delegation/jose/mod.rs",
+  "mcp-re-http-profile/src/delegation/jose/compact_jws.rs",
+  "mcp-re-http-profile/src/delegation/jose/claim_window.rs",
+  "mcp-re-http-profile/src/delegation/jose/protected_header.rs",
+  "mcp-re-http-profile/src/error.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/jose/root_signed_statement",
+  "mutation://http_profile/jose/root_signed_statement",
+]
+tested_symbols = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::tests::the_four_verifiers_share_one_window_rule",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::claim_window::tests::exp_plus_skew_is_the_first_stale_instant",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::claim_window::tests::nbf_minus_skew_is_the_first_fresh_instant",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::claim_window::tests::a_degenerate_window_is_refused_whatever_the_skew",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::claim_window::tests::an_issuance_dated_ahead_of_now_is_refused_beyond_the_skew",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::claim_window::tests::a_negative_skew_narrows_both_edges",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::claim_window::tests::extreme_claims_clamp_instead_of_wrapping",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::compact_jws::tests::a_genuine_statement_round_trips_with_its_root",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::compact_jws::tests::three_non_empty_segments_split_in_order",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::compact_jws::tests::segment_encoding_and_json_are_refused_separately",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::compact_jws::tests::another_media_type_or_algorithm_is_refused_before_the_claims_are_read",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::compact_jws::tests::a_header_kid_disagreeing_with_the_claims_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::compact_jws::tests::an_unresolvable_issuer_is_untrusted_not_a_bad_signature",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::compact_jws::tests::a_signature_by_another_key_or_a_tampered_one_is_invalid",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::compact_jws::tests::a_signer_returning_other_than_64_octets_is_refused_at_issuance",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::compact_jws::tests::a_signer_refusal_is_propagated",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::protected_header::tests::an_issued_header_is_pinned_to_eddsa",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::jose::protected_header::tests::an_unknown_header_member_does_not_parse",
+]
+
+[[unit]]
 id = "http_profile.delegated_credential_chain"
 class = "V0"
 description = "What an inline delegation credential must be before any response proposition may rest on it: three segments under the profile's own algorithm, type and key use; a root signature that verifies under an issuer key the trust seam resolved for the Response slot; inside its own nbf/exp window under a clamped skew; scoped to this verifier's audience; at an accepted trust epoch; and named on no revocation list by delegated kid, issuer kid or jti."
 paths = [
+  "mcp-re-http-profile/src/delegation/jose/mod.rs",
+  "mcp-re-http-profile/src/delegation/jose/compact_jws.rs",
+  "mcp-re-http-profile/src/delegation/jose/claim_window.rs",
+  "mcp-re-http-profile/src/delegation/jose/protected_header.rs",
   "mcp-re-http-profile/src/verifier.rs",
   "mcp-re-http-profile/src/verify/mod.rs",
   "mcp-re-http-profile/src/sigbase.rs",
@@ -896,10 +943,8 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::tests::revoked_by_jti_is_revoked",
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::tests::cnf_kid_not_delegated_kid_is_credential_invalid",
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::tests::not_three_segments_is_credential_invalid",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::parse::tests::three_non_empty_segments_split_in_order",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::parse::tests::a_fourth_well_formed_segment_is_refused",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::parse::tests::an_empty_segment_at_the_right_count_is_refused",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::parse::tests::decode_json_refuses_bad_base64url_and_bad_json_separately",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::parse::tests::a_credential_reads_back_as_the_header_and_claims_it_was_issued_with",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::parse::tests::a_fourth_segment_or_a_non_credential_payload_is_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::verify::tests::a_cnf_that_names_another_key_is_an_invalid_credential",
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::verify::tests::a_stale_trust_epoch_is_its_own_refusal",
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::verify::tests::each_scope_failure_names_what_it_is",
@@ -1370,6 +1415,10 @@ description = "What a presented admission assertion has to be before any verdict
 # separate unit for assertion validity as the discharge rather than an `ensures` added
 # there. This is that unit. Nothing here is inside the Verus cone.
 paths = [
+  "mcp-re-http-profile/src/delegation/jose/mod.rs",
+  "mcp-re-http-profile/src/delegation/jose/compact_jws.rs",
+  "mcp-re-http-profile/src/delegation/jose/claim_window.rs",
+  "mcp-re-http-profile/src/delegation/jose/protected_header.rs",
   "mcp-re-http-profile/src/admission/mod.rs",
   "mcp-re-http-profile/src/admission/verdict.rs",
   "mcp-re-http-profile/src/admission_policy.rs",
@@ -1503,6 +1552,10 @@ id = "http_profile.admission_state_provenance"
 class = "V0"
 description = "An authoritative admission state is obtainable only by verifying a record authenticated as issued by the configured admission authority, bound to the workload and to the admission generation and status, and current within the deployment's declared revocation-currentness budget — so store-write access without the signing authority can neither mint an admission nor indefinitely replay one."
 paths = [
+  "mcp-re-http-profile/src/delegation/jose/mod.rs",
+  "mcp-re-http-profile/src/delegation/jose/compact_jws.rs",
+  "mcp-re-http-profile/src/delegation/jose/claim_window.rs",
+  "mcp-re-http-profile/src/delegation/jose/protected_header.rs",
   "mcp-re-http-profile/src/authoritative_admission/record/mod.rs",
   "mcp-re-http-profile/src/authoritative_admission/record/currentness.rs",
   "mcp-re-http-profile/src/authoritative_admission/record/verified.rs",
@@ -3564,6 +3617,10 @@ id = "http_profile.pdp_decision_authentication"
 class = "V0"
 description = "ADR-MCPRE-065: what the AUTHORITY said, and that it was said to this enforcement point. A decision's JWS shape, its issuer's resolution through the authorization trust seam, its signature, the profile and audience it names, and the two freshness bounds — the verifier's own cap as well as the issuer's window. It decides nothing about the request in hand."
 paths = [
+  "mcp-re-http-profile/src/delegation/jose/mod.rs",
+  "mcp-re-http-profile/src/delegation/jose/compact_jws.rs",
+  "mcp-re-http-profile/src/delegation/jose/claim_window.rs",
+  "mcp-re-http-profile/src/delegation/jose/protected_header.rs",
   "mcp-re-http-profile/src/pdp_decision/verify.rs",
   "mcp-re-http-profile/src/pdp_decision/claims.rs",
   "mcp-re-http-profile/src/pdp_decision/issue.rs",

@@ -482,8 +482,10 @@ growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
 # because the path changed would launder 522 registered lines as progress.
 [[debt]]
 path = "mcp-re-http-profile/src/admission/mod.rs"
-baseline_prod_loc = 462
-baseline_sha = "d1fc5fa"
+# MCPRE-194: the compact-JWS codec and the claim window moved to `delegation/jose`, leaving
+# the assertion its refusal mapping and its own staleness budget: 462 (measured at d1fc5fa) -> 419.
+baseline_prod_loc = 419
+baseline_sha = "1021196"
 status = "unreviewed"
 
 [[debt]]
@@ -626,8 +628,10 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-http-profile/src/delegation/mod.rs"
-baseline_prod_loc = 218
-baseline_sha = "255465e"
+# MCPRE-194: the protected header is the shared `ProtectedHeader`, and the segment codec is
+# `jose`'s: 218 (measured at 255465e) -> 206.
+baseline_prod_loc = 206
+baseline_sha = "1021196"
 status = "unreviewed"
 
 [[debt]]
