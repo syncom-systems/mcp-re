@@ -173,10 +173,10 @@ mod tests {
                 ),
             )),
             AdmissionPolicy {
-                max_assertion_age: 300,
                 max_clock_skew: 5,
                 degraded_propagation_bound: 60,
                 allow_degraded_mode: true,
+                ..AdmissionPolicy::default()
             },
             AdmissionEnforcement::Required,
             Arc::new(|_kid: &str| None),
@@ -214,10 +214,10 @@ mod tests {
         let enforcer = AdmissionEnforcer::new(
             Arc::new(source),
             AdmissionPolicy {
-                max_assertion_age: 300,
                 max_clock_skew: 5,
                 degraded_propagation_bound: 60,
                 allow_degraded_mode: true,
+                ..AdmissionPolicy::default()
             },
             AdmissionEnforcement::Required,
             Arc::new(|_kid: &str| None),

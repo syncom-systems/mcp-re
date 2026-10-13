@@ -627,13 +627,8 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
         building.control(),
     )?
     .into_parts();
-    if let Some(gate) = admission {
-        proxy = proxy.with_admission(
-            gate.source,
-            gate.policy,
-            gate.enforcement,
-            gate.resolve_authority,
-        );
+    if let Some(enforcer) = admission {
+        proxy = proxy.with_admission_enforcer(enforcer);
     }
     posture.declare(Seam::AdmissionCurrency, admission_state);
 

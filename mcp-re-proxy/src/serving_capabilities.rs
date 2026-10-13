@@ -40,8 +40,6 @@
 //! file. Hiding the declarations inside these functions would move the proof somewhere
 //! the gate cannot see it.
 
-use std::sync::Arc;
-
 use crate::startup_posture::SeamState;
 
 /// What materializing one optional capability produced: the artifact to attach, and the
@@ -264,20 +262,6 @@ const ADMISSION_OFF: &str = "admission currency = OFF (--admission off): a call 
      because currency is a comparison against state only the deployment can supply. \
      Pass --admission with --admission-redis-url to enforce it.";
 
-/// Everything `HttpProfileProxy::with_admission` needs, kept together so the composition
-/// root attaches one value rather than reassembling four.
-///
-/// Not `cfg`-gated, although only the `redis_replay` arm below can build one: every field
-/// type exists in both profiles, and giving the two arms different return types would
-/// push the `cfg` into the composition root, which is the one place that should not have
-/// to know which backends this build has.
-pub(crate) struct AdmissionGate {
-    pub(crate) source: Arc<dyn crate::admission_source::AsyncAdmissionSource>,
-    pub(crate) policy: mcp_re_http_profile::AdmissionPolicy,
-    pub(crate) enforcement: crate::admission_enforcer::AdmissionEnforcement,
-    pub(crate) resolve_authority: crate::http_profile_serve::AdmissionAuthorityResolver,
-}
-
 /// MCPRE-493 §7 — the admission-currency gate over the shared authoritative record.
 ///
 /// Without a source the assertion and its binding are verified evidence that decides
@@ -292,32 +276,20 @@ pub(crate) fn admission_currency(
     state: &crate::config_state::AdmissionState,
     max_clock_skew: mcp_re_core::MaxClockSkew,
     control: &crate::control_runtime::ControlRuntimeProvision,
-) -> Result<Established<AdmissionGate>, String> {
-    use crate::config_state::{AdmissionAvailability, AdmissionPosture};
+) -> Result<Established<crate::admission_enforcer::AdmissionEnforcer>, String> {
+    use crate::admission_enforcer::AdmissionEnforcement;
+    use crate::config_state::AdmissionAvailability;
     // The state names the posture AND carries what that posture cannot exist without, so
     // there is nothing here to reconstruct and no arm for a witness that went missing.
     let Some(gate) = state.enforced() else {
         return Ok(Established::off(ADMISSION_OFF));
     };
-    let enforcement = match gate.posture() {
-        AdmissionPosture::Optional => crate::admission_enforcer::AdmissionEnforcement::Optional,
-        AdmissionPosture::Required => crate::admission_enforcer::AdmissionEnforcement::Required,
-    };
-    let (kid, key, url, availability) = (
+    let enforcement = AdmissionEnforcement::from(gate.posture());
+    let (kid, key, url) = (
         gate.authority_kid().to_string(),
         gate.authority().clone(),
         gate.record_store(),
-        gate.availability(),
     );
-    // The two `AdmissionPolicy` flags are a PROJECTION of one posture rather than two
-    // settings this seam could combine wrongly. `unwrap_or` is a saturation that cannot
-    // fire: the bound was narrowed from a positive `i64` at layer A.
-    let (allow_degraded_mode, degraded_propagation_bound) = match availability {
-        AdmissionAvailability::FailClosed => (false, 0),
-        AdmissionAvailability::BoundedDegraded { bound_secs } => {
-            (true, i64::try_from(bound_secs.get()).unwrap_or(i64::MAX))
-        }
-    };
     // The admission record is an INDEPENDENT endpoint; it has nothing to do with which
     // replay tier the deployment chose. Coupling it to the replay control runtime made
     // admission unimplementable on the CP/linearizable tier — the operator supplied
@@ -334,7 +306,7 @@ pub(crate) fn admission_currency(
         .block_on(crate::redis_admission_source::RedisAdmissionSource::connect(
             url,
             crate::admission_source::AdmissionRecordVerifier::new(
-                Arc::clone(&resolve_authority),
+                std::sync::Arc::clone(&resolve_authority),
                 mcp_re_http_profile::PROFILE_TAG,
                 mcp_re_http_profile::authoritative_admission::record::AdmissionStateCurrentness {
                     max_record_age: gate.record_currentness().max_age_secs(),
@@ -347,11 +319,11 @@ pub(crate) fn admission_currency(
         "admission currency = {} (authority {kid}, shared record over redis signed by that \
          authority and read within {}s, degraded {})",
         match enforcement {
-            crate::admission_enforcer::AdmissionEnforcement::Required => "REQUIRED",
-            crate::admission_enforcer::AdmissionEnforcement::Optional => "optional",
+            AdmissionEnforcement::Required => "REQUIRED",
+            AdmissionEnforcement::Optional => "optional",
         },
         gate.record_currentness().max_age_secs(),
-        match availability {
+        match gate.availability() {
             AdmissionAvailability::FailClosed => {
                 "OFF (an unreachable authority fails closed)".to_string()
             }
@@ -361,17 +333,12 @@ pub(crate) fn admission_currency(
         },
     );
     Ok(Established::on(
-        AdmissionGate {
-            source: Arc::new(source),
-            policy: mcp_re_http_profile::AdmissionPolicy {
-                max_assertion_age: 300,
-                max_clock_skew: max_clock_skew.secs(),
-                degraded_propagation_bound,
-                allow_degraded_mode,
-            },
+        crate::admission_enforcer::AdmissionEnforcer::new(
+            std::sync::Arc::new(source),
+            gate.enforcer_policy(max_clock_skew),
             enforcement,
             resolve_authority,
-        },
+        ),
         line,
     ))
 }
@@ -387,7 +354,7 @@ pub(crate) fn admission_currency(
     state: &crate::config_state::AdmissionState,
     _max_clock_skew: mcp_re_core::MaxClockSkew,
     _control: &crate::control_runtime::ControlRuntimeProvision,
-) -> Result<Established<AdmissionGate>, String> {
+) -> Result<Established<crate::admission_enforcer::AdmissionEnforcer>, String> {
     if state.is_enforced() {
         return Err(
             "--admission requires a build with the `redis_replay` feature (the \
