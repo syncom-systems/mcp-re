@@ -63,7 +63,9 @@ jobs:
       # bindPort mirror must equal it and no registered port may fall outside the
       # band. Fast, python-only — fails before the slow build.
       - name: Port-registry gate (single-source ports, no drift)
-        run: python3 scripts/check_port_registry.py
+        run: |
+          python3 scripts/check_port_registry.py --selftest
+          python3 scripts/check_port_registry.py
 
       # SEP-2322 discriminator gate: the conformance suite pins the discriminator's
       # VALUE, but that only protects readers that classify through the shared
@@ -75,7 +77,9 @@ jobs:
       # is a script rather than a test because `sdk/` is not Bazel-addressable.
       # Fast, python-only.
       - name: Discriminator gate (one classifier, no open-coded copies)
-        run: python3 scripts/discriminator_gate.py
+        run: |
+          python3 scripts/discriminator_gate.py --selftest
+          python3 scripts/discriminator_gate.py
 
       # Tracked-file leak guard: key material, credential documents, and personal
       # or concrete service-account identifiers must never land in a tracked file
@@ -203,7 +207,21 @@ jobs:
           version: v3.16.3
 
       - name: Helm chart render gate (fail-closed guards must refuse)
-        run: python3 scripts/helm_render_gate.py
+        run: |
+          python3 scripts/helm_render_gate.py --selftest
+          python3 scripts/helm_render_gate.py
+
+      # The selftests of gates whose real run needs Bazel, the network or a disposable
+      # checkout. Each injects the defect its gate exists to catch and proves red, with none
+      # of those, so a gate edited into permissiveness fails here before the slow jobs.
+      - name: Gate selftests (gazelle drift, lint membership, target table, evidence graph, Verus install, negative controls)
+        run: |
+          python3 scripts/bazel_gazelle_gate.py --selftest
+          python3 scripts/workspace_lints_gate.py --selftest
+          tools/verification/rust-targets --selftest
+          tools/verification/evidence-graph --selftest
+          python3 scripts/install_pinned_verus.py --selftest
+          python3 scripts/hosted_negative_controls.py --selftest
 
       # ES256 containment (ADR-MCPRE-054): ECDSA P-256 is admitted for SCITT receipt
       # verification and nowhere else — request and response signing stay Ed25519.

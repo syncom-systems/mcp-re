@@ -16,6 +16,9 @@
 #                   name it; [] when none does. Checked against the workflows.
 #   selftest        whether the script handles a `--selftest` argument of its own. Checked
 #                   against the script's text.
+#   selftest_exempt present when a control has no `--selftest`, with the reason. A control
+#                   with neither fails; so does an exemption on a row that has a selftest or
+#                   is not a control.
 #   not_a_control   present when the script is not a control at all — a driver, runner,
 #                   report, demo or repository operation — with the reason. Such a script is
 #                   outside the control census's gate population (tools/verification/_controls.py).
@@ -49,9 +52,9 @@ selftest = true
 
 [[script]]
 path = "scripts/bazel_gazelle_gate.py"
-stages = [3]
-ci = ["ci.yml:bazel"]
-selftest = false
+stages = [1, 3]
+ci = ["ci.yml:bazel", "ci.yml:rust"]
+selftest = true
 
 [[script]]
 path = "scripts/bazel_srcs_gate.py"
@@ -70,7 +73,7 @@ not_a_control = "performs a repository operation: moves every surface that carri
 path = "scripts/check_port_registry.py"
 stages = [1]
 ci = ["ci.yml:rust"]
-selftest = false
+selftest = true
 
 [[script]]
 path = "scripts/claim_surface_gate.py"
@@ -140,7 +143,7 @@ selftest = true
 path = "scripts/discriminator_gate.py"
 stages = [1]
 ci = ["ci.yml:rust"]
-selftest = false
+selftest = true
 
 [[script]]
 path = "scripts/doc_path_gate.py"
@@ -194,19 +197,19 @@ selftest = true
 path = "scripts/helm_render_gate.py"
 stages = [1]
 ci = ["ci.yml:rust"]
-selftest = false
+selftest = true
 
 [[script]]
 path = "scripts/hosted_negative_controls.py"
-stages = []
-ci = ["verification.yml:negative-controls"]
-selftest = false
+stages = [1]
+ci = ["ci.yml:rust", "verification.yml:negative-controls"]
+selftest = true
 
 [[script]]
 path = "scripts/install_pinned_verus.py"
-stages = []
-ci = ["verification.yml:host", "verification.yml:negative-controls"]
-selftest = false
+stages = [1]
+ci = ["ci.yml:rust", "verification.yml:host", "verification.yml:negative-controls"]
+selftest = true
 
 [[script]]
 path = "scripts/jcs_vocabulary_gate.py"
@@ -309,12 +312,14 @@ path = "scripts/prepare_node_matrix.sh"
 stages = []
 ci = ["verification.yml:host"]
 selftest = false
+selftest_exempt = "an installer that provisions the pinned Node interpreters on a runner; the pins it installs are checked by node_runtime_gate.py"
 
 [[script]]
 path = "scripts/prepare_python_matrix.sh"
 stages = []
 ci = ["verification.yml:host"]
 selftest = false
+selftest_exempt = "an installer that provisions the pinned Python interpreters on a runner; the pins it installs are checked by python_runtime_gate.py"
 
 [[script]]
 path = "scripts/proxy_flag_doc_gate.py"
@@ -460,6 +465,7 @@ path = "scripts/stage_image_binaries.sh"
 stages = []
 ci = []
 selftest = false
+selftest_exempt = "builds and stages the image binaries with Bazel; which proxy target it names is checked by helm_render_gate.py"
 
 [[script]]
 path = "scripts/startup_backedges.py"
@@ -513,6 +519,7 @@ path = "scripts/verification_runner_preflight.sh"
 stages = [1]
 ci = ["verification.yml:host"]
 selftest = false
+selftest_exempt = "reports what the runner it runs on lacks; its subject is the host, which no fixture can stand in for"
 off_merge_path = "a runner-environment preflight whose scope is the verification workflow itself"
 
 [[script]]
@@ -530,8 +537,8 @@ selftest = true
 [[script]]
 path = "scripts/workspace_lints_gate.py"
 stages = [1, 2]
-ci = ["ci.yml:bazel"]
-selftest = false
+ci = ["ci.yml:bazel", "ci.yml:rust"]
+selftest = true
 
 # Needs a live kind cluster and a 3 GB bench image, which no CI runner has.
 # rehearsal_claim_gate.py, which is unconditional, keeps it wired.
@@ -540,6 +547,7 @@ path = "tools/slo/rehearse_job_spec.sh"
 stages = [5]
 ci = []
 selftest = false
+selftest_exempt = "a kind-cluster rehearsal; its wiring is policed by rehearsal_claim_gate.py"
 off_merge_path = "a kind-cluster Job-spec rehearsal; its wiring is policed by rehearsal_claim_gate.py"
 
 [[script]]
@@ -547,6 +555,7 @@ path = "tools/verification/attest"
 stages = []
 ci = []
 selftest = false
+selftest_exempt = "an evidence writer; the records it issues are checked by the lanes that read them and by test_attest.py"
 off_merge_path = "an evidence writer invoked by the lanes; it issues records, it does not decide"
 
 [[script]]
@@ -554,13 +563,14 @@ path = "tools/verification/evidence"
 stages = []
 ci = []
 selftest = false
+selftest_exempt = "a driver over phases the merge path runs as separate steps, each with its own suite"
 off_merge_path = "a driver over phases the merge path runs as separate steps"
 
 [[script]]
 path = "tools/verification/evidence-graph"
-stages = []
-ci = []
-selftest = false
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
 off_merge_path = "a semantic overlay report with no verdict"
 
 [[script]]
@@ -568,6 +578,7 @@ path = "tools/verification/extraction-image"
 stages = [1, 2]
 ci = ["extraction-image.yml:build"]
 selftest = false
+selftest_exempt = "builds the pinned extraction image; its identity is checked by extraction_image_gate.py"
 off_merge_path = "builds and names the pinned extraction image; the lanes that decide run inside it"
 
 [[script]]
@@ -575,6 +586,7 @@ path = "tools/verification/fingerprint"
 stages = []
 ci = []
 selftest = false
+selftest_exempt = "a CLI over _fingerprint.fingerprint_unit, which the verification suites exercise"
 off_merge_path = "a CLI over _fingerprint.fingerprint_unit; a measurement, not a verdict"
 
 [[script]]
@@ -582,6 +594,7 @@ path = "tools/verification/generate-views"
 stages = []
 ci = []
 selftest = false
+selftest_exempt = "a generator; check-views is the verdict over its output"
 off_merge_path = "a generator; the verdict over its output is check-views"
 
 # Charon links the private rustc crates, so this cannot execute outside the pinned
@@ -591,6 +604,7 @@ path = "tools/verification/regenerate-lean"
 stages = [1, 2]
 ci = ["verification.yml:extraction"]
 selftest = false
+selftest_exempt = "runs only inside the pinned extraction container; the model it regenerates is checked by test_lean_model.py"
 off_merge_path = "runs only inside the pinned extraction container, which one filtered workflow provides"
 
 # The attestation store is machine-local and gitignored, so a merge-path job cannot see
@@ -600,6 +614,7 @@ path = "tools/verification/review"
 stages = [1]
 ci = []
 selftest = false
+selftest_exempt = "reads the machine-local attestation store; its binding mode is policed by release_assurance_gate.py"
 off_merge_path = "reads the machine-local attestation store; its binding mode is policed by release_assurance_gate.py"
 
 [[script]]
@@ -607,6 +622,7 @@ path = "tools/verification/review-frontier"
 stages = []
 ci = []
 selftest = false
+selftest_exempt = "a review-obligation report with no verdict"
 off_merge_path = "a review-obligation report with no verdict"
 
 [[script]]
@@ -614,6 +630,7 @@ path = "tools/verification/review-packet"
 stages = []
 ci = []
 selftest = false
+selftest_exempt = "a derived review packet; a document, not a decision"
 off_merge_path = "a derived review packet; a document, not a decision"
 
 # It decides a pull request's SCOPE, never a verdict; on any doubt it widens to a full run.
@@ -622,6 +639,7 @@ path = "tools/verification/select-units"
 stages = []
 ci = ["mutation-probe.yml:probe", "verification.yml:scope"]
 selftest = false
+selftest_exempt = "pinned by test_scoped_verification.py in ci.yml"
 off_merge_path = "scopes the filtered verification workflows; pinned by test_scoped_verification.py in ci.yml"
 
 # verification_trigger_gate.py, which is unconditional, holds verification.yml's filter to
@@ -635,4 +653,5 @@ ci = [
   "verification.yml:host",
 ]
 selftest = false
+selftest_exempt = "the lane dispatcher; its lanes and verdict composition are pinned by the verification suites in ci.yml"
 off_merge_path = "the lane dispatcher; runs in verification.yml, whose filter verification_trigger_gate.py holds to every fingerprint input"
