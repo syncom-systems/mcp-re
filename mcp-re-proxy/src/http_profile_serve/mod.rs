@@ -128,7 +128,7 @@ use crate::delegated_server_signer::DelegatedServerSigner;
 use crate::exchange_state::ExchangeEvent;
 use crate::exchange_state::ExchangeProgress;
 use crate::exchange_state::RetrySemantics;
-use crate::http_profile_dispatch::ProxyDispatchConfig;
+use crate::http_profile_dispatch::ReplayAdmission;
 use crate::request_stages::ReadyForDispatch;
 use crate::transport::TransportBinding;
 use authority_verdicts::AuthorityVerdicts;
@@ -181,10 +181,10 @@ pub struct HttpProfileProxy {
     /// and the receipt a refusal is served as. Held as one owner so the reply path and the
     /// refusal path cannot drift apart in what they sign under.
     responses: receipt::ResponseSigning,
-    /// The authoritative async replay tier (ADR-MCPRE-051 §4).
-    replay_async: crate::async_replay::AsyncReplayTier,
-    /// Deployment replay-durability posture (fleet-strict + declared tier).
-    dispatch_cfg: ProxyDispatchConfig,
+    /// The authoritative async replay tier (ADR-MCPRE-051 §4) and the posture declared
+    /// for it, held as one value so every admission reads the declaration made about the
+    /// store that answers it.
+    replay: ReplayAdmission,
     /// The backend seam, and the reading of every answer it can give.
     inner_async: inner_plane::InnerPlane,
     /// Optional Mode-A transport binding: bind the verified request actor to the
@@ -246,16 +246,13 @@ impl HttpProfileProxy {
 
     /// Construct the serving PEP (ADR-MCPRE-052 delegated signing, the only response-signing
     /// mode), signing every response and rejection with the shared [`DelegatedServerSigner`].
-    /// `dispatch_cfg.fleet_strict` IS the replay claim: set, every request refuses unless
-    /// both the declared tier and `replay_async`'s own durability class are durable; unset,
-    /// the tier refuses replays within this process only, the single-process posture.
-    // Public embedder constructor: seven required inputs, no default; optional postures are `with_*`.
-    #[allow(clippy::too_many_arguments)]
+    /// `replay`'s posture IS the replay claim: fleet-strict, every request refuses unless
+    /// both the declared tier and the store's own durability class are durable;
+    /// single-process, the tier refuses replays within this process only.
     pub fn new_delegated(
         resolve_actor: ActorResolver,
         expected_audience: AudienceTuple,
-        replay_async: crate::async_replay::AsyncReplayTier,
-        dispatch_cfg: ProxyDispatchConfig,
+        replay: ReplayAdmission,
         inner_async: Box<dyn AsyncInnerServer>,
         sig_ttl_secs: i64,
         delegated_signer: Arc<DelegatedServerSigner>,
@@ -263,8 +260,7 @@ impl HttpProfileProxy {
         HttpProfileProxy {
             requests: request_admission::RequestAdmission::new(resolve_actor, expected_audience),
             responses: receipt::ResponseSigning::new(&delegated_signer, sig_ttl_secs),
-            replay_async,
-            dispatch_cfg,
+            replay,
             inner_async: inner_plane::InnerPlane::over(inner_async),
             transport_binding: None,
             continuations: continuation::ContinuationPlane::disabled(),

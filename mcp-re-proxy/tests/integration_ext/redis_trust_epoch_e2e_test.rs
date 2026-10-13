@@ -161,7 +161,7 @@ mod serving_path {
     use mcp_re_proxy::async_replay::AsyncReplayTier;
     use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
     use mcp_re_proxy::async_serve::ServedHttpRequest;
-    use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
+    use mcp_re_proxy::http_profile_dispatch::{ReplayAdmission, ReplayPosture};
     use mcp_re_proxy::trust_epoch::redis_trust_epoch_source;
     use mcp_re_proxy::trust_epoch::RedisEpochReader;
     use mcp_re_proxy::trust_epoch::SharedEpochChannel;
@@ -292,14 +292,13 @@ mod serving_path {
             proxy: HttpProfileProxy::new_delegated(
                 resolve_actor,
                 audience(),
-                AsyncReplayTier::new(
-                    Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-                    mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+                ReplayAdmission::new(
+                    AsyncReplayTier::new(
+                        Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                        mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+                    ),
+                    ReplayPosture::SingleProcess,
                 ),
-                ProxyDispatchConfig {
-                    fleet_strict: false,
-                    tier: None,
-                },
                 Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
                     |_forwarded: &[u8]| -> Vec<u8> {
                         br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()

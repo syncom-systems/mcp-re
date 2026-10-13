@@ -54,7 +54,7 @@ use mcp_re_proxy::authorization::AuthorizationRequest;
 use mcp_re_proxy::authorization::AuthorizedDecision;
 use mcp_re_proxy::authorization::DecisionEvidenceIdentity;
 use mcp_re_proxy::authorization::GrantAttribution;
-use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
+use mcp_re_proxy::http_profile_dispatch::{ReplayAdmission, ReplayPosture};
 use mcp_re_proxy::ActorResolver;
 use mcp_re_proxy::DelegatedRotor;
 use mcp_re_proxy::DelegatedServerSigner;
@@ -313,14 +313,13 @@ fn proxy(
     let base = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        AsyncReplayTier::new(
-            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ReplayAdmission::new(
+            AsyncReplayTier::new(
+                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+            ),
+            ReplayPosture::SingleProcess,
         ),
-        ProxyDispatchConfig {
-            fleet_strict: false,
-            tier: None,
-        },
         counting_inner(calls),
         300,
         ready_signer(),

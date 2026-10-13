@@ -426,12 +426,12 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     // The redis store's reconnect machinery binds to the runtime it is CREATED in, so the
     // substrate must outlive every USE of the tier — discharged by draining the fleet
     // before anything is reclaimed, not by drop order. See `replay_plane`.
-    let (replay_async, dispatch_cfg) = crate::replay_plane::MaterializedReplay::materialize(
+    let replay = crate::replay_plane::MaterializedReplay::materialize(
         &replay_plan,
         config.state().freshness(),
         building.control(),
     )?
-    .into_parts();
+    .into_admission();
 
     // Materialized HERE, not where the channel credential is established, so the CRL load
     // and its stale-CRL refusal sit after the trust posture and before the revocation
@@ -560,8 +560,7 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     let mut proxy = HttpProfileProxy::new_delegated(
         resolve_actor,
         expected_audience,
-        replay_async,
-        dispatch_cfg,
+        replay,
         Box::new(pool),
         300,
         building.signing()?.signer(),

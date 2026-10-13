@@ -19,7 +19,6 @@ use crate::exchange_state::ContinuationState;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
 use crate::exchange_state::ExchangeProgress;
-use crate::http_profile_dispatch::dispatch_request_with_async_tier;
 use crate::refusal::Refusal;
 
 use super::continuation::Retirement;
@@ -49,16 +48,11 @@ impl HttpProfileProxy {
         // The outcome value is not consulted: admission is the property, and a stage that
         // read the outcome to decide something would be making a second decision the
         // pipeline does not have a state for.
-        dispatch_request_with_async_tier(
-            ex.verified,
-            &self.replay_async,
-            continuation,
-            &self.dispatch_cfg,
-            ex.now,
-        )
-        .await
-        .map(|_| Established::new((), ExchangeEvent::ReplayAdmitted))
-        .map_err(|e| Refusal::new(e, 409))
+        self.replay
+            .admit(ex.verified, continuation, ex.now)
+            .await
+            .map(|_| Established::new((), ExchangeEvent::ReplayAdmitted))
+            .map_err(|e| Refusal::new(e, 409))
     }
 
     /// ANSWERABLE — can this request be answered AT ALL?

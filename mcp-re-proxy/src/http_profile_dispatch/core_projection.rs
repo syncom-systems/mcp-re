@@ -21,13 +21,12 @@ use super::ProxyDispatchError;
 impl From<&ProxyDispatchError> for McpReError {
     fn from(e: &ProxyDispatchError) -> McpReError {
         match e {
-            // A tier below the strict-production minimum and no declared tier are one fact
-            // for the caller: the store this deployment would admit against cannot be relied
-            // upon. Fail closed on the operational token rather than inventing a
-            // configuration one — the request is refused, and why is the operator's startup
-            // line, not the client's rejection code.
-            ProxyDispatchError::SubMinimumReplayTier(_)
-            | ProxyDispatchError::NoDeclaredReplayTier => McpReError::ReplayCacheUnavailable,
+            // A tier below the strict-production minimum means, for the caller, that the
+            // store this deployment would admit against cannot be relied upon. Fail closed
+            // on the operational token rather than inventing a configuration one — the
+            // request is refused, and why is the operator's startup line, not the client's
+            // rejection code.
+            ProxyDispatchError::SubMinimumReplayTier(_) => McpReError::ReplayCacheUnavailable,
             ProxyDispatchError::Dispatch(e) => McpReError::from(e),
         }
     }
@@ -48,19 +47,13 @@ mod tests {
     use super::*;
     use crate::ReplayDurabilityTier;
 
-    /// Both tier failures are the same fact about the store, and the projection says so.
+    /// A sub-minimum tier is an outage verdict, not a configuration token of its own.
     #[test]
-    fn an_unusable_tier_and_an_undeclared_one_are_one_verdict() {
-        assert_eq!(
-            McpReError::from(&ProxyDispatchError::SubMinimumReplayTier(
-                ReplayDurabilityTier::AsyncReplicatedBounded
-            )),
-            McpReError::from(&ProxyDispatchError::NoDeclaredReplayTier)
-        );
-        assert_eq!(
-            ProxyDispatchError::NoDeclaredReplayTier.wire_code(),
-            "mcp-re.replay_cache_unavailable"
-        );
+    fn a_sub_minimum_tier_is_an_unavailable_replay_cache() {
+        let e =
+            ProxyDispatchError::SubMinimumReplayTier(ReplayDurabilityTier::AsyncReplicatedBounded);
+        assert_eq!(McpReError::from(&e), McpReError::ReplayCacheUnavailable);
+        assert_eq!(e.wire_code(), "mcp-re.replay_cache_unavailable");
     }
 
     /// The delegating arm does not re-decide: a dispatch failure keeps the verdict the

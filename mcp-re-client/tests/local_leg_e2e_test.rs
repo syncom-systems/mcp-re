@@ -36,7 +36,7 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
-use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
+use mcp_re_proxy::http_profile_dispatch::{ReplayAdmission, ReplayPosture};
 use mcp_re_proxy::ActorResolver;
 use mcp_re_proxy::HttpProfileProxy;
 
@@ -197,14 +197,13 @@ fn build_server(backend_reply: &'static str) -> HttpProfileProxy {
     HttpProfileProxy::new_delegated(
         server_resolver(),
         expected_audience,
-        AsyncReplayTier::new(
-            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ReplayAdmission::new(
+            AsyncReplayTier::new(
+                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+            ),
+            ReplayPosture::SingleProcess,
         ),
-        ProxyDispatchConfig {
-            fleet_strict: false,
-            tier: None,
-        },
         // The fixture's backend answers synchronously from memory, and says so.
         Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
             move |_forwarded: &[u8]| -> Vec<u8> { backend_reply.as_bytes().to_vec() },

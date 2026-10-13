@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The sealed handover value: the established replay tier and the dispatch posture it
-//! implies (ADR-MCPRE-056 §6; #78 / ADR-MCPS-020).
+//! The sealed handover value: the established replay tier and the posture declared for it
+//! (ADR-MCPRE-056 §6; #78 / ADR-MCPS-020).
 //!
 //! # Why this is its own module
 //!
 //! The durability guard runs inside the producer, which makes it part of BUILDING the
 //! value rather than something a producer remembers to run. That argument holds only for
 //! as long as the producer is the sole one — and the representation decides that, not the
-//! call sites. With public fields, `MaterializedReplay { tier, dispatch }` was an ordinary
+//! call sites. With public fields, `MaterializedReplay { .. }` was an ordinary
 //! expression in every module of this crate, so the guard was reachable-around by the same
 //! composition root it exists to constrain; `app.rs` destructured the value, which is the
 //! shape [`R-COMPOSE`](../../../../CLAUDE.md) forbids.
@@ -32,7 +32,8 @@
 
 use crate::async_replay::AsyncReplayTier;
 use crate::control_runtime::ControlRuntime;
-use crate::http_profile_dispatch::ProxyDispatchConfig;
+use crate::http_profile_dispatch::{ReplayAdmission, ReplayPosture};
+use crate::replay_tier::ReplayDurabilityTier;
 use crate::startup_plan::{PlannedStore, ReplayPlan};
 
 use super::backends::{establish_etcd, establish_redis};
@@ -43,21 +44,19 @@ use super::backends::{establish_etcd, establish_redis};
 /// reads, it is the thing an outside construction cannot supply.
 struct DurabilityWitness;
 
-/// The established replay tier and the dispatch posture it implies.
+/// The established replay tier and the posture declared for it.
 ///
-/// By value: the caller moves both into the proxy through [`Self::into_parts`]. Nothing
-/// here is shared back, and nothing outside this module can assemble one.
+/// By value: the caller moves it into the proxy through [`Self::into_admission`], which
+/// hands the tier over still paired with its posture. Nothing here is shared back, and
+/// nothing outside this module can assemble one.
 pub struct MaterializedReplay {
-    /// The authoritative tier the per-core request path awaits.
-    tier: AsyncReplayTier,
-    /// Fleet-strict dispatch and the declared durability tier, which the serving path
-    /// reports. The posture's tier is `ReplayPlan::tier()`, the tier that
-    /// `ReplayState::materialization_plan` paired with this plan's store and `backends`
-    /// copies in unchanged. `accept` checks only the volatile floor (`assert_durable`); it
-    /// does not compare the advertised tier against the store, and cannot, because
-    /// `ReplayDurabilityClass` has no class finer than `Durable`. The store/tier
-    /// correspondence is the plan's invariant, not this value's.
-    dispatch: ProxyDispatchConfig,
+    /// The authoritative tier the per-core request path awaits, under the fleet-strict
+    /// posture declaring `ReplayPlan::tier()` — the tier `ReplayState::materialization_plan`
+    /// paired with this plan's store, stated once, by `materialize`. `accept` checks only
+    /// the volatile floor (`assert_durable`); it does not compare the declared tier against
+    /// the store, and cannot, because `ReplayDurabilityClass` has no class finer than
+    /// `Durable`. The store/tier correspondence is the plan's invariant, not this value's.
+    admission: ReplayAdmission,
     /// See [`DurabilityWitness`]. Never read: possession is the whole content.
     _durable: DurabilityWitness,
 }
@@ -82,36 +81,35 @@ impl MaterializedReplay {
         // this store with the only tier it can serve, and materialization has no standing
         // to re-pair them.
         let tier = plan.tier();
-        let (established, dispatch) = match plan.store() {
+        let established = match plan.store() {
             PlannedStore::Etcd { endpoint } => establish_etcd(endpoint, tier, freshness)?,
             PlannedStore::Redis { url } => establish_redis(url, tier, freshness, control)?,
         };
-        Self::accept(established, dispatch)
+        Self::accept(established, tier.clone())
     }
 
     /// The checked construction, shared by [`Self::materialize`] and the batteries that
     /// exercise the guard against an injected store.
     ///
     /// Producing the value and checking it are ONE step: there is no path from a tier and
-    /// a posture to a `MaterializedReplay` that does not pass through `assert_durable`.
-    fn accept(tier: AsyncReplayTier, dispatch: ProxyDispatchConfig) -> Result<Self, String> {
+    /// a declared tier to a `MaterializedReplay` that does not pass through
+    /// `assert_durable`.
+    fn accept(tier: AsyncReplayTier, declared: ReplayDurabilityTier) -> Result<Self, String> {
         let _durable = assert_durable(&tier)?;
         Ok(MaterializedReplay {
-            tier,
-            dispatch,
+            admission: ReplayAdmission::new(tier, ReplayPosture::FleetStrict(declared)),
             _durable,
         })
     }
 
-    /// The handover: both halves, moved out together.
+    /// The handover: the tier and its posture, moved out as the one value the serving path
+    /// admits through.
     ///
-    /// The seal ends at this call. What possession guaranteed (the tier passed
-    /// `assert_durable`) is not carried by either half afterwards, and
-    /// `ProxyDispatchConfig` is a plain value with public fields any module of the crate can
-    /// build, so the tuple does not keep the halves paired. The sole consumer (`app.rs`)
-    /// moves both directly into `HttpProfileProxy::new_delegated`.
-    pub fn into_parts(self) -> (AsyncReplayTier, ProxyDispatchConfig) {
-        (self.tier, self.dispatch)
+    /// What possession guaranteed (the tier passed `assert_durable`) is not carried past
+    /// this call; what is carried is the pairing, which [`ReplayAdmission`] holds for as
+    /// long as the proxy does.
+    pub fn into_admission(self) -> ReplayAdmission {
+        self.admission
     }
 }
 
@@ -166,11 +164,29 @@ mod tests {
         }
     }
 
-    fn linearizable_dispatch() -> ProxyDispatchConfig {
-        ProxyDispatchConfig {
-            fleet_strict: true,
-            tier: Some(ReplayDurabilityTier::Linearizable),
-        }
+    fn durable_tier() -> AsyncReplayTier {
+        AsyncReplayTier::new(
+            std::sync::Arc::new(DurableStore),
+            crate::config_state::test_support::freshness(60),
+        )
+    }
+
+    /// Admit one verified request through the handed-over value, as the serving path does.
+    fn admit_one(
+        admission: &ReplayAdmission,
+    ) -> Result<
+        mcp_re_http_profile::DispatchOutcome,
+        crate::http_profile_dispatch::ProxyDispatchError,
+    > {
+        let verified = crate::authorization::action_harness::verified_over_as(
+            crate::authorization::action_harness::LIST,
+            "did:example:agent-1",
+            "key-a",
+        )
+        .verified;
+        tokio::runtime::Runtime::new()
+            .expect("rt")
+            .block_on(admission.admit(&verified, None, 1))
     }
 
     /// The volatile tier cannot be handed over, even though it can be constructed.
@@ -199,33 +215,45 @@ mod tests {
     /// else, which is what the same test could not say while the fields were `pub`.
     #[test]
     fn a_volatile_tier_under_a_linearizable_posture_cannot_be_built() {
-        let err = match MaterializedReplay::accept(volatile_tier(), linearizable_dispatch()) {
-            Ok(_) => panic!("a volatile tier must not produce a handover value"),
-            Err(e) => e,
-        };
+        let err =
+            match MaterializedReplay::accept(volatile_tier(), ReplayDurabilityTier::Linearizable) {
+                Ok(_) => panic!("a volatile tier must not produce a handover value"),
+                Err(e) => e,
+            };
         assert!(err.contains("single-process reference"), "{err}");
     }
 
-    /// The guard admits what it is supposed to admit: a durable store yields the value
-    /// with the posture it was given, so the refusal above is about durability and not a
-    /// constructor that refuses everything.
-    ///
-    /// Read back through `into_parts`, the only projection — which is also the assertion
-    /// that the seal did not cost the composition root what it actually needs.
+    /// The guard admits what it is supposed to admit: a durable store yields the value, so
+    /// the refusal above is about durability and not a constructor that refuses everything.
     #[test]
-    fn a_durable_tier_produces_the_handover_value_with_its_posture() {
-        let durable = AsyncReplayTier::new(
-            std::sync::Arc::new(DurableStore),
-            crate::config_state::test_support::freshness(60),
+    fn a_durable_tier_produces_the_handover_value() {
+        let admission =
+            MaterializedReplay::accept(durable_tier(), ReplayDurabilityTier::Linearizable)
+                .unwrap_or_else(|e| panic!("a durable tier must be handed over: {e}"))
+                .into_admission();
+        let outcome = admit_one(&admission);
+        assert!(
+            outcome.is_ok(),
+            "a strict-minimum tier over a durable store was refused: {outcome:?}"
         );
-        let materialized = MaterializedReplay::accept(durable, linearizable_dispatch())
-            .unwrap_or_else(|e| panic!("a durable tier must be handed over: {e}"));
-        let (tier, dispatch) = materialized.into_parts();
-        assert!(dispatch.fleet_strict);
-        assert_eq!(dispatch.tier, Some(ReplayDurabilityTier::Linearizable));
+    }
+
+    /// The handed-over value admits under the tier it was materialized with, and no other:
+    /// the declaration travels with the store into every admission.
+    ///
+    /// A durable store declared at a sub-minimum tier is handed over (durability is all
+    /// `accept` checks), and the first request through it is refused naming exactly that
+    /// tier. A handover that lost the pairing — the store kept, the declaration dropped or
+    /// replaced — would admit it or name another.
+    #[test]
+    fn the_handed_over_value_admits_under_the_tier_it_was_declared_at() {
+        let declared = ReplayDurabilityTier::AsyncReplicatedBounded;
+        let admission = MaterializedReplay::accept(durable_tier(), declared.clone())
+            .unwrap_or_else(|e| panic!("durability is all accept checks: {e}"))
+            .into_admission();
         assert_eq!(
-            tier.durability_class(),
-            mcp_re_core::ReplayDurabilityClass::Durable
+            admit_one(&admission).err(),
+            Some(crate::http_profile_dispatch::ProxyDispatchError::SubMinimumReplayTier(declared))
         );
     }
 
@@ -245,9 +273,7 @@ mod tests {
             let ok = etcd.unwrap_or_else(|e| {
                 panic!("the etcd tier materializes without contacting anything: {e}")
             });
-            let (_, dispatch) = ok.into_parts();
-            assert!(dispatch.fleet_strict, "a shared tier serves fleet-strict");
-            assert_eq!(dispatch.tier, Some(ReplayDurabilityTier::Linearizable));
+            let _admission = ok.into_admission();
         } else {
             let err = match etcd {
                 Ok(_) => panic!("refused without the backend"),

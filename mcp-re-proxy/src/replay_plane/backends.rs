@@ -12,7 +12,6 @@
 
 use crate::async_replay::AsyncReplayTier;
 use crate::control_runtime::ControlRuntime;
-use crate::http_profile_dispatch::ProxyDispatchConfig;
 use crate::replay_tier::ReplayDurabilityTier;
 
 /// The retention padding this deployment's shared store applies, stated at startup.
@@ -37,7 +36,7 @@ pub(super) fn establish_etcd(
     endpoint: &str,
     tier: &ReplayDurabilityTier,
     freshness: crate::config_state::FreshnessWindow,
-) -> Result<(AsyncReplayTier, ProxyDispatchConfig), String> {
+) -> Result<AsyncReplayTier, String> {
     #[cfg(feature = "cpstore_etcd")]
     {
         let store = std::sync::Arc::new(
@@ -52,13 +51,7 @@ pub(super) fn establish_etcd(
         eprintln!("mcp-re-proxy: replay tier = shared (CP/linearizable; async etcd backend)");
         eprintln!("mcp-re-proxy: {}", tier.startup_audit_line("etcd"));
         eprintln!("mcp-re-proxy: {}", divergence_audit_line(freshness));
-        Ok((
-            AsyncReplayTier::new(store, freshness),
-            ProxyDispatchConfig {
-                fleet_strict: true,
-                tier: Some(tier.clone()),
-            },
-        ))
+        Ok(AsyncReplayTier::new(store, freshness))
     }
     #[cfg(not(feature = "cpstore_etcd"))]
     Err(
@@ -81,7 +74,7 @@ pub(super) fn establish_redis(
     tier: &ReplayDurabilityTier,
     freshness: crate::config_state::FreshnessWindow,
     control: Option<&ControlRuntime>,
-) -> Result<(AsyncReplayTier, ProxyDispatchConfig), String> {
+) -> Result<AsyncReplayTier, String> {
     #[cfg(feature = "redis_replay")]
     {
         let connection = redis_connection(tier, freshness, control)?;
@@ -98,13 +91,7 @@ pub(super) fn establish_redis(
         eprintln!("mcp-re-proxy: replay tier = shared (horizontally-scaled; async Redis backend)");
         eprintln!("mcp-re-proxy: {}", tier.startup_audit_line("redis"));
         eprintln!("mcp-re-proxy: {}", divergence_audit_line(freshness));
-        Ok((
-            AsyncReplayTier::new(std::sync::Arc::new(store), freshness),
-            ProxyDispatchConfig {
-                fleet_strict: true,
-                tier: Some(tier.clone()),
-            },
-        ))
+        Ok(AsyncReplayTier::new(std::sync::Arc::new(store), freshness))
     }
     #[cfg(not(feature = "redis_replay"))]
     Err(
