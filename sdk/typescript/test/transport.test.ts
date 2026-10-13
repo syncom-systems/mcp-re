@@ -1097,7 +1097,7 @@ describe("McpReHttpTransport verified-reply shape", () => {
     const delivered = await deliver(
       {
         outcome: "rejection",
-        wireCode: "mcp-re.upstream_unavailable",
+        wireCode: "mcp-re.inner_dispatch_indeterminate",
         bound: true,
         requestState: null,
         executionStatus: "possibly_executed",
@@ -1108,7 +1108,7 @@ describe("McpReHttpTransport verified-reply shape", () => {
       "{}",
     );
     const error = (delivered as { error: { message: string; data: unknown } }).error;
-    expect(error.message).toBe("mcp-re.upstream_unavailable");
+    expect(error.message).toBe("mcp-re.inner_dispatch_indeterminate");
     expect(error.data, "a member the receipt did not carry must not be invented").toEqual({
       requestBound: true,
       executionStatus: "possibly_executed",
@@ -1141,7 +1141,7 @@ describe("McpReHttpTransport verified-reply shape", () => {
     const delivered = await deliver(
       {
         outcome: "rejection",
-        wireCode: "mcp-re.request_signature_invalid",
+        wireCode: "mcp-re.invalid_signature",
         bound: false,
         requestState: null,
       },

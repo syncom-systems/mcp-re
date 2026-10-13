@@ -969,6 +969,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
 
 [[package]]
+name = "mcp-re-binding-core"
+version = "0.17.0"
+dependencies = [
+ "mcp-re-client-core",
+ "mcp-re-core",
+ "serde_json",
+]
+
+[[package]]
 name = "mcp-re-client"
 version = "0.17.0"
 dependencies = [

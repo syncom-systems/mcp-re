@@ -30,14 +30,7 @@ export interface AcceptedResultJs {
   serverKeyid: string
 }
 
-/**
- * The audited core's version — `mcp-re-client-core`'s, not this binding crate's.
- *
- * r12 R12-1474: this used to return `env!("CARGO_PKG_VERSION")`, which is the N-API
- * wrapper's own version (`0.1.x`) and moves independently of the code that was audited.
- * A consumer calling a function named `coreVersion` to learn which audited core they have
- * was told the version of the shim in front of it.
- */
+/** The audited core's version — `mcp-re-client-core`'s, not this binding crate's. */
 export declare function coreVersion(): string
 
 /** One HTTP header (name/value pair) on the RFC 9421 request/response. */
@@ -85,7 +78,14 @@ export declare function signNotificationWithSigner(signCallback: (arg: Buffer) =
  */
 export declare function signPreimage(seed: Buffer, preimage: Buffer): Buffer
 
-/** Sign an MCP request as an RFC 9421 + RFC 9530 message. */
+/**
+ * Sign an MCP request as an RFC 9421 + RFC 9530 message.
+ *
+ * For an ADR-MCPS-047 answer leg, the five `cont*` handles bind this request to the
+ * `InputRequiredResult` it answers; all five or none. `bindingsJson` is the
+ * provider-supplied artifact bindings (ADR-MCPS-044 §Authorization-binding hook) as a
+ * JSON array of specs; absent means DPoP only.
+ */
 export declare function signRequest(seed: Buffer, keyId: string, idJson: string, method: string, paramsJson: string, targetUri: string, audienceId: string, route: string | undefined | null, dpopToken: string, nonce: string, created: number, expires: number, contPrevAlg?: string | undefined | null, contPrevValue?: string | undefined | null, contIrrAlg?: string | undefined | null, contIrrValue?: string | undefined | null, contRequestState?: string | undefined | null, bindingsJson?: string | undefined | null): SignedRequestJs
 
 /**
@@ -128,7 +128,10 @@ export declare function verifyAccepted202(status: number, respHeaders: Array<Htt
  */
 export declare function verifyResponse(status: number, respHeaders: Array<HttpHeader>, respBody: Buffer, reqMethod: string, reqTargetUri: string, reqHeaders: Array<HttpHeader>, reqBody: Buffer, issuerKeyId: string, issuerPubkeyB64Url: string, issuerRole: string, issuerTrustDomain: string, issuerSubject: string, verifierAudiences: Array<string>, expectedAudienceHash: string, acceptedEpochs: Array<string>, maxClockSkew: number, revokedIdentifiers: Array<string>, now: number, issuerRetiredUntil?: number | undefined | null): VerifyResultJs
 
-/** The outcome of verifying a delegated-required RFC 9421 response. */
+/**
+ * The outcome of verifying a delegated-required RFC 9421 response; the members are
+ * `mcp-re-binding-core`'s `Verdict`.
+ */
 export interface VerifyResultJs {
   /**
    * The evidence VERIFIED; this does NOT mean the request succeeded. A caller

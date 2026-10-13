@@ -25,6 +25,7 @@ members = [
     "mcp-re-operator-display", # The ONE projection of an operator-configured locator for human eyes — scheme/host/port only, every credential-bearing component removed and its removal reported (std-only, zero deps)
     "mcp-re-demo",        # demo certificate material — the DemoFixtures mTLS fixture generator
     "mcp-re-test-paths",  # Test-only: resolve binaries + data fixtures under Bazel runfiles OR Cargo
+    "sdk/binding-core",   # The one adapter both SDK bindings (PyO3, napi) share over mcp-re-client-core (ADR-MCPS-044)
 ]
 
 [workspace.package]

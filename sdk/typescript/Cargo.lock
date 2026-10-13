@@ -459,6 +459,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcp-re-binding-core"
+version = "0.17.0"
+dependencies = [
+ "mcp-re-client-core",
+ "mcp-re-core",
+ "serde_json",
+]
+
+[[package]]
 name = "mcp-re-client-core"
 version = "0.17.0"
 dependencies = [
@@ -498,12 +507,10 @@ dependencies = [
 name = "mcp-re-typescript-sdk"
 version = "0.1.1"
 dependencies = [
+ "mcp-re-binding-core",
  "mcp-re-client-core",
- "mcp-re-core",
  "napi",
  "napi-derive",
- "serde",
- "serde_json",
 ]
 
 [[package]]

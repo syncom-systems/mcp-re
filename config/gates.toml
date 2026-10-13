@@ -402,6 +402,12 @@ selftest = false
 not_a_control = "a capacity measurement rig, with no verdict"
 
 [[script]]
+path = "scripts/sdk_wire_code_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
 path = "scripts/seam_posture_gate.py"
 stages = [1]
 ci = ["ci.yml:rust"]

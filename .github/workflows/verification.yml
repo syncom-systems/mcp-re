@@ -239,6 +239,8 @@ on:
       # The PyO3 binding the wheel's `_core` is built from, and the Bazel lane over it
       # (`//sdk/python:core_lane_test`).
       - "sdk/python/src/**"
+      # The binding core both native bindings marshal into (`//sdk/binding-core`).
+      - "sdk/binding-core/src/**"
       - "sdk/python/BUILD.bazel"
       - "sdk/python/bazel_tests/**"
       - "sdk/python/pyproject.toml"
@@ -658,6 +660,8 @@ on:
       # The PyO3 binding the wheel's `_core` is built from, and the Bazel lane over it
       # (`//sdk/python:core_lane_test`).
       - "sdk/python/src/**"
+      # The binding core both native bindings marshal into (`//sdk/binding-core`).
+      - "sdk/binding-core/src/**"
       - "sdk/python/BUILD.bazel"
       - "sdk/python/bazel_tests/**"
       - "sdk/python/pyproject.toml"

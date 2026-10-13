@@ -9,55 +9,42 @@
 //! Two custody classes are exposed (ADR-MCPS-044 §Compliance): `signRequest` takes a
 //! raw seed (software custody), and `signRequestWithSigner` takes only a sign
 //! callback, so the private key never enters the SDK (non-exporting custody).
+//!
+//! This file marshals JavaScript values into `mcp-re-binding-core` and its results back;
+//! the signing inputs, the device check, the root anchor, the verify preamble and the
+//! verdict are that crate's, shared with the PyO3 binding.
 
 use napi::bindgen_prelude::Buffer;
 use napi::bindgen_prelude::Function;
 use napi_derive::napi;
 
-use mcp_re_client_core::build_authorization;
-use mcp_re_client_core::build_signed_notification;
-use mcp_re_client_core::build_signed_notification_with_signer;
-use mcp_re_client_core::build_signed_request;
-use mcp_re_client_core::build_signed_request_with_signer;
-use mcp_re_client_core::verify_delegated_accepted_202;
-use mcp_re_client_core::verify_delegated_response;
-use mcp_re_client_core::AudienceTuple;
-use mcp_re_client_core::DelegationPolicy;
-use mcp_re_client_core::DpopCredential;
-use mcp_re_client_core::HttpProfileError;
+use mcp_re_binding_core::BindingError;
+use mcp_re_binding_core::Call;
+use mcp_re_binding_core::ContinuationArgs;
+use mcp_re_binding_core::IssuerField;
+use mcp_re_binding_core::PinnedIssuer;
+use mcp_re_binding_core::SignArgs;
+use mcp_re_binding_core::SignedParts;
+use mcp_re_binding_core::Verdict;
+use mcp_re_binding_core::VerifyArgs;
 use mcp_re_client_core::HttpRequest;
 use mcp_re_client_core::HttpResponse;
-use mcp_re_client_core::ProvidedAuthorization;
-use mcp_re_client_core::RequestSigningInputs;
-use mcp_re_client_core::ResponseExpectation;
-mod projection;
-mod trust;
-use projection::project_verdict;
-use trust::root_resolver;
-use trust::PinnedIssuer;
 
-use mcp_re_client_core::CompositeResponseTrust;
-use mcp_re_client_core::ContinuationHandles;
-use mcp_re_client_core::StaticRevocationList;
-use mcp_re_client_core::PROFILE_TAG;
-use mcp_re_core::SigningKey;
-use serde_json::Map;
-use serde_json::Value;
-
-fn parse_json(s: &str, what: &str) -> napi::Result<Value> {
-    serde_json::from_str(s)
-        .map_err(|e| napi::Error::from_reason(format!("invalid {what} json: {e}")))
-}
-fn seed_to_key(seed: &[u8]) -> napi::Result<SigningKey> {
-    if seed.len() != 32 {
-        return Err(napi::Error::from_reason(
-            "signing seed must be exactly 32 bytes",
-        ));
+/// An issuer field by the key the TypeScript API takes it as.
+fn field_name(field: IssuerField) -> &'static str {
+    match field {
+        IssuerField::KeyId => "issuerKeyId",
+        IssuerField::Role => "issuerRole",
+        IssuerField::TrustDomain => "issuerTrustDomain",
+        IssuerField::Subject => "issuerSubject",
     }
-    let mut s = [0u8; 32];
-    s.copy_from_slice(seed);
-    Ok(SigningKey::from_seed_bytes(&s))
 }
+
+/// A binding refusal as the error the TypeScript SDK throws.
+fn raise(e: BindingError) -> napi::Error {
+    napi::Error::from_reason(e.message(field_name))
+}
+
 /// A JS number as whole seconds. A saturating `as i64` would turn Infinity into an
 /// unbounded expiry or skew and NaN into 0, so a non-finite, fractional or
 /// beyond-`Number.MAX_SAFE_INTEGER` value is refused instead.
@@ -69,114 +56,15 @@ fn whole_seconds(v: f64, what: &str) -> napi::Result<i64> {
     }
     Ok(v as i64)
 }
-fn params_object(params_json: &str) -> napi::Result<Map<String, Value>> {
-    match parse_json(params_json, "params")? {
-        Value::Object(m) => Ok(m),
-        _ => Err(napi::Error::from_reason("params must be a JSON object")),
-    }
-}
 
-/// The RFC 9421 signing inputs shared by both custody paths: the signed audience
-/// tuple, the DPoP artifact binding whose credential is the covered `Authorization`
-/// header, and — for an ADR-MCPS-047 MRTR answer leg — the signed continuation.
-///
-/// FALLIBLE, and both refusals are `mcp-re-client-core`'s rather than this file's, so the
-/// pyo3 binding cannot disagree with this one about either rule:
-///
-/// * an EMPTY `dpop_token` is refused ([`DpopCredential`]) instead of minting a binding
-///   over zero bytes beside a signed `Authorization: Bearer ` header carrying nothing;
-/// * a PARTIALLY supplied continuation is refused ([`ContinuationHandles`]) instead of
-///   being dropped, which used to turn an answer leg into an ordinary new call with no
-///   error anywhere.
-#[allow(clippy::too_many_arguments)]
-fn signing_inputs(
-    key_id: String,
-    audience_id: String,
-    target_uri: &str,
-    route: Option<String>,
-    dpop_token: &str,
-    nonce: String,
-    created: f64,
-    expires: f64,
-    cont_prev_alg: Option<String>,
-    cont_prev_value: Option<String>,
-    cont_irr_alg: Option<String>,
-    cont_irr_value: Option<String>,
-    cont_request_state: Option<String>,
-    provided: ProvidedAuthorization,
-) -> napi::Result<RequestSigningInputs> {
-    let audience = AudienceTuple {
-        audience_id,
-        target_uri: target_uri.to_owned(),
-        route,
-    };
-    // DPoP stays the built-in, header-derived binding: its credential is the covered
-    // `Authorization: Bearer` header, so it is never provider-supplied — `build_authorization`
-    // refuses a provider that presents one. Provider bindings are appended after it.
-    let credential =
-        DpopCredential::present(dpop_token).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    let mut bindings = vec![credential.binding()];
-    bindings.extend(provided.bindings);
-    let mut inputs = RequestSigningInputs::new(
-        key_id,
-        audience,
-        bindings,
-        nonce,
-        whole_seconds(created, "created")?,
-        whole_seconds(expires, "expires")?,
-    )
-    .with_headers(vec![(
-        "Authorization".to_owned(),
-        credential.authorization_header_value(),
-    )]);
-    let handles = ContinuationHandles::from_optional(
-        cont_prev_alg,
-        cont_prev_value,
-        cont_irr_alg,
-        cont_irr_value,
-        cont_request_state,
-    )
-    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    if let Some(handles) = handles {
-        inputs = inputs.with_continuation(handles.continuation());
-    }
-    if let Some(jws) = provided.decision {
-        // The document goes in; the `pdp-decision` binding over it is minted there, from
-        // these exact bytes, so nothing in this file can make the two disagree.
-        inputs = inputs.with_authorization_decision(jws);
-    }
-    Ok(inputs)
-}
-
-/// Deserialize a provider list into the bindings and decision it contributes.
-///
-/// The rule lives in `mcp-re-client-core`, not here: the spec JSON is a public seam that
-/// the TypeScript wrapper classes do not stand in front of, and one implementation is what
-/// keeps this binding and the PyO3 one from drifting apart on it.
-fn provided_authorization(bindings_json: Option<&str>) -> napi::Result<ProvidedAuthorization> {
-    let Some(json) = bindings_json else {
-        return Ok(ProvidedAuthorization::default());
-    };
-    build_authorization(json)
-        .map_err(|r| napi::Error::from_reason(format!("mcp-re: {}", r.wire_code())))
-}
-
-fn to_signed_request(signed: mcp_re_client_core::SignedRequest) -> SignedRequestJs {
-    let req = signed.request();
-    SignedRequestJs {
-        method: req.method.clone(),
-        target_uri: req.target_uri.clone(),
-        headers: req
-            .headers
-            .iter()
-            .map(|(k, v)| HttpHeader {
-                key: k.clone(),
-                value: v.clone(),
-            })
-            .collect(),
-        body: Buffer::from(req.body.clone()),
-        evidence_digest_alg: signed.evidence().digest_alg().to_owned(),
-        evidence_digest_value: signed.evidence().digest_value().to_owned(),
+/// A device callback as the core's device seam: the signature bytes, or `None` when the
+/// callback threw.
+fn device<'a, 'scope: 'a>(
+    sign_callback: &'a Function<'scope, Buffer, Buffer>,
+) -> impl FnOnce(&[u8]) -> Option<Vec<u8>> + 'a {
+    move |preimage: &[u8]| {
+        let out = sign_callback.call(Buffer::from(preimage.to_vec())).ok()?;
+        Some(out.to_vec())
     }
 }
 
@@ -185,6 +73,10 @@ fn to_signed_request(signed: mcp_re_client_core::SignedRequest) -> SignedRequest
 pub struct HttpHeader {
     pub key: String,
     pub value: String,
+}
+
+fn to_pairs(headers: Vec<HttpHeader>) -> Vec<(String, String)> {
+    headers.into_iter().map(|h| (h.key, h.value)).collect()
 }
 
 /// A signed RFC 9421 request.
@@ -198,21 +90,33 @@ pub struct SignedRequestJs {
     pub evidence_digest_value: String,
 }
 
+impl From<SignedParts> for SignedRequestJs {
+    fn from(p: SignedParts) -> Self {
+        SignedRequestJs {
+            method: p.method,
+            target_uri: p.target_uri,
+            headers: p
+                .headers
+                .into_iter()
+                .map(|(key, value)| HttpHeader { key, value })
+                .collect(),
+            body: Buffer::from(p.body),
+            evidence_digest_alg: p.evidence_digest_alg,
+            evidence_digest_value: p.evidence_digest_value,
+        }
+    }
+}
+
 /// The audited core's version — `mcp-re-client-core`'s, not this binding crate's.
-///
-/// r12 R12-1474: this used to return `env!("CARGO_PKG_VERSION")`, which is the N-API
-/// wrapper's own version (`0.1.x`) and moves independently of the code that was audited.
-/// A consumer calling a function named `coreVersion` to learn which audited core they have
-/// was told the version of the shim in front of it.
 #[napi]
 pub fn core_version() -> String {
-    mcp_re_client_core::CORE_VERSION.to_string()
+    mcp_re_binding_core::CORE_VERSION.to_string()
 }
 
 /// The RFC 9421 profile tag the signature is emitted/verified under.
 #[napi]
 pub fn profile_tag() -> String {
-    PROFILE_TAG.to_string()
+    mcp_re_binding_core::PROFILE_TAG.to_string()
 }
 
 /// Sign exact preimage bytes with a raw seed, returning the 64-byte detached Ed25519
@@ -222,17 +126,71 @@ pub fn profile_tag() -> String {
 /// device-delegated signature is byte-identical to the in-process one.
 #[napi]
 pub fn sign_preimage(seed: Buffer, preimage: Buffer) -> napi::Result<Buffer> {
-    let key = seed_to_key(seed.as_ref())?;
-    let sig = mcp_re_core::b64url_decode(&key.sign(preimage.as_ref())).map_err(|_| {
-        napi::Error::from_reason(format!(
-            "mcp-re: {}",
-            HttpProfileError::InvalidSignature.wire_code()
-        ))
-    })?;
-    Ok(Buffer::from(sig))
+    mcp_re_binding_core::sign_preimage(seed.as_ref(), preimage.as_ref())
+        .map(Buffer::from)
+        .map_err(raise)
+}
+
+/// The arguments every signing entry point shares, in the order the TypeScript API takes
+/// them.
+#[allow(clippy::too_many_arguments)]
+fn sign_args(
+    call: Call,
+    key_id: String,
+    method: String,
+    params_json: String,
+    target_uri: String,
+    audience_id: String,
+    route: Option<String>,
+    dpop_token: String,
+    nonce: String,
+    created: f64,
+    expires: f64,
+    bindings_json: Option<String>,
+) -> napi::Result<SignArgs> {
+    Ok(SignArgs {
+        call,
+        key_id,
+        method,
+        params_json,
+        target_uri,
+        audience_id,
+        route,
+        dpop_token,
+        nonce,
+        created: whole_seconds(created, "created")?,
+        expires: whole_seconds(expires, "expires")?,
+        bindings_json,
+    })
+}
+
+/// A request call: its id, and the ADR-MCPS-047 answer-leg handles, all five or none.
+fn request_call(
+    id_json: String,
+    prev_alg: Option<String>,
+    prev_value: Option<String>,
+    irr_alg: Option<String>,
+    irr_value: Option<String>,
+    request_state: Option<String>,
+) -> Call {
+    Call::Request {
+        id_json,
+        continuation: ContinuationArgs {
+            prev_alg,
+            prev_value,
+            irr_alg,
+            irr_value,
+            request_state,
+        },
+    }
 }
 
 /// Sign an MCP request as an RFC 9421 + RFC 9530 message.
+///
+/// For an ADR-MCPS-047 answer leg, the five `cont*` handles bind this request to the
+/// `InputRequiredResult` it answers; all five or none. `bindingsJson` is the
+/// provider-supplied artifact bindings (ADR-MCPS-044 §Authorization-binding hook) as a
+/// JSON array of specs; absent means DPoP only.
 #[napi]
 #[allow(clippy::too_many_arguments)]
 pub fn sign_request(
@@ -248,43 +206,38 @@ pub fn sign_request(
     nonce: String,
     created: f64,
     expires: f64,
-    // ADR-MCPS-047 MRTR answer leg: bind this request to the `InputRequiredResult` it
-    // answers. All five are `Some` together (or all `None` for an ordinary request):
-    // the previous-request evidence digest (this client's OPEN-leg sign handle), the
-    // input-required-response evidence digest (the OPEN-leg verify handle), and the
-    // opaque `requestState`. The continuation rides inside the signed evidence block.
     cont_prev_alg: Option<String>,
     cont_prev_value: Option<String>,
     cont_irr_alg: Option<String>,
     cont_irr_value: Option<String>,
     cont_request_state: Option<String>,
-    // Provider-supplied artifact bindings (ADR-MCPS-044 §Authorization-binding hook), as
-    // a JSON array of specs carrying the artifact MATERIAL; the core digests it. Absent
-    // means DPoP only — the frozen parity vectors sign through this path unchanged.
     bindings_json: Option<String>,
 ) -> napi::Result<SignedRequestJs> {
-    let key = seed_to_key(seed.as_ref())?;
-    let id = parse_json(&id_json, "id")?;
-    let params = params_object(&params_json)?;
-    let inputs = signing_inputs(
-        key_id,
-        audience_id,
-        &target_uri,
-        route,
-        &dpop_token,
-        nonce,
-        created,
-        expires,
+    let call = request_call(
+        id_json,
         cont_prev_alg,
         cont_prev_value,
         cont_irr_alg,
         cont_irr_value,
         cont_request_state,
-        provided_authorization(bindings_json.as_deref())?,
+    );
+    let args = sign_args(
+        call,
+        key_id,
+        method,
+        params_json,
+        target_uri,
+        audience_id,
+        route,
+        dpop_token,
+        nonce,
+        created,
+        expires,
+        bindings_json,
     )?;
-    let signed = build_signed_request(&id, &method, params, &target_uri, &inputs, &key)
-        .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
-    Ok(to_signed_request(signed))
+    mcp_re_binding_core::sign(args, seed.as_ref())
+        .map(SignedRequestJs::from)
+        .map_err(raise)
 }
 
 /// Sign an MCP request under NON-EXPORTING custody: the private key never enters the
@@ -319,78 +272,33 @@ pub fn sign_request_with_signer(
     cont_irr_alg: Option<String>,
     cont_irr_value: Option<String>,
     cont_request_state: Option<String>,
-    // Provider-supplied artifact bindings (ADR-MCPS-044 §Authorization-binding hook), as
-    // a JSON array of specs carrying the artifact MATERIAL; the core digests it. Absent
-    // means DPoP only — the frozen parity vectors sign through this path unchanged.
     bindings_json: Option<String>,
 ) -> napi::Result<SignedRequestJs> {
-    let id = parse_json(&id_json, "id")?;
-    let params = params_object(&params_json)?;
-    let inputs = signing_inputs(
-        key_id,
-        audience_id,
-        &target_uri,
-        route,
-        &dpop_token,
-        nonce,
-        created,
-        expires,
+    let call = request_call(
+        id_json,
         cont_prev_alg,
         cont_prev_value,
         cont_irr_alg,
         cont_irr_value,
         cont_request_state,
-        provided_authorization(bindings_json.as_deref())?,
-    )?;
-    // The device seam. Any failure — the callback throwing, returning a non-Buffer
-    // value, or returning a wrong-length signature — is an unusable signature and
-    // fails closed rather than emitting unsigned or malformed evidence.
-    let sign_base = |preimage: &[u8]| -> Result<Vec<u8>, HttpProfileError> {
-        let out = sign_callback
-            .call(Buffer::from(preimage.to_vec()))
-            .map_err(|_| HttpProfileError::InvalidSignature)?;
-        let sig = out.to_vec();
-        if sig.len() != 64 {
-            return Err(HttpProfileError::InvalidSignature);
-        }
-        Ok(sig)
-    };
-    let signed =
-        build_signed_request_with_signer(&id, &method, params, &target_uri, &inputs, sign_base)
-            .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
-    Ok(to_signed_request(signed))
-}
-
-/// The signing inputs for a notification: the request inputs minus the continuation,
-/// which a message that receives no result cannot carry.
-#[allow(clippy::too_many_arguments)]
-fn notification_inputs(
-    key_id: String,
-    audience_id: String,
-    target_uri: &str,
-    route: Option<String>,
-    dpop_token: &str,
-    nonce: String,
-    created: f64,
-    expires: f64,
-    bindings_json: Option<String>,
-) -> napi::Result<RequestSigningInputs> {
-    signing_inputs(
+    );
+    let args = sign_args(
+        call,
         key_id,
-        audience_id,
+        method,
+        params_json,
         target_uri,
+        audience_id,
         route,
         dpop_token,
         nonce,
         created,
         expires,
-        None,
-        None,
-        None,
-        None,
-        None,
-        provided_authorization(bindings_json.as_deref())?,
-    )
+        bindings_json,
+    )?;
+    mcp_re_binding_core::sign_with_device(args, device(&sign_callback))
+        .map(SignedRequestJs::from)
+        .map_err(raise)
 }
 
 /// Sign a one-way MCP **notification** — a JSON-RPC message with a `method` and no
@@ -416,22 +324,23 @@ pub fn sign_notification(
     expires: f64,
     bindings_json: Option<String>,
 ) -> napi::Result<SignedRequestJs> {
-    let key = seed_to_key(seed.as_ref())?;
-    let params = params_object(&params_json)?;
-    let inputs = notification_inputs(
+    let args = sign_args(
+        Call::Notification,
         key_id,
+        method,
+        params_json,
+        target_uri,
         audience_id,
-        &target_uri,
         route,
-        &dpop_token,
+        dpop_token,
         nonce,
         created,
         expires,
         bindings_json,
     )?;
-    let signed = build_signed_notification(&method, params, &target_uri, &inputs, &key)
-        .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
-    Ok(to_signed_request(signed))
+    mcp_re_binding_core::sign(args, seed.as_ref())
+        .map(SignedRequestJs::from)
+        .map_err(raise)
 }
 
 /// Non-exporting-custody variant of `signNotification`: the private key never enters
@@ -452,32 +361,23 @@ pub fn sign_notification_with_signer(
     expires: f64,
     bindings_json: Option<String>,
 ) -> napi::Result<SignedRequestJs> {
-    let params = params_object(&params_json)?;
-    let inputs = notification_inputs(
+    let args = sign_args(
+        Call::Notification,
         key_id,
+        method,
+        params_json,
+        target_uri,
         audience_id,
-        &target_uri,
         route,
-        &dpop_token,
+        dpop_token,
         nonce,
         created,
         expires,
         bindings_json,
     )?;
-    let sign_base = |preimage: &[u8]| -> Result<Vec<u8>, HttpProfileError> {
-        let out = sign_callback
-            .call(Buffer::from(preimage.to_vec()))
-            .map_err(|_| HttpProfileError::InvalidSignature)?;
-        let sig = out.to_vec();
-        if sig.len() != 64 {
-            return Err(HttpProfileError::InvalidSignature);
-        }
-        Ok(sig)
-    };
-    let signed =
-        build_signed_notification_with_signer(&method, params, &target_uri, &inputs, sign_base)
-            .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
-    Ok(to_signed_request(signed))
+    mcp_re_binding_core::sign_with_device(args, device(&sign_callback))
+        .map(SignedRequestJs::from)
+        .map_err(raise)
 }
 
 /// The outcome of verifying a delegated-signed bodyless `202 Accepted`.
@@ -498,79 +398,8 @@ pub struct AcceptedResultJs {
     pub server_keyid: String,
 }
 
-/// Verify the delegated-signed bodyless `202` a server returns for a one-way
-/// notification, bound to the exact transmission this client sent.
-///
-/// The binding is INSTANCE-level (owner ruling C019b): the acknowledgement covers
-/// `mcp-re-request-evidence`, the digest of the request's own signature base, which
-/// includes its nonce. An acknowledgement captured for one transmission therefore does
-/// not verify for a byte-identical retransmission.
-///
-/// Same trust inputs as `verifyResponse`: the root issuer anchor, the audience scope,
-/// the accepted trust epochs, and the client's static denylist.
-#[napi]
-#[allow(clippy::too_many_arguments)]
-pub fn verify_accepted_202(
-    status: u16,
-    resp_headers: Vec<HttpHeader>,
-    resp_body: Buffer,
-    req_method: String,
-    req_target_uri: String,
-    req_headers: Vec<HttpHeader>,
-    req_body: Buffer,
-    issuer_key_id: String,
-    issuer_pubkey_b64url: String,
-    issuer_role: String,
-    issuer_trust_domain: String,
-    issuer_subject: String,
-    verifier_audiences: Vec<String>,
-    expected_audience_hash: String,
-    accepted_epochs: Vec<String>,
-    max_clock_skew: f64,
-    revoked_identifiers: Vec<String>,
-    now: f64,
-    issuer_retired_until: Option<f64>,
-) -> napi::Result<AcceptedResultJs> {
-    let max_clock_skew = whole_seconds(max_clock_skew, "maxClockSkew")?;
-    let now = whole_seconds(now, "now")?;
-    let resolve = root_resolver(PinnedIssuer {
-        key_id: issuer_key_id,
-        pubkey_b64url: issuer_pubkey_b64url,
-        role: issuer_role,
-        trust_domain: issuer_trust_domain,
-        subject: issuer_subject,
-        retired_until: issuer_retired_until,
-    })?;
-    let to_pairs =
-        |hs: Vec<HttpHeader>| hs.into_iter().map(|h| (h.key, h.value)).collect::<Vec<_>>();
-    let response = HttpResponse {
-        status,
-        headers: to_pairs(resp_headers),
-        body: resp_body.to_vec(),
-    };
-    let request = HttpRequest {
-        method: req_method,
-        target_uri: req_target_uri,
-        headers: to_pairs(req_headers),
-        body: req_body.to_vec(),
-    };
-    let policy = DelegationPolicy::new(
-        verifier_audiences,
-        &expected_audience_hash,
-        accepted_epochs,
-        max_clock_skew,
-    );
-    let revocation = StaticRevocationList::from_identifiers(revoked_identifiers);
-    let trust = CompositeResponseTrust::new(&resolve, &revocation);
-    let actor = verify_delegated_accepted_202(&response, &request, &trust, &policy, now)
-        .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
-    Ok(AcceptedResultJs {
-        ok: true,
-        server_keyid: actor.identity.keyid,
-    })
-}
-
-/// The outcome of verifying a delegated-required RFC 9421 response.
+/// The outcome of verifying a delegated-required RFC 9421 response; the members are
+/// `mcp-re-binding-core`'s `Verdict`.
 #[napi(object)]
 pub struct VerifyResultJs {
     /// The evidence VERIFIED; this does NOT mean the request succeeded. A caller
@@ -616,6 +445,150 @@ pub struct VerifyResultJs {
     pub request_state: Option<String>,
 }
 
+impl From<Verdict> for VerifyResultJs {
+    fn from(v: Verdict) -> Self {
+        VerifyResultJs {
+            ok: true,
+            server_keyid: v.server_keyid,
+            outcome: v.outcome.to_owned(),
+            wire_code: v.wire_code,
+            bound: v.bound,
+            execution_status: v.execution_status,
+            retry_safety: v.retry_safety,
+            continuation_status: v.continuation_status,
+            retention_status: v.retention_status,
+            resp_evidence_digest_alg: v.resp_evidence_digest_alg,
+            resp_evidence_digest_value: v.resp_evidence_digest_value,
+            request_state: v.request_state,
+        }
+    }
+}
+
+/// The arguments both verification entry points share, in the order the TypeScript API
+/// takes them.
+#[allow(clippy::too_many_arguments)]
+fn verify_args(
+    status: u16,
+    resp_headers: Vec<HttpHeader>,
+    resp_body: Buffer,
+    req_method: String,
+    req_target_uri: String,
+    req_headers: Vec<HttpHeader>,
+    req_body: Buffer,
+    issuer: PinnedIssuer,
+    verifier_audiences: Vec<String>,
+    expected_audience_hash: String,
+    accepted_epochs: Vec<String>,
+    max_clock_skew: f64,
+    revoked_identifiers: Vec<String>,
+    now: f64,
+) -> napi::Result<VerifyArgs> {
+    Ok(VerifyArgs {
+        response: HttpResponse {
+            status,
+            headers: to_pairs(resp_headers),
+            body: resp_body.to_vec(),
+        },
+        request: HttpRequest {
+            method: req_method,
+            target_uri: req_target_uri,
+            headers: to_pairs(req_headers),
+            body: req_body.to_vec(),
+        },
+        issuer,
+        verifier_audiences,
+        expected_audience_hash,
+        accepted_epochs,
+        max_clock_skew: whole_seconds(max_clock_skew, "maxClockSkew")?,
+        revoked_identifiers,
+        now: whole_seconds(now, "now")?,
+    })
+}
+
+fn pinned(
+    key_id: String,
+    pubkey_b64url: String,
+    role: String,
+    trust_domain: String,
+    subject: String,
+    retired_until: Option<f64>,
+) -> napi::Result<PinnedIssuer> {
+    Ok(PinnedIssuer {
+        key_id,
+        pubkey_b64url,
+        role,
+        trust_domain,
+        subject,
+        retired_until: retired_until
+            .map(|t| whole_seconds(t, "issuerRetiredUntil"))
+            .transpose()?,
+    })
+}
+
+/// Verify the delegated-signed bodyless `202` a server returns for a one-way
+/// notification, bound to the exact transmission this client sent.
+///
+/// The binding is INSTANCE-level (owner ruling C019b): the acknowledgement covers
+/// `mcp-re-request-evidence`, the digest of the request's own signature base, which
+/// includes its nonce. An acknowledgement captured for one transmission therefore does
+/// not verify for a byte-identical retransmission.
+///
+/// Same trust inputs as `verifyResponse`: the root issuer anchor, the audience scope,
+/// the accepted trust epochs, and the client's static denylist.
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn verify_accepted_202(
+    status: u16,
+    resp_headers: Vec<HttpHeader>,
+    resp_body: Buffer,
+    req_method: String,
+    req_target_uri: String,
+    req_headers: Vec<HttpHeader>,
+    req_body: Buffer,
+    issuer_key_id: String,
+    issuer_pubkey_b64url: String,
+    issuer_role: String,
+    issuer_trust_domain: String,
+    issuer_subject: String,
+    verifier_audiences: Vec<String>,
+    expected_audience_hash: String,
+    accepted_epochs: Vec<String>,
+    max_clock_skew: f64,
+    revoked_identifiers: Vec<String>,
+    now: f64,
+    issuer_retired_until: Option<f64>,
+) -> napi::Result<AcceptedResultJs> {
+    let issuer = pinned(
+        issuer_key_id,
+        issuer_pubkey_b64url,
+        issuer_role,
+        issuer_trust_domain,
+        issuer_subject,
+        issuer_retired_until,
+    )?;
+    let args = verify_args(
+        status,
+        resp_headers,
+        resp_body,
+        req_method,
+        req_target_uri,
+        req_headers,
+        req_body,
+        issuer,
+        verifier_audiences,
+        expected_audience_hash,
+        accepted_epochs,
+        max_clock_skew,
+        revoked_identifiers,
+        now,
+    )?;
+    let accepted = mcp_re_binding_core::verify_accepted_202(args).map_err(raise)?;
+    Ok(AcceptedResultJs {
+        ok: true,
+        server_keyid: accepted.server_keyid,
+    })
+}
+
 /// Verify a delegated-required (the ONLY mode) RFC 9421 response bound to the request the
 /// client sent: the credential chains to the root issuer judged at `now` (a root retired
 /// with `issuerRetiredUntil` is trusted through that deadline) and is scoped to
@@ -645,69 +618,41 @@ pub fn verify_response(
     now: f64,
     issuer_retired_until: Option<f64>,
 ) -> napi::Result<VerifyResultJs> {
-    let max_clock_skew = whole_seconds(max_clock_skew, "maxClockSkew")?;
-    let now = whole_seconds(now, "now")?;
-    let resolve = root_resolver(PinnedIssuer {
-        key_id: issuer_key_id,
-        pubkey_b64url: issuer_pubkey_b64url,
-        role: issuer_role,
-        trust_domain: issuer_trust_domain,
-        subject: issuer_subject,
-        retired_until: issuer_retired_until,
-    })?;
-    let to_pairs =
-        |hs: Vec<HttpHeader>| hs.into_iter().map(|h| (h.key, h.value)).collect::<Vec<_>>();
-    let response = HttpResponse {
+    let issuer = pinned(
+        issuer_key_id,
+        issuer_pubkey_b64url,
+        issuer_role,
+        issuer_trust_domain,
+        issuer_subject,
+        issuer_retired_until,
+    )?;
+    let args = verify_args(
         status,
-        headers: to_pairs(resp_headers),
-        body: resp_body.to_vec(),
-    };
-    let request = HttpRequest {
-        method: req_method,
-        target_uri: req_target_uri,
-        headers: to_pairs(req_headers),
-        body: req_body.to_vec(),
-    };
-    let expectation = ResponseExpectation::new(request);
-    let policy = DelegationPolicy::new(
+        resp_headers,
+        resp_body,
+        req_method,
+        req_target_uri,
+        req_headers,
+        req_body,
+        issuer,
         verifier_audiences,
-        &expected_audience_hash,
+        expected_audience_hash,
         accepted_epochs,
         max_clock_skew,
-    );
-    let revocation = StaticRevocationList::from_identifiers(revoked_identifiers);
-    let trust = CompositeResponseTrust::new(&resolve, &revocation);
-    let verified = verify_delegated_response(&response, &trust, &expectation, &policy, now)
-        .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
-    // `result.requestState` only if this is an InputRequiredResult — a terminal reply
-    // has none. The verified product derives it from the body verification covered and
-    // REFUSES, rather than reporting as terminal, both a reply that declares itself
-    // non-terminal without a usable state and one whose `resultType` is outside the set
-    // MCP 2026-07-28 defines (MCPRE-495).
-    let request_state = verified
-        .continuation_state()
-        .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
-    // A verified rejection receipt is genuine evidence but NOT an acceptance — the
-    // projection surfaces the outcome so the caller does not read a signed replay/trust
-    // rejection as a success. (An unsigned / direct-root / forged answer never reaches
-    // here: it fails verify_delegated_response above and is raised as an error.)
-    let ev = verified.verified();
-    // The response evidence handle (D_irr): the answer leg binds to it. Read from the
-    // VERIFIED response evidence, never from unverified bytes.
-    let resp_digest = ev.response_signature_base_digest();
-    Ok(project_verdict(
-        &ev.accepted_signer().identity.keyid,
-        verified.outcome(),
-        ev.is_bound(),
-        resp_digest.digest_alg(),
-        resp_digest.digest_value(),
-        request_state,
-    ))
+        revoked_identifiers,
+        now,
+    )?;
+    mcp_re_binding_core::verify_response(args)
+        .map(VerifyResultJs::from)
+        .map_err(raise)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::field_name;
     use super::whole_seconds;
+    use mcp_re_binding_core::BindingError;
+    use mcp_re_binding_core::IssuerField;
 
     #[test]
     fn a_time_that_is_not_whole_seconds_is_refused() {
@@ -726,5 +671,21 @@ mod tests {
             Some(9_007_199_254_740_991)
         );
         assert_eq!(whole_seconds(-3.0, "now").ok(), Some(-3));
+    }
+
+    #[test]
+    fn an_issuer_field_is_named_by_its_typescript_key() {
+        let named = [
+            (IssuerField::KeyId, "issuerKeyId"),
+            (IssuerField::Role, "issuerRole"),
+            (IssuerField::TrustDomain, "issuerTrustDomain"),
+            (IssuerField::Subject, "issuerSubject"),
+        ];
+        for (field, key) in named {
+            assert_eq!(
+                BindingError::EmptyIssuerField(field).message(field_name),
+                format!("invalid issuer identity: {key} is empty")
+            );
+        }
     }
 }

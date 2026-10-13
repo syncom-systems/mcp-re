@@ -131,6 +131,15 @@ jobs:
           python3 scripts/os_entropy_census_gate.py --selftest
           python3 scripts/os_entropy_census_gate.py
 
+      # SDK wire-code gate: every `mcp-re.*` token the Python and TypeScript SDKs spell is
+      # the wire code of a verdict `ALL_ERRORS` lists. The SDKs spell these by hand, and two
+      # test fixtures had modelled receipts carrying codes no server emits. Fast, python-only.
+      - name: SDK wire-code gate (every SDK `mcp-re.*` token is a frozen wire code)
+        run: |
+          python3 scripts/sdk_wire_code_gate.py --selftest
+          python3 scripts/sdk_wire_code_gate.py --probe
+          python3 scripts/sdk_wire_code_gate.py
+
       # Finding-ledger gate: every ledger row carries a disposition the taxonomy can
       # close, or it is counted open. `accepted-risk` / `wontfix` are refused, a premise
       # names a registered ASM, a constraint names the owner ruling that accepted it.

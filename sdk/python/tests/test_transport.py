@@ -1059,7 +1059,7 @@ async def test_a_post_dispatch_rejection_reports_its_execution_and_retry_contrac
 
     post_dispatch = _stub_verdict(
         outcome="rejection",
-        wire_code="mcp-re.upstream_unavailable",
+        wire_code="mcp-re.inner_dispatch_indeterminate",
         execution_status="possibly_executed",
         retry_safety="unsafe_without_reconciliation",
         continuation_status="consumed",
@@ -1072,7 +1072,7 @@ async def test_a_post_dispatch_rejection_reports_its_execution_and_retry_contrac
     out = await _send(_config(), rejecting, _request())
 
     error = out[0].message.error
-    assert error.message == "mcp-re.upstream_unavailable"
+    assert error.message == "mcp-re.inner_dispatch_indeterminate"
     assert error.data == {
         "requestBound": True,
         "executionStatus": "possibly_executed",

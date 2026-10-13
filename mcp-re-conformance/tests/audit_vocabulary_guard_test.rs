@@ -559,8 +559,8 @@ fn the_measurement_moves_when_the_scanned_set_shrinks() {
 /// the build graph by [`the_scanned_crate_set_is_the_workspace`], so a new crate cannot be
 /// scanned by nobody.
 ///
-/// The SDK bindings are crates like any other: thin PyO3/napi wrappers over
-/// `mcp_re_client_core::build_authorization`, whose own sources must mint no verdict token.
+/// The SDK bindings are crates like any other: thin PyO3/napi wrappers over the shared
+/// `mcp-re-binding-core` adapter, and none of the three may mint a verdict token.
 /// The TypeScript SDK's `.ts` files spell tokens it RECEIVES, and are not Rust sources.
 const CRATE_SOURCE_TREES: &[(&str, &str)] = &[
     ("mcp-re-core", "MCP_RE_SRC_TREE_CORE"),
@@ -578,6 +578,7 @@ const CRATE_SOURCE_TREES: &[(&str, &str)] = &[
         "mcp-re-operator-display",
         "MCP_RE_SRC_TREE_OPERATOR_DISPLAY",
     ),
+    ("sdk/binding-core", "MCP_RE_SRC_TREE_SDK_BINDING_CORE"),
     ("sdk/python", "MCP_RE_SRC_TREE_SDK_PYTHON"),
     ("sdk/typescript", "MCP_RE_SRC_TREE_SDK_TYPESCRIPT"),
 ];
