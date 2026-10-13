@@ -4817,7 +4817,7 @@ supported_by = [
 ]
 # `depends_on` was EMPTY, and that was false. The Python SDK's whole cryptographic argument
 # is the audited core's: `verify_delegated_response` decides binding, trust, revocation,
-# epoch and audience; `DelegationPolicy` clamps the skew; `ExecutionContract` and
+# epoch and audience; `DelegationPolicy` holds the bounded skew; `ExecutionContract` and
 # `continuation_state` decide what a receipt stated and whether a reply is terminal. Those
 # are MCP-RE's own registered units, not an external boundary, and a root that did not name
 # them read as a self-contained claim over five Python files.

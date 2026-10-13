@@ -899,7 +899,7 @@ tested_symbols = [
 [[unit]]
 id = "http_profile.delegated_credential_chain"
 class = "V0"
-description = "What an inline delegation credential must be before any response proposition may rest on it: three segments under the profile's own algorithm, type and key use; a root signature that verifies under an issuer key the trust seam resolved for the Response slot; inside its own nbf/exp window under a clamped skew; scoped to this verifier's audience; at an accepted trust epoch; and named on no revocation list by delegated kid, issuer kid or jti."
+description = "What an inline delegation credential must be before any response proposition may rest on it: three segments under the profile's own algorithm, type and key use; a root signature that verifies under an issuer key the trust seam resolved for the Response slot; inside its own nbf/exp window widened by a `MaxClockSkew`, which holds no value past the profile bound; scoped to this verifier's audience; at an accepted trust epoch; and named on no revocation list by delegated kid, issuer kid or jti."
 paths = [
   "mcp-re-http-profile/src/delegation/jose/mod.rs",
   "mcp-re-http-profile/src/delegation/jose/compact_jws.rs",
