@@ -57,6 +57,10 @@ package(default_visibility = ["//visibility:public"])
 # gazelle:resolve rust mcp_re_http_profile //mcp-re-http-profile:mcp_re_http_profile
 # gazelle:resolve rust mcp_re_client_core //mcp-re-client-core:mcp_re_client_core
 # gazelle:resolve rust mcp_re_client_proxy //mcp-re-client-proxy:mcp_re_client_proxy
+#
+# `sdk/` is excluded from the walk, so gazelle never indexes the binding core's target and
+# would resolve `use mcp_re_binding_core` to the crates hub; this names the first-party target.
+# gazelle:resolve rust mcp_re_binding_core //sdk/binding-core:mcp_re_binding_core
 
 # Run with: bazel run //:gazelle -- -mode diff   (dry-run; prints the diff)
 #

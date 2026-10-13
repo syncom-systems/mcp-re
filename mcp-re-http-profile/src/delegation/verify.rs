@@ -20,7 +20,6 @@ use mcp_re_core::VerificationKey;
 
 use crate::error::HttpProfileError;
 
-use super::bounded_skew;
 use super::jose::ClaimWindow;
 use super::jose::CompactJws;
 use super::jose::JwsDefect;
@@ -70,19 +69,19 @@ pub(super) fn check_root_signature(
     Ok(claims)
 }
 
-/// Step 4: `now` is inside the credential's claim window, widened by the BOUNDED skew.
+/// Step 4: `now` is inside the credential's claim window, widened by the skew.
 ///
-/// The skew is clamped before it is applied, by the same cap the RFC 9421 signature gate
-/// uses, so a misconfigured tolerance cannot widen the credential-acceptance window past it.
-/// Every way of being outside — not yet valid, expired, a degenerate window, an issuance
-/// dated ahead of the verifier — is the one refusal.
+/// The skew is a [`MaxClockSkew`](mcp_re_core::MaxClockSkew), the type the RFC 9421
+/// signature gate reads, so the credential-acceptance window cannot be widened past the
+/// bound that gate holds. Every way of being outside — not yet valid, expired, a degenerate
+/// window, an issuance dated ahead of the verifier — is the one refusal.
 fn check_freshness(
     claims: &DelegationClaims,
     params: &DelegationVerifyParams<'_>,
 ) -> Result<(), HttpProfileError> {
     claims
         .window()
-        .check(params.now, bounded_skew(params.max_clock_skew))
+        .check(params.now, params.max_clock_skew.secs())
         .map_err(|_| HttpProfileError::DelegationCredentialExpired)
 }
 
@@ -250,7 +249,7 @@ mod tests {
     ) -> DelegationVerifyParams<'a> {
         DelegationVerifyParams {
             now,
-            max_clock_skew: 0,
+            max_clock_skew: mcp_re_core::MaxClockSkew::ZERO,
             verifier_audiences: audiences,
             expected_profile: "mcp-re/http-1",
             expected_audience_hash: "aud-hash",

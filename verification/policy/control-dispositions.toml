@@ -7020,7 +7020,7 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-16047"
 project = "mcp-re-client-core"
-control = "src/lib.rs#response::delegated_tests::an_out_of_range_skew_cannot_widen_the_credential_window"
+control = "src/lib.rs#response::delegated_tests::the_widest_constructible_skew_cannot_widen_the_credential_window_past_its_bound"
 decision = "new-proposition"
 proposition = "NP-183"
 recorded = "2026-09-19"
@@ -15093,4 +15093,28 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#async_fleet::core_runtime::tests::the_startup_line_names_the_built_pool_and_bound"
 decision = "new-proposition"
 proposition = "NP-153"
+recorded = "2026-10-13"
+
+[[disposition]]
+id = "CD-20483"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::profile::tests::a_skew_one_past_the_verifier_bound_is_refused_and_the_bound_is_accepted"
+decision = "new-proposition"
+proposition = "NP-040"
+recorded = "2026-10-13"
+
+[[disposition]]
+id = "CD-20484"
+project = "sdk/python"
+control = "pytest#tests/test_smoke.py::test_the_cores_clock_skew_bound_is_the_one_every_sdk_window_reads"
+decision = "new-proposition"
+proposition = "NP-012"
+recorded = "2026-10-13"
+
+[[disposition]]
+id = "CD-20485"
+project = "sdk/typescript"
+control = "vitest#test/smoke.test.ts > mcp-re-sdk smoke (built package) > exposes the core's clock-skew bound, the one number every SDK window derives from"
+decision = "new-proposition"
+proposition = "NP-012"
 recorded = "2026-10-13"

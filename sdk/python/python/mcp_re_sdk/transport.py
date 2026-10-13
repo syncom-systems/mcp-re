@@ -238,12 +238,10 @@ _MCP_RE_ERROR_CODE = -31001
 #: merely-expired ones.
 _FAR_FUTURE = 2**63 - 1
 
-#: Widest delegation clock skew a caller may configure, in seconds.
-#:
-#: Mirrors the RFC 9421 verifier's own ceiling (`VerifierPolicy::MAX_CLOCK_SKEW_BOUND`)
-#: so one deployment does not run two different notions of "close enough" — beyond this
-#: the credential's nbf/exp window stops bounding anything.
-MAX_CLOCK_SKEW_BOUND = 300
+#: Widest delegation clock skew a caller may configure, in seconds: the native core's own
+#: bound, read from it, so one deployment does not run two different notions of "close
+#: enough" — beyond it the credential's nbf/exp window stops bounding anything.
+MAX_CLOCK_SKEW_BOUND = _core.max_clock_skew_bound()
 
 
 @dataclass(frozen=True)

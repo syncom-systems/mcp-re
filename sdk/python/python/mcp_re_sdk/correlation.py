@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional
 
+from . import _core
 from .custody import McpReError
 
 __all__ = [
@@ -48,10 +49,10 @@ _CONSUMED_SCAN_AT = 1024
 #:
 #: The consumed set exists to answer "was this id already answered?", which only matters
 #: for a response that arrives LATE — so retention has to outlast the request window, not
-#: end with it. 300s is the profile's own widest skew tolerance: past it a response is so
-#: late that calling it a duplicate says nothing more than calling it unbound, and both
-#: refuse it.
-_CONSUMED_GRACE = 300
+#: end with it. It is the profile's own widest skew tolerance, read from the native core:
+#: past it a response is so late that calling it a duplicate says nothing more than
+#: calling it unbound, and both refuse it.
+_CONSUMED_GRACE = _core.max_clock_skew_bound()
 
 
 @dataclass(frozen=True)

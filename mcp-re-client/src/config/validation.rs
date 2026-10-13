@@ -18,8 +18,8 @@ use super::ClientConfig;
 use super::ConfigError;
 use super::LocalConfig;
 use super::AUTHORIZATION;
-use super::MAX_CLOCK_SKEW_SECS;
 use super::MAX_MANIFEST_RELOAD_SECS;
+use mcp_re_core::MaxClockSkew;
 
 /// The profile's signature-validity ceiling, `VerifierPolicy::DEFAULT_MAX_SIGNATURE_VALIDITY`.
 const MAX_REQUEST_LIFETIME_SECS: i64 = 3600;
@@ -41,8 +41,11 @@ pub(super) fn check_local(local: &LocalConfig) -> Result<BindScope, ConfigError>
     Ok(scope)
 }
 
-/// Which documents this client will believe, and how far a window may be widened.
-pub(super) fn check_trust_and_delegation(config: &ClientConfig) -> Result<(), ConfigError> {
+/// Which documents this client will believe, and how far a window may be widened. Returns
+/// the clock-skew tolerance the checks admitted, which the validated configuration carries.
+pub(super) fn check_trust_and_delegation(
+    config: &ClientConfig,
+) -> Result<MaxClockSkew, ConfigError> {
     if config.trust.org_keys.is_empty() {
         return Err(err(
             "trust.org_keys is empty: a client that pins no manifest-signing key \
@@ -58,15 +61,14 @@ pub(super) fn check_trust_and_delegation(config: &ClientConfig) -> Result<(), Co
     if config.delegation.accepted_epochs.is_empty() {
         return Err(err("delegation.accepted_epochs is empty"));
     }
-    if !(0..=MAX_CLOCK_SKEW_SECS).contains(&config.delegation.max_clock_skew) {
-        return Err(err(format!(
-            "delegation.max_clock_skew {} is outside 0..={MAX_CLOCK_SKEW_SECS}. The value \
-             widens the delegated credential's nbf/exp window directly, so an unbounded one \
-             accepts a server credential long past its exp — while the response-signature \
-             freshness gate silently reverts to the profile default, leaving no symptom",
-            config.delegation.max_clock_skew
-        )));
-    }
+    let skew = config.delegation.max_clock_skew;
+    let max_clock_skew = MaxClockSkew::new(skew).ok_or_else(|| {
+        err(format!(
+            "delegation.max_clock_skew {skew} is outside 0..={}: it widens the credential \
+             window and the response-signature gate alike, past any verifier's bound",
+            MaxClockSkew::BOUND_SECS
+        ))
+    })?;
     if !(1..=MAX_MANIFEST_RELOAD_SECS).contains(&config.trust.reload_secs) {
         return Err(err(format!(
             "trust.reload_secs {} is outside 1..={MAX_MANIFEST_RELOAD_SECS}. Withdrawing \
@@ -76,7 +78,7 @@ pub(super) fn check_trust_and_delegation(config: &ClientConfig) -> Result<(), Co
             config.trust.reload_secs
         )));
     }
-    Ok(())
+    Ok(max_clock_skew)
 }
 
 /// Whether every route names a distinct id and every binding digests something the request

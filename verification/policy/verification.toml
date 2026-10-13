@@ -899,7 +899,7 @@ tested_symbols = [
 [[unit]]
 id = "http_profile.delegated_credential_chain"
 class = "V0"
-description = "What an inline delegation credential must be before any response proposition may rest on it: three segments under the profile's own algorithm, type and key use; a root signature that verifies under an issuer key the trust seam resolved for the Response slot; inside its own nbf/exp window under a clamped skew; scoped to this verifier's audience; at an accepted trust epoch; and named on no revocation list by delegated kid, issuer kid or jti."
+description = "What an inline delegation credential must be before any response proposition may rest on it: three segments under the profile's own algorithm, type and key use; a root signature that verifies under an issuer key the trust seam resolved for the Response slot; inside its own nbf/exp window widened by a `MaxClockSkew`, which holds no value past the profile bound; scoped to this verifier's audience; at an accepted trust epoch; and named on no revocation list by delegated kid, issuer kid or jti."
 paths = [
   "mcp-re-http-profile/src/delegation/jose/mod.rs",
   "mcp-re-http-profile/src/delegation/jose/compact_jws.rs",
@@ -962,8 +962,8 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::tests::bad_root_signature_is_credential_invalid",
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::tests::unknown_issuer_is_untrusted",
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::tests::expired_and_not_yet_valid",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::tests::configured_skew_above_the_hard_cap_does_not_widen_the_credential_window",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::tests::negative_configured_skew_is_treated_as_zero",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::tests::the_widest_constructible_skew_is_the_bound_and_applies_in_full",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::tests::a_zero_skew_admits_exactly_the_credential_window",
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::tests::verifier_not_in_aud_is_audience_mismatch",
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::tests::wrong_audience_hash_or_server_signer_is_audience_mismatch",
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::tests::wrong_profile_is_profile_mismatch",
@@ -4964,7 +4964,7 @@ tested_symbols = [
 [[unit]]
 id = "client.delegation_policy_seal"
 class = "V0"
-description = "What the credential must satisfy, sealed: the clock skew is clamped to the profile bound at construction, so no inhabitant carries an unbounded tolerance and both freshness windows read the same bounded number."
+description = "What the credential must satisfy, sealed: the policy takes the clock skew as a `MaxClockSkew`, so no inhabitant carries a tolerance outside the profile bound, and both freshness windows read that one skew through the policy's single projection."
 paths = ["mcp-re-client-core/src/delegation_policy.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -4973,13 +4973,12 @@ evidence = [
   "test://client/delegation_policy/skew_seal",
   "mutation://client/delegation_policy/skew_seal",
 ]
-# The seal is the claim. A configured skew beyond the bound is not CONSTRUCTIBLE, rather
-# than rejected later by whichever window happens to check — which is what would let the two
-# windows disagree about the tolerance they applied.
+# The seal is the claim. A skew outside the bound is not CONSTRUCTIBLE — the type is
+# `MaxClockSkew`, whose own unit carries that — so what this unit tests is the single
+# reading: both windows get the one skew the policy holds, which is what stops them
+# disagreeing about the tolerance they applied.
 tested_symbols = [
-  "//mcp-re-client-core:mcp_re_client_core_test#delegation_policy::policy_seal_tests::a_configured_skew_beyond_the_profile_bound_is_not_constructible",
-  "//mcp-re-client-core:mcp_re_client_core_test#delegation_policy::policy_seal_tests::a_negative_skew_narrows_to_zero_rather_than_skewing_the_window_backwards",
-  "//mcp-re-client-core:mcp_re_client_core_test#delegation_policy::policy_seal_tests::both_gates_read_the_same_bounded_number",
+  "//mcp-re-client-core:mcp_re_client_core_test#delegation_policy::policy_seal_tests::both_gates_read_the_one_skew_the_policy_holds",
 ]
 
 [[unit]]
@@ -5804,7 +5803,7 @@ tested_symbols = [
 [[unit]]
 id = "sdk_binding_core.adapter"
 class = "V0"
-description = "THE SDK BINDING CORE HANDS THE CALLER'S VALUES TO THE AUDITED CORE AND REPORTS ITS VERDICT WITHOUT RESTATING IT, ONCE FOR BOTH BINDINGS. Signing reads the call in one refusal order (id, params, provider bindings, then the DPoP credential and the continuation, whose refusals are `mcp-re-client-core`'s) and, under device custody, reports a device that fails or answers anything but a 64-octet signature (the HTTP profile's signer seam refusing that answer) as a typed device failure carrying the host's own error, never as a wire code, since nothing was signed or sent; a refusal the device did not cause stays a refusal, and a device signature is byte-identical to the software one. Verification builds the pinned root anchor from the issuer values the caller supplied — an empty or whitespace issuer field is refused by name before any evidence is read, a retired root is judged at the caller's `now` through the core's own `TrustedIssuerSet` — builds the delegation policy and denylist from the caller's values, hands the request the caller TRANSMITTED to the core unchanged, and projects the verified outcome field for field: success or rejection, bound or unbound, and the four execution-contract members verbatim, an absent one staying absent. Every refusal the core makes is reported under its wire code, in a typed field. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about either host's marshalling (sdk_python.native_binding, sdk_typescript.native_binding, ASM-0087, ASM-0088), or about what either SDK does with the verdict."
+description = "THE SDK BINDING CORE HANDS THE CALLER'S VALUES TO THE AUDITED CORE AND REPORTS ITS VERDICT WITHOUT RESTATING IT, ONCE FOR BOTH BINDINGS. Signing reads the call in one refusal order (id, params, provider bindings, then the DPoP credential and the continuation, whose refusals are `mcp-re-client-core`'s) and, under device custody, reports a device that fails or answers anything but a 64-octet signature (the HTTP profile's signer seam refusing that answer) as a typed device failure carrying the host's own error, never as a wire code, since nothing was signed or sent; a refusal the device did not cause stays a refusal, and a device signature is byte-identical to the software one. Verification builds the pinned root anchor from the issuer values the caller supplied — an empty or whitespace issuer field is refused by name before any evidence is read, a retired root is judged at the caller's `now` through the core's own `TrustedIssuerSet` — builds the delegation policy and denylist from the caller's values — a clock skew outside the profile bound is refused, not clamped, as the sidecar's configuration refuses it — hands the request the caller TRANSMITTED to the core unchanged, and projects the verified outcome field for field: success or rejection, bound or unbound, and the four execution-contract members verbatim, an absent one staying absent. Every refusal the core makes is reported under its wire code, in a typed field. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about either host's marshalling (sdk_python.native_binding, sdk_typescript.native_binding, ASM-0087, ASM-0088), or about what either SDK does with the verdict."
 paths = [
   "sdk/binding-core/src/lib.rs",
   "sdk/binding-core/src/device.rs",
@@ -5841,6 +5840,7 @@ tested_symbols = [
   "//sdk/binding-core:mcp_re_binding_core_test#verdict::tests::an_absent_execution_member_stays_absent_in_the_projection",
   "//sdk/binding-core:mcp_re_binding_core_test#verdict::tests::a_rejection_is_not_reported_as_a_success",
   "//sdk/binding-core:mcp_re_binding_core_test#verify::tests::an_unsigned_answer_is_a_wire_refusal_on_both_entry_points",
+  "//sdk/binding-core:mcp_re_binding_core_test#verify_args::tests::a_skew_past_the_bound_is_refused_and_the_bound_is_accepted",
   "//sdk/binding-core:mcp_re_binding_core_test#verify_args::tests::the_pinned_identity_is_refused_before_the_check_runs",
   "//sdk/binding-core:mcp_re_binding_core_test#verify_args::tests::the_check_is_handed_the_callers_values_and_its_refusal_is_a_wire_code",
 ]
@@ -5854,7 +5854,7 @@ tested_symbols = [
 id = "sdk_python.native_binding"
 class = "V0"
 description = "THE PYTHON SDK'S NATIVE BINDING HANDS THE CALLER'S VALUES TO THE BINDING CORE UNCHANGED AND RAISES WHAT IT REPORTS. Each `#[pyfunction]` builds the core's signing or verification arguments from the keyword arguments it is handed — the five continuation keywords each reaching its own handle — passes the transmitted request bytes through untouched, and returns the core's verdict field for field; a wire refusal is raised as `WireRefusal` with the frozen token in `.wire_code`, a device failure as `SigningDeviceFailure` with no wire code and the device's own exception as `__cause__`, and any other refusal as a `ValueError` carrying the core's message, an empty issuer field named by its Python keyword. The anchor, policy, device failure and projection are sdk_binding_core.adapter's. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the interpreter, about PyO3's delivery of arguments and return value beyond the premise ASM-0088 states, or about what the Python layer does with the verdict (the sdk_python.* units)."
-paths = ["sdk/python/src/lib.rs", "sdk/python/src/refusal.rs"]
+paths = ["sdk/python/src/lib.rs", "sdk/python/src/core_facts.rs", "sdk/python/src/refusal.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -5865,6 +5865,7 @@ evidence = [
 tested_symbols = [
   "//sdk/python:native_binding_test#tests::an_issuer_field_is_named_by_its_python_keyword",
   "//sdk/python:native_binding_test#tests::the_five_continuation_keywords_reach_their_own_handles",
+  "//sdk/python:native_binding_test#core_facts::tests::each_fact_is_the_binding_cores_own",
   "//sdk/python:native_binding_test#refusal::tests::a_device_answer_that_is_not_bytes_is_named_by_its_python_type",
 ]
 
@@ -5877,7 +5878,7 @@ tested_symbols = [
 id = "sdk_typescript.native_binding"
 class = "V0"
 description = "THE TYPESCRIPT SDK'S NATIVE BINDING HANDS THE CALLER'S VALUES TO THE BINDING CORE AND THROWS WHAT IT REPORTS. Each `#[napi]` function builds the core's signing or verification arguments from the values it is handed, refusing a time or skew that is not a whole in-range number of seconds instead of saturating it, passes the transmitted request bytes through untouched, and returns the core's verdict field for field; a refusal is thrown with its kind in the error's `code` — the frozen token for a wire refusal, `SigningDeviceFailure` for a device that could not sign (what the device threw as its `cause`), `InvalidArg` otherwise — and the core's message, an empty issuer field named by its TypeScript key. The anchor, policy, device failure and projection are sdk_binding_core.adapter's. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the Node runtime, about napi's delivery of arguments and return value beyond the premise ASM-0087 states, or about what the TypeScript layer does with the verdict (the sdk_typescript.* units)."
-paths = ["sdk/typescript/src/lib.rs", "sdk/typescript/src/refusal.rs"]
+paths = ["sdk/typescript/src/lib.rs", "sdk/typescript/src/core_facts.rs", "sdk/typescript/src/refusal.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -5888,6 +5889,7 @@ evidence = [
 tested_symbols = [
   "//sdk/typescript:native_binding_test#tests::a_time_that_is_not_whole_seconds_is_refused",
   "//sdk/typescript:native_binding_test#tests::an_issuer_field_is_named_by_its_typescript_key",
+  "//sdk/typescript:native_binding_test#core_facts::tests::each_fact_is_the_binding_cores_own",
   "//sdk/typescript:native_binding_test#refusal::tests::a_refusal_is_thrown_with_its_kind_in_the_code",
 ]
 
@@ -11142,6 +11144,7 @@ evidence = [
 tested_symbols = [
   "//mcp-re-core:mcp_re_core_test#time::clock_skew::tests::every_tolerance_inside_the_bound_is_held_exactly",
   "//mcp-re-core:mcp_re_core_test#time::clock_skew::tests::a_negative_or_unbounded_tolerance_is_not_constructible",
+  "//mcp-re-core:mcp_re_core_test#time::clock_skew::tests::zero_is_the_tolerance_new_builds_from_zero",
 ]
 
 [[unit]]
@@ -11444,8 +11447,9 @@ tested_symbols = [
   "//mcp-re-client:mcp_re_client_test#config::tests::a_dpop_binding_on_a_non_bearer_authorization_is_refused",
   "//mcp-re-client:mcp_re_client_test#config::tests::a_literal_mtls_binding_is_refused",
   # The two bounds a deployment could otherwise widen silently.
-  "//mcp-re-client:mcp_re_client_test#config::tests::a_config_skew_bound_matches_the_profile_bound",
   "//mcp-re-client:mcp_re_client_test#config::tests::an_out_of_range_clock_skew_is_refused",
+  "//mcp-re-client:clock_skew_parity_test#the_sidecar_and_the_sdk_refuse_a_301_second_skew_alike",
+  "//mcp-re-client:clock_skew_parity_test#the_sidecar_and_the_sdk_accept_the_bound_and_refuse_a_negative_skew_alike",
   "//mcp-re-client:mcp_re_client_test#config::tests::a_disabled_or_unbounded_reload_cadence_is_refused",
   # Identity and rollback: a duplicate route id makes two audiences one, an empty pin set
   # trusts every issuer, and an unnamed floor is rollback protection that resets on restart.

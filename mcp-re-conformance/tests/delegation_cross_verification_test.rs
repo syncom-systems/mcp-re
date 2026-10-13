@@ -127,7 +127,8 @@ fn external_credential_verifies_under_our_verifier() {
     let epochs = [kat.trust_epoch.as_str()];
     let params = DelegationVerifyParams {
         now: kat.now_unix,
-        max_clock_skew: kat.max_clock_skew,
+        max_clock_skew: mcp_re_core::MaxClockSkew::new(kat.max_clock_skew)
+            .expect("the KAT skew is inside the bound"),
         verifier_audiences: &audiences,
         expected_profile: &kat.expected_profile,
         expected_audience_hash: &kat.expected_audience_hash,

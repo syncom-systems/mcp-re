@@ -221,8 +221,10 @@ review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 # The SHA moves with the number.
 [[debt]]
 path = "mcp-re-client-core/src/response.rs"
-baseline_prod_loc = 362
-baseline_sha = "b142a7a"
+# MCPRE-200: the policy's skew is a `MaxClockSkew`: 362 (measured at c939c2f) -> 355.
+# `baseline_sha` names that parent.
+baseline_prod_loc = 355
+baseline_sha = "c939c2f"
 status = "reviewed-exception"
 review_ref = "EX-010 in docs/architecture/review-dispositions.md"
 
@@ -349,9 +351,11 @@ path = "sdk/python/src/lib.rs"
 # the root anchor, the verify preamble and the verdict projection both bindings restated:
 # 767 (measured at 6f2000c) -> 686.
 # MCPRE-199: a refusal crosses into Python typed, and the refusal channel and device seam
-# are `refusal.rs`'s: 686 (measured at c198ef0) -> 683. `baseline_sha` names that parent.
-baseline_prod_loc = 683
-baseline_sha = "c198ef0"
+# are `refusal.rs`'s: 686 (measured at c198ef0) -> 683.
+# MCPRE-200: the version, profile-tag and skew-bound accessors are `core_facts.rs`, what the
+# core reports about itself: 683 (measured at 75e64d0) -> 672. `baseline_sha` names that parent.
+baseline_prod_loc = 672
+baseline_sha = "75e64d0"
 status = "unreviewed"
 
 [[debt]]
@@ -385,9 +389,11 @@ path = "sdk/typescript/src/lib.rs"
 # the root anchor, the verify preamble and the verdict projection both bindings restated:
 # 727 (measured at 6f2000c) -> 649.
 # MCPRE-199: a refusal crosses into JavaScript typed, and the refusal channel and device
-# seam are `refusal.rs`'s: 649 (measured at c198ef0) -> 645. `baseline_sha` names that parent.
-baseline_prod_loc = 645
-baseline_sha = "c198ef0"
+# seam are `refusal.rs`'s: 649 (measured at c198ef0) -> 645.
+# MCPRE-200: the version, profile-tag and skew-bound accessors are `core_facts.rs`, what the
+# core reports about itself: 645 (measured at 75e64d0) -> 635. `baseline_sha` names that parent.
+baseline_prod_loc = 635
+baseline_sha = "75e64d0"
 status = "unreviewed"
 
 # MCPRE-175 gave the local listener an owner subtree. `serve.rs` mixed the accept loop with
@@ -509,10 +515,11 @@ status = "unreviewed"
 [[debt]]
 path = "mcp-re-client/src/config/mod.rs"
 # MCPRE-202: the parse, read and check entry points moved to the validated configuration that
-# owns them, `config/validated.rs`: 382 (measured at 75fae5e) -> 355. `baseline_sha` names that
-# parent.
-baseline_prod_loc = 355
-baseline_sha = "75fae5e"
+# owns them, `config/validated.rs`: 382 (measured at 75fae5e) -> 355.
+# MCPRE-200: the skew bound is `MaxClockSkew`'s, and the restated constant with its rationale is
+# deleted: 355 (measured at c939c2f) -> 343. `baseline_sha` names that parent.
+baseline_prod_loc = 343
+baseline_sha = "c939c2f"
 status = "unreviewed"
 
 [[debt]]
@@ -692,14 +699,6 @@ status = "unreviewed"
 path = "mcp-re-proxy/src/delegated_server_signer/mod.rs"
 baseline_prod_loc = 387
 baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-http-profile/src/delegation/mod.rs"
-# MCPRE-194: the protected header is the shared `ProtectedHeader`, and the segment codec is
-# `jose`'s: 218 (measured at 255465e) -> 206.
-baseline_prod_loc = 206
-baseline_sha = "1021196"
 status = "unreviewed"
 
 [[debt]]

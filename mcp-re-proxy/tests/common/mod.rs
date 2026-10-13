@@ -187,7 +187,7 @@ fn org_resolver(
 fn verify_params<'a>(now: i64) -> DelegationVerifyParams<'a> {
     DelegationVerifyParams {
         now,
-        max_clock_skew: 60,
+        max_clock_skew: mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
         verifier_audiences: &[AUD],
         expected_profile: PROFILE_TAG,
         expected_audience_hash: AUD_SCOPE,

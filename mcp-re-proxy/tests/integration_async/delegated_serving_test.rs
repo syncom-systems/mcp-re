@@ -295,7 +295,7 @@ fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: AUD_SCOPE,
         accepted_epochs: epochs,
-        max_clock_skew: 60,
+        max_clock_skew: mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
     }
 }
 
@@ -824,7 +824,7 @@ async fn the_client_facing_crate_can_verify_the_202_the_server_emits() {
         vec![VERIFIER_AUD.to_string()],
         AUD_SCOPE,
         vec![EPOCH.to_string()],
-        60,
+        mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
     );
     let actor = client_verify_202(&ack, &note, &client_trust_202(), &policy, NOW)
         .expect("the client-facing crate verifies the server's 202");
@@ -839,7 +839,7 @@ async fn the_client_facing_crate_can_verify_the_202_the_server_emits() {
         vec![VERIFIER_AUD.to_string()],
         AUD_SCOPE,
         vec!["epoch-999".to_string()],
-        60,
+        mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
     );
     assert!(
         client_verify_202(&ack, &note, &client_trust_202(), &stale, NOW).is_err(),
@@ -906,7 +906,7 @@ async fn the_client_cores_own_notification_envelope_earns_a_202() {
             vec![VERIFIER_AUD.to_string()],
             AUD_SCOPE,
             vec![EPOCH.to_string()],
-            60,
+            mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
         ),
         NOW,
     )

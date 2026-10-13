@@ -32,6 +32,7 @@ libc = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+mcp-re-binding-core = { path = "../sdk/binding-core" }
 mcp-re-proxy = { path = "../mcp-re-proxy" }
 mcp-re-http-profile = { path = "../mcp-re-http-profile" }
 rcgen = { workspace = true }

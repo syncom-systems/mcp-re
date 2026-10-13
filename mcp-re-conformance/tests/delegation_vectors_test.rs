@@ -951,7 +951,8 @@ fn run_fixture(fixture: &Fixture, verify_at: i64) -> String {
         verifier_audiences: &auds,
         expected_audience_hash: &fixture.check.expected_audience_hash,
         accepted_epochs: &epochs,
-        max_clock_skew: fixture.check.max_clock_skew,
+        max_clock_skew: mcp_re_core::MaxClockSkew::new(fixture.check.max_clock_skew)
+            .expect("the fixture skew is inside the bound"),
     };
     let is_revoked = |kid: &str| fixture.check.revoked_kids.iter().any(|r| r == kid);
 

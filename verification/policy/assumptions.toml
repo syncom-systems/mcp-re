@@ -2591,7 +2591,7 @@ id = "ASM-0069"
 description = "The wall-clock `now` handed to the delegated-credential chain check is the verifying party's current UTC time, to within the deployment's configured skew of the issuer's clock."
 justification = """
 `http_profile.delegated_credential_chain` admits a credential only inside its own `nbf`/`exp`
-window, widened by the clamped skew (`check_freshness`). The chain holds no clock: `now` is an
+window, widened by the bounded `MaxClockSkew` (`check_freshness`). The chain holds no clock: `now` is an
 argument to every verifier operation, supplied by whoever verifies the response — the client
 proxy's verification clock, an SDK caller, or, for a retained exchange, the instant at which
 the exchange was retained. So the conclusion *this credential is inside its window* is a
@@ -2607,7 +2607,7 @@ for would reopen its review for the units it already serves.
 
 A clock that steps backwards re-admits a credential whose `exp` has passed, and one that steps
 forwards refuses a credential that is current; both are the same failure of this premise and
-neither is detectable from one response. The skew clamp bounds how far a misconfigured
+neither is detectable from one response. The skew's type bounds how far a misconfigured
 TOLERANCE can widen the window; it says nothing about a wrong READING.
 
 It stops being acceptable if the chain is ever handed a value that is not an acquisition of the

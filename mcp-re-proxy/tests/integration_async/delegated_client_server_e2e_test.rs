@@ -278,7 +278,12 @@ impl RemoteTransport for InProcessServer {
 
 fn delegation_policy() -> DelegationPolicy {
     // audience_hash defaults to --audience on the server, so the client expects it too.
-    DelegationPolicy::new(vec![AUD.to_string()], AUD, vec![EPOCH.to_string()], 60)
+    DelegationPolicy::new(
+        vec![AUD.to_string()],
+        AUD,
+        vec![EPOCH.to_string()],
+        mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
+    )
 }
 
 /// The client's trust seam: the ROOT issuer key for the Response slot (the credential

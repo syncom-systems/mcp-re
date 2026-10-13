@@ -335,7 +335,7 @@ graph BT
 
 ```mermaid
 graph BT
-    THM_0060["THM-0060<br/>The client's clock skew is bounded at construction and read once"]
+    THM_0060["THM-0060<br/>The client's clock skew is bounded by its type and read once"]
 ```
 
 ## Component 7

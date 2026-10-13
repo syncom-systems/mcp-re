@@ -208,7 +208,8 @@ mod tests {
         let jws = issue_delegation_credential(&root(), &header, &c);
         let params = DelegationVerifyParams {
             now,
-            max_clock_skew: skew,
+            max_clock_skew: mcp_re_core::MaxClockSkew::new(skew)
+                .expect("the probed skew is in range"),
             verifier_audiences: &[AUD],
             expected_profile: PROFILE,
             expected_audience_hash: "h",

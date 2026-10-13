@@ -21,6 +21,8 @@
 
 mod refusal;
 
+mod core_facts;
+
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
@@ -48,18 +50,6 @@ fn field_name(field: IssuerField) -> &'static str {
         IssuerField::TrustDomain => "issuer_trust_domain",
         IssuerField::Subject => "issuer_subject",
     }
-}
-
-/// The audited core's version — `mcp-re-client-core`'s, not this binding crate's.
-#[pyfunction]
-fn core_version() -> &'static str {
-    mcp_re_binding_core::CORE_VERSION
-}
-
-/// The RFC 9421 profile tag the signature is emitted/verified under.
-#[pyfunction]
-fn profile_tag() -> &'static str {
-    mcp_re_binding_core::PROFILE_TAG
 }
 
 /// Sign exact preimage bytes with a raw seed, returning the 64-byte detached Ed25519
@@ -661,8 +651,7 @@ fn verify_response(
 
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(core_version, m)?)?;
-    m.add_function(wrap_pyfunction!(profile_tag, m)?)?;
+    core_facts::register(m)?;
     m.add_function(wrap_pyfunction!(sign_preimage, m)?)?;
     m.add_function(wrap_pyfunction!(sign_request, m)?)?;
     m.add_function(wrap_pyfunction!(sign_request_with_signer, m)?)?;

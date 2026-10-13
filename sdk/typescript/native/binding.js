@@ -779,6 +779,7 @@ function __napiStampBindingTarget(exportsObject, target) {
 module.exports.__napiBindingTarget = __napiStampBindingTarget(nativeBinding, __napiLoadedBindingTarget)
 module.exports = nativeBinding
 module.exports.coreVersion = nativeBinding.coreVersion
+module.exports.maxClockSkewBound = nativeBinding.maxClockSkewBound
 module.exports.profileTag = nativeBinding.profileTag
 module.exports.SIGNING_DEVICE_FAILURE = nativeBinding.SIGNING_DEVICE_FAILURE
 module.exports.signNotification = nativeBinding.signNotification

@@ -1559,7 +1559,7 @@ fn chain_expectations() -> mcp_re_http_profile::DelegationExpectations<'static> 
         verifier_audiences: &["did:example:server"],
         expected_audience_hash: "aud-scope-1",
         accepted_epochs: &["epoch-1"],
-        max_clock_skew: 60,
+        max_clock_skew: mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
     }
 }
 
@@ -2272,7 +2272,7 @@ fn frozen_http_profile_corpus_verifies() {
                     verifier_audiences: &auds,
                     expected_audience_hash: &check.audience_hash,
                     accepted_epochs: &epochs,
-                    max_clock_skew: 60,
+                    max_clock_skew: mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
                 };
                 let revoked_kid = check.revoked;
                 let is_revoked = move |id: &str| revoked_kid && id == D202_DELEGATED_KID;
