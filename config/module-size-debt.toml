@@ -402,10 +402,15 @@ status = "unreviewed"
 # rather than added to a file the ratchet holds at 712. The debt moves WITH the file —
 # dropping the entry because the path changed would launder 712 registered lines as
 # progress — and the number falls to 707 because the actor projection left with it.
+# MCPRE-212: the request-role handle has one owner, `RequestRoleEvidence::of_signed_request`,
+# so the bodyless copy of its derivation goes: 391 (measured at c939c2f) -> 370.
+# MCPRE-211: the delegated 202 emitter is crate-private and reads its signer from one window's
+# projection; the file measures 370 with both changes. `baseline_sha` names the parent where
+# 391 was measured.
 [[debt]]
 path = "mcp-re-http-profile/src/bodyless/mod.rs"
-baseline_prod_loc = 408
-baseline_sha = "255465e"
+baseline_prod_loc = 370
+baseline_sha = "c939c2f"
 status = "unreviewed"
 
 [[debt]]
@@ -575,10 +580,13 @@ baseline_prod_loc = 377
 baseline_sha = "bff0cb9"
 status = "unreviewed"
 
+# MCPRE-211: the two delegated emitters are crate-private and read their signer from one
+# window's projection, and the runtime keyid re-check is gone because the key value owns it:
+# 305 (measured at c939c2f, under a 408 baseline) -> 286. `baseline_sha` names that parent.
 [[debt]]
 path = "mcp-re-http-profile/src/sign.rs"
-baseline_prod_loc = 408
-baseline_sha = "d1fc5fa"
+baseline_prod_loc = 286
+baseline_sha = "c939c2f"
 status = "unreviewed"
 
 [[debt]]
@@ -686,12 +694,6 @@ status = "reviewed-exception"
 review_ref = "EX-017 in docs/architecture/review-dispositions.md"
 growth_from_prod_loc = 378
 growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
-
-[[debt]]
-path = "mcp-re-http-profile/src/rejection/mod.rs"
-baseline_prod_loc = 227
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/async_etcd_store.rs"

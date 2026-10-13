@@ -461,7 +461,6 @@ paths = [
   "mcp-re-core/src/error.rs",
   "mcp-re-core/src/encoding.rs",
   "mcp-re-http-profile/src/verify/floor/response.rs",
-  "mcp-re-http-profile/src/verify/bound_request.rs",
   "mcp-re-http-profile/src/verified_response/mod.rs",
   "mcp-re-http-profile/src/verified_response/facts.rs",
   "mcp-re-http-profile/src/verified_response/bound.rs",
@@ -706,7 +705,6 @@ paths = [
   "mcp-re-http-profile/src/verify/full/mod.rs",
   "mcp-re-http-profile/src/verify/full/response.rs",
   "mcp-re-http-profile/src/verified_response/bound.rs",
-  "mcp-re-http-profile/src/verify/bound_request.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -722,9 +720,9 @@ tested_symbols = [
   "//mcp-re-http-profile:full_profile_test#cryptographic_req_splice_still_fails_at_the_floor",
   "//mcp-re-http-profile:full_profile_test#a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request",
   "//mcp-re-http-profile:full_profile_test#two_requests_differing_only_in_a_signed_parameter_have_different_handles",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::bound_request::tests::a_derived_handle_agrees_with_the_signers_handle",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::bound_request::tests::a_request_differing_in_a_covered_component_derives_a_different_handle",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::bound_request::tests::a_thin_covered_set_cannot_reproduce_a_signed_handle",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#evidence::request_role::tests::a_derived_handle_agrees_with_the_signers_handle",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#evidence::request_role::tests::a_request_differing_in_a_covered_component_derives_a_different_handle",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#evidence::request_role::tests::a_thin_covered_set_cannot_reproduce_a_signed_handle",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::response_block_foreign_profile_fails_closed",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::response_block_unknown_field_fails_closed",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::response_block_round_trips_and_validates",
@@ -7088,8 +7086,9 @@ paths = [
   # `delegated_202_test` three measure the shipped one, is a disposition for the unit's
   # owner. See EX-015 in docs/architecture/review-dispositions.md.
   "mcp-re-http-profile/src/rejection/pre_052_direct_root.rs",
-  # The signing window the emission is bound under.
+  # The signing window the emission is bound under, and the projection the emitters read it through.
   "mcp-re-http-profile/src/custody/window_emission.rs",
+  "mcp-re-http-profile/src/custody/delegated_signer.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -7114,7 +7113,9 @@ tested_symbols = [
   # The emitted signature covers a digest and signature headers the emitter computed, never ones
   # the caller supplied, and the delegated evidence block is inside the digested body.
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::caller_supplied_digest_and_signature_headers_do_not_survive_emission",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_delegated_response_is_refused_when_the_signer_names_another_key",
+  # Every part a delegated emitter signs with is read from one window: the block's signer keyid
+  # and the signature keyid are one value.
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::delegated_signer::tests::every_part_is_read_from_the_one_window",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::the_delegated_response_block_is_inside_the_digested_body",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_bound_response_advertises_the_handle_of_the_request_it_answers",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::an_unsigned_request_cannot_be_answered_with_a_bound_response",
@@ -8734,11 +8735,13 @@ paths = [
   "mcp-re-http-profile/src/custody/issuance_terms.rs",
   "mcp-re-http-profile/src/custody/key_window.rs",
   "mcp-re-http-profile/src/custody/lifecycle_event.rs",
-  "mcp-re-http-profile/src/custody/active_key.rs",
+  "mcp-re-http-profile/src/custody/active_key/mod.rs",
+  "mcp-re-http-profile/src/custody/active_key/stated.rs",
   "mcp-re-http-profile/src/custody/issuance_refusal.rs",
   "mcp-re-http-profile/src/custody/signing_window.rs",
   "mcp-re-http-profile/src/custody/trust_epoch.rs",
   "mcp-re-http-profile/src/custody/window_emission.rs",
+  "mcp-re-http-profile/src/custody/delegated_signer.rs",
 ]
 exported_contracts = []
 # TWO classes, for the reason each of the verifier's propositions carries two. The seal added by
@@ -9436,6 +9439,8 @@ paths = [
   "mcp-re-http-profile/src/bodyless/pre_052_fixtures.rs",
   "mcp-re-http-profile/src/bodyless/delegated_ack.rs",
   "mcp-re-http-profile/src/bodyless/delegated_credential.rs",
+  # The covered `mcp-re-request-evidence` value is `RequestRoleEvidence::of_signed_request`.
+  "mcp-re-http-profile/src/evidence/request_role.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -9450,6 +9455,7 @@ evidence = [
 # a bodied message still requires its content-type is as much a statement about the sets as
 # one that a bodyless message must not carry it.
 tested_symbols = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#bodyless::tests::the_acknowledgement_and_the_bound_response_derive_one_handle",
   "//mcp-re-http-profile:bodyless_202_test#signed_202_verifies_against_its_notification",
   "//mcp-re-http-profile:bodyless_202_test#an_acknowledgement_binds_to_one_transmission_not_to_content",
   "//mcp-re-http-profile:bodyless_202_test#a_forged_request_evidence_header_is_refused",

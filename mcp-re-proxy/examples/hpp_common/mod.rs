@@ -9,25 +9,24 @@
 //! shared key file. Addresses/target come from the environment — the launcher
 //! resolves them from `config/ports.toml`, so no port literal is baked in here.
 
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::custody::DelegatedKeyWindow;
+use mcp_re_http_profile::custody::SigningWindow;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::ActorIdentity;
-use mcp_re_http_profile::Audience;
 use mcp_re_http_profile::AudienceTuple;
-use mcp_re_http_profile::Cnf;
-use mcp_re_http_profile::DelegatedJwk;
+use mcp_re_http_profile::CustodyConfig;
+use mcp_re_http_profile::DelegatedSigningCustody;
 use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationHeader;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
-use mcp_re_http_profile::DELEGATION_ALG;
-use mcp_re_http_profile::DELEGATION_TYP;
-use mcp_re_http_profile::JWK_CRV_ED25519;
-use mcp_re_http_profile::JWK_KTY_OKP;
-use mcp_re_http_profile::KEY_USE_RESPONSE_SIGNING;
 use mcp_re_http_profile::PROFILE_TAG;
 
 /// Demo client request-signing seed (Ed25519). Deterministic — proof material.
@@ -43,8 +42,6 @@ pub const DELEGATED_SEED: [u8; 32] = [44u8; 32];
 pub const CLIENT_KEY_ID: &str = "client-key-1";
 /// The root/issuer kid. Named `SERVER_KEY_ID` for continuity with the client driver.
 pub const SERVER_KEY_ID: &str = "server-key-1";
-/// The delegated kid the RFC 9421 response signature carries.
-pub const DELEGATED_KEY_ID: &str = "server-key-1/delegated/1";
 pub const TRUST_DOMAIN: &str = "example.com";
 pub const CLIENT_SUBJECT: &str = "did:example:host-a";
 pub const SERVER_SUBJECT: &str = "did:example:server-1";
@@ -56,6 +53,8 @@ pub const AUD_SCOPE: &str = "aud-scope-1";
 pub const EPOCH: &str = "epoch-1";
 /// How long a minted credential stays valid, in seconds.
 pub const CREDENTIAL_TTL: i64 = 3600;
+/// How long a signed response advertises validity for, in seconds.
+pub const RESPONSE_TTL: i64 = 300;
 /// Demo access token bound by the request's OAuth DPoP artifact binding. The
 /// evidence block requires at least one artifact binding; DPoP derives its
 /// credential from the covered `Authorization: Bearer` header.
@@ -92,55 +91,54 @@ pub fn server_identity() -> ActorIdentity {
     }
 }
 
-/// The identity the response evidence block names as its signer: the same actor, keyed
-/// by the DELEGATED kid, which is what the RFC 9421 response signature carries.
-pub fn delegated_server_identity() -> ActorIdentity {
-    ActorIdentity {
-        role: "server".into(),
-        trust_domain: TRUST_DOMAIN.into(),
-        subject: SERVER_SUBJECT.into(),
-        keyid: DELEGATED_KEY_ID.into(),
-    }
+type Issue = Box<dyn FnMut(&DelegationHeader, &DelegationClaims) -> Option<String> + Send>;
+type Factory = Box<dyn FnMut() -> SigningKey + Send>;
+
+/// The demo's delegated-signing custody: the ROOT (`server_key`) issues the credential the
+/// delegated key presents (ADR-MCPRE-052), and rotates it, through the same
+/// `DelegatedSigningCustody` the shipped serving path runs. The root attests that the
+/// delegated key may sign responses for this verifier, profile, audience scope and trust
+/// epoch.
+///
+/// This is the ISSUER side, kept here so the proof pair runs self-contained. In production
+/// the root is a KMS/HSM anchor, not a seed in the serving process.
+fn custody() -> &'static Mutex<DelegatedSigningCustody<Issue, Factory>> {
+    static CUSTODY: OnceLock<Mutex<DelegatedSigningCustody<Issue, Factory>>> = OnceLock::new();
+    CUSTODY.get_or_init(|| {
+        let cfg = CustodyConfig {
+            issuer_kid: SERVER_KEY_ID.into(),
+            iss: SERVER_SUBJECT.into(),
+            profile: PROFILE_TAG.into(),
+            aud: AUDIENCE_ID.into(),
+            audience_hash: AUD_SCOPE.into(),
+            trust_epoch: EPOCH.parse().expect("EPOCH is a trust epoch"),
+            server_role: "server".into(),
+            server_trust_domain: TRUST_DOMAIN.into(),
+            server_subject: SERVER_SUBJECT.into(),
+            window: DelegatedKeyWindow::of(CREDENTIAL_TTL, CREDENTIAL_TTL / 6)
+                .expect("0 < overlap < ttl"),
+        };
+        let root = server_key();
+        let issue: Issue = Box::new(move |h, c| Some(issue_delegation_credential(&root, h, c)));
+        let factory: Factory = Box::new(delegated_key);
+        Mutex::new(DelegatedSigningCustody::new(
+            cfg,
+            server_key().public_key(),
+            issue,
+            factory,
+        ))
+    })
 }
 
-/// Mint the compact-JWS delegation credential the delegated key presents
-/// (ADR-MCPRE-052): the root attests that `DELEGATED_KEY_ID` may sign responses for this
-/// verifier, profile, audience scope, and trust epoch, until `now + CREDENTIAL_TTL`.
-///
-/// This is the ISSUER side, kept here so the proof pair runs self-contained. In
-/// production the root is a KMS/HSM anchor and the credential is minted by a governed
-/// issuer, not by the serving process.
-pub fn delegation_credential(now: i64) -> String {
-    let delegated = delegated_key();
-    let header = DelegationHeader {
-        typ: DELEGATION_TYP.into(),
-        alg: DELEGATION_ALG.into(),
-        kid: SERVER_KEY_ID.into(),
-    };
-    let claims = DelegationClaims {
-        iss: SERVER_SUBJECT.into(),
-        iat: now,
-        nbf: now,
-        exp: now + CREDENTIAL_TTL,
-        jti: "hpp-demo-credential-1".into(),
-        aud: Audience::One(AUDIENCE_ID.into()),
-        mcp_re_profile: PROFILE_TAG.into(),
-        mcp_re_audience_hash: AUD_SCOPE.into(),
-        mcp_re_server_signer: delegated_server_identity().actor_id(),
-        mcp_re_key_use: KEY_USE_RESPONSE_SIGNING.into(),
-        delegated_kid: DELEGATED_KEY_ID.into(),
-        issuer_kid: SERVER_KEY_ID.into(),
-        trust_epoch: EPOCH.into(),
-        cnf: Cnf {
-            jwk: DelegatedJwk {
-                kty: JWK_KTY_OKP.into(),
-                crv: JWK_CRV_ED25519.into(),
-                kid: DELEGATED_KEY_ID.into(),
-                x: delegated.public_key().to_b64url(),
-            },
-        },
-    };
-    issue_delegation_credential(&server_key(), &header, &claims)
+/// The window a response is signed under at `now`: the custody's active delegated key,
+/// rotated if due, advertising `RESPONSE_TTL` seconds or the credential's own expiry,
+/// whichever closes first.
+pub fn signing_window(now: i64) -> SigningWindow {
+    let mut custody = custody().lock().expect("custody lock");
+    custody.ensure_active(now).expect("the demo root issues");
+    let active = custody.active_snapshot().expect("an issuance is active");
+    SigningWindow::over(Arc::new(active), now, RESPONSE_TTL)
+        .expect("an active credential opens a window")
 }
 
 /// The canonical `@target-uri` (RFC 9421) both sides use verbatim, from

@@ -43,8 +43,8 @@ use crate::sign::sign_response_with_signer;
 
 use super::rejection_body;
 use super::request_id;
-use super::ActorIdentity;
 use super::RejectionReason;
+use crate::block::ActorIdentity;
 
 /// Full-profile response signing (MCPRE-101) by the ROOT key: compose the response
 /// evidence block (`se.syncom/mcp-re.http.response`) carrying the `server_signer`
