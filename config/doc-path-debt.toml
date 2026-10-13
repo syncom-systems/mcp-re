@@ -310,12 +310,6 @@ dead_tokens = 1
 status = "unreviewed"
 
 [[debt]]
-path = "scripts/bazel_srcs_gate.py"
-dead_tokens = 1
-status = "reviewed-exception"
-review_ref = "DP-003 in docs/architecture/review-dispositions.md"
-
-[[debt]]
 path = "scripts/test-aws-cloud.sh.example"
 dead_tokens = 2
 status = "reviewed-exception"

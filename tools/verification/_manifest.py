@@ -11,6 +11,7 @@ verification toolchain exists.
 
 from __future__ import annotations
 
+import functools
 import os
 import sys
 from collections.abc import Iterable
@@ -22,6 +23,7 @@ from _seams import files_with_seams
 from _ecosystems import RUST
 from _ecosystems import test_project_for
 from _ecosystems import valid_target
+import _module_tree
 import _rust_targets
 from _ecosystems import unit_ecosystem
 from _ecosystems import unit_projects
@@ -207,22 +209,27 @@ def claims_test_evidence(unit: dict) -> bool:
     return any(str(entry).startswith("test://") for entry in unit.get("evidence", []))
 
 
-def _module_candidates(root_dir: str, symbol_path: str) -> list[str]:
-    """The source files an IN-CRATE selector's module path could name, longest first.
+@functools.lru_cache(maxsize=None)
+def _crate_modules(crate_root: str) -> dict[tuple[str, ...], str]:
+    """Module path -> repository path, for every file `crate_root` reaches."""
+    tree = _module_tree.walk(_rust_targets.REPO_ROOT / crate_root)
+    base = _rust_targets.REPO_ROOT.resolve()
+    return {f.module: os.path.relpath(f.path.resolve(), base) for f in tree.files}
+
+
+def _module_candidates(crate_root: str, symbol_path: str) -> list[str]:
+    """The source files an IN-CRATE selector's module path names, longest prefix first.
 
     A selector on a test target built from a crate executes code in that crate's module
-    tree, rooted at the crate root's directory: `rejection::tests::x` on the proxy's unit
-    tests can only execute code in `mcp-re-proxy/src/rejection.rs`. Every prefix is offered
+    tree: `rejection::tests::x` on the proxy's unit tests can only execute code in
+    `mcp-re-proxy/src/rejection.rs`. Every prefix that is a FILE of the tree is offered,
     because the selector names an item, not a file, and the file boundary can be anywhere
-    above it.
+    above it. Which file a module is — `#[path]`, both file forms, inline modules — is
+    `_module_tree`'s answer.
     """
-    segments = [s for s in symbol_path.split("::") if s]
-    out: list[str] = []
-    for depth in range(len(segments), 0, -1):
-        stem = "/".join(segments[:depth])
-        out.append(f"{root_dir}/{stem}.rs")
-        out.append(f"{root_dir}/{stem}/mod.rs")
-    return out
+    segments = tuple(s for s in symbol_path.split("::") if s)
+    modules = _crate_modules(crate_root)
+    return [modules[segments[:d]] for d in range(len(segments), 0, -1) if segments[:d] in modules]
 
 
 def _validate_gate_controls(uwhere: str, unit: dict) -> None:
@@ -293,7 +300,7 @@ def _validate_in_crate_selectors(uwhere: str, unit: dict) -> None:
             continue
         root_dir = row["root"].rsplit("/", 1)[0]
         # The crate root itself holds the modules it declares inline, `tests` among them.
-        candidates = _module_candidates(root_dir, path) + [row["root"]]
+        candidates = _module_candidates(row["root"], path) + [row["root"]]
         if not any(c in declared for c in candidates):
             raise ManifestError(
                 f"{uwhere}: tested_symbol {symbol!r} executes code in {root_dir}, but no "

@@ -24,12 +24,17 @@ mode:
 - **Only a glob over `src/` exempts a crate.** A crate is exempt when its library
   sources cannot drift, not when the word `glob` occurs somewhere in its BUILD file.
   `mcp-re-proxy` globs its integration-test sources while hand-listing its library.
-- **Both module forms are walked.** `mod cli;` resolves to `src/cli.rs` OR to
-  `src/cli/mod.rs`, and in either form the modules IT declares live under `src/cli/`.
-  A walk that stops at a resolved file observes nothing after the first
-  file-to-directory split, which is precisely when a hand-list starts to drift.
-- **Declarations are read from code only.** A `mod` written inside a comment or a
-  string literal compiles nothing and needs no `srcs` entry.
+- **The module tree is rustc's.** `tools/verification/_module_tree.py` owns it: both
+  file forms, `#[path]`, inline modules, and declarations read from code only. A walk
+  that stops at a resolved file observes nothing after the first file-to-directory
+  split, which is precisely when a hand-list starts to drift.
+
+The second hand list is the audit-vocabulary guard's: `CRATE_SOURCE_TREES` names the
+crate packages it scans, `COMPILED_SOURCE_DIRS` the directories it walks in each, and each
+package's `guard_src_files` glob the files its runfiles carry. A crate package missing from
+the list, a file a crate target reaches outside those directories, or one the glob leaves
+out of the runfiles, is a file the guard never reads while it reports a clean scan. Each is
+checked against the module tree of every crate target the build graph compiles.
 
 Run:  python3 scripts/bazel_srcs_gate.py
       python3 scripts/bazel_srcs_gate.py --selftest
@@ -37,14 +42,18 @@ Run:  python3 scripts/bazel_srcs_gate.py
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import sys
 import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools" / "verification"))
 
-MOD_DECL = re.compile(r"^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?mod[ \t]+([a-z0-9_]+)[ \t]*;", re.M)
+import _module_tree  # noqa: E402
+
 SRC_ENTRY = re.compile(r'"(src/[A-Za-z0-9_/]+\.rs)"')
 # A glob reaching into `src/`. Undriftable ONLY when it is the value of the PRODUCTION
 # LIBRARY target's `srcs` — see `library_srcs`.
@@ -60,8 +69,6 @@ RULE_CALL = re.compile(r"^([A-Za-z_][A-Za-z0-9_.]*)\s*\(", re.M)
 #: Rule names that declare a Rust LIBRARY. The gate's subject is the crate's library
 #: module tree rooted at `src/lib.rs`, so only these targets can answer for it.
 LIBRARY_RULE = re.compile(r"(?:^|_)rust_library$")
-
-IDENT = re.compile(r"[A-Za-z0-9_]")
 
 
 def balanced(text: str, start: int, opener: str, closer: str) -> str:
@@ -162,155 +169,135 @@ def library_srcs(build_text: str) -> str | None:
     return "\n".join(owning) if owning else None
 
 
-def strip_noncode(text: str) -> str:
-    """`text` with comments, string literals and char literals blanked out.
+def check_module_tree(crate: Path, listed: set[str]) -> list[str]:
+    """Findings for every file the library's module tree reaches, and every declaration
+    that reaches none.
 
-    Line structure is preserved, so a finding still names the line it came from.
-    The gate's claim is about what rustc compiles, and rustc compiles neither the
-    `mod` in a doc comment nor the one inside a fixture string — counting either
-    would demand a `srcs` entry for a file that nothing needs.
-    """
-    out: list[str] = []
-    i, n = 0, len(text)
-
-    def blank(upto: int) -> None:
-        nonlocal i
-        out.extend("\n" if ch == "\n" else " " for ch in text[i:upto])
-        i = upto
-
-    while i < n:
-        c = text[i]
-        nxt = text[i + 1] if i + 1 < n else ""
-
-        if c == "/" and nxt == "/":
-            j = text.find("\n", i)
-            blank(n if j < 0 else j)
-        elif c == "/" and nxt == "*":
-            # Rust block comments nest.
-            depth, j = 0, i
-            while j < n:
-                if text.startswith("/*", j):
-                    depth += 1
-                    j += 2
-                elif text.startswith("*/", j):
-                    depth -= 1
-                    j += 2
-                    if depth == 0:
-                        break
-                else:
-                    j += 1
-            blank(j)
-        elif c == '"' or (c == "r" and _raw_string_here(text, i)):
-            blank(_string_end(text, i))
-        elif c == "'":
-            blank(_char_literal_end(text, i))
-        else:
-            out.append(c)
-            i += 1
-
-    return "".join(out)
-
-
-def _raw_string_here(text: str, i: int) -> bool:
-    """True when the `r` at `i` opens a raw string rather than ending an identifier."""
-    if i and IDENT.match(text[i - 1]) and not (text[i - 1] == "b" and (i < 2 or not IDENT.match(text[i - 2]))):
-        return False
-    j = i + 1
-    while j < len(text) and text[j] == "#":
-        j += 1
-    return j < len(text) and text[j] == '"'
-
-
-def _string_end(text: str, i: int) -> int:
-    """Index one past the string literal starting at `i`."""
-    n = len(text)
-    if text[i] == "r":
-        j = i + 1
-        hashes = 0
-        while j < n and text[j] == "#":
-            hashes += 1
-            j += 1
-        close = '"' + "#" * hashes
-        end = text.find(close, j + 1)
-        return n if end < 0 else end + len(close)
-    j = i + 1
-    while j < n:
-        if text[j] == "\\":
-            j += 2
-            continue
-        if text[j] == '"':
-            return j + 1
-        j += 1
-    return n
-
-
-def _char_literal_end(text: str, i: int) -> int:
-    """Index one past a char literal at `i`; `i + 1` when it is a lifetime.
-
-    Only a char literal can hide a quote (`'"'`), which is the whole reason this
-    distinction is drawn.
-    """
-    if text.startswith("'\\", i):
-        j = text.find("'", i + 2)
-        return i + 1 if j < 0 else j + 1
-    if i + 2 < len(text) and text[i + 2] == "'":
-        return i + 3
-    return i + 1
-
-
-def declared_mods(file: Path) -> list[str]:
-    """The module names a Rust file declares in code, deduplicated and sorted."""
-    return sorted(set(MOD_DECL.findall(strip_noncode(file.read_text(errors="replace")))))
-
-
-def check_module_tree(
-    crate: Path, rel_dir: str, decl_rel: str, listed: set[str], seen: set[str]
-) -> list[str]:
-    """Findings for every module `decl_rel` declares, recursively.
-
-    RECURSIVE because a hand-list is flat but a module tree is not. `mod
-    config_state;` resolves to a directory whose submodules are hand-listed one by
-    one, so a new `src/config_state/foo.rs` is exactly as invisible to Bazel as a
-    new `src/foo.rs`.
-
-    A module is resolved the way rustc resolves it — `src/<rel>.rs` first, then
-    `src/<rel>/mod.rs` — and the walk continues into whichever file won, with the
-    children looked for under `src/<rel>/`. Both forms therefore behave the same
-    here, which is what keeps the gate observing a module across the split that
-    turns one file into a directory.
+    The tree is walked to the bottom even under an unlisted file: one run names every
+    missing entry, not one per re-run.
     """
     findings: list[str] = []
-
-    for mod in declared_mods(crate / decl_rel):
-        rel = f"{rel_dir}/{mod}" if rel_dir else mod
-        if rel in seen:
-            continue
-        seen.add(rel)
-
-        file_form, dir_form = f"src/{rel}.rs", f"src/{rel}/mod.rs"
-        if (crate / file_form).is_file():
-            child = file_form
-        elif (crate / dir_form).is_file():
-            child = dir_form
-        else:
+    tree = _module_tree.walk(crate / "src" / "lib.rs")
+    for module in tree.files[1:]:
+        rel = module.path.relative_to(crate).as_posix()
+        if rel not in listed:
+            declared = module.declared_by.relative_to(crate).as_posix() if module.declared_by else "?"
             findings.append(
-                f"{crate.name}: `mod {mod};` in {decl_rel} resolves to neither "
-                f"{file_form} nor {dir_form} — cargo cannot compile it either"
+                f"{crate.name}/BUILD.bazel: `mod {module.module[-1]};` in {declared} needs {rel} "
+                f"in the hand-listed srcs — rustc compiles it, Bazel cannot find it (E0583)"
             )
-            continue
-
-        if child not in listed:
-            findings.append(
-                f"{crate.name}/BUILD.bazel: `mod {mod};` in {decl_rel} needs {child} "
-                f"in the hand-listed srcs — cargo compiles it, Bazel cannot find it "
-                f"(E0583)"
-            )
-
-        # Descend even when the parent is unlisted: one run should name every
-        # missing entry, not one per re-run.
-        findings.extend(check_module_tree(crate, rel, child, listed, seen))
-
+    for declaring, decl in tree.unresolved:
+        findings.append(
+            f"{crate.name}: `mod {decl.name};` in {declaring.relative_to(crate).as_posix()} "
+            f"names no file — rustc cannot compile it either"
+        )
     return findings
+
+
+GUARD = Path("mcp-re-conformance") / "tests" / "audit_vocabulary_guard_test.rs"
+TARGET_TABLE = Path("verification") / "generated" / "rust-targets.json"
+
+
+def _rust_slice_const(text: str, name: str) -> str:
+    """The body of `const NAME: &[…] = &[ … ];` in a Rust source."""
+    match = re.search(r"\bconst\s+" + name + r"\s*:[^=]*=\s*&\[", text)
+    if match is None:
+        raise SystemExit(f"bazel srcs gate: {GUARD} declares no `{name}` — the hand list moved")
+    return balanced(text, match.end() - 1, "[", "]")
+
+
+def _first_strings(body: str) -> list[str]:
+    """The first string of every tuple in a slice of tuples."""
+    return re.findall(r'\(\s*"([^"]+)"\s*,', body)
+
+
+def _guard_patterns(build_text: str) -> tuple[list[str], list[str]]:
+    """The include and exclude patterns of a package's `guard_src_files` glob, or none.
+
+    Only `srcs = glob([...])`, with or without `exclude = [...]`, is read. Any other `srcs`
+    shape raises `ValueError`: a pattern read from the wrong list would mark an excluded file
+    as carried.
+    """
+    match = re.search(r'name\s*=\s*"guard_src_files"', build_text)
+    if match is None:
+        return [], []
+    rule = balanced(build_text, build_text.rfind("(", 0, match.start()), "(", ")")
+    srcs = re.search(r"\bsrcs\s*=\s*", rule)
+    value = attribute_value(rule, srcs.end()).strip() if srcs else ""
+    if not value.startswith("glob(") or balanced(value, value.index("("), "(", ")") != value[4:]:
+        raise ValueError(f"guard_src_files srcs this gate does not read: {value!r}")
+    call = value[5:-1]
+    include = balanced(call, call.index("["), "[", "]")
+    rest = call[call.index("[") + len(include) :]
+    exclude_at = re.search(r"\bexclude\s*=\s*\[", rest)
+    exclude = balanced(rest, exclude_at.end() - 1, "[", "]") if exclude_at else "[]"
+    if re.sub(r"\bexclude\s*=\s*\[[^\]]*\]", "", rest).strip(" ,\n") != "":
+        raise ValueError(f"guard_src_files glob arguments this gate does not read: {value!r}")
+    return re.findall(r'"([^"]+)"', include), re.findall(r'"([^"]+)"', exclude)
+
+
+def _glob_matches(pattern: str, path: str) -> bool:
+    regex = re.escape(pattern).replace(r"\*\*/", "(?:.*/)?").replace(r"\*", "[^/]*")
+    return re.fullmatch(regex, path) is not None
+
+
+def check_source_trees(root: Path) -> tuple[list[str], int]:
+    """The audit-vocabulary guard's hand lists against the module trees of the crate
+    targets the build graph compiles. Returns the findings and how many files were checked.
+    """
+    guard = (root / GUARD).read_text(encoding="utf-8")
+    scanned = set(_first_strings(_rust_slice_const(guard, "CRATE_SOURCE_TREES")))
+    not_scanned = set(_first_strings(_rust_slice_const(guard, "NOT_SCANNED")))
+    kinds = set(re.findall(r'"([^"]+)"', _rust_slice_const(guard, "CRATE_KINDS")))
+    dirs = re.findall(r'"([^"]+)"', _rust_slice_const(guard, "COMPILED_SOURCE_DIRS"))
+    rows = json.loads((root / TARGET_TABLE).read_text(encoding="utf-8"))["targets"]
+
+    findings: list[str] = []
+    crate_packages = {row["package"] for row in rows.values() if row["kind"] in kinds}
+    for package in sorted(crate_packages - scanned - not_scanned):
+        findings.append(
+            f"{GUARD}: crate package {package} is in neither CRATE_SOURCE_TREES nor NOT_SCANNED "
+            f"— the guard scans it by nobody"
+        )
+    for package in sorted(scanned - crate_packages):
+        findings.append(f"{GUARD}: CRATE_SOURCE_TREES names {package}, which compiles no crate")
+
+    checked = 0
+    base = root.resolve()
+    #: Each package's `(include, exclude)` glob patterns, or `None` when its `srcs` is unread.
+    globs: dict[str, tuple[list[str], list[str]] | None] = {}
+    for label, row in sorted(rows.items()):
+        package = row["package"]
+        # A test-only target is linked by tests alone — Bazel refuses any other consumer — so
+        # its sources are test sources, which the guard does not scan by design.
+        if row["kind"] not in kinds or package not in scanned or row["testonly"]:
+            continue
+        if package not in globs:
+            build = root / package / "BUILD.bazel"
+            try:
+                globs[package] = _guard_patterns(build.read_text(encoding="utf-8")) if build.is_file() else ([], [])
+            except ValueError as exc:
+                findings.append(f"{package}/BUILD.bazel: {exc}")
+                globs[package] = None
+        read = globs[package]
+        for module in _module_tree.walk(root / row["root"]).files:
+            rel = os.path.relpath(module.path.resolve(), base)
+            within = rel[len(package) + 1 :] if rel.startswith(f"{package}/") else None
+            checked += 1
+            if within is None or not any(within.startswith(f"{d}/") for d in dirs):
+                findings.append(
+                    f"{label} compiles {rel}, outside the {dirs} the audit-vocabulary guard "
+                    f"walks in {package} — the guard never reads it"
+                )
+            elif read is not None and (
+                not any(_glob_matches(p, within) for p in read[0])
+                or any(_glob_matches(p, within) for p in read[1])
+            ):
+                findings.append(
+                    f"{label} compiles {rel}, which {package}:guard_src_files does not glob — "
+                    f"the guard's runfiles do not carry it"
+                )
+    return findings, checked
 
 
 def check_crate(crate: Path) -> list[str]:
@@ -335,7 +322,7 @@ def check_crate(crate: Path) -> list[str]:
             f"{crate.name}/BUILD.bazel: hand-lists sources without src/lib.rs — "
             f"the crate root itself is missing"
         )
-    findings.extend(check_module_tree(crate, "", "src/lib.rs", listed, set()))
+    findings.extend(check_module_tree(crate, listed))
 
     for entry in sorted(listed):
         if not (crate / entry).is_file():
@@ -406,94 +393,36 @@ def selftest() -> int:  # noqa: C901 — a control per property, each one named
     LIB = "pub mod alpha;\npub mod beta;\n"
     ok = True
 
-    # --- file modules -----------------------------------------------------------
+    # --- the module tree is the owner's: its one fixture, listed and not ----------
+    # Which files the tree reaches — both forms, `#[path]`, inline modules, code only — is
+    # `_module_tree`'s selftest. What this gate adds is the hand-list against that tree.
+    fixture = {
+        rel[len("src/"):]: text
+        for rel, text in _module_tree.FIXTURE.items()
+        if rel.startswith("src/") and "mod missing;" not in text
+    }
+    fixture["lib.rs"] = _module_tree.FIXTURE["src/lib.rs"].replace("mod missing;\n", "")
+    reached = sorted(
+        path for path, _ in _module_tree.FIXTURE_TREES["src/lib.rs"].values()
+    )
+    listing = "srcs = [" + ", ".join(f'"{p}"' for p in reached) + "]\n"
+    ok &= case("the fixture tree, every reached file listed", listing, fixture, None)
     ok &= case(
-        "file module, complete",
-        'srcs = ["src/lib.rs", "src/alpha.rs", "src/beta.rs"]\n',
-        {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
-        None,
+        "the fixture tree, a file reached only through `#[path]` unlisted",
+        listing.replace('"src/elsewhere/sibling.rs", ', ""),
+        fixture,
+        "needs src/elsewhere/sibling.rs",
+    )
+    ok &= case(
+        "the fixture tree, the child of an inline module unlisted",
+        listing.replace('"src/outer/nested.rs", ', ""),
+        fixture,
+        "needs src/outer/nested.rs",
     )
     ok &= case(
         "file module, one missing — the defect that shipped",
         'srcs = ["src/lib.rs", "src/alpha.rs"]\n',
         {"lib.rs": LIB, "alpha.rs": "", "beta.rs": ""},
-        "mod beta",
-    )
-
-    # --- directory modules, mod.rs form -----------------------------------------
-    MODRS = {"lib.rs": LIB, "alpha/mod.rs": "pub mod deep;\n", "alpha/deep.rs": "",
-             "beta.rs": ""}
-    ok &= case(
-        "directory module (mod.rs), complete",
-        'srcs = ["src/lib.rs", "src/alpha/mod.rs", "src/alpha/deep.rs", '
-        '"src/beta.rs"]\n',
-        MODRS,
-        None,
-    )
-    ok &= case(
-        "directory module (mod.rs), child unlisted",
-        'srcs = ["src/lib.rs", "src/alpha/mod.rs", "src/beta.rs"]\n',
-        MODRS,
-        "mod deep",
-    )
-    ok &= case(
-        "directory module (mod.rs), the mod.rs itself unlisted",
-        'srcs = ["src/lib.rs", "src/alpha/deep.rs", "src/beta.rs"]\n',
-        MODRS,
-        "needs src/alpha/mod.rs",
-    )
-
-    # --- directory modules, the form a file-to-directory split actually takes ----
-    # `src/alpha.rs` stays put and gains `src/alpha/`. A walk that treats a resolved
-    # file as a leaf sees nothing under it, so this is the shape that would go blind
-    # the moment cli.rs starts to split.
-    SPLIT = {"lib.rs": LIB, "alpha.rs": "pub mod deep;\n", "alpha/deep.rs": "",
-             "beta.rs": ""}
-    ok &= case(
-        "directory module (2018 form), complete",
-        'srcs = ["src/lib.rs", "src/alpha.rs", "src/alpha/deep.rs", "src/beta.rs"]\n',
-        SPLIT,
-        None,
-    )
-    ok &= case(
-        "directory module (2018 form), child unlisted",
-        'srcs = ["src/lib.rs", "src/alpha.rs", "src/beta.rs"]\n',
-        SPLIT,
-        "mod deep",
-    )
-    ok &= case(
-        "directory module (2018 form), grandchild unlisted",
-        'srcs = ["src/lib.rs", "src/alpha.rs", "src/alpha/deep.rs", "src/beta.rs"]\n',
-        {**SPLIT, "alpha/deep.rs": "pub mod deeper;\n", "alpha/deep/deeper.rs": ""},
-        "mod deeper",
-    )
-
-    # --- what counts as a declaration -------------------------------------------
-    ok &= case(
-        "a mod inside a line comment declares nothing",
-        'srcs = ["src/lib.rs", "src/alpha.rs", "src/beta.rs"]\n',
-        {"lib.rs": LIB + "// mod ghost;\n", "alpha.rs": "", "beta.rs": ""},
-        None,
-    )
-    ok &= case(
-        "a mod inside a nested block comment declares nothing",
-        'srcs = ["src/lib.rs", "src/alpha.rs", "src/beta.rs"]\n',
-        {"lib.rs": LIB + "/* outer /* inner */\nmod ghost;\n*/\n", "alpha.rs": "",
-         "beta.rs": ""},
-        None,
-    )
-    ok &= case(
-        "a mod inside a raw string declares nothing",
-        'srcs = ["src/lib.rs", "src/alpha.rs", "src/beta.rs"]\n',
-        {"lib.rs": LIB + 'const F: &str = r#"\nmod ghost;\n"#;\n', "alpha.rs": "",
-         "beta.rs": ""},
-        None,
-    )
-    ok &= case(
-        "a quote inside a char literal does not swallow the file",
-        'srcs = ["src/lib.rs", "src/alpha.rs"]\n',
-        {"lib.rs": "pub mod alpha;\nconst Q: char = '\"';\npub mod beta;\n",
-         "alpha.rs": "", "beta.rs": ""},
         "mod beta",
     )
 
@@ -597,8 +526,10 @@ def selftest() -> int:  # noqa: C901 — a control per property, each one named
         "a mod that resolves to no file at all",
         'srcs = ["src/lib.rs", "src/alpha.rs"]\n',
         {"lib.rs": "pub mod alpha;\npub mod nowhere;\n", "alpha.rs": ""},
-        "resolves to neither",
+        "names no file",
     )
+
+    ok &= _selftest_source_trees()
 
     if not ok:
         return 1
@@ -606,18 +537,109 @@ def selftest() -> int:  # noqa: C901 — a control per property, each one named
     return 0
 
 
+def _selftest_source_trees() -> bool:
+    """The guard's hand lists against the module tree: one case per way they come apart."""
+    guard = (
+        'const CRATE_SOURCE_TREES: &[(&str, &str)] = &[\n    ("pkg", "TREE_PKG"),\n{extra}];\n'
+        'const NOT_SCANNED: &[(&str, &str)] = &[("skipped", "why")];\n'
+        'const CRATE_KINDS: &[&str] = &["rust_library", "rust_binary"];\n'
+        'const COMPILED_SOURCE_DIRS: &[&str] = &["src", "examples"];\n'
+    )
+    library = {"kind": "rust_library", "package": "pkg", "root": "pkg/src/lib.rs", "testonly": False}
+
+    def case(name: str, expect: str | None, *, extra: str = "", rows: dict | None = None,
+             files: dict[str, str] | None = None,
+             srcs: str = 'glob(["src/**/*.rs", "examples/**/*.rs"])') -> bool:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixture = {
+                f"pkg/{rel}": text.replace("mod missing;\n", "")
+                for rel, text in _module_tree.FIXTURE.items()
+                if rel.startswith("src/")
+            }
+            _module_tree.materialize_fixture(root, {**fixture, **(files or {})})
+            (root / GUARD).parent.mkdir(parents=True)
+            (root / GUARD).write_text(guard.format(extra=extra))
+            (root / "pkg" / "BUILD.bazel").write_text(
+                f'filegroup(\n    name = "guard_src_files",\n    srcs = {srcs},\n)\n'
+            )
+            (root / TARGET_TABLE).parent.mkdir(parents=True)
+            (root / TARGET_TABLE).write_text(json.dumps({"targets": rows or {"//pkg:lib": library}}))
+            found, checked = check_source_trees(root)
+        if checked == 0:
+            print(f"SELFTEST FAILED [{name}]: no file was checked — a vacuous pass")
+            return False
+        if expect is None and found or expect is not None and (len(found) != 1 or expect not in found[0]):
+            print(f"SELFTEST FAILED [{name}]: expected {expect!r}, got {found}")
+            return False
+        return True
+
+    ok = case("the fixture crate, scanned, every file in a walked and globbed directory", None)
+    ok &= case(
+        "a crate package in neither list",
+        "in neither CRATE_SOURCE_TREES nor NOT_SCANNED",
+        rows={"//pkg:lib": library, "//other:lib": {**library, "package": "other", "root": "pkg/src/lib.rs"}},
+    )
+    ok &= case(
+        "a hand-listed package that compiles no crate",
+        "compiles no crate",
+        extra='    ("gone", "TREE_GONE"),\n',
+    )
+    ok &= case(
+        "a `#[path]` module outside the walked directories",
+        "outside the",
+        files={
+            "pkg/src/lib.rs": '#[path = "../shared/x.rs"]\nmod x;\n',
+            "pkg/shared/x.rs": "",
+        },
+    )
+    ok &= case(
+        "an example binary the glob leaves out of the runfiles",
+        "does not glob",
+        rows={"//pkg:lib": library, "//pkg:demo": {**library, "kind": "rust_binary", "root": "pkg/examples/demo.rs"}},
+        files={"pkg/examples/demo.rs": ""},
+        srcs='glob(["src/**/*.rs"])',
+    )
+    ok &= case(
+        "a compiled file the glob's `exclude` leaves out of the runfiles",
+        "does not glob",
+        srcs='glob(\n        ["src/**/*.rs", "examples/**/*.rs"],\n        exclude = ["src/alpha/deep.rs"],\n    )',
+    )
+    ok &= case(
+        "an `exclude` naming no compiled file excludes nothing",
+        None,
+        srcs='glob(["src/**/*.rs", "examples/**/*.rs"], exclude = ["src/never.rs"])',
+    )
+    ok &= case(
+        "a `srcs` shape the gate does not read is a finding, not a guess",
+        "does not read",
+        srcs='glob(["src/**/*.rs", "examples/**/*.rs"]) + ["extra.rs"]',
+    )
+    ok &= case(
+        "a test-only target's sources are test sources",
+        None,
+        rows={
+            "//pkg:lib": library,
+            "//pkg:fixture": {**library, "root": "pkg/tests/fixture/lib.rs", "testonly": True},
+        },
+        files={"pkg/tests/fixture/lib.rs": ""},
+    )
+    return ok
+
+
 def main() -> int:
     if "--selftest" in sys.argv:
         return selftest()
     crates = checked_crates(REPO)
-    findings = scan(REPO)
+    tree_findings, tree_files = check_source_trees(REPO)
+    findings = scan(REPO) + tree_findings
     if findings:
         print("bazel srcs gate: FAIL", file=sys.stderr)
         for f in findings:
             print(f"  {f}", file=sys.stderr)
         print(
-            "\nA hand-listed srcs drifts silently: cargo globs the directory, Bazel "
-            "does not. Add the file to the list.",
+            "\nA hand list drifts silently: the module tree moves, the list does not. Add the "
+            "file or the package to the list.",
             file=sys.stderr,
         )
         return 1
@@ -631,7 +653,8 @@ def main() -> int:
         return 1
     print(
         f"bazel srcs gate: OK — module tree matches the hand-listed srcs in "
-        f"{', '.join(crates)}"
+        f"{', '.join(crates)}; the audit-vocabulary guard's source trees carry all "
+        f"{tree_files} file(s) its crates' targets compile"
     )
     return 0
 

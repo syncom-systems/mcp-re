@@ -66,6 +66,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from _ecosystems import REPO_ROOT
+import _module_tree
 import _registries
 import _rust_targets
 
@@ -216,9 +217,6 @@ def walk(suffix: str, root: Path | None = None) -> list[Path]:
 # Rust: follow the module tree from each target root
 # ---------------------------------------------------------------------------
 
-_MOD_DECL = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([a-z0-9_]+)\s*;")
-_MOD_INLINE = re.compile(r"^(\s*)(?:pub(?:\([^)]*\))?\s+)?mod\s+([a-z0-9_]+)\s*\{")
-_PATH_ATTR = re.compile(r'^\s*#\[path\s*=\s*"([^"]+)"\]')
 #: `#[tokio::test]` takes arguments (`flavor = "multi_thread"`, `start_paused = true`), and a
 #: test written with them is a test: an attribute matched only in its bare form would leave
 #: it outside the census, unclaimed and undispositioned without the gate noticing.
@@ -227,32 +225,19 @@ _FN = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z0-9_]+
 _ATTR_LINE = re.compile(r"^\s*#\[")
 
 
-def _resolve_mod(here: Path, name: str, explicit: str | None) -> Path | None:
-    """The file a `mod name;` declaration in `here` refers to, or None if absent.
-
-    `here` is the declaring file. A declaration in `foo.rs` looks in `foo/`; one in
-    `mod.rs` or a crate root looks beside itself. `#[path]` overrides both and is resolved
-    relative to the same directory the search would have started from.
-    """
-    base = here.parent if here.name in ("mod.rs", "lib.rs", "main.rs") else here.parent / here.stem
-    if explicit is not None:
-        candidate = (here.parent / explicit) if here.name in ("mod.rs", "lib.rs", "main.rs") else (base / explicit)
-        return candidate if candidate.is_file() else None
-    for candidate in (base / f"{name}.rs", base / name / "mod.rs"):
-        if candidate.is_file():
-            return candidate
-    return None
-
-
 def _walk_rust_file(
     path: Path,
+    mod_rs: bool,
     prefix: tuple[str, ...],
     package: str,
     target: str,
     seen: set[Path],
     out: list[Control],
 ) -> None:
-    """Collect every `#[test]` reachable from `path`, and recurse into `mod name;`.
+    """Collect every `#[test]` reachable from `path`, and recurse into its file modules.
+
+    Which file a `mod` names, and which inline modules enclose a test, is
+    `_module_tree`'s answer: this walk only reads the test attributes.
 
     `seen` is per target, not global: the same file reached from two targets is two
     distinct controls, and sharing the set would silently drop the second.
@@ -265,36 +250,23 @@ def _walk_rust_file(
         lines = path.read_text(errors="replace").splitlines()
     except OSError:
         return
-    stack: list[tuple[int, str]] = []
+    inline = [d for d in _module_tree.read_declarations(path) if d.inline]
     pending_test: int | None = None
-    pending_path: str | None = None
-    children: list[tuple[str, str | None]] = []
     for number, line in enumerate(lines, start=1):
-        attr = _PATH_ATTR.match(line)
-        if attr:
-            pending_path = attr.group(1)
-            continue
-        decl = _MOD_DECL.match(line)
-        if decl:
-            children.append((decl.group(1), pending_path))
-            pending_path = None
-            continue
-        inline = _MOD_INLINE.match(line)
-        if inline:
-            indent = len(inline.group(1))
-            while stack and stack[-1][0] >= indent:
-                stack.pop()
-            stack.append((indent, inline.group(2)))
-            pending_path = None
-            continue
-        test = _TEST_ATTR.match(line)
-        if test:
-            pending_test = len(test.group(1))
+        if _TEST_ATTR.match(line):
+            pending_test = number
             continue
         if pending_test is not None:
             fn = _FN.match(line)
             if fn:
-                mods = tuple(name for indent, name in stack if indent < pending_test)
+                mods = next(
+                    (
+                        tuple(name for name, _ in d.enclosing) + (d.name,)
+                        for d in sorted(inline, key=lambda d: len(d.enclosing), reverse=True)
+                        if d.line < pending_test <= d.end_line
+                    ),
+                    (),
+                )
                 segments = prefix + mods + (fn.group(1),)
                 out.append(
                     Control(
@@ -310,11 +282,12 @@ def _walk_rust_file(
                 pending_test = None
             elif not (_ATTR_LINE.match(line) or not line.strip()):
                 pending_test = None
-        pending_path = None
-    for name, explicit in children:
-        child = _resolve_mod(path, name, explicit)
-        if child is not None:
-            _walk_rust_file(child, prefix + (name,), package, target, seen, out)
+    for child in _module_tree.children(path, mod_rs=mod_rs):
+        if child.file is not None:
+            inner = tuple(name for name, _ in child.declaration.enclosing)
+            _walk_rust_file(
+                child.file, child.mod_rs, prefix + inner + (child.declaration.name,), package, target, seen, out
+            )
 
 
 def rust_controls() -> list[Control]:
@@ -329,7 +302,7 @@ def rust_controls() -> list[Control]:
         if "rust_test" not in entry["kinds"]:
             continue
         identity = _rust_targets.root_identity(root, entry["package"])
-        _walk_rust_file(REPO_ROOT / root, (), entry["package"], identity, set(), out)
+        _walk_rust_file(REPO_ROOT / root, True, (), entry["package"], identity, set(), out)
     return out
 
 

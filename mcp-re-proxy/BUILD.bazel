@@ -1720,6 +1720,7 @@ nt_rust_test(
 # workspace lint policy.
 rust_shared_library(
     name = "mock_pkcs11",
+    testonly = True,
     srcs = ["tests/mock-pkcs11/src/lib.rs"],
     crate_name = "mock_pkcs11",
     edition = "2021",

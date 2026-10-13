@@ -37,7 +37,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from workflow_reader import Command, parse, shell_commands
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools" / "verification"))
+
+from _module_tree import read_declarations  # noqa: E402
+from workflow_reader import Command, parse, shell_commands  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 TABLE = Path("verification") / "generated" / "rust-targets.json"
@@ -52,7 +55,6 @@ SCAN_GLOBS = (
 BAZEL_TEST = re.compile(r"\bbazel\s+test\b")
 LABEL = re.compile(r"(?<![\w$])(//[A-Za-z0-9_./-]*:[A-Za-z0-9_.+-]+)")
 MODULE_FILTER = re.compile(r"--test_arg=([a-z][a-z0-9_]*)::")
-MOD_DECL = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([a-z0-9_]+)\s*[;{]", re.M)
 
 
 def load_targets(root: Path) -> dict[str, dict]:
@@ -72,9 +74,12 @@ def commands(path: Path) -> list[Command]:
 
 
 def root_modules(root: Path, row: dict) -> set[str]:
-    """The modules the target's crate root declares — what a `module::` filter can name."""
+    """The modules the target's crate root declares at its top level — what a `module::`
+    filter can name, since a test's name starts at the crate root."""
     path = root / row["root"]
-    return set(MOD_DECL.findall(path.read_text(encoding="utf-8"))) if path.is_file() else set()
+    if not path.is_file():
+        return set()
+    return {d.name for d in read_declarations(path) if not d.enclosing}
 
 
 def check(root: Path, targets: dict[str, dict]) -> tuple[list[str], int]:
@@ -120,7 +125,9 @@ def selftest() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "pkg" / "tests").mkdir(parents=True)
-        (root / "pkg" / "tests" / "main.rs").write_text("mod real_mod;\npub mod other {\n}\n")
+        (root / "pkg" / "tests" / "main.rs").write_text(
+            "mod real_mod;\npub mod other {\n    mod nested_only;\n}\n// mod commented_out;\n"
+        )
         targets = {
             "//pkg:real_test": {"kind": "rust_test", "root": "pkg/tests/main.rs"},
             "//pkg:a_library": {"kind": "rust_library", "root": "pkg/src/lib.rs"},
@@ -177,6 +184,16 @@ def selftest() -> int:
                 "a test lane after a neighbouring segment is still read",
                 "run: true && bazel test //pkg:ghost_test\n",
                 "not a test target",
+            ),
+            (
+                "a module nested in another is not a crate-root filter",
+                "run: bazel test //pkg:real_test --test_arg=nested_only::\n",
+                "names no module",
+            ),
+            (
+                "a commented-out module is not a module",
+                "run: bazel test //pkg:real_test --test_arg=commented_out::\n",
+                "names no module",
             ),
             (
                 "a filter naming no module selects nothing",

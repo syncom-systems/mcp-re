@@ -6941,7 +6941,7 @@
    "srcs": [
     "mcp-re-proxy/tests/mock-pkcs11/src/lib.rs"
    ],
-   "testonly": false,
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:pkcs11_keysource_e2e_test": {

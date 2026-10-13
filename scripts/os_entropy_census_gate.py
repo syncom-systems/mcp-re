@@ -37,8 +37,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
+sys.path.insert(0, str(REPO / "tools" / "verification"))
 
-from bazel_srcs_gate import strip_noncode  # noqa: E402
+from _module_tree import code_only  # noqa: E402
 from module_size_gate import production_source, rust_sources  # noqa: E402
 
 sys.path.insert(0, str(REPO / "tools" / "verification"))
@@ -54,7 +55,7 @@ def acquisition_sites(root: Path) -> set[str]:
     sites: set[str] = set()
     for path in rust_sources(root):
         production = "\n".join(production_source(path.read_text(encoding="utf-8")))
-        if ACQUISITION.search(strip_noncode(production)):
+        if ACQUISITION.search(code_only(production)):
             sites.add(path.relative_to(root).as_posix())
     return sites
 

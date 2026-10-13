@@ -2653,7 +2653,7 @@ operator-local script the live lane is driven by).
 
 ## DP-003 — illustrative and placeholder paths — **reviewed exception**
 
-Cited by `config/doc-path-debt.toml` for four files. No rule distinguishes a hypothetical
+Cited by `config/doc-path-debt.toml` for three files. No rule distinguishes a hypothetical
 path from a real one, and pretending otherwise is how a gate earns a suppression, so these
 are dispositioned once and pinned.
 
@@ -2661,7 +2661,6 @@ are dispositioned once and pinned.
 |---|---|---|
 | `CLAUDE.md` | a domain-repository example under `src/domain/`, prefixed *"e.g."*; and the rules file of the vendored AWS agent toolkit | the first is a shape, not a location; the second is a third-party artifact's own path |
 | `BUILD.bazel` | the `lib.rs`/`main.rs` pair, named as a Rust convention | a convention, not a file of this repository |
-| `scripts/bazel_srcs_gate.py` | a synthetic crate layout in a comment explaining the directory-module case its `--selftest` builds | the temporary tree is the subject; the path is supposed not to exist here |
 | `tools/slo/job_identity.py` | the `owner/repo/...` form of a workflow reference | a GitHub API template, instantiated at run time |
 
 **`CLAUDE.md` stays IN the gate's scope.** It is this repository's normative standards

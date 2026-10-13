@@ -233,7 +233,16 @@ def test_in_crate_selectors_are_covered_by_the_units_own_paths():
     else:
         raise AssertionError("an undeclared in-crate module must be refused")
 
+    # A file the tree does not hold is no coverage: `rejection` is a directory module.
     unit["paths"].append("mcp-re-http-profile/src/rejection.rs")
+    try:
+        _validate_in_crate_selectors("unit[0]", unit)
+    except ManifestError:
+        pass
+    else:
+        raise AssertionError("a path naming no file of the module tree must not cover a selector")
+
+    unit["paths"].append("mcp-re-http-profile/src/rejection/mod.rs")
     _validate_in_crate_selectors("unit[0]", unit)
 
     # A module DIRECTORY resolves through any prefix of the selector's path.

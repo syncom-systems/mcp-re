@@ -25,14 +25,18 @@ from __future__ import annotations
 
 import functools
 import re
+import sys
 import tomllib
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _module_tree import declaration_chain  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 POLICY = REPO / "verification" / "policy"
 
 _RULE = re.compile(r"^(\w+)\(\s*$", re.M)
-_DECL = r"^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?mod[ \t]+{name}[ \t]*[;{{]"
 
 
 def _rules(build: str) -> dict[str, dict]:
@@ -70,18 +74,6 @@ def _package_rules(package: str) -> dict[str, dict]:
     return _rules(build.read_text(encoding="utf-8")) if build.is_file() else {}
 
 
-def _attributes_above(lines: list[str], index: int) -> list[str]:
-    """The attribute and comment lines directly above a declaration."""
-    out = []
-    for line in reversed(lines[:index]):
-        stripped = line.strip()
-        if stripped.startswith(("#[", "//")) or (out and stripped.endswith(")]")):
-            out.append(stripped)
-        else:
-            break
-    return out
-
-
 def _requirement(attributes: list[str]) -> list[frozenset[str]]:
     """The feature requirements a declaration's `cfg` attributes state, as alternatives: each
     entry is a set of which at least one must hold. `not(...)` states no requirement, and
@@ -104,25 +96,16 @@ def _requirement(attributes: list[str]) -> list[frozenset[str]]:
 
 @functools.cache
 def module_requirement(package: str, module_path: str) -> tuple[frozenset[str], ...]:
-    """Every feature requirement on the way from `package/src/lib.rs` to `module_path`."""
-    current = REPO / package / "src" / "lib.rs"
-    if not current.is_file():
+    """Every feature requirement on the way from `package/src/lib.rs` to `module_path`.
+
+    The declarations on the way are `_module_tree`'s: inline modules are followed inside
+    their file, file modules to the file rustc compiles.
+    """
+    root = REPO / package / "src" / "lib.rs"
+    if not root.is_file():
         return ()
-    required: list[frozenset[str]] = []
-    for segment in module_path.split("::"):
-        lines = current.read_text(encoding="utf-8").splitlines()
-        pattern = re.compile(_DECL.format(name=re.escape(segment)))
-        index = next((i for i, line in enumerate(lines) if pattern.match(line)), None)
-        if index is None:
-            break
-        required.extend(_requirement(_attributes_above(lines, index)))
-        base = current.parent if current.name in ("lib.rs", "mod.rs") else current.with_suffix("")
-        for candidate in (base / f"{segment}.rs", base / segment / "mod.rs"):
-            if candidate.is_file():
-                current = candidate
-                break
-        # Otherwise the module is inline in `current`, and deeper segments are searched there.
-    return tuple(required)
+    chain = declaration_chain(root, tuple(module_path.split("::")))
+    return tuple(need for decl in chain for need in _requirement(list(decl.attributes)))
 
 
 def _selectors() -> list[tuple[str, str]]:
