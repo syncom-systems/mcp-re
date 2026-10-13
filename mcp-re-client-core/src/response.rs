@@ -916,8 +916,9 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason::new("mcp-re.inner_dispatch_indeterminate", "backend already ran")
-            .with_execution(mcp_re_http_profile::ExecutionDisposition::PossiblyExecuted);
+        let reason =
+            RejectionReason::new("mcp-re.inner_dispatch_indeterminate", "backend already ran")
+                .with_execution(mcp_re_http_profile::ExecutionDisposition::PossiblyExecuted);
         let resp = build_delegated_rejection(
             signed.request(),
             &reason,
