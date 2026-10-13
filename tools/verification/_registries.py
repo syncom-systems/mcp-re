@@ -14,8 +14,8 @@ registry edit therefore came with a remembered rule: run every suite.
 
 So this module owns two things.
 
-  * READING. `parse`, `read`, `document`, `rows`, `text` and `text_at` are the only code
-    that turns a policy registry's bytes into data. The typed loaders
+  * READING. `parse`, `read`, `document`, `rows`, `text`, `text_at` and `blob_at` are the
+    only code that turns a policy registry's bytes into data. The typed loaders
     (`_manifest.load_verification`, `_theorems.load_theorems`, `_mutation.load_probes`,
     `_structural.load_probes`, `_measured.load_measurements`) read through them and add
     their own schema.
@@ -123,20 +123,29 @@ def text_at(name: str, commit: str, root: Path = REPO_ROOT) -> str | None:
     Raises `ManifestError` when git cannot answer at all, because "the commit holds no
     registry" and "the question was not asked" are different facts.
     """
-    proc = subprocess.run(
-        ["git", "show", f"{commit}:{relative(name)}"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-    )
+    blob = blob_at(relative(name), commit, root)
+    return None if blob is None else blob.decode("utf-8")
+
+
+def blob_at(rel: str, commit: str, root: Path = REPO_ROOT) -> bytes | None:
+    """The bytes of repo-relative `rel` at `commit`, or None when `commit` does not hold it.
+
+    Raises `ManifestError` when git cannot answer: `commit` does not resolve, `root` is not
+    a repository, or `commit`'s tree names `rel` and its blob cannot be read. Only a commit
+    that resolves, and whose tree has no entry for `rel`, can say the path is absent.
+    """
+    proc = subprocess.run(["git", "show", f"{commit}:{rel}"], cwd=root, capture_output=True)
     if proc.returncode == 0:
         return proc.stdout
-    absent = subprocess.run(
-        ["git", "cat-file", "-e", f"{commit}^{{commit}}"], cwd=root, capture_output=True
+    entry = subprocess.run(
+        ["git", "ls-tree", "--full-tree", "--name-only", f"{commit}^{{commit}}", "--", rel],
+        cwd=root,
+        capture_output=True,
     )
-    if absent.returncode == 0:
+    if entry.returncode == 0 and not entry.stdout.strip():
         return None
-    raise ManifestError(f"git show {commit}:{relative(name)}: {proc.stderr.strip()}")
+    reason = proc.stderr if entry.returncode == 0 else entry.stderr
+    raise ManifestError(f"git show {commit}:{rel}: {reason.decode('utf-8', 'replace').strip()}")
 
 
 def duplicate_ids(ids: list[str], label: str) -> list[str]:

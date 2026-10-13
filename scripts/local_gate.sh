@@ -344,6 +344,8 @@ stage_static() {
     `# ADR-MCPRE-061 §6.3 — the file-size ratchet. Clippy has no file-length lint at all,` \
     `# so the one threshold the project states about FILES had no mechanical form until` \
     `# this gate. Pure text: it belongs in the no-build stage.` \
+    `# The five ratchets read register and baseline through _ratchet.py; its selftest first.` \
+    && python3 tools/verification/_ratchet.py --selftest \
     && python3 scripts/module_size_gate.py --selftest \
     && python3 scripts/module_size_gate.py \
     `# A unit's \`paths\` is the closure its fingerprint is taken over, so a file that` \

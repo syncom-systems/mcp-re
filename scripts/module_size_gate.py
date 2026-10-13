@@ -104,23 +104,20 @@ from it unnoticed.
 
 from __future__ import annotations
 
-import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
-    import tomli as tomllib  # type: ignore[no-redef]
-
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "tools" / "verification"))
 
+import _ratchet  # noqa: E402
+import _registries  # noqa: E402
 from _rust_source import crate_sources, production_view  # noqa: E402
 
-REGISTRY = REPO / "config" / "module-size-debt.toml"
+REGISTRY_REL = "config/module-size-debt.toml"
+REGISTRY = REPO / REGISTRY_REL
 THRESHOLD = 200
 
 #: ADR-MCPRE-061 §14 dispositions. Investigation status and disposition are separate facts:
@@ -164,6 +161,24 @@ PERMITTED_TRANSITIONS = {
     ("reviewed-exception", "reviewed-action-required"),
 }
 
+#: The register's shape. `_ratchet` checks it; this gate decides only what it measures.
+SCHEMA = _ratchet.Schema(
+    table="debt",
+    key="path",
+    required=frozenset({"path", "baseline_prod_loc", "baseline_sha", "status"}),
+    fields=frozenset(ENTRY_FIELDS),
+    statuses=tuple(sorted(STATUSES)),
+    reviewed=frozenset(REVIEWED),
+    unknown_hint=(
+        " — `exception_ref` was renamed to `review_ref` because a §14 record may also "
+        "DECLINE an exception"
+    ),
+)
+
+
+def register(root: Path = REPO) -> _ratchet.Register:
+    return _ratchet.Register(REGISTRY_REL, SCHEMA, root)
+
 
 def production_lines(text: str) -> int:
     """Every line of a Rust source that is NOT inside a test region.
@@ -174,16 +189,6 @@ def production_lines(text: str) -> int:
     owner for the view and counts it; the prose in ADR-MCPRE-061 §5.1 describes the rule.
     """
     return len(production_view(text))
-
-
-def load_registry(path: Path) -> dict[str, dict]:
-    if not path.exists():
-        return {}
-    data = tomllib.loads(path.read_text())
-    entries = {}
-    for entry in data.get("debt", []):
-        entries[entry["path"]] = entry
-    return entries
 
 
 def check(
@@ -237,65 +242,13 @@ def check(
     return problems, len(sources)
 
 
-def referenced_documents(review_ref: str) -> list[str]:
-    """The repo-relative document paths a `review_ref` names.
-
-    Free text with a path in it, so a record can be cited as "EX-001 in
-    docs/architecture/review-dispositions.md" rather than as a bare filename that says nothing
-    about which record.
-    """
-    return re.findall(r"\S+\.md", review_ref)
-
-
 def permitted_transition(old: str, new: str) -> bool:
     """Whether a disposition may move from `old` to `new` (ADR-MCPRE-061 §14).
 
     Total, so the selftest can assert the relation rather than re-implement it. An
-    unknown status is not a transition question — `validate_registry` rejects it first.
+    unknown status is not a transition question — the register's schema rejects it first.
     """
     return (old, new) in PERMITTED_TRANSITIONS
-
-
-def validate_registry(registry: dict[str, dict], root: Path | None = None) -> list[str]:
-    problems = []
-    for rel, entry in registry.items():
-        for field in ("path", "baseline_prod_loc", "baseline_sha", "status"):
-            if field not in entry:
-                problems.append(f"{rel}: debt entry is missing `{field}`")
-        status = entry.get("status")
-        if status is not None and status not in STATUSES:
-            problems.append(
-                f"{rel}: status `{status}` is not one of {sorted(STATUSES)}"
-            )
-        if status in REVIEWED and not entry.get("review_ref"):
-            problems.append(
-                f"{rel}: status is `{status}` but no `review_ref` names the "
-                f"ADR-MCPRE-061 §14 record that adjudicated it"
-            )
-        unknown = sorted(set(entry) - ENTRY_FIELDS)
-        if unknown:
-            problems.append(
-                f"{rel}: unknown debt field(s) {unknown} — `exception_ref` was renamed to "
-                f"`review_ref` because a §14 record may also DECLINE an exception"
-            )
-        # A reference to a record that is not there is the same defect as a stale entry:
-        # the registry claims the review exists and nothing can be read to check it. The
-        # point of `reviewed-exception` is that it points at evidence.
-        ref = entry.get("review_ref")
-        if ref and root is not None:
-            named = referenced_documents(ref)
-            if not named:
-                problems.append(
-                    f"{rel}: `review_ref` names no document — cite the record's file so "
-                    f"the claim can be read"
-                )
-            for doc in named:
-                if not (root / doc).exists():
-                    problems.append(
-                        f"{rel}: `review_ref` names {doc}, which does not exist — a "
-                        f"completed review must point at a record, not at a memory of one"
-                    )
-    return problems
 
 
 # --------------------------------------------------------------------------------------
@@ -387,14 +340,14 @@ def selftest() -> int:
         # `unreviewed` -> `reviewed-exception` is the ADR-MCPRE-061 §14 transition, and it
         # changes what the entry CLAIMS, never what the ratchet ALLOWS.
         record = root / "record.md"
-        record.write_text("# a §14 record\n")
+        record.write_text("# EX-000, a §14 record\n")
         big.write_text("\n".join(f"fn f{i}() {{}}" for i in range(THRESHOLD + 2)) + "\n")
         reviewed = {rel_big: {"path": rel_big,
                               "baseline_prod_loc": THRESHOLD + 2,
                               "baseline_sha": "0" * 7,
                               "status": "reviewed-exception",
                               "review_ref": "EX-000 in record.md"}}
-        if validate_registry(reviewed, root):
+        if register(root).problems(reviewed):
             print("selftest FAIL: a reviewed exception citing a real record was rejected")
             return 1
         problems, _ = check(root, reviewed)
@@ -413,7 +366,7 @@ def selftest() -> int:
         # census, and the registry has a state for it.
         big.write_text("\n".join(f"fn f{i}() {{}}" for i in range(THRESHOLD + 2)) + "\n")
         action = {rel_big: dict(reviewed[rel_big], status="reviewed-action-required")}
-        if validate_registry(action, root):
+        if register(root).problems(action):
             print("selftest FAIL: a reviewed-action-required entry with a record was rejected")
             return 1
         problems, _ = check(root, action)
@@ -428,24 +381,10 @@ def selftest() -> int:
             print(f"selftest FAIL: reviewed-action-required was allowed to grow: {problems}")
             return 1
 
-        # A record that is not there is the same defect as a stale entry.
-        record.unlink()
-        if not any("does not exist" in p for p in validate_registry(reviewed, root)):
-            print("selftest FAIL: a review_ref naming a missing record was accepted")
-            return 1
-
-    # Registry schema validation.
-    for reviewed_status in sorted(REVIEWED):
-        bad = {"a.rs": {"path": "a.rs", "baseline_prod_loc": 1, "baseline_sha": "x",
-                        "status": reviewed_status}}
-        if not any("review_ref" in p for p in validate_registry(bad)):
-            print(f"selftest FAIL: {reviewed_status} without a reference was accepted")
-            return 1
-
     # The renamed field does not linger: a stale `exception_ref` is an unknown field.
     stale = {"a.rs": {"path": "a.rs", "baseline_prod_loc": 1, "baseline_sha": "x",
                       "status": "unreviewed", "exception_ref": "EX-000 in record.md"}}
-    if not any("unknown debt field" in p for p in validate_registry(stale)):
+    if not any("unknown debt field" in p for p in register().problems(stale)):
         print("selftest FAIL: the pre-rename `exception_ref` field was accepted")
         return 1
 
@@ -490,20 +429,15 @@ def selftest() -> int:
     if check_transitions({}, after):
         print("selftest FAIL: a newly registered file was judged as a transition")
         return 1
-    bad2 = {"a.rs": {"path": "a.rs", "baseline_prod_loc": 1, "baseline_sha": "x",
-                     "status": "whatever"}}
-    if not any("is not one of" in p for p in validate_registry(bad2)):
-        print("selftest FAIL: unknown status was accepted")
-        return 1
 
     if selftest_baseline_growth() != 0:
         return 1
 
-    print("module-size gate selftest: PASS (ratchet in both directions, "
-          "empty scope, stale + malformed registry entries, the §14 disposition lifecycle "
-          "and its refusals, the pre-rename `exception_ref` field, and the one-shot upward "
-          "baseline authorization, and the measurement correction that buys nothing — "
-          "thirteen refusals and the three arrangements that pass)")
+    print("module-size gate selftest: PASS (ratchet in both directions, empty scope, stale "
+          "entries, the §14 disposition lifecycle and its refusals, the pre-rename "
+          "`exception_ref` field, the one-shot upward baseline authorization, and the "
+          "measurement correction that buys nothing; the register schema and its three "
+          "baseline states are `_ratchet`'s selftest)")
     return 0
 
 
@@ -531,7 +465,7 @@ def selftest_baseline_growth() -> int:
         root = Path(tmp)
         record = root / "record.md"
         record.write_text(
-            "# a §14 record\n\n"
+            "# EX-000, a §14 record\n\n"
             f"{growth_authorization_line(rel, 442, 454)}\n"
         )
 
@@ -623,10 +557,11 @@ def selftest_baseline_growth() -> int:
             print("selftest FAIL: a shrinking baseline was made to justify itself")
             return 1
 
-    # The growth fields are part of the schema, not unknown fields.
-    if validate_registry(entry()):
-        print("selftest FAIL: the growth authorization fields were rejected as unknown")
-        return 1
+        # The growth fields are part of the schema, not unknown fields.
+        if register(root).problems(entry()):
+            print("selftest FAIL: the growth authorization fields were rejected as unknown: "
+                  f"{register(root).problems(entry())}")
+            return 1
     return 0
 
 
@@ -634,27 +569,6 @@ def empty_scope_is_failure(examined: int) -> bool:
     """A gate that examined nothing must not report OK. Named so the selftest can assert
     the contract rather than re-implement it."""
     return examined == 0
-
-
-def previous_registry(ref: str = "origin/main") -> tuple[dict[str, dict] | None, str]:
-    """The registry as of `ref`, and a sentence saying which it is.
-
-    Returns `(None, why)` when the ref cannot be read. The caller PRINTS that sentence: a
-    transition check that quietly no-ops when it cannot find its baseline is the "green
-    that measured nothing" failure applied to this gate, and a skipped check must be
-    visible in the output rather than inferred from its silence.
-    """
-    try:
-        out = subprocess.run(
-            ["git", "show", f"{ref}:config/module-size-debt.toml"],
-            cwd=REPO, capture_output=True, text=True, check=True,
-        ).stdout
-    except Exception as e:  # noqa: BLE001 - any git failure is the same answer here
-        return None, f"no baseline registry at {ref} ({type(e).__name__})"
-    entries = {}
-    for entry in tomllib.loads(out).get("debt", []):
-        entries[entry["path"]] = entry
-    return entries, f"against {ref}"
 
 
 def check_transitions(previous: dict[str, dict], current: dict[str, dict]) -> list[str]:
@@ -665,10 +579,7 @@ def check_transitions(previous: dict[str, dict], current: dict[str, dict]) -> li
     debt (the `debt is paid` and `not in the debt registry` rules judge that).
     """
     problems = []
-    for rel, entry in current.items():
-        before = previous.get(rel)
-        if before is None:
-            continue
+    for rel, before, entry in _ratchet.transitions(previous, current):
         old = before.get("status")
         new = entry.get("status")
         if old not in STATUSES or new not in STATUSES:
@@ -701,11 +612,10 @@ def file_is_unchanged(rel: str, ref: str = "origin/main") -> bool | None:
     favour: to grow a file you must change it, and a changed file gets no correction.
     """
     try:
-        blob = subprocess.run(
-            ["git", "show", f"{ref}:{rel}"],
-            cwd=REPO, capture_output=True, check=True,
-        ).stdout
-    except Exception:  # noqa: BLE001 - a path absent at ref is not an unchanged path
+        blob = _registries.blob_at(rel, ref, REPO)
+    except _registries.ManifestError:
+        return None
+    if blob is None:
         return None
     here = REPO / rel
     if not here.exists():
@@ -743,7 +653,7 @@ def check_baseline_growth(
         new = entry.get("baseline_prod_loc")
         if before is None or new is None or before.get("baseline_prod_loc") is None:
             # Not a transition. A newly registered entry is new debt (the threshold rules
-            # judge it) and a malformed one is `validate_registry`'s to report.
+            # judge it) and a malformed one is the register schema's to report.
             continue
         old, new = int(before["baseline_prod_loc"]), int(new)
 
@@ -807,7 +717,7 @@ def check_baseline_growth(
                 f"grow; anything else is growing a unit already owed a decomposition"
             )
         want = growth_authorization_line(rel, old, new)
-        named = referenced_documents(str(ref))
+        named = _ratchet.documents(str(ref))
         if not named:
             problems.append(
                 f"{rel}: `growth_ref` names no document — cite the record's file so the "
@@ -845,7 +755,7 @@ def emit_registry() -> int:
     through the tool that refreshes the numbers.
     """
     sha = baseline_sha()
-    existing = load_registry(REGISTRY)
+    existing = register().current()
     rows = []
     for p in crate_sources(REPO):
         prod = production_lines(p.read_text(encoding="utf-8", errors="replace"))
@@ -882,17 +792,22 @@ def main() -> int:
     if "--emit-registry" in sys.argv:
         return emit_registry()
 
-    registry = load_registry(REGISTRY)
-    schema_problems = validate_registry(registry, REPO)
+    reg = register()
+    try:
+        registry = reg.current()
+    except _ratchet.RegisterError as exc:
+        print(f"module-size gate: FAIL — {exc}")
+        return 1
+    schema_problems = reg.problems(registry)
     measured: dict[str, int] = {}
     problems, examined = check(REPO, registry, measured)
-    previous, baseline_note = previous_registry()
-    if previous is None:
-        # Both origin/main checks are skipped together, and the skip is PRINTED. A gate that
-        # quietly stops checking the one edit that disables it is the "green that measured
-        # nothing" failure aimed at the gate itself.
-        baseline_problems: list[str] = []
+    baseline = reg.at(_ratchet.BASE)
+    if isinstance(baseline, _ratchet.Unreadable):
+        baseline_problems = [_ratchet.unreadable_problem(REGISTRY_REL, _ratchet.BASE, baseline)]
+        baseline_note = "nowhere"
     else:
+        previous = baseline.entries if isinstance(baseline, _ratchet.Present) else {}
+        baseline_note = f"against {_ratchet.BASE}"
         baseline_problems = check_transitions(previous, registry) + check_baseline_growth(
             previous, registry, measured, REPO
         )

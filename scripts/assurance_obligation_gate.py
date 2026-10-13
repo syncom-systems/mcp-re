@@ -27,6 +27,8 @@ mechanical consequences the ratification attached to the registry:
     a status returning to `unreviewed`          -> FAIL. The lifecycle is one-way.
     a reviewed row with no live `review_ref`    -> FAIL. A completed review points at a
                                                    record, not at a memory of one.
+    origin/main unreadable                      -> FAIL. The shrink-only and one-way rules
+                                                   compared nothing.
 
 SUCCESSION — the one way a row count may rise, and why it is not a loophole.
 
@@ -86,9 +88,7 @@ Run:  python3 scripts/assurance_obligation_gate.py
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -96,6 +96,7 @@ REGISTRY_REL = "config/assurance-obligation-debt.toml"
 REGISTRY = REPO / REGISTRY_REL
 
 sys.path.insert(0, str(REPO / "tools" / "verification"))
+import _ratchet  # noqa: E402
 import _registries  # noqa: E402
 
 STATUSES = ("unreviewed", "reviewed-action-required", "reviewed-exception")
@@ -149,54 +150,42 @@ def current_unit_paths() -> dict[str, set[str]]:
     }
 
 
-def load_registry(path: Path = REGISTRY) -> dict[str, dict]:
+#: The register's shape. `_ratchet` checks it, the `review_ref` rule included;
+#: `load_registry` adds the one field rule that is this registry's own.
+SCHEMA = _ratchet.Schema(
+    table="obligation",
+    key="unit",
+    required=frozenset(_KEYS - _OPTIONAL),
+    fields=frozenset(_KEYS),
+    statuses=STATUSES,
+    reviewed=frozenset(REVIEWED),
+)
+
+
+def obligations(root: Path = REPO) -> _ratchet.Register:
+    return _ratchet.Register(REGISTRY_REL, SCHEMA, root)
+
+
+def load_registry(register: _ratchet.Register | None = None) -> dict[str, dict]:
     """The registry, validated strictly — an unknown key is a failure, not an ignored field.
 
     A missing file is an empty registry rather than an error, and that is not a loophole:
     with no rows, every owing proposition is unregistered and fails immediately.
     """
-    if not path.is_file():
-        return {}
-    with path.open("rb") as handle:
-        doc = tomllib.load(handle)
-    rows: dict[str, dict] = {}
-    for index, row in enumerate(doc.get("obligation", [])):
-        where = f"{path.name} [[obligation]] #{index + 1}"
-        unknown = set(row) - _KEYS
-        if unknown:
-            raise ValueError(f"{where}: unknown key(s) {sorted(unknown)}")
-        missing = _KEYS - _OPTIONAL - set(row)
-        if missing:
-            raise ValueError(f"{where}: missing required key(s) {sorted(missing)}")
-        if row["status"] not in STATUSES:
-            raise ValueError(
-                f"{where}: `status` is {row['status']!r}, not one of {list(STATUSES)}."
-            )
-        if not str(row["obligation"]).strip():
-            raise ValueError(
-                f"{where}: `obligation` is empty. A row names the obligation it owes, or "
-                f"the registry cannot say what closing the row would mean."
-            )
-        if row["unit"] in rows:
-            raise ValueError(f"{where}: duplicate unit {row['unit']!r}")
-        rows[row["unit"]] = row
+    register = register or obligations()
+    try:
+        rows = register.current()
+    except _ratchet.RegisterError as exc:
+        raise ValueError(str(exc)) from exc
+    problems = register.problems(rows) + [
+        f"{unit}: `obligation` is empty. A row names the obligation it owes, or the registry "
+        f"cannot say what closing the row would mean."
+        for unit, row in sorted(rows.items())
+        if not str(row.get("obligation", "x")).strip()
+    ]
+    if problems:
+        raise ValueError(f"{register.rel}: " + "; ".join(problems))
     return rows
-
-
-def base_registry(base: str, repo: Path = REPO) -> dict[str, dict] | None:
-    """The registry as `base` has it, or None when that revision is unavailable.
-
-    UNAVAILABLE IS NOT EMPTY, the same rule the class-transition ratchet follows: a checkout
-    that cannot resolve `origin/main` has no baseline, and reading that as "the registry was
-    empty" would turn every existing row into an illegal addition.
-    """
-    proc = subprocess.run(
-        ["git", "show", f"{base}:{REGISTRY_REL}"], cwd=repo, capture_output=True
-    )
-    if proc.returncode != 0:
-        return None
-    doc = tomllib.loads(proc.stdout.decode("utf-8"))
-    return {row["unit"]: row for row in doc.get("obligation", [])}
 
 
 def _severity_rank(name: str) -> int:
@@ -214,7 +203,7 @@ def _severity_rank(name: str) -> int:
 def base_unit_paths(base: str, repo: Path = REPO) -> dict[str, set[str]] | None:
     """Each unit's declared `paths` at `base`, or None when that revision is unavailable.
 
-    UNAVAILABLE IS NOT EMPTY, the same rule `base_registry` follows: an empty mapping would
+    UNAVAILABLE IS NOT EMPTY, the rule `_ratchet`'s baseline states keep: an empty mapping would
     read as "the predecessor declared no paths", under which every successor's paths are
     trivially NOT a subset and a legitimate succession fails — or, with the test inverted,
     every one passes. Neither is a fact about the tree.
@@ -381,19 +370,6 @@ def defects(
                 f"must state the current one — it changes nothing about the obligation, "
                 f"and a stale copy of it is a reader's false premise."
             )
-        if row["status"] in REVIEWED:
-            ref = str(row.get("review_ref") or "").strip()
-            if not ref:
-                found.append(
-                    f"registry row for {unit!r} is {row['status']!r} with no `review_ref`. "
-                    f"A completed review names its record; both reviewed states carry one."
-                )
-            elif not (repo / ref).is_file():
-                found.append(
-                    f"registry row for {unit!r} names review_ref {ref!r}, which this tree "
-                    f"does not hold. A completed review must point at a record rather than "
-                    f"at a memory of one."
-                )
 
     if before is None:
         return found
@@ -407,8 +383,8 @@ def defects(
             f"do not carry a valid one: a decomposition of an obligation the base registry "
             f"held names it in `succeeds` beside the `decomposition_ref` that records it."
         )
-    for unit in sorted(set(registry) & set(before)):
-        was, now = before[unit].get("status"), registry[unit].get("status")
+    for unit, was_row, row in _ratchet.transitions(before, registry):
+        was, now = was_row.get("status"), row.get("status")
         if now == "unreviewed" and was in REVIEWED:
             found.append(
                 f"registry row for {unit!r} returned to 'unreviewed' from {was!r}. The "
@@ -440,7 +416,6 @@ def selftest() -> int:
     }
     reg = {"u": dict(base_row)}
     raised = {"u": {**now["u"], "effective_severity": "critical"}}
-    reviewed = {"u": {**base_row, "status": "reviewed-exception", "review_ref": "README.md"}}
 
     cases = [
         ("a registered owing unit passes", now, reg, reg, None),
@@ -464,28 +439,7 @@ def selftest() -> int:
             "one-way",
         ),
         (
-            "a reviewed row with a live review_ref passes",
-            now,
-            reviewed,
-            reviewed,
-            None,
-        ),
-        (
-            "a reviewed row with NO review_ref fails",
-            now,
-            {"u": {**base_row, "status": "reviewed-exception"}},
-            {"u": {**base_row, "status": "reviewed-exception"}},
-            "no `review_ref`",
-        ),
-        (
-            "a reviewed row naming a document that does not exist fails",
-            now,
-            {"u": {**reviewed["u"], "review_ref": "docs/nope-not-here.md"}},
-            {"u": {**reviewed["u"], "review_ref": "docs/nope-not-here.md"}},
-            "does not hold",
-        ),
-        (
-            "an unavailable base checks the registry but not the ratchet",
+            "a base without the registry checks the registry but not the ratchet",
             now,
             reg,
             None,
@@ -641,8 +595,8 @@ def selftest() -> int:
     parser_cases = [
         ("an unknown key", 'unit = "u"\nobligation = "x"\neffective_severity = "high"\n'
          'direct_consequence_severity = "high"\ninherited_severity = "none"\n'
-         'root_reachable = false\nstatus = "unreviewed"\nnope = 1\n', "unknown key"),
-        ("a missing key", 'unit = "u"\nobligation = "x"\n', "missing required key"),
+         'root_reachable = false\nstatus = "unreviewed"\nnope = 1\n', "unknown obligation field"),
+        ("a missing key", 'unit = "u"\nobligation = "x"\n', "entry is missing"),
         ("an unknown status", 'unit = "u"\nobligation = "x"\neffective_severity = "high"\n'
          'direct_consequence_severity = "high"\ninherited_severity = "none"\n'
          'root_reachable = false\nstatus = "fine-actually"\n', "not one of"),
@@ -655,7 +609,7 @@ def selftest() -> int:
             handle.write("[[obligation]]\n" + body)
             temp = Path(handle.name)
         try:
-            load_registry(temp)
+            load_registry(_ratchet.Register(temp.name, SCHEMA, temp.parent))
             print(f"  FAIL  the parser refuses {label}")
             failed = True
         except ValueError as exc:
@@ -679,9 +633,18 @@ def main() -> int:
     if args.selftest:
         return selftest()
 
-    registry = load_registry()
+    try:
+        registry = load_registry()
+    except ValueError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
     measured = owing()
-    before = base_registry(args.base)
+    baseline = obligations().at(args.base)
+    if isinstance(baseline, _ratchet.Unreadable):
+        print(f"FAIL: {_ratchet.unreadable_problem(REGISTRY_REL, args.base, baseline)}",
+              file=sys.stderr)
+        return 1
+    before = baseline.entries if isinstance(baseline, _ratchet.Present) else None
     found = defects(
         measured,
         registry,
@@ -697,8 +660,8 @@ def main() -> int:
     if before is None:
         print(
             f"assurance-obligation gate: registry consistent with {len(measured)} measured "
-            f"obligation(s), but {args.base} is unavailable so the shrink-only and "
-            f"one-way-status rules were NOT checked. That is a fact about this checkout."
+            f"obligation(s), and {args.base} holds no registry, so there was nothing for the "
+            f"shrink-only and one-way-status rules to compare against."
         )
         return 0
     states = {status: 0 for status in STATUSES}
