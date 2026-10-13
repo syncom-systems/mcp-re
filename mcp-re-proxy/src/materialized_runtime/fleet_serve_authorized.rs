@@ -3,9 +3,10 @@
 //!
 //! [`crate::app::serve_fleet`] is the phase-1 execution primitive beneath
 //! [`MaterializedRuntime::serve`](super::MaterializedRuntime::serve): it binds the per-core
-//! listeners and serves until the drain. `serve` is what makes serving legal — it holds a
-//! `RuntimeLifecycle` that reached `Materialized` by value, records the serving events only
-//! once they happened, and tears the runtime down in its documented order. A crate-visible
+//! listeners and serves until the drain. `serve` is what makes serving legal — it runs on
+//! a runtime that owns a `RuntimeLifecycle` at `Materialized` from construction, records
+//! the serving events only once they happened, and tears the runtime down in its documented
+//! order. A crate-visible
 //! `serve_fleet` taking plain arguments let any crate code serve past all of that.
 //!
 //! [`FleetServeAuthorized`] closes that route. `serve_fleet` cannot be called without one,

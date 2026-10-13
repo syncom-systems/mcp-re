@@ -625,9 +625,14 @@ review_requirement = "Owner security-specification review"
 # refusals for the two producer routes. NO CLAIM CORRECTION WAS NEEDED here — unlike the two
 # SDK roots, this statement was already right, and what was missing was evidence for a
 # sentence it had asserted since ratification.
+# MCPRE-195. The path's materialization leg is applied by the owners that establish each fact:
+# `begin` from the validated deployment, `reached` after the last required resource is taken,
+# and the runtime keeps the lifecycle, so `serve` cannot be handed one that skipped a state.
+# `proxy.materialized_lifecycle_sole_producer` carries that with three compile refusals.
 supported_by = [
   "unit://proxy.runtime_lifecycle",
   "unit://proxy.runtime_lifecycle_sole_mutator",
+  "unit://proxy.materialized_lifecycle_sole_producer",
 ]
 depends_on = []
 

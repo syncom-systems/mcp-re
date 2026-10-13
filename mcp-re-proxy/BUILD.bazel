@@ -460,6 +460,7 @@ _PROXY_LIB_SRCS = [
     # lifecycle state cannot advance beyond the ownership it describes. Crate-internal.
     "src/materializing_runtime/mod.rs",
     "src/materializing_runtime/completeness.rs",
+    "src/materializing_runtime/materialized_lifecycle.rs",
     # ADR-MCPRE-057 §3: the global runtime lifecycle as a value, with one closed
     # transition relation. Represents which transitions are LEGAL; it is not
     # synchronization (§5.4). Crate-internal.

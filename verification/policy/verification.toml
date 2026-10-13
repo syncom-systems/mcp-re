@@ -110,7 +110,7 @@ pilot = "verus-candidate"
 [[unit]]
 id = "proxy.fleet_serve_sole_route"
 class = "V0"
-description = "Crate code cannot execute the serving fleet except through `MaterializedRuntime::serve`: `app::serve_fleet` cannot be called without a `FleetServeAuthorized`, which carries the fleet configuration it authorizes and is spent to obtain it; its field is private to `materialized_runtime::fleet_serve_authorized`, its only producer `issue` is `pub(super)` so only `materialized_runtime` can name it, and `serve` — which holds a lifecycle that legally reached `Materialized` by value — is where it is issued. No `Default`, `Clone` or serialization produces one."
+description = "Crate code cannot execute the serving fleet except through `MaterializedRuntime::serve`: `app::serve_fleet` cannot be called without a `FleetServeAuthorized`, which carries the fleet configuration it authorizes and is spent to obtain it; its field is private to `materialized_runtime::fleet_serve_authorized`, its only producer `issue` is `pub(super)` so only `materialized_runtime` can name it, and `serve` — which runs on a runtime that owns a lifecycle at `Materialized` from construction — is where it is issued. No `Default`, `Clone` or serialization produces one."
 # The issuer is in the closure: "only `serve` issues it" is a fact about `materialized_runtime.rs`,
 # so a change there must move this unit's fingerprint.
 paths = [
@@ -131,6 +131,24 @@ exported_contracts = []
 evidence_class = "structural"
 direct_consequence_severity = "medium"
 evidence = ["structural://proxy/runtime_lifecycle/sole_mutator"]
+
+[[unit]]
+id = "proxy.materialized_lifecycle_sole_producer"
+class = "V0"
+description = "The runtime owns the lifecycle that describes it (ADR-MCPRE-057 §3/§9): `MaterializingRuntime::begin` creates the lifecycle from the `ValidatedDeployment` the root holds, `MaterializedLifecycle::reached` is the only producer of `MaterializationSucceeded` and is `pub(super)` to `materializing_runtime`, `MaterializedRuntime::new` accepts only that certificate, and `serve` takes no lifecycle — so no code can assemble or serve a runtime on a lifecycle that skipped validation, planning or materialization. No `Default`, `Clone` or serialization produces either value."
+# `serve`'s signature and the private `lifecycle` field are facts about `materialized_runtime.rs`,
+# and `completeness.rs` decides whether `finish` may reach `Materialized`, so a change in either
+# must move this unit's fingerprint.
+paths = [
+  "mcp-re-proxy/src/materializing_runtime/mod.rs",
+  "mcp-re-proxy/src/materializing_runtime/completeness.rs",
+  "mcp-re-proxy/src/materializing_runtime/materialized_lifecycle.rs",
+  "mcp-re-proxy/src/materialized_runtime.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "medium"
+evidence = ["structural://proxy/materialized_lifecycle/sole_producer"]
 
 [[unit]]
 id = "http_profile.keyid"

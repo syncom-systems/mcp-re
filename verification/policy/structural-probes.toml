@@ -1929,3 +1929,114 @@ pub struct CryptographicFloorVerifiedRequest {"""
 new = """
 #[derive(Clone)]
 pub struct CryptographicFloorVerifiedRequest {"""
+
+
+# --- proxy.materialized_lifecycle_sole_producer (MCPRE-195) ------------------------------
+#
+# The runtime owns the lifecycle that describes it. S54 is the bypass the issue named, written
+# the way the call site was before: a `MaterializedRuntime` served on a lifecycle the caller
+# constructed. S55 and S56 close the certificate's two production routes, so `new` cannot be
+# handed a lifecycle that reached `Materialized` anywhere but inside `finish`.
+
+[[probe]]
+id = "S54"
+unit = "proxy.materialized_lifecycle_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "`MaterializedRuntime::serve` takes no lifecycle: the runtime records against the one it owns, so crate code cannot serve a runtime on a freshly constructed `RuntimeLifecycle`"
+insertion_parent = "mcp-re-proxy/src/lib.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0061"
+note = """
+THE BYPASS MCPRE-195 NAMED, and the falsifier: restore `serve`'s `lifecycle: RuntimeLifecycle`
+parameter and this construction is exactly the old, legal call, which the lane reports as the
+boundary open. `E0061` because the refusal is the ARITY of `serve` — there is no argument
+position a lifecycle could occupy. On the tree before MCPRE-195 this probe compiled.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S54. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
+pub(crate) fn hostile(
+    runtime: crate::materialized_runtime::MaterializedRuntime,
+    config_snapshot: Arc<crate::config_snapshot::ServerConfigSnapshot>,
+    serve_options: Arc<crate::ServerOptions>,
+    fleet: crate::async_fleet::FleetConfig,
+    shutdown: Arc<AtomicBool>,
+) -> Result<(), String> {
+    runtime.serve(config_snapshot, serve_options, fleet, shutdown, crate::runtime_state::RuntimeLifecycle::new()) // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`serve` is `pub(crate)` and nameable from the crate root, the widest position a consumer occupies; its parameters are the snapshot, the options, the fleet and the shutdown flag. The `lifecycle` field is bare-private to `materialized_runtime`"
+alternate-constructors = "`new` is the only associated function returning `Self`, and it takes a `MaterializedLifecycle` (S55, S56); no `From`, `Default` or builder. `shutdown(&mut self)` and `serve(self, ..)` are the only methods, and neither accepts a lifecycle"
+generated-or-deserialization = "`MaterializedRuntime` has no derives; nothing decodes one"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` builds the runtime by struct expression inside `materialized_runtime`, with a lifecycle driven by `apply`; no test-gated constructor and no test-gated field visibility exists"
+
+[[probe]]
+id = "S55"
+unit = "proxy.materialized_lifecycle_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside `materializing_runtime` can mint a MaterializedLifecycle through its producer, so `finish` is the only site that applies `MaterializationSucceeded`"
+insertion_parent = "mcp-re-proxy/src/lib.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+note = """
+THE ROUTE THAT KEEPS S54 HONEST. A certificate anyone could mint would make the parameter
+removal a formality: the bypass would mint one and call `new`. `E0624` — the associated
+function is private — rather than a field error, because this attacks the producer, not the
+literal. The argument is a fresh lifecycle on purpose: `reached` is the sole site of the
+event, so a caller who could reach it could certify a lifecycle that skipped every state.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S55. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::materializing_runtime::MaterializedLifecycle;
+use crate::runtime_state::RuntimeLifecycle;
+
+pub(crate) fn hostile() -> MaterializedLifecycle {
+    MaterializedLifecycle::reached(RuntimeLifecycle::new()).expect("hostile") // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`reached` is `pub(super)`: visible to `materializing_runtime` and its children, and to nothing else. The type is re-exported `pub(crate)` so `MaterializedRuntime::new` can name it; naming the type does not reach its producer"
+alternate-constructors = "`reached` is the only associated function returning `Self`, and it is fallible; `into_lifecycle(self)` is the only projection and consumes the value. No `From`, `Default` or builder"
+generated-or-deserialization = "no derives at all — no `Clone`, no `Debug`, no Serialize, no Deserialize; a certificate cannot be decoded or duplicated"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` builds every certificate through `reached` over a lifecycle driven by `apply`; no test-gated constructor and no test-gated field visibility exists"
+
+[[probe]]
+id = "S56"
+unit = "proxy.materialized_lifecycle_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside `materializing_runtime::materialized_lifecycle` can write a MaterializedLifecycle literal, so possession means `reached` ran"
+insertion_parent = "mcp-re-proxy/src/lib.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+The literal route, closed by field privacy, probed separately from S55 because either alone
+would leave the other unwitnessed.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S56. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::materializing_runtime::MaterializedLifecycle;
+use crate::runtime_state::RuntimeLifecycle;
+
+pub(crate) fn hostile() -> MaterializedLifecycle {
+    MaterializedLifecycle {
+        lifecycle: RuntimeLifecycle::new(), // STRUCTURAL-PROBE-SITE
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`lifecycle` is bare-private to `materialized_lifecycle`; the type is `pub(crate)` so every consumer can name it and none can fill the field"
+alternate-constructors = "`reached` is the only associated function returning `Self` (S55); no `From`, `Default` or builder"
+generated-or-deserialization = "no derives at all; nothing decodes or clones a certificate"
+test-only-construction = "the owner's tests construct only through `reached`; no test-gated constructor and no test-gated field visibility exists"

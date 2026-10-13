@@ -258,8 +258,11 @@ path = "mcp-re-proxy/src/app.rs"
 # 815 (measured at 5f7a4ca) -> 804.
 # MCPRE-191: the freshness owner projects the verifier policy, so the root no longer builds it
 # or maps a skew refusal that cannot occur: 804 (measured at 1a20771) -> 789.
-baseline_prod_loc = 789
-baseline_sha = "1a20771"
+# MCPRE-195: the runtime owns the lifecycle that describes it, so the root no longer creates
+# one, records validation and planning on its own word, or hands it to `serve`:
+# 789 (measured at 1021196) -> 775. `baseline_sha` names that parent.
+baseline_prod_loc = 775
+baseline_sha = "1021196"
 status = "reviewed-exception"
 review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 

@@ -220,6 +220,7 @@ not an omission to hide.
 | proxy.kms_endpoint_authority | V0 | THM-0089 | 1 |
 | proxy.legality_boundary_totality | V0 | _none_ | 0 |
 | proxy.listener_state_assembly | V0 | THM-0048 | 1 |
+| proxy.materialized_lifecycle_sole_producer | V0 | _none_ | 0 |
 | proxy.mcp_transport_contract_state | V0 | _none_ | 0 |
 | proxy.mechanism_verified_credential | V0 | THM-0030 | 1 |
 | proxy.mode_c_trust_set | V0 | _none_ | 0 |
