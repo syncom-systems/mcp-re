@@ -20,15 +20,16 @@ use crate::delegation::DelegationHeader;
 use crate::error::HttpProfileError;
 
 use super::IssuanceRefusal;
+mod stated;
 
 /// An owned, cheaply-cloned snapshot of the current delegated key and the delegation
 /// credential the issuance seam returned (ADR-MCPRE-052 §4). A hot-path response signer publishes one and signs per
 /// request off it — the root is never touched on that path; issuance and rotation stay
 /// inside the custody state machine.
 ///
-/// The representation is private and [`issued`](Self::issued) is its only producer, so
-/// holding one of these means the credential attests the key inside it and the window
-/// projected by [`nbf`](Self::nbf)/[`exp`](Self::exp) is the credential's own.
+/// The representation is private and, in a product build, [`issued`](Self::issued) is its
+/// only producer, so holding one means the credential attests the key inside it and the
+/// window projected by [`nbf`](Self::nbf)/[`exp`](Self::exp) is the credential's own.
 #[derive(Clone)]
 pub struct ActiveDelegatedKey {
     /// The in-memory delegated Ed25519 signing key (shared, never the root). Shared via
@@ -151,10 +152,9 @@ impl ActiveDelegatedKey {
 
     /// The delegated signing key. Never the root.
     ///
-    /// Crate-private: the key confers signing authority for the whole credential lifetime,
-    /// and the only holder that may use it is a [`SigningWindow`](super::SigningWindow),
-    /// which bounds the validity a signature may advertise. Other crates read the public
-    /// half through [`public_key`](Self::public_key).
+    /// Crate-private: only a [`SigningWindow`](super::SigningWindow) signs with it, through
+    /// its `DelegatedSigner`, so a signature never advertises validity past the window.
+    /// Other crates read the public half through [`public_key`](Self::public_key).
     pub(crate) fn key(&self) -> &SigningKey {
         &self.key
     }

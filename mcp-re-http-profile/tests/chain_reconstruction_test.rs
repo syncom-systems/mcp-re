@@ -8,9 +8,11 @@
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::block::AudienceTuple;
+use mcp_re_http_profile::custody::ActiveDelegatedKey;
+use mcp_re_http_profile::custody::SigningWindow;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::reconstruct_chain;
-use mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key;
+use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
@@ -236,15 +238,19 @@ fn hop_with_bad_window(created: i64, expires: i64, nonce: &str) -> RetainedHop {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: DONE.as_bytes().to_vec(),
     };
-    sign_delegated_response_full_with_owned_key(
+    sign_delegated_response_full(
         &mut response,
         &request,
-        &server_signer(),
-        &credential(created, expires),
-        &delegated_key(),
-        DELEGATED_KID,
-        created,
-        expires,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                delegated_key(),
+                server_signer(),
+                credential(created, expires),
+                DELEGATED_KID,
+            ),
+            created,
+            expires,
+        ),
     )
     .expect("response signs");
 
@@ -283,15 +289,19 @@ fn hop_at(
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: body.as_bytes().to_vec(),
     };
-    sign_delegated_response_full_with_owned_key(
+    sign_delegated_response_full(
         &mut response,
         &request,
-        &server_signer(),
-        &credential(created, expires),
-        &delegated_key(),
-        DELEGATED_KID,
-        created,
-        expires,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                delegated_key(),
+                server_signer(),
+                credential(created, expires),
+                DELEGATED_KID,
+            ),
+            created,
+            expires,
+        ),
     )
     .expect("response signs");
 
@@ -1018,15 +1028,19 @@ fn signed_answer(request: &HttpRequest, body: &str) -> HttpResponse {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: body.as_bytes().to_vec(),
     };
-    sign_delegated_response_full_with_owned_key(
+    sign_delegated_response_full(
         &mut response,
         request,
-        &server_signer(),
-        &credential(CREATED, EXPIRES),
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &SigningWindow::stated(
+            ActiveDelegatedKey::stated(
+                delegated_key(),
+                server_signer(),
+                credential(CREATED, EXPIRES),
+                DELEGATED_KID,
+            ),
+            CREATED,
+            EXPIRES,
+        ),
     )
     .expect("response signs");
     response
@@ -1047,15 +1061,19 @@ fn answer_outside_the_full_signer(
         body: body.as_bytes().to_vec(),
     };
     assert!(
-        sign_delegated_response_full_with_owned_key(
+        sign_delegated_response_full(
             &mut response.clone(),
             request,
-            &server_signer(),
-            &credential(CREATED, EXPIRES),
-            &delegated_key(),
-            DELEGATED_KID,
-            CREATED,
-            EXPIRES,
+            &SigningWindow::stated(
+                ActiveDelegatedKey::stated(
+                    delegated_key(),
+                    server_signer(),
+                    credential(CREATED, EXPIRES),
+                    DELEGATED_KID
+                ),
+                CREATED,
+                EXPIRES
+            )
         )
         .is_err(),
         "the full-profile signer refuses to answer this request"

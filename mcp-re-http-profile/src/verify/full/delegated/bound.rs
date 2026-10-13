@@ -7,8 +7,8 @@
 //! `;req`, the block's `request_evidence` equals the handle DERIVED FROM THAT SAME
 //! REQUEST, and the credential's scope names the block's declared server signer.
 //!
-//! The handle used to be a second operand supplied beside the request, with nothing
-//! relating the two — see [`crate::verify::bound_request`] for what that admitted.
+//! The handle is derived by [`RequestRoleEvidence::of_signed_request`], never supplied
+//! beside the request, so the request and the handle cannot name two exchanges.
 //!
 //! The product carries the shared [`BoundResponseSignatureFacts`], never a
 //! `CryptographicFloorVerifiedBoundResponse` — see [`super`] for why that containment would
@@ -20,6 +20,7 @@ use crate::block::SignerSlot;
 use crate::body::extract_meta_block;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
+use crate::evidence::RequestRoleEvidence;
 use crate::evidence::ResponseRoleEvidence;
 use crate::ids::PROFILE_TAG;
 use crate::ids::REQUIRED_RESPONSE_COMPONENTS;
@@ -33,7 +34,6 @@ use crate::policy::VerifierPolicy;
 use crate::sigbase::signature_base;
 use crate::sigbase::SourceMessage;
 use crate::verified_response::AcceptedResponseSigner;
-use crate::verify::bound_request::request_evidence_of;
 use crate::verify::floor::components::require_components;
 use crate::verify::floor::params::check_params;
 use crate::verify::floor::sf_dictionary::member_value;
@@ -133,9 +133,8 @@ pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
     .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
 
     // Request-evidence binding (explicit MCP defense-in-depth, as verify_response_full).
-    // The handle is OF the request this verification was given — see
-    // `crate::verify::bound_request`.
-    let bound = request_evidence_of(request)?;
+    // The handle is OF the request this verification was given.
+    let bound = RequestRoleEvidence::of_signed_request(request)?;
     if !bound.matches(&block.request_evidence) {
         return Err(HttpProfileError::ResponseBindingMismatch);
     }

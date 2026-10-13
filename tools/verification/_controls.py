@@ -66,6 +66,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from _ecosystems import REPO_ROOT
+import _gates
 import _module_tree
 import _registries
 import _rust_targets
@@ -726,31 +727,31 @@ def probe_controls() -> list[Control]:
 # ---------------------------------------------------------------------------
 
 
-def gate_controls() -> list[Control]:
-    """Executable checks under `scripts/` — the source-text and structural gates.
+def gate_controls(root: Path = REPO_ROOT) -> list[Control]:
+    """The source-text and structural gates under `scripts/`.
 
     A gate is a control by every test this record applies: it executes on the merge path,
     it can fail, and what it refuses is a security-relevant property. Whether any unit
-    CLAIMS one is exactly ADR-069's question, and for this kind the answer at the start of
-    the campaign is uniformly no, because no evidence scheme names a gate.
+    CLAIMS one is exactly ADR-069's question.
+
+    The population is every `scripts/*.py|*.sh` except a script the gate registry
+    (`config/gates.toml`, read by `_gates`) marks `not_a_control` — a driver, runner,
+    report, demo or repository operation, with its reason recorded there once. A script
+    with no row stays in the population, so a missing row can only widen the census; the
+    merge-path gate is what refuses the missing row. An unreadable registry raises
+    `_gates.RegistryError` rather than yielding a narrower census.
     """
-    out: list[Control] = []
-    scripts = REPO_ROOT / "scripts"
-    if not scripts.is_dir():
-        return out
-    for path in sorted(scripts.iterdir()):
-        if not path.is_file() or path.suffix not in (".py", ".sh"):
-            continue
-        out.append(
-            Control(
-                project="",
-                identity=f"gate#scripts/{path.name}",
-                kind="gate",
-                carrier=f"scripts/{path.name}",
-                line=0,
-            )
+    not_controls = _gates.not_controls(_gates.load(root))
+    return [
+        Control(
+            project="",
+            identity=f"gate#{path}",
+            kind="gate",
+            carrier=path,
+            line=0,
         )
-    return out
+        for path in sorted(_gates.population(root) - not_controls)
+    ]
 
 
 # ---------------------------------------------------------------------------

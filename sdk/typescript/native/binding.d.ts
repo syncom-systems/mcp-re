@@ -53,6 +53,12 @@ export interface SignedRequestJs {
 }
 
 /**
+ * The `code` of a signing device that could not sign: a local condition with no wire
+ * code, since nothing was signed or sent.
+ */
+export declare const SIGNING_DEVICE_FAILURE: string
+
+/**
  * Sign a one-way MCP **notification** — a JSON-RPC message with a `method` and no
  * `id` — as an RFC 9421 + RFC 9530 message.
  *

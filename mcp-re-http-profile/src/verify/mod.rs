@@ -35,7 +35,6 @@
 //! `Verifier`; the one `pub` item is [`DelegationExpectations`], which is an INPUT a
 //! deployment supplies, not a verification entry point.
 
-pub(crate) mod bound_request;
 pub(crate) mod floor;
 // The §5.1 freshness conjunct has ONE statement, and a signer deciding whether a window it has
 // not minted yet will still be fresh needs the rule itself rather than a second formula

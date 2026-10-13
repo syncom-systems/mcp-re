@@ -34,8 +34,6 @@ __all__ = [
     "SigningDevice",
 ]
 
-#: The Ed25519 detached-signature length the RFC 9421 profile emits.
-_SIGNATURE_LEN = 64
 #: The Ed25519 seed length.
 _SEED_LEN = 32
 
@@ -63,13 +61,11 @@ class SignerUnavailable(McpReSdkError):
 
     Deliberately **not** an :class:`McpReError`: this is a local condition — the device
     raised, or handed back something that is not a 64-byte signature — and nothing was
-    ever transmitted, so no wire code describes it. Reporting it as
-    ``mcp-re.invalid_signature`` would claim a peer rejected a signature that was never
-    sent, and the frozen taxonomy is wire-only and reuse-only, so there is no client-side
-    token to borrow either.
+    ever transmitted, so no wire code describes it. The native module reports it typed,
+    as ``SigningDeviceFailure``, and this is that failure in the SDK's own family.
 
-    Fail-closed either way: no evidence is emitted. ``__cause__`` carries whatever the
-    device actually did.
+    Fail-closed either way: no evidence is emitted. ``__cause__`` is what the device
+    raised, when it raised.
     """
 
     def __init__(self, detail: str) -> None:
@@ -169,8 +165,9 @@ class Signer:
         credential (``seed``/``sign_callback``) and ``key_id``, which this signer
         supplies.
 
-        Raises :class:`SignerUnavailable` if a non-exporting device cannot sign, and
-        :class:`ValueError` carrying a frozen wire code for a genuine protocol failure.
+        Raises :class:`SignerUnavailable` if a non-exporting device cannot sign, and the
+        native ``WireRefusal`` (a :class:`ValueError`) carrying a frozen wire code in
+        ``.wire_code`` for a genuine protocol failure.
         """
         return self._sign(_core.sign_request, _core.sign_request_with_signer, **kwargs)
 
@@ -197,37 +194,11 @@ class Signer:
         if self.custody is CustodyClass.SOFTWARE:
             return software(self._seed, self.key_id, **kwargs)
 
-        # The core cannot tell "the device is broken" from "the signature is bad" — it
-        # only sees a callback that failed, and maps that to a wire code. Capture what
-        # the device actually did on this side of the boundary so the local condition is
-        # reported as a local condition.
-        failure: dict = {}
-
-        def guarded(preimage: bytes) -> bytes:
-            try:
-                sig = self._sign_callback(preimage)
-            except BaseException as exc:
-                failure["cause"] = exc
-                raise
-            if not isinstance(sig, (bytes, bytearray)):
-                failure["cause"] = TypeError(
-                    f"device returned {type(sig).__name__}, expected bytes"
-                )
-                raise failure["cause"]
-            if len(sig) != _SIGNATURE_LEN:
-                failure["cause"] = ValueError(
-                    f"device returned a {len(sig)}-byte signature, expected {_SIGNATURE_LEN}"
-                )
-                raise failure["cause"]
-            return bytes(sig)
-
         try:
-            return non_exporting(guarded, self.key_id, **kwargs)
-        except ValueError:
-            cause = failure.get("cause")
-            if cause is None:
-                raise  # a real protocol failure in the core, not the device
-            raise SignerUnavailable(str(cause) or type(cause).__name__) from cause
+            return non_exporting(self._sign_callback, self.key_id, **kwargs)
+        except _core.SigningDeviceFailure as e:
+            cause = e.__cause__ if e.__cause__ is not None else e
+            raise SignerUnavailable(str(e)) from cause
 
     def __repr__(self) -> str:  # never render key material
         return (

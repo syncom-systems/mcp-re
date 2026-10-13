@@ -82,21 +82,15 @@ on every PR, or that the control is correct. Branch protection is repository con
 and is not readable from the tree; this gate closes the gap it can see from here, which is
 the one that has actually opened five times.
 
-AND IT DOES NOT PROVE A DEFINED POPULATION FOR `scripts/`, which is stated rather than
-quietly left out. The entry-point half above rests on a property — the execute bit — that
-decides membership on its own. `scripts/` has no such property: it holds gates, a sourced
-toolchain shim, a demo runner, architecture reports and CI helpers, and executability
-separates none of them. The obvious substitute is a `*_gate.py` glob, and that is exactly
-the move SF-010 warns against: it would repeat the `test_mutation_lane.py` repair one shape
-later and leave the same hole for the next shape.
-
-Measured 2026-09-21, so the gap is known rather than assumed: 41 files match
-`scripts/*_gate.py`; 40 are invoked by `local_gate.sh` and therefore in the first
-population; the one that is not, `merge_readiness_gate.py`, is named by an unconditional
-workflow and belongs there — it is a merge-TIME authority, and running it from a pre-merge
-aggregate would be asking a question about a commit that does not exist yet. So there is no
-live instance today. What is missing is the guarantee, and a filename pattern would be a
-guarantee-shaped thing rather than one.
+THE `scripts/` POPULATION IS THE GATE REGISTRY. `scripts/` has no property like the execute
+bit that decides membership on its own: it holds gates, a sourced toolchain shim, a demo
+runner, architecture reports and CI helpers, and executability separates none of them. So
+membership is written down instead, in `config/gates.toml` (read by
+`tools/verification/_gates.py`): every `scripts/*.py|*.sh` has a row, and a script with no
+row fails here. Each row also states the `local_gate.sh` stages and the workflow jobs that
+name the script, and this gate checks both against the files, so the registry cannot drift
+from what actually runs. A row's `off_merge_path` is the one place an exemption from the
+checks above is recorded, for a script and for an entry point alike.
 
 Run:  python3 scripts/merge_path_gate.py
       python3 scripts/merge_path_gate.py --selftest
@@ -113,6 +107,9 @@ from workflow_reader import Command, Workflow, named_paths, parse, shell_command
 REPO = Path(__file__).resolve().parent.parent
 LOCAL_GATE = REPO / "scripts" / "local_gate.sh"
 
+sys.path.insert(0, str(REPO / "tools" / "verification"))
+import _gates  # noqa: E402
+
 #: A fetch that TRUNCATES the object graph rather than extending it.
 #:
 #: `git fetch --depth=N` into a full clone does not add a ref beside the history; it makes
@@ -126,50 +123,22 @@ LOCAL_GATE = REPO / "scripts" / "local_gate.sh"
 #: history is free to fetch what it needs.
 SHALLOW_FETCH = re.compile(r"git fetch\b[^\n]*(--depth[= ]|--shallow-since|--shallow-exclude)")
 
-#: Scripts that are deliberately local, each with the reason. The exemption list IS part of
-#: what this gate measured, so it is printed on every run and checked for dead entries: an
-#: exemption naming a script the gate no longer invokes is a claim about nothing.
-EXEMPT: dict[str, str] = {
-    # Measurement lanes, not controls. Both refuse to run unattended for reasons of their
-    # own — one needs a quiet box, the other a live process — and neither decides whether
-    # a change is admissible.
-    #
-    # The SLO lane DOES run in CI now: `.github/workflows/slo.yml` schedules it on the
-    # self-hosted runner. It stays exempt for two reasons, and both are the shape this list
-    # is for rather than a way around it. That workflow is `paths:`-filtered on the declared
-    # performance surface deliberately — a whole SLO run belongs where perf-relevant code was
-    # touched, and `slo_evidence_identity.py` refuses a filter narrower than that surface, so
-    # the filter is policed rather than trusted. And the workflow invokes the lane through
-    # `scripts/local_gate.sh --from 4`, because stage 4 is a procedure (decide, refuse below
-    # the disk floor, measure, attest only a PASS) with one definition; so this path is not
-    # named literally there either.
-    "scripts/local_slo_lane.sh": (
-        "an SLO measurement, not an admissibility control; scheduled by the surface-filtered "
-        ".github/workflows/slo.yml via local_gate.sh stage 4"
-    ),
-    # A PLUMBING rehearsal, and the only lane that needs a live kind cluster plus a 3 GB
-    # bench image — neither exists on a CI runner. What keeps it wired is not this gate but
-    # `rehearsal_claim_gate.py`, which IS unconditional: it fails if the runbooks' sentence
-    # about this rehearsal stops being backed by a reachable invocation.
-    "tools/slo/rehearse_job_spec.sh": (
-        "a kind-cluster Job-spec rehearsal; its wiring is policed by rehearsal_claim_gate.py"
-    ),
-    "scripts/demo-local.sh": "a demo runner, not a control",
-    # Architecture ANALYSIS. These report numbers for a human to classify — ADR-MCPRE-060
-    # is explicit that the workflow is measure, validate, classify, review, and never
-    # "run script, refactor until the number falls". A report has no pass to enforce, and
-    # only their `--selftest` runs in the gate, which is a check that the measurement still
-    # measures.
-    "scripts/module_map.py": "an architecture report with no verdict; --selftest only",
-    "scripts/startup_backedges.py": "an architecture report with no verdict; --selftest only",
-    # Named only by the `paths:`-filtered verification workflow, and correctly so: it
-    # checks the self-hosted runner's environment for that workflow's jobs. Its scope IS
-    # that filter — there is no other job whose environment it describes — which is the
-    # one shape the filtered-only rule below is meant to admit rather than refuse.
-    "scripts/verification_runner_preflight.sh": (
-        "a runner-environment preflight whose scope is the verification workflow itself"
-    ),
-}
+def exemptions(rows: dict[str, _gates.Gate]) -> tuple[dict[str, str], dict[str, str]]:
+    """`(script exemptions, entry-point exemptions)`, from the rows' `off_merge_path`.
+
+    Split by where the path lives, because the two halves of this gate ask different things
+    of an exemption: a script exemption must name something `local_gate.sh` invokes, an
+    entry-point exemption something under `tools/verification/` that is an entry point.
+    Both are printed on every run and checked for dead entries: an exemption naming nothing
+    either check would flag is a claim about nothing.
+    """
+    scripts: dict[str, str] = {}
+    entries: dict[str, str] = {}
+    for path, gate in rows.items():
+        if gate.off_merge_path:
+            target = entries if path.startswith(f"{ENTRY_ROOT}/") else scripts
+            target[path] = gate.off_merge_path
+    return scripts, entries
 
 
 def scripts_in(commands: list[Command]) -> set[str]:
@@ -252,14 +221,14 @@ def defects(
             found.append(
                 f"{script} is named only by a `paths:`-filtered workflow. It therefore runs "
                 f"on the pull requests that touch those paths and on no others, while "
-                f"reading as enforced. Move it to an unconditional job, or add it to EXEMPT "
-                f"with the reason its scope really is that filter."
+                f"reading as enforced. Move it to an unconditional job, or give its row in {_gates.REGISTRY} an "
+                f"`off_merge_path` stating why its scope really is that filter."
             )
             continue
         found.append(
             f"{script} runs only in scripts/local_gate.sh. A control the assurance model "
-            f"relies on must be present on the merge path; add it to a workflow, or add it "
-            f"to EXEMPT with the reason it is deliberately local."
+            f"relies on must be present on the merge path; add it to a workflow, or give its "
+            f"row in {_gates.REGISTRY} an `off_merge_path` stating why it is deliberately local."
         )
     for script in sorted((selftests or set()) - covered - exempt.keys()):
         found.append(
@@ -270,8 +239,9 @@ def defects(
             f"its filter."
         )
     found.extend(
-        f"EXEMPT names {script}, which scripts/local_gate.sh does not invoke. A dead "
-        f"exemption is a claim about nothing and hides the next one that matters."
+        f"{script} carries `off_merge_path` in {_gates.REGISTRY}, and scripts/local_gate.sh "
+        f"does not invoke it. A dead exemption is a claim about nothing and hides the next "
+        f"one that matters."
         for script in sorted(exempt.keys() - gated - (selftests or set()))
     )
     return found
@@ -362,54 +332,6 @@ def dispatched_entry_points(root: Path) -> tuple[set[str], str | None]:
         sys.modules.pop(name, None)
 
 
-#: Entry points that are deliberately NOT admissibility controls, each with the reason.
-#:
-#: Same contract as `EXEMPT`: printed on every run and checked for dead entries, because an
-#: exemption naming a file that no longer exists is a claim about nothing. The recurring
-#: shapes here are GENERATOR, REPORT and MEASUREMENT — a program with no verdict cannot
-#: refuse a change, so requiring it on the merge path would be requiring a run whose outcome
-#: nothing reads.
-EXEMPT_ENTRY: dict[str, str] = {
-    # An evidence WRITER. It issues freshness records from measurements the lanes already
-    # made; it decides nothing about admissibility, and the lanes that call it are reached.
-    f"{ENTRY_ROOT}/attest": "an evidence writer invoked by the lanes; it issues records, it does not decide",
-    # A one-command driver over phases CI deliberately runs as separate steps, so that a
-    # phase which could not execute is visible as a missing record rather than folded into
-    # one exit status.
-    f"{ENTRY_ROOT}/evidence": "a driver over phases the merge path runs as separate steps",
-    f"{ENTRY_ROOT}/evidence-graph": "a semantic overlay report with no verdict",
-    f"{ENTRY_ROOT}/fingerprint": "a CLI over _fingerprint.fingerprint_unit; a measurement, not a verdict",
-    # Its verdict half is `check-views`, which IS named by an unconditional workflow. A
-    # generator and the gate over its output are two propositions, and only one of them
-    # can refuse a change.
-    f"{ENTRY_ROOT}/generate-views": "a generator; the verdict over its output is check-views",
-    # The one case the filtered-only rule is meant to ADMIT rather than refuse: Charon links
-    # the private rustc crates, so this cannot execute outside the pinned extraction
-    # container, and the workflow whose filter it sits behind is the only place that exists.
-    f"{ENTRY_ROOT}/regenerate-lean": "runs only inside the pinned extraction container, which one filtered workflow provides",
-    # It reads the attestation store, which is machine-local and gitignored — so a
-    # merge-path job cannot see what it would report. Its BINDING closure mode is policed
-    # by scripts/release_assurance_gate.py, which is unconditional.
-    f"{ENTRY_ROOT}/review": "reads the machine-local attestation store; its binding mode is policed by release_assurance_gate.py",
-    f"{ENTRY_ROOT}/review-frontier": "a review-obligation report with no verdict",
-    # It decides a pull request's SCOPE, never a verdict, and only in the two filtered
-    # workflows that run the lanes it scopes — a scope is meaningless where no lane runs.
-    # On any doubt it widens to a full run. Its semantics are pinned by
-    # test_scoped_verification.py, which the unconditional ci.yml runs.
-    f"{ENTRY_ROOT}/select-units": "scopes the filtered verification workflows; pinned by test_scoped_verification.py in ci.yml",
-    f"{ENTRY_ROOT}/review-packet": "a derived review packet; a document, not a decision",
-    # The lane dispatcher. It runs in verification.yml and nowhere else on a pull request,
-    # and that workflow's path filter is not a guess: verification_trigger_gate.py, which IS
-    # unconditional, holds it to every unit's fingerprint read set. So the dispatcher runs on
-    # exactly the changes that move a unit, and its scope IS that filter.
-    f"{ENTRY_ROOT}/verify": "the lane dispatcher; runs in verification.yml, whose filter verification_trigger_gate.py holds to every fingerprint input",
-    # A BUILDER. It builds, loads and names the pinned extraction image the formal lanes run
-    # in, from the dispatched extraction-image.yml and local_gate.sh stage 3; the lanes that
-    # decide something run inside the image it produces.
-    f"{ENTRY_ROOT}/extraction-image": "builds and names the pinned extraction image; the lanes that decide run inside it",
-}
-
-
 def entry_point_defects(
     population: set[str],
     unconditional: set[str],
@@ -436,13 +358,13 @@ def entry_point_defects(
         found.append(
             f"{script} {why}. It is an assurance-platform entry point — an executable file "
             f"under {ENTRY_ROOT}/ — so something is meant to run it. Name it in an "
-            f"unconditional workflow, run it from a reached dispatcher, or add it to "
-            f"EXEMPT_ENTRY with the reason it decides nothing."
+            f"unconditional workflow, run it from a reached dispatcher, or give its row in "
+            f"{_gates.REGISTRY} an `off_merge_path` stating why it decides nothing."
         )
     found.extend(
-        f"EXEMPT_ENTRY names {script}, which is not an assurance-platform entry point in "
-        f"this tree. A dead exemption is a claim about nothing and hides the next one that "
-        f"matters."
+        f"{script} carries `off_merge_path` in {_gates.REGISTRY} and is not an "
+        f"assurance-platform entry point in this tree. A dead exemption is a claim about "
+        f"nothing and hides the next one that matters."
         for script in sorted(exempt.keys() - population)
     )
     return found
@@ -506,6 +428,90 @@ def not_executable(paths: set[str]) -> list[str]:
     )
 
 
+#: A shell function definition, and a `local_gate.sh` stage: the `run "<label>" <function>`
+#: lines, numbered in the order they appear, which is the order the aggregate runs them.
+_FUNCTION = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\(\)\s*\{", re.M)
+_STAGE = re.compile(r'^run\s+"[^"]*"\s+([A-Za-z_][A-Za-z0-9_]*)\s*$', re.M)
+
+
+def registry_paths(commands: list[Command]) -> set[str]:
+    """Every path these commands name that a registry row can describe: a `.py`/`.sh`
+    script anywhere, or an assurance-platform entry point."""
+    return scripts_in(commands) | names_in(commands)
+
+
+def local_gate_stages(text: str) -> dict[str, set[int]]:
+    """For each path `local_gate.sh` names, the stages that reach it.
+
+    A stage is a `run` line's function; it reaches every function it calls, transitively,
+    and a path belongs to every stage that reaches the function naming it. A function ends
+    at the first line that starts with `}`, which is how this file closes every one.
+    """
+    lines = text.splitlines()
+    bodies: dict[str, str] = {}
+    for match in _FUNCTION.finditer(text):
+        first = text.count("\n", 0, match.start()) + 1
+        last = first
+        while last < len(lines) and not lines[last].startswith("}"):
+            last += 1
+        bodies[match.group(1)] = "\n".join(lines[first:last])
+    names = set(bodies)
+    own: dict[str, set[str]] = {}
+    calls: dict[str, set[str]] = {}
+    for name, body in bodies.items():
+        commands = shell_commands(body)
+        own[name] = registry_paths(commands)
+        words = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", " ".join(c.executed for c in commands)))
+        calls[name] = (words & names) - {name}
+    stages: dict[str, set[int]] = {}
+    for number, root in enumerate(_STAGE.findall(text), 1):
+        reached: set[str] = set()
+        todo = [root]
+        while todo:
+            name = todo.pop()
+            if name not in reached:
+                reached.add(name)
+                todo.extend(calls.get(name, ()))
+        for name in reached:
+            for path in own.get(name, ()):
+                stages.setdefault(path, set()).add(number)
+    return stages
+
+
+def workflow_jobs(flows: list[Workflow]) -> dict[str, set[str]]:
+    """For each path a workflow names, every `<workflow file>:<job key>` naming it."""
+    jobs: dict[str, set[str]] = {}
+    for workflow in flows:
+        name = Path(workflow.path).name
+        for key, job in workflow.jobs.items():
+            for path in registry_paths(job.commands()):
+                jobs.setdefault(path, set()).add(f"{name}:{key}")
+    return jobs
+
+
+def registry_defects(
+    rows: dict[str, _gates.Gate],
+    stages: dict[str, set[int]],
+    jobs: dict[str, set[str]],
+) -> list[str]:
+    """Rows whose `stages` or `ci` disagree with `local_gate.sh` and the workflows."""
+    found: list[str] = []
+    for path, gate in sorted(rows.items()):
+        actual_stages = tuple(sorted(stages.get(path, ())))
+        if gate.stages != actual_stages:
+            found.append(
+                f"{path}: {_gates.REGISTRY} says `stages = {list(gate.stages)}` and "
+                f"scripts/local_gate.sh runs it in stages {list(actual_stages)}. Correct the row."
+            )
+        actual_jobs = tuple(sorted(jobs.get(path, ())))
+        if gate.ci != actual_jobs:
+            found.append(
+                f"{path}: {_gates.REGISTRY} says `ci = {list(gate.ci)}` and the workflows "
+                f"name it in {list(actual_jobs)}. Correct the row."
+            )
+    return found
+
+
 def selftest() -> int:
     """A gate whose only evidence is that a clean tree passes has never been shown to fail."""
     cases = [
@@ -534,7 +540,7 @@ def selftest() -> int:
             set(),
             set(),
             {"scripts/gone.py": "stale"},
-            "which scripts/local_gate.sh does not invoke",
+            "scripts/local_gate.sh does not invoke it",
             "an exemption naming nothing",
         ),
     ]
@@ -745,6 +751,53 @@ def selftest() -> int:
         print("SELFTEST FAIL: the coverage matcher cannot see an extensionless entry point", file=sys.stderr)
         return 1
 
+    # ---- the gate registry ---------------------------------------------------------------
+    # Stages are reached through function calls, numbered by the `run` lines' order.
+    stage_text = (
+        'one() {\n  helper\n}\n'
+        'helper() {\n  python3 scripts/a_gate.py\n}\n'
+        'two() {\n  bash scripts/b.sh && helper\n}\n'
+        'run "first" one\nrun "second" two\n'
+    )
+    stages = local_gate_stages(stage_text)
+    if stages != {"scripts/a_gate.py": {1, 2}, "scripts/b.sh": {2}}:
+        print(f"SELFTEST FAIL: local_gate stages read as {stages!r}", file=sys.stderr)
+        return 1
+    jobs = workflow_jobs([parse(
+        "on:\n  pull_request:\njobs:\n  rust:\n    steps:\n      - run: python3 scripts/a_gate.py\n"
+        "  docs:\n    steps:\n      - run: tools/verification/check-views\n"
+    )])
+    if (
+        set(jobs) != {"scripts/a_gate.py", "tools/verification/check-views"}
+        or {j.rsplit(":", 1)[1] for j in jobs["scripts/a_gate.py"]} != {"rust"}
+        or {j.rsplit(":", 1)[1] for j in jobs["tools/verification/check-views"]} != {"docs"}
+    ):
+        print(f"SELFTEST FAIL: workflow jobs read as {jobs!r}", file=sys.stderr)
+        return 1
+    row = _gates.parse(
+        '[[script]]\npath = "scripts/a_gate.py"\nstages = [1, 2]\nci = ["w.yml:rust"]\nselftest = true\n'
+    )
+    agree = {"scripts/a_gate.py": {"w.yml:rust"}}
+    if registry_defects(row, stages, agree):
+        print("SELFTEST FAIL: a row agreeing with local_gate.sh and the workflows was refused", file=sys.stderr)
+        return 1
+    if not any("stages" in d for d in registry_defects(row, {"scripts/a_gate.py": {1}}, agree)):
+        print("SELFTEST FAIL: a row whose stages local_gate.sh contradicts passed", file=sys.stderr)
+        return 1
+    if not any("`ci =" in d for d in registry_defects(row, stages, {})):
+        print("SELFTEST FAIL: a row whose workflow jobs the workflows contradict passed", file=sys.stderr)
+        return 1
+    split = exemptions(_gates.parse(
+        '[[script]]\npath = "scripts/x.sh"\nstages = []\nci = []\nselftest = false\noff_merge_path = "a demo"\n'
+        f'[[script]]\npath = "{ENTRY_ROOT}/report"\nstages = []\nci = []\nselftest = false\noff_merge_path = "a report"\n'
+    ))
+    if split != ({"scripts/x.sh": "a demo"}, {f"{ENTRY_ROOT}/report": "a report"}):
+        print(f"SELFTEST FAIL: exemptions split as {split!r}", file=sys.stderr)
+        return 1
+    if _gates.selftest() != 0:
+        print("SELFTEST FAIL: the gate registry reader's own selftest", file=sys.stderr)
+        return 1
+
     print("merge_path_gate selftest: OK")
     return 0
 
@@ -761,6 +814,12 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+    try:
+        rows = _gates.load(REPO)
+    except _gates.RegistryError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+    exempt, exempt_entry = exemptions(rows)
     covered, filtered_only = workflow_coverage()
     selftests = {
         path.relative_to(REPO).as_posix() for path in REPO.glob(SELFTEST_GLOB)
@@ -792,7 +851,13 @@ def main() -> int:
         f"`git update-index --chmod=+x {path}`."
         for path in not_executable(runnable)
     ]
-    found += defects(gated, covered, EXEMPT, filtered_only, selftests)
+    found += defects(gated, covered, exempt, filtered_only, selftests)
+    found += _gates.problems(rows, REPO)
+    found += registry_defects(
+        rows,
+        local_gate_stages(LOCAL_GATE.read_text(encoding="utf-8")),
+        workflow_jobs(list(workflows(REPO))),
+    )
 
     # THE DEFINED POPULATION. The two sets above are places someone thought to look; this
     # one is every executable file under tools/verification/, which is what makes a file an
@@ -812,7 +877,7 @@ def main() -> int:
         population,
         entry_unconditional,
         dispatched,
-        EXEMPT_ENTRY,
+        exempt_entry,
         entry_filtered,
         dispatch_problem,
     )
@@ -821,14 +886,20 @@ def main() -> int:
         print(f"FAIL: {defect}", file=sys.stderr)
     if found:
         return 1
-    exemptions = ", ".join(f"{name} ({why})" for name, why in sorted(EXEMPT.items()))
+    listed = ", ".join(f"{name} ({why})" for name, why in sorted(exempt.items()))
     print(
         f"merge-path gate: OK — {len(gated)} script(s) invoked by local_gate.sh and "
         f"{len(selftests)} platform self-test(s), all named by an UNCONDITIONAL workflow "
-        f"except: {exemptions}; {len(runnable)} path(s) run as programs, all executable"
+        f"except: {listed}; {len(runnable)} path(s) run as programs, all executable"
+    )
+    print(
+        f"merge-path gate: OK — {len(rows)} row(s) in {_gates.REGISTRY}, one for each of the "
+        f"{len(_gates.population(REPO))} script(s) under {_gates.SCRIPTS}/ and each exemption "
+        f"outside it, every row's stages and workflow jobs matching local_gate.sh and the "
+        f"workflows; {len(_gates.not_controls(rows))} marked not a control"
     )
     entry_exemptions = ", ".join(
-        f"{name.rsplit('/', 1)[-1]} ({why})" for name, why in sorted(EXEMPT_ENTRY.items())
+        f"{name.rsplit('/', 1)[-1]} ({why})" for name, why in sorted(exempt_entry.items())
     )
     print(
         f"merge-path gate: OK — {len(population)} assurance-platform entry point(s) under "

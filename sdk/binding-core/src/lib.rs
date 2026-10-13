@@ -4,14 +4,15 @@
 //!
 //! The PyO3 binding (`sdk/python`) and the napi binding (`sdk/typescript`) marshal host
 //! values into the typed arguments here and marshal the results back; everything they
-//! used to restate lives here once: the signing inputs and their refusal order, the device
-//! signature check, the root-issuer anchor, the verify preamble, the verdict projection,
-//! and the one rendering of a wire refusal.
+//! used to restate lives here once: the signing inputs and their refusal order, the typed
+//! device failure, the root-issuer anchor, the verify preamble, the verdict projection,
+//! and the refusal type.
 //!
 //! No host language is linked: this crate depends on neither PyO3 nor napi, which is what
 //! lets both bindings consume it and what keeps language bindings out of
 //! `mcp-re-client-core`.
 
+mod device;
 mod error;
 mod pinned_issuer;
 mod sign;
@@ -20,6 +21,8 @@ mod verdict;
 mod verify;
 mod verify_args;
 
+pub use device::DeviceFailure;
+pub use device::SignError;
 pub use error::BindingError;
 pub use error::IssuerField;
 pub use pinned_issuer::PinnedIssuer;

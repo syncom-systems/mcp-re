@@ -2432,7 +2432,7 @@ conjunct = "nbf/exp are read out of the published credential, never taken from t
 # still in place — which is the point of the probe. Before the fix this proposition had no
 # falsifier: both values came from one argument, so any control over them passed over every
 # implementation.
-path = "mcp-re-http-profile/src/custody/active_key.rs"
+path = "mcp-re-http-profile/src/custody/active_key/mod.rs"
 anchor = """
             jti: claims.jti,
             nbf: claims.nbf,
@@ -2458,7 +2458,7 @@ conjunct = "the credential a snapshot carries attests the key that snapshot hold
 # returning a well-formed credential for a stale key — publishes a snapshot whose RFC 9421
 # `keyid` names a key this process does not hold, and every response it signs is rejected
 # fleet-wide, discovered at the next request rather than at the issuance.
-path = "mcp-re-http-profile/src/custody/active_key.rs"
+path = "mcp-re-http-profile/src/custody/active_key/mod.rs"
 anchor = """
         if delegated_key_of(&claims)?.to_bytes() != key.public_key().to_bytes() {
             return Err(HttpProfileError::DelegationCredentialInvalid);
@@ -2482,7 +2482,7 @@ conjunct = "every claim except the window comes back exactly as the issuance ask
 # attests the right key — a credential scoped to another deployment, minted under a stale
 # trust epoch, or authorising a different key use. The verifiers would refuse it, which is
 # the point: the failure would be discovered at the next request instead of at issuance.
-path = "mcp-re-http-profile/src/custody/active_key.rs"
+path = "mcp-re-http-profile/src/custody/active_key/mod.rs"
 anchor = """
         if claims != as_requested {
             return Err(HttpProfileError::DelegationCredentialInvalid);
@@ -5466,21 +5466,25 @@ theorem = "THM-0094"
 conjunct = "a condition this SDK originated is reported under the SDK's own prefix, never as a frozen mcp-re.* token the peer did not send"
 path = "sdk/python/python/mcp_re_sdk/transport.py"
 anchor = """
-    return token if _WIRE_CODE.match(token) else None
+            # condition", so it can never be read as something the peer said.
+            message = _error_message(request.id, f"mcp-re-sdk: {type(e).__name__}: {e}")
 """
 weakening = """
-    return token
+            # condition", so it can never be read as something the peer said.
+            message = _error_message(request.id, str(e))
 """
 expect_red = [
   "pytest#tests/test_transport.py::test_a_value_error_that_is_not_a_token_is_labelled_a_local_condition",
+  "pytest#tests/test_transport.py::test_a_value_error_that_merely_says_a_token_is_a_local_condition",
 ]
 note = """
-THE `None` RETURN IS THE CARRIER, not a null-guard. Every caller spells the delivery as
-`_peer_wire_code(...) or "mcp-re-sdk: ..."`, so the ONLY thing separating a local condition
-from a peer verdict is this predicate refusing to call a reset connection, a TLS error or a
-caller-raised timeout a token. Under the weakening the SDK's own failures occupy the field
-that otherwise only ever holds something the peer said, and a caller branching on the frozen
-taxonomy (REQ-14/POL-6) acts on a verdict no peer issued.
+THE PREFIX IS THE CARRIER. A core refusal arrives as the binding's `WireRefusal`, whose
+`.wire_code` is delivered as the token; every other `ValueError` reaching an exchange is the
+SDK's or the caller's own condition and is delivered under `mcp-re-sdk:`. Under the weakening
+a reset connection, a TLS error or a caller-raised timeout occupies the field that otherwise
+only ever holds something the peer said, and a `ValueError` whose text merely spells a token
+is read as one, so a caller branching on the frozen taxonomy (REQ-14/POL-6) acts on a verdict
+no peer issued.
 """
 
 [[probe]]
@@ -5490,21 +5494,22 @@ theorem = "THM-0095"
 conjunct = "a condition this SDK originated is reported under the SDK's own prefix, never as a frozen mcp-re.* token the peer did not send"
 path = "sdk/typescript/src/transport.ts"
 anchor = """
-  return /^mcp-re\\.[a-z0-9_]+$/.test(token) ? token : null;
+  return typeof code === "string" && code.startsWith("mcp-re.") ? code : null;
 """
 weakening = """
-  return token;
+  return (e as Error).message;
 """
 expect_red = [
   "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > still labels a genuine local failure as one",
+  "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > does not read a wire code out of a message that merely says one",
   "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > delivers a network error under the local prefix, not as something the peer said",
 ]
 note = """
-The TypeScript instance of M199, with the same `?? \"mcp-re-sdk: ...\"` spelling at both of
-its call sites. The sibling control -- delivering a CORE failure as its frozen token -- is
-deliberately NOT expected red: it stays green under the weakening, because the weakening
-only widens what counts as a token. A probe that expected it would be measuring the wrong
-direction.
+The TypeScript instance of M199. A core refusal carries its frozen token in the thrown
+error's `code`, which `coreWireCode` reads; the weakening reads the message instead, so a
+local failure's text is delivered in the wire-code field. The sibling control -- delivering a
+CORE failure as its frozen token -- is deliberately NOT expected red: a core refusal's
+message is its token, so it stays green under the weakening.
 """
 
 [[probe]]
@@ -8944,13 +8949,13 @@ theorem = "THM-0077"
 conjunct = "the issuer kid in the minted credential is the one that was PLANNED, not one the signing plan re-derived from configuration"
 path = "mcp-re-proxy/src/startup_plan.rs"
 anchor = "                issuer_kid: response_kid,\n"
-weakening = "                issuer_kid: {\n                    let _ = &response_kid;\n                    response_issuer_kid(config)\n                },\n"
+weakening = "                issuer_kid: {\n                    let _ = &response_kid;\n                    config.state().delegated_signing().issuer_kid().to_string()\n                },\n"
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_issuer_kid_in_the_credential_is_the_one_that_was_planned",
 ]
 note = """
 THE WEAKENING RESTORES THE DEFECT VERBATIM, which is why it is the falsifier for this unit.
-The kid was once derived twice — by `response_issuer_kid`, whose value the startup transcript
+The kid was once derived twice — by the planner, whose value the startup transcript
 prints and which the trust plane excludes from the request-signer set, and again inside the
 delegated wiring, which is the one that reached the credential. Both spelled
 `--delegated-issuer-kid` falling back to `--server-key-id`, so they agreed; nothing made them.
@@ -9992,11 +9997,11 @@ theorem = "THM-0077"
 conjunct = "Every security capability held by the serving runtime is derived from validated semantic owner state"
 path = "mcp-re-proxy/src/signing_plane/mod.rs"
 anchor = """
-            minting.custody.trust_epoch = watch.epoch().map_err(|_| {
+            minting = plan.minting_under(watch.epoch().map_err(|_| {
 """
 weakening = """
-            minting.custody.trust_epoch = watch.epoch().or_else(|_| {
-                Ok::<_, epoch_watch::EpochRefusal>(plan.custody.trust_epoch.clone())
+            minting = plan.minting_under(watch.epoch().or_else(|_| {
+                Ok::<_, epoch_watch::EpochRefusal>(plan.custody().trust_epoch.clone())
             }).map_err(|_| {
 """
 expect_red = [
@@ -11697,7 +11702,7 @@ expect_red = [
 id = "M463-the-root-may-clamp-the-window-never-extend-it"
 unit = "http_profile.delegated_signing_custody"
 conjunct = "an adopted credential's window lies inside the one requested and is open at the instant it was requested"
-path = "mcp-re-http-profile/src/custody/active_key.rs"
+path = "mcp-re-http-profile/src/custody/active_key/mod.rs"
 anchor = """
         if claims.exp > requested_claims.exp || claims.exp <= requested_claims.nbf {
 """
@@ -11938,7 +11943,7 @@ conjunct = "an adopted credential verifies under the root the custody was built 
 # The weakening is the custody as it stood before Ruling 19 B4b: the issuer seam's answer
 # taken on its word. The header test goes red with it because the root check is also what
 # pins the header — `typ`, `alg`, and a `kid` that is the requested root's.
-path = "mcp-re-http-profile/src/custody/active_key.rs"
+path = "mcp-re-http-profile/src/custody/active_key/mod.rs"
 anchor = """
         crate::delegation::root_signed(&credential, &requested.0.kid, root)
             .map_err(|_| IssuanceRefusal::RootKeyMismatch)?;
@@ -12160,7 +12165,7 @@ expect_red = [
 id = "M490-a-root-signing-under-another-key-is-not-recorded-as-an-outage"
 unit = "http_profile.delegated_signing_custody"
 conjunct = "a credential the configured root key did not sign is refused with the root-key-mismatch cause, distinct from an unavailable root"
-path = "mcp-re-http-profile/src/custody/active_key.rs"
+path = "mcp-re-http-profile/src/custody/active_key/mod.rs"
 anchor = """
             .map_err(|_| IssuanceRefusal::RootKeyMismatch)?;
 """
@@ -13099,18 +13104,18 @@ The idle bound closes connections gracefully; counting a serving connection as i
 id = "M541-http-profile-a-delegated-signer-signs-under-a-key-its-block-does-not-name"
 unit = "http_profile.response_emission_binding"
 conjunct = "a delegated response is signed only under the keyid its block names as the server signer"
-path = "mcp-re-http-profile/src/sign.rs"
+path = "mcp-re-http-profile/src/custody/delegated_signer.rs"
 anchor = """
-    if server_signer.keyid == delegated_kid {
+        self.window.key().delegated_kid()
 """
 weakening = """
-    if true {
+        self.window.key().server_signer().subject.as_str()
 """
 expect_red = [
-  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_delegated_response_is_refused_when_the_signer_names_another_key",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::delegated_signer::tests::every_part_is_read_from_the_one_window",
 ]
 note = """
-A signer that told a verifier one key in the block and signed under another would leave only the verifier to notice.
+The block names `server_signer` and the signature is made under `kid()`; both are read from one window's ActiveDelegatedKey, whose construction makes the identity's keyid the credential's delegated_kid. An emitter that read its keyid from anywhere else would sign under a key the block does not name.
 """
 
 [[probe]]
@@ -13776,3 +13781,20 @@ The k8s invariant would move to the producer that does not owe it: a deployment 
 a window that abandons a request its deadline still allows on SIGTERM, while a directly built
 `ServerOptions` would be refused for a pair the drain bounds on its own.
 """
+
+[[probe]]
+id = "M595-a-device-failure-is-never-reported-as-a-wire-code"
+unit = "sdk_binding_core.adapter"
+theorem = "THM-0094"
+conjunct = "a local signing failure is never reported as a wire code the peer did not send"
+note = "Under device custody nothing is signed or sent when the device fails, so the binding core reports a typed device failure carrying the host's error. The weakening reports a failed device as `mcp-re.invalid_signature`, the reading that tells a caller a peer rejected a signature that never existed; the device-failure test must go red."
+path = "sdk/binding-core/src/sign.rs"
+anchor = """
+        (Err(_), Some(e), _) => Err(SignError::Device(DeviceFailure::Failed(e))),
+"""
+weakening = """
+        (Err(_), Some(_), _) => Err(SignError::Refused(BindingError::Wire("mcp-re.invalid_signature"))),
+"""
+expect_red = [
+  "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_device_that_fails_is_a_device_failure_carrying_the_host_error",
+]
