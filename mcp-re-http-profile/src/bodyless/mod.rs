@@ -197,14 +197,14 @@ fn check_request_evidence(
 ///
 /// Refuses before signing if the notification carries a request evidence block that does
 /// not validate, as every `;req`-bound signer does.
-pub fn sign_delegated_accepted_202_with_owned_key(
+///
+/// Crate-private: [`crate::custody::sign_delegated_accepted_202`] is the public path, and
+/// `signer` is read from one [`SigningWindow`](crate::custody::SigningWindow).
+pub(crate) fn emit_delegated_accepted_202(
     request: &HttpRequest,
-    server_delegation: &str,
-    delegated_key: &mcp_re_core::SigningKey,
-    delegated_kid: &str,
-    created: i64,
-    expires: i64,
+    signer: &crate::custody::DelegatedSigner<'_>,
 ) -> Result<HttpResponse, HttpProfileError> {
+    let server_delegation = signer.credential();
     crate::sign::validate_carried_request_block(&request.body)?;
     if server_delegation.len() > crate::ids::MAX_DELEGATION_HEADER_LEN {
         return Err(HttpProfileError::MalformedEvidence(
@@ -235,7 +235,7 @@ pub fn sign_delegated_accepted_202_with_owned_key(
             .iter()
             .map(|n| CoveredComponent::req(n)),
     );
-    let params = params_for(delegated_kid, created, expires, None);
+    let params = params_for(signer.kid(), signer.created(), signer.expires(), None);
     let base = signature_base(
         &components,
         &params,
@@ -250,7 +250,7 @@ pub fn sign_delegated_accepted_202_with_owned_key(
         &components,
         &params,
         &base,
-        delegated_key,
+        signer.key(),
     )?;
     Ok(response)
 }

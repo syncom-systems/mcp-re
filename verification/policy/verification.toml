@@ -7071,8 +7071,9 @@ paths = [
   # `delegated_202_test` three measure the shipped one, is a disposition for the unit's
   # owner. See EX-015 in docs/architecture/review-dispositions.md.
   "mcp-re-http-profile/src/rejection/pre_052_direct_root.rs",
-  # The signing window the emission is bound under.
+  # The signing window the emission is bound under, and the projection the emitters read it through.
   "mcp-re-http-profile/src/custody/window_emission.rs",
+  "mcp-re-http-profile/src/custody/delegated_signer.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -7097,7 +7098,9 @@ tested_symbols = [
   # The emitted signature covers a digest and signature headers the emitter computed, never ones
   # the caller supplied, and the delegated evidence block is inside the digested body.
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::caller_supplied_digest_and_signature_headers_do_not_survive_emission",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_delegated_response_is_refused_when_the_signer_names_another_key",
+  # Every part a delegated emitter signs with is read from one window: the block's signer keyid
+  # and the signature keyid are one value.
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::delegated_signer::tests::every_part_is_read_from_the_one_window",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::the_delegated_response_block_is_inside_the_digested_body",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_bound_response_advertises_the_handle_of_the_request_it_answers",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::an_unsigned_request_cannot_be_answered_with_a_bound_response",
@@ -8717,11 +8720,13 @@ paths = [
   "mcp-re-http-profile/src/custody/issuance_terms.rs",
   "mcp-re-http-profile/src/custody/key_window.rs",
   "mcp-re-http-profile/src/custody/lifecycle_event.rs",
-  "mcp-re-http-profile/src/custody/active_key.rs",
+  "mcp-re-http-profile/src/custody/active_key/mod.rs",
+  "mcp-re-http-profile/src/custody/active_key/stated.rs",
   "mcp-re-http-profile/src/custody/issuance_refusal.rs",
   "mcp-re-http-profile/src/custody/signing_window.rs",
   "mcp-re-http-profile/src/custody/trust_epoch.rs",
   "mcp-re-http-profile/src/custody/window_emission.rs",
+  "mcp-re-http-profile/src/custody/delegated_signer.rs",
 ]
 exported_contracts = []
 # TWO classes, for the reason each of the verifier's propositions carries two. The seal added by
