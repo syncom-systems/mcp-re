@@ -399,10 +399,13 @@ status = "unreviewed"
 # rather than added to a file the ratchet holds at 712. The debt moves WITH the file —
 # dropping the entry because the path changed would launder 712 registered lines as
 # progress — and the number falls to 707 because the actor projection left with it.
+# MCPRE-212: the request-role handle has one owner, `RequestRoleEvidence::of_signed_request`,
+# so the bodyless copy of its derivation goes: 391 (measured at c939c2f) -> 370.
+# `baseline_sha` names that parent.
 [[debt]]
 path = "mcp-re-http-profile/src/bodyless/mod.rs"
-baseline_prod_loc = 408
-baseline_sha = "255465e"
+baseline_prod_loc = 370
+baseline_sha = "c939c2f"
 status = "unreviewed"
 
 [[debt]]

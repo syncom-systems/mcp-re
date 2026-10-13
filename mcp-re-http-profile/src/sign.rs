@@ -126,7 +126,7 @@ pub fn sign_delegated_response_full_with_owned_key(
 ) -> Result<Vec<u8>, HttpProfileError> {
     require_signer_is_delegated_key(server_signer, delegated_kid)?;
     request_block::require_valid(request)?;
-    let request_evidence = crate::verify::bound_request::request_evidence_of(request)?;
+    let request_evidence = crate::evidence::RequestRoleEvidence::of_signed_request(request)?;
     let block = HttpResponseEvidenceBlock {
         profile: PROFILE_TAG.to_owned(),
         server_signer: server_signer.clone(),
