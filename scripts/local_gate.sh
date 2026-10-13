@@ -204,6 +204,9 @@ stage_static() {
     `# The second is a campaign-length debt, and a merge path red for the length of a` \
     `# campaign is a gate nobody can act on. \`control-census --closure\` states the release` \
     `# criterion and is run at closure, by the campaign that owes it.` \
+    `# MCPRE-189: every reference between the policy registries, and the reader rule.` \
+    && tools/verification/check-registries --selftest \
+    && tools/verification/check-registries \
     && python3 scripts/serving_identity_provenance_gate.py --selftest \
     && python3 scripts/serving_identity_provenance_gate.py \
     && python3 scripts/authorization_provenance_gate.py --selftest \

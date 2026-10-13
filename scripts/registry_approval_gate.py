@@ -32,11 +32,12 @@ from __future__ import annotations
 
 import json
 import sys
-import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-POLICY_DIR = REPO / "verification" / "policy"
+sys.path.insert(0, str(REPO / "tools" / "verification"))
+import _registries  # noqa: E402
+
 REVIEWS_DIR = REPO / "verification" / "reviews"
 
 #: Keys that express review/approval STATE. Deliberately not "any key containing the word
@@ -131,13 +132,12 @@ def scan() -> tuple[list[str], int]:
     """(failures, files examined). An empty scope is a failure, not a pass."""
     failures: list[str] = []
     examined = 0
-    for path in sorted(POLICY_DIR.glob("*.toml")):
+    for path in _registries.policy_files(REPO):
         examined += 1
         try:
-            with path.open("rb") as handle:
-                doc = tomllib.load(handle)
-        except tomllib.TOMLDecodeError as exc:
-            failures.append(f"{path.relative_to(REPO)}: unparsable: {exc}")
+            doc = _registries.read(path, path.relative_to(REPO).as_posix())
+        except _registries.ManifestError as exc:
+            failures.append(str(exc))
             continue
         exempt = EXEMPT_KEYS.get(path.name, set())
         for key in offending_keys(doc, exempt=exempt):

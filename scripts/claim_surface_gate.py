@@ -102,7 +102,6 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -112,6 +111,7 @@ sys.path.insert(0, str(REPO / "tools" / "verification"))
 
 from _fingerprint import fingerprint_theorem  # noqa: E402
 from _manifest import ManifestError, load_verification  # noqa: E402
+import _registries  # noqa: E402
 from _claim_corrections import (  # noqa: E402
     CorrectionError,
     chain,
@@ -398,15 +398,9 @@ def theorems_at(commit: str) -> dict | None:
     read, and those are fields, not invariants.
     """
     try:
-        out = subprocess.run(
-            ["git", "show", f"{commit}:verification/policy/theorems.toml"],
-            cwd=REPO, capture_output=True, check=True,
-        ).stdout
-    except Exception:  # noqa: BLE001
-        return None
-    try:
-        return tomllib.loads(out.decode("utf-8"))
-    except Exception:  # noqa: BLE001
+        text = _registries.text_at("theorems", commit, REPO)
+        return None if text is None else _registries.parse(text, f"{commit}:theorems.toml")
+    except ManifestError:
         return None
 
 

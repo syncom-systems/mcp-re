@@ -37,12 +37,11 @@ Stdlib only, like the rest of `tools/verification/`.
 from __future__ import annotations
 
 import re
-import tomllib
 
-from _manifest import POLICY_DIR, SCHEMA_VERSION, ManifestError, _reject_unknown, _require
+import _registries
+from _manifest import SCHEMA_VERSION, ManifestError, _reject_unknown, _require
 from _evidence_class import severity_problem
 
-THEOREMS_TOML = POLICY_DIR / "theorems.toml"
 
 #: `THM-NNNN`, matching the established `ASM-NNNN` convention.
 _ID_RE = re.compile(r"^THM-\d{4}$")
@@ -416,11 +415,5 @@ def load_theorems(unit_ids: set[str], proof_edges: list[dict] | None = None) -> 
     on the direction check; omitting them skips it, so a caller that has not loaded the
     unit catalogue's edges cannot silently claim the stronger validation.
     """
-    if not THEOREMS_TOML.exists():
-        raise ManifestError("verification/policy/theorems.toml: missing")
-    try:
-        with THEOREMS_TOML.open("rb") as handle:
-            doc = tomllib.load(handle)
-    except tomllib.TOMLDecodeError as exc:
-        raise ManifestError(f"theorems.toml: unparsable: {exc}") from exc
+    doc = _registries.document("theorems", required=True)
     return validate_theorems(doc, unit_ids, proof_edges)

@@ -341,24 +341,15 @@ def dispatched_entry_points(root: Path) -> tuple[set[str], str | None]:
     honest report, and a gate that quietly returned `set()` here would instead be the
     "green that measured nothing" shape with the sign flipped.
     """
-    import importlib.util
-    import sys
-    from importlib.machinery import SourceFileLoader
-
     dispatcher = root / ENTRY_ROOT / "verify"
     if not dispatcher.is_file():
         return set(), f"{ENTRY_ROOT}/verify does not exist, so no lane has a known runner"
     previous = list(sys.path)
     sys.path.insert(0, str(root / ENTRY_ROOT))
     try:
-        loader = SourceFileLoader("_merge_path_gate_verify", str(dispatcher))
-        spec = importlib.util.spec_from_loader("_merge_path_gate_verify", loader)
-        module = importlib.util.module_from_spec(spec)
-        # Registered before execution: a `@dataclass` at module level resolves its own
-        # `__module__` through `sys.modules`, and without this the import fails on a file
-        # that is perfectly well-formed when run.
-        sys.modules["_merge_path_gate_verify"] = module
-        loader.exec_module(module)
+        from _load_tool import load_tool
+
+        module = load_tool("verify", "_merge_path_gate_verify", root / ENTRY_ROOT)
         lanes = getattr(module, "LANES", None)
         if not lanes:
             return set(), f"{ENTRY_ROOT}/verify declares no LANES table"

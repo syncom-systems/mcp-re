@@ -13866,7 +13866,7 @@ proposition = "NP-241"
 recorded = "2026-10-04"
 
 [[disposition]]
-id = "CD-20226"
+id = "CD-20450"
 project = "mcp-re-proxy"
 control = "src/lib.rs#tls::routing_header_tests::the_ingress_assertion_header_is_read_only_when_exactly_one_is_present"
 decision = "new-proposition"
@@ -13874,7 +13874,7 @@ proposition = "NP-073"
 recorded = "2026-10-04"
 
 [[disposition]]
-id = "CD-20227"
+id = "CD-20451"
 project = "mcp-re-proxy"
 control = "src/lib.rs#trust_epoch::tests::a_trust_epoch_outage_is_announced_on_its_edges_not_per_poll"
 decision = "new-proposition"
@@ -13882,7 +13882,7 @@ proposition = "NP-242"
 recorded = "2026-10-04"
 
 [[disposition]]
-id = "CD-20227"
+id = "CD-20452"
 project = "mcp-re-proxy"
 control = "src/lib.rs#config_state::continuation_control::tests::a_state_and_its_plan_debug_print_carries_no_credential"
 decision = "new-proposition"
@@ -13954,7 +13954,7 @@ proposition = "NP-249"
 recorded = "2026-10-04"
 
 [[disposition]]
-id = "CD-20245"
+id = "CD-20453"
 project = "mcp-re-client"
 control = "src/lib.rs#config::validation::tests::a_route_whose_target_uri_differs_from_its_audience_is_refused"
 decision = "new-proposition"
@@ -13962,7 +13962,7 @@ proposition = "NP-251"
 recorded = "2026-10-04"
 
 [[disposition]]
-id = "CD-20246"
+id = "CD-20454"
 project = "mcp-re-client"
 control = "src/lib.rs#config::validation::tests::an_empty_expected_audience_hash_is_refused"
 decision = "new-proposition"
@@ -13970,7 +13970,7 @@ proposition = "NP-251"
 recorded = "2026-10-04"
 
 [[disposition]]
-id = "CD-20247"
+id = "CD-20455"
 project = "mcp-re-client"
 control = "src/lib.rs#config::validation::tests::the_request_lifetime_bound_is_exactly_one_to_the_profiles_signature_validity_ceiling"
 decision = "new-proposition"
@@ -13978,7 +13978,7 @@ proposition = "NP-251"
 recorded = "2026-10-04"
 
 [[disposition]]
-id = "CD-20248"
+id = "CD-20456"
 project = "mcp-re-client"
 control = "src/lib.rs#config::validation::tests::the_request_lifetime_ceiling_is_the_profiles"
 decision = "new-proposition"
@@ -14282,7 +14282,7 @@ proposition = "NP-263"
 recorded = "2026-10-04"
 
 [[disposition]]
-id = "CD-20297"
+id = "CD-20457"
 project = "mcp-re-proxy"
 control = "src/lib.rs#async_inner::in_process::tests::an_in_process_inner_states_the_bound_its_embedder_gave"
 decision = "new-proposition"
@@ -14402,7 +14402,7 @@ proposition = "NP-266"
 recorded = "2026-10-04"
 
 [[disposition]]
-id = "CD-20318"
+id = "CD-20458"
 project = "mcp-re-proxy"
 control = "src/lib.rs#materializing_runtime::tests::a_second_install_is_refused_and_the_installed_plane_stays_owned"
 decision = "new-proposition"

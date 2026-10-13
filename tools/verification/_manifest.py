@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import os
 import sys
-import tomllib
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -31,12 +30,12 @@ from _evidence_class import class_problems
 from _evidence_class import severity_problem
 from _premise import class_problem, registration_problems
 from _premise import is_live
+import _registries
+from _registries import REPO_ROOT
+from _registries import ManifestError
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-POLICY_DIR = REPO_ROOT / "verification" / "policy"
-
-VERIFICATION_TOML = POLICY_DIR / "verification.toml"
-ASSUMPTIONS_TOML = POLICY_DIR / "assumptions.toml"
+VERIFICATION_TOML = _registries.path("verification")
+ASSUMPTIONS_TOML = _registries.path("assumptions")
 
 #: The premise registry's own schema. Bumped to 2 by ADR-MCPRE-068 Phase 0C, which made
 #: `premise_class` required of every live record.
@@ -48,8 +47,8 @@ ASSUMPTIONS_TOML = POLICY_DIR / "assumptions.toml"
 #: in their scope — that invalidation is the schema change being handled rather than
 #: tolerated.
 ASSUMPTIONS_SCHEMA_VERSION = 2
-TRUST_BOUNDARIES_TOML = POLICY_DIR / "trust-boundaries.toml"
-TOOLCHAINS_LOCK_TOML = POLICY_DIR / "toolchains.lock.toml"
+TRUST_BOUNDARIES_TOML = _registries.path("trust-boundaries")
+TOOLCHAINS_LOCK_TOML = _registries.path("toolchains")
 
 #: Bumped to 2 by ADR-MCPRE-068 Phase 0A, which made `evidence_class` and
 #: `direct_consequence_severity` required on every unit. The bump is not bookkeeping: the
@@ -443,18 +442,8 @@ def aggregate_verdict(formal_verdicts, hygiene_verdicts=()) -> str:
     return "PASS"
 
 
-class ManifestError(Exception):
-    """A manifest is malformed. Always fatal — unknown provenance is never freshness."""
-
-
 def _load(path: Path) -> dict:
-    if not path.exists():
-        raise ManifestError(f"{path.relative_to(REPO_ROOT)}: missing")
-    try:
-        with path.open("rb") as handle:
-            return tomllib.load(handle)
-    except tomllib.TOMLDecodeError as exc:
-        raise ManifestError(f"{path.relative_to(REPO_ROOT)}: unparsable: {exc}") from exc
+    return _registries.read(path, path.relative_to(REPO_ROOT).as_posix())
 
 
 #: Keys a unit may no longer declare because the fact has ONE authority elsewhere. Named

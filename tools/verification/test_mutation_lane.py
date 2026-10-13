@@ -65,44 +65,21 @@ def _expect_manifest_error(fn, message: str):
 # --- the registry is validated strictly ---------------------------------------
 
 
-def test_the_registry_parses_and_every_probe_names_a_real_unit_and_theorem():
-    """A probe resolving into nothing would be a self-test of an imaginary battery."""
-    import tomllib
-
-    probes = lane.load_probes()
-    assert probes, "the registry must not be empty while V0 claims rest on it"
-    rows = tomllib.load(
-        (lane.REPO_ROOT / "verification/policy/theorems.toml").open("rb")
-    )["theorem"]
-    resting: dict[str, set[str]] = {}
-    for row in rows:
-        for unit in [ref.removeprefix("unit://") for ref in row.get("supported_by", [])] + [row.get("owner", "")]:
-            resting.setdefault(unit, set()).add(row["id"])
-    wrong = []
-    for probe in probes:
-        assert probe["unit"] in UNITS, probe["id"]
-        # `theorem` is optional — a unit may have a probe before it has a registered
-        # claim — but a theorem that IS named must be one that rests on the probe's unit:
-        # the probe defends that theorem's conjunct, and naming another theorem states that
-        # a different proposition is protected.
-        if "theorem" in probe and probe["theorem"] not in resting.get(probe["unit"], set()):
-            wrong.append(f"{probe['id']}: {probe['theorem']} does not rest on {probe['unit']}")
-    assert not wrong, "\n".join(wrong)
-
-
-def test_every_registered_anchor_matches_exactly_one_site_today():
-    """The staleness property, asserted over the real registry: this is the check that
-    turns a refactor into a re-adjudication instead of a silent loss of coverage."""
-    for probe in lane.load_probes():
-        source = (lane.REPO_ROOT / probe["path"]).read_text()
-        assert source.count(probe["anchor"]) == 1, f"{probe['id']} is stale"
-
-
-def test_a_weakening_that_changes_nothing_is_rejected_by_construction():
+def test_a_weakening_that_changes_nothing_is_refused_by_the_loader():
     """A probe whose weakening equals its anchor would apply no weakening at all and then
-    report whatever the battery does normally."""
-    for probe in lane.load_probes():
-        assert probe["anchor"] != probe["weakening"], probe["id"]
+    report whatever the battery does normally. The live registry is held to this by
+    `check-registries`, which loads it."""
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        registry = root / "verification" / "policy" / "mutation-probes.toml"
+        registry.parent.mkdir(parents=True)
+        registry.write_text(
+            '[[probe]]\nid = "T-01"\nunit = "u"\nconjunct = "c"\npath = "a.rs"\n'
+            'anchor = "x"\nweakening = "x"\nexpect_red = ["//a:t#c"]\n'
+        )
+        _expect_manifest_error(lambda: lane.load_probes(root), "a no-op weakening must be refused")
+        registry.write_text(registry.read_text().replace('weakening = "x"', 'weakening = "y"'))
+        assert [p["id"] for p in lane.load_probes(root)] == ["T-01"]
 
 
 # --- the failure modes --------------------------------------------------------
@@ -631,12 +608,17 @@ def test_a_compound_probe_applies_and_reverts_every_site_together():
     compound = [probe for probe in lane.load_probes() if probe.get("also")]
     assert compound, "no probe uses the compound form; this control has nothing to measure"
 
+    import _mutation
+
     body = inspect.getsource(lane.apply)
-    # The sites are validated BEFORE any file is written.
-    assert body.index("STALE") < body.index("write_text"), body
+    resolver = inspect.getsource(_mutation.weaken)
+    # The sites are validated BEFORE any file is written: every site resolves in `weaken`,
+    # which writes nothing, and `apply` writes only what it returned.
+    assert body.index("weaken(") < body.index("write_text"), body
+    assert "STALE" in resolver and "write_text" not in resolver, resolver
     # And each further weakening is applied to the text as already weakened, so two sites in
     # ONE file compound instead of the last one winning.
-    assert "weakened[path].count(anchor)" in body, body
+    assert "weakened[path].count(anchor)" in resolver, resolver
 
     with tempfile.TemporaryDirectory() as raw:
         tree = Path(raw)

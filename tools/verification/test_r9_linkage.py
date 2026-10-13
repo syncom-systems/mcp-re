@@ -29,11 +29,9 @@ Run: python3 tools/verification/test_r9_linkage.py
 
 from __future__ import annotations
 
-import importlib.util
 import subprocess
 import sys
 import tempfile
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent

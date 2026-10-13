@@ -17,7 +17,6 @@ Run with `python3 -m pytest tools/verification/test_evidence_class.py`, or direc
 from __future__ import annotations
 
 import sys
-import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -31,7 +30,8 @@ from _evidence_class import (  # noqa: E402
     class_problems,
     severity_problem,
 )
-from _manifest import POLICY_DIR, SCHEMA_VERSION  # noqa: E402
+import _registries  # noqa: E402
+from _manifest import SCHEMA_VERSION  # noqa: E402
 
 
 def _tested(**over):
@@ -210,7 +210,7 @@ def test_all_the_problems_are_reported_not_just_the_first():
 
 
 def _load(name):
-    return tomllib.loads((POLICY_DIR / name).read_text(encoding="utf-8"))
+    return _registries.read(_registries.POLICY_DIR / name)
 
 
 def test_the_schema_version_was_bumped_for_the_new_required_keys():

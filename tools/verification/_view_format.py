@@ -13,20 +13,25 @@ callers.
 
 from __future__ import annotations
 
+import _registries
+
 #: Where generated views live. Everything in this directory is derived; a file here that
 #: no renderer produces is a drift failure, because nothing can establish it is current.
 GENERATED_ROOT = "verification/generated"
 
 #: The authoritative inputs, named on every page. A view derived from anything else — the
 #: attestation store above all — could not be committed, because it would not reproduce.
-SOURCES = (
-    "verification/policy/theorems.toml",
-    "verification/policy/verification.toml",
-    "verification/policy/assumptions.toml",
-    # Added with the derived boundary view. A page that named three sources while reading
-    # four would understate what can invalidate it, and the banner is the only place a
-    # reader is told what a regeneration depends on.
-    "verification/policy/trust-boundaries.toml",
+SOURCES = tuple(
+    _registries.relative(name)
+    for name in (
+        "theorems",
+        "verification",
+        "assumptions",
+        # Added with the derived boundary view. A page that named three sources while
+        # reading four would understate what can invalidate it, and the banner is the only
+        # place a reader is told what a regeneration depends on.
+        "trust-boundaries",
+    )
 )
 
 

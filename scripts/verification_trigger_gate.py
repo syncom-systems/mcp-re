@@ -55,7 +55,6 @@ Run:  python3 scripts/verification_trigger_gate.py
 from __future__ import annotations
 
 import sys
-import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -72,32 +71,23 @@ from _manifest import (  # noqa: E402
     load_trust_boundaries,
     load_verification,
 )
+import _registries  # noqa: E402
+from _registries import structural_probe_paths  # noqa: E402
 
-#: The ADR-MCPRE-068 structural probes, whose injection sites the lane reads.
-STRUCTURAL_PROBES = REPO / "verification" / "policy" / "structural-probes.toml"
 
-
-def structural_probe_sites(registry: Path) -> list[str]:
+def structural_probe_sites(probes: list[dict]) -> list[str]:
     """Every tree file a registered structural probe READS, derived from the registry.
 
     NOT a fingerprint input — no unit declares `structural://` before ADR-MCPRE-068 Phase
     0D, and the components land with those declarations. It belongs in the trigger set
     anyway, and for the same reason the fingerprint inputs do: an in-crate probe injects a
-    module declaration into a parent it must not already contain, and a boundary probe
-    claims to correspond to a ```compile_fail doctest in a named file. Both are
-    RE-ADJUDICATION triggers — change either and the probe may become stale, may start
+    module declaration into a parent it must not already contain, a boundary probe claims to
+    correspond to a ```compile_fail doctest in a named file, and a relaxation edits named
+    files to open the boundary. All are RE-ADJUDICATION triggers — change either and the probe may become stale, may start
     attacking a boundary that moved, or may silently stop being the case it cites — and a
     lane that does not re-run cannot report it.
     """
-    if not registry.is_file():
-        return []
-    doc = tomllib.load(registry.open("rb"))
-    sites: list[str] = []
-    for probe in doc.get("probe", []):
-        for key in ("insertion_parent", "doc_path"):
-            if probe.get(key):
-                sites.append(str(probe[key]))
-    return sorted(set(sites))
+    return sorted(structural_probe_paths(probes))
 
 
 def fingerprint_inputs() -> list[str]:
@@ -213,28 +203,23 @@ def selftest() -> int:
     # The structural-probe derivation. A site read by a probe and covered by no filter is
     # a probe that cannot be re-adjudicated when the code under it moves, and the failure
     # is silent: the lane simply does not run.
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        registry = Path(tmp) / "structural-probes.toml"
-        registry.write_text(
-            'schema_version = 1\n[[probe]]\ninsertion_parent = "a/src/mod.rs"\n'
-            '[[probe]]\ndoc_path = "b/src/lib.rs"\n',
-            encoding="utf-8",
-        )
-        sites = structural_probe_sites(registry)
-        ok = sites == ["a/src/mod.rs", "b/src/lib.rs"]
-        print(f"  {'ok  ' if ok else 'FAIL'}  a probe's injection and documented sites are required inputs")
-        if not ok:
-            failed = True
-            print(f"        got {sites}")
-        uncovered = check('on:\n  pull_request:\n    paths:\n      - "z/**"\n  push:\n    paths:\n      - "z/**"\n', sites)
-        ok = any("a/src/mod.rs" in f for f in uncovered)
-        print(f"  {'ok  ' if ok else 'FAIL'}  an uncovered probe site fails the gate")
-        if not ok:
-            failed = True
-    ok = structural_probe_sites(Path(tmp) / "gone.toml") == []
-    print(f"  {'ok  ' if ok else 'FAIL'}  a registry that does not exist contributes no requirement")
+    probes = [
+        {"id": "S1", "insertion_parent": "a/src/mod.rs"},
+        {"id": "S2", "doc_path": "b/src/lib.rs", "relaxation": [{"path": "c/src/owner.rs"}]},
+    ]
+    sites = structural_probe_sites(probes)
+    ok = sites == ["a/src/mod.rs", "b/src/lib.rs", "c/src/owner.rs"]
+    print(f"  {'ok  ' if ok else 'FAIL'}  a probe's injection, documented and relaxed sites are required inputs")
+    if not ok:
+        failed = True
+        print(f"        got {sites}")
+    uncovered = check('on:\n  pull_request:\n    paths:\n      - "z/**"\n  push:\n    paths:\n      - "z/**"\n', sites)
+    ok = any("a/src/mod.rs" in f for f in uncovered)
+    print(f"  {'ok  ' if ok else 'FAIL'}  an uncovered probe site fails the gate")
+    if not ok:
+        failed = True
+    ok = structural_probe_sites([]) == []
+    print(f"  {'ok  ' if ok else 'FAIL'}  no registered probe contributes no requirement")
     if not ok:
         failed = True
 
@@ -294,7 +279,7 @@ def main(argv: list[str]) -> int:
     if not inputs:
         print("verification-trigger gate: FAILED — the fingerprint read set is empty")
         return 1
-    required = sorted(set(inputs) | set(structural_probe_sites(STRUCTURAL_PROBES)))
+    required = sorted(set(inputs) | set(structural_probe_sites(_registries.rows("structural-probes", "probe"))))
     text = WORKFLOW.read_text(encoding="utf-8")
     try:
         failures = check(text, required)

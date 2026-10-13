@@ -63,9 +63,9 @@ Stdlib only, like the rest of this layer.
 from __future__ import annotations
 
 import re
-import tomllib
 from pathlib import Path
 
+import _registries
 from _manifest import ManifestError
 import _rust_targets
 
@@ -125,9 +125,7 @@ def load_probes(registry: Path) -> list[dict]:
     """
     if not registry.is_file():
         return []
-    with registry.open("rb") as handle:
-        doc = tomllib.load(handle)
-    probes = doc.get("probe", [])
+    probes = _registries.read(registry).get("probe", [])
     seen: set[str] = set()
     for index, probe in enumerate(probes):
         where = f"{registry.name} [[probe]] #{index + 1}"

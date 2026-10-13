@@ -48,20 +48,16 @@ Run:  tools/verification/check-views
 
 from __future__ import annotations
 
-import importlib.util
 import sys
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+from _load_tool import load_tool  # noqa: E402
 from _manifest import ManifestError  # noqa: E402
 
-_loader = SourceFileLoader("generate_views", str(HERE / "generate-views"))
-_spec = importlib.util.spec_from_loader("generate_views", _loader)
-generate_views = importlib.util.module_from_spec(_spec)
-_loader.exec_module(generate_views)
+generate_views = load_tool("generate-views", "generate_views")
 
 
 def empty_scope_is_failure(rendered: int) -> bool:

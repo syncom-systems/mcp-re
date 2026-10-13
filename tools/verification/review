@@ -45,6 +45,7 @@ from _assurance_graph import (  # noqa: E402
 )
 from _evidence_class import SEVERITIES  # noqa: E402
 from _approvals import ApprovalError, entry_text, ledger_state, load_ledger  # noqa: E402
+import _registries  # noqa: E402
 from _fingerprint import (  # noqa: E402
     fingerprint_theorem,
     fingerprint_unit,
@@ -323,8 +324,8 @@ def review_backing(
     as it stands. Assumptions need an entry approval at their current text; theorems are
     refuted only by an entry approval at some other text (see `ledger_state`)."""
     registry = {
-        "THM": (REPO_ROOT / "verification/policy/theorems.toml").read_text(encoding="utf-8"),
-        "ASM": (REPO_ROOT / "verification/policy/assumptions.toml").read_text(encoding="utf-8"),
+        "THM": _registries.text("theorems", REPO_ROOT),
+        "ASM": _registries.text("assumptions", REPO_ROOT),
     }
     subjects = [row["id"] for row in theorems.get("theorem", [])] + [
         row["id"] for row in assumptions.get("assumption", [])

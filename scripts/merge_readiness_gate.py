@@ -131,6 +131,7 @@ from _evidence import MALFORMED_LANE, PREREQUISITE_KINDS, required_lanes  # noqa
 from _fingerprint import WORKSPACE_BUILD_INPUTS  # noqa: E402
 from _load_tool import load_tool  # noqa: E402
 from _manifest import SCHEMA_VERSION, load_verification  # noqa: E402
+import _registries  # noqa: E402
 
 #: The only three answers. A caller that wants to know whether to merge reads exactly one
 #: of these; there is deliberately no fourth "green except…" state to argue with.
@@ -335,7 +336,7 @@ def git(*args: str) -> str:
 
 
 #: The registry whose `[[unit]]` entries decide which lanes a candidate needs.
-VERIFICATION_TOML = "verification/policy/verification.toml"
+VERIFICATION_TOML = _registries.relative("verification")
 
 
 def manifest_at(sha: str) -> dict:
@@ -371,13 +372,13 @@ def manifest_at(sha: str) -> dict:
         reason `load_verification` refuses it: the lane names would be read under a schema
         nobody here implements.
     """
-    import tomllib
-
-    blob = git("show", f"{sha}:{VERIFICATION_TOML}")
     try:
-        doc = tomllib.loads(blob)
-    except tomllib.TOMLDecodeError as exc:
-        raise Undecidable(f"{VERIFICATION_TOML} at {sha[:12]} is unparsable: {exc}") from exc
+        blob = _registries.text_at("verification", sha, REPO)
+        if blob is None:
+            raise Undecidable(f"{VERIFICATION_TOML} is absent at {sha[:12]}")
+        doc = _registries.parse(blob, f"{VERIFICATION_TOML} at {sha[:12]}")
+    except _registries.ManifestError as exc:
+        raise Undecidable(str(exc)) from exc
     if doc.get("schema_version") != SCHEMA_VERSION:
         raise Undecidable(
             f"{VERIFICATION_TOML} at {sha[:12]} declares schema_version "

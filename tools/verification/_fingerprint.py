@@ -138,7 +138,6 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
-import tomllib
 from contextvars import ContextVar
 from functools import lru_cache
 
@@ -149,6 +148,7 @@ from _ecosystems import formal_source_patterns
 from _ecosystems import unit_ecosystem
 from _ecosystems import unit_projects
 from _lean_sources import generated_model_paths, LAKEFILE, theorem_source_paths
+import _registries
 import _rust_targets
 from _premise import is_model_registration
 from _manifest import (
@@ -510,15 +510,10 @@ def _mutation_probes(unit_id: str) -> dict[str, str]:
     registry entry is the claim, so the entry's content is what participates. Same argument,
     and same shape, as `_trusted_assumptions`.
     """
-    registry = REPO_ROOT / "verification" / "policy" / "mutation-probes.toml"
-    _record(registry.relative_to(REPO_ROOT).as_posix())
-    if not registry.is_file():
-        return {}
-    with registry.open("rb") as handle:
-        doc = tomllib.load(handle)
+    _record(_registries.relative("mutation-probes"))
     return {
         probe["id"]: canonical_digest(probe)
-        for probe in doc.get("probe", [])
+        for probe in _registries.rows("mutation-probes", "probe")
         if probe.get("unit") == unit_id
     }
 
@@ -526,6 +521,9 @@ def _mutation_probes(unit_id: str) -> dict[str, str]:
 #: The lane that decides what "a declared control went red" means.
 MUTATION_LANE_INPUTS = (
     "tools/verification/verify-mutations",
+    # The registry's schema and what a probe's sites resolve to: whether an anchor is STALE
+    # is decided here, before the lane weakens anything.
+    "tools/verification/_mutation.py",
     # What a probe's `expect_red` label RUNS: the label is resolved to its crate root and
     # features through the build-graph table, and the ecosystem adapter builds the argv and
     # reads the result. Either one changing changes what a recorded red means.
@@ -540,8 +538,8 @@ def _mutation_lane_identity(unit: dict) -> dict[str, str]:
     return _digest_paths(list(MUTATION_LANE_INPUTS))
 
 
-def _registry_entries(filename: str, key: str, unit_id: str) -> dict[str, str]:
-    """Each record in `filename` scoped to this unit, digested WHOLE.
+def _registry_entries(name: str, key: str, unit_id: str) -> dict[str, str]:
+    """Each record in registry `name` scoped to this unit, digested WHOLE.
 
     The generalization of `_mutation_probes`, and it exists because ADR-MCPRE-068 added two
     more registries with the same property: ids alone would let a record be hollowed out —
@@ -549,15 +547,10 @@ def _registry_entries(filename: str, key: str, unit_id: str) -> dict[str, str]:
     widened, a measurement's protocol pointed at a different corpus — with no unit deriving
     DIRTY. The registry entry IS the claim, so the entry's content participates.
     """
-    registry = REPO_ROOT / "verification" / "policy" / filename
-    _record(registry.relative_to(REPO_ROOT).as_posix())
-    if not registry.is_file():
-        return {}
-    with registry.open("rb") as handle:
-        doc = tomllib.load(handle)
+    _record(_registries.relative(name))
     return {
         record["id"]: canonical_digest(record)
-        for record in doc.get(key, [])
+        for record in _registries.rows(name, key)
         if record.get("unit") == unit_id
     }
 
@@ -812,13 +805,13 @@ def fingerprint_unit(
         # why they could not land at 0B: a component that is `{}` everywhere would have
         # spent a whole re-attestation on nothing.
         "structural_probes": (
-            _registry_entries("structural-probes.toml", "probe", unit["id"])
+            _registry_entries("structural-probes", "probe", unit["id"])
             if claims_structural_evidence(unit)
             else {}
         ),
         "structural_lane_identity": _structural_lane_identity(unit),
         "measurements": (
-            _registry_entries("measurements.toml", "measurement", unit["id"])
+            _registry_entries("measurements", "measurement", unit["id"])
             if claims_measured_evidence(unit)
             else {}
         ),

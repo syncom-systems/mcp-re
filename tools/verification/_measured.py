@@ -47,9 +47,9 @@ Stdlib only, like the rest of this layer.
 from __future__ import annotations
 
 import re
-import tomllib
 from pathlib import Path
 
+import _registries
 from _manifest import ManifestError
 
 #: The two mechanical control shapes — ADR-MCPRE-068 §4.1, owner Ruling 4.
@@ -76,9 +76,7 @@ def load_measurements(registry: Path) -> list[dict]:
     """The registry, validated strictly — an unknown key is a failure, not an ignored field."""
     if not registry.is_file():
         return []
-    with registry.open("rb") as handle:
-        doc = tomllib.load(handle)
-    measurements = doc.get("measurement", [])
+    measurements = _registries.read(registry).get("measurement", [])
     seen: set[str] = set()
     for index, measurement in enumerate(measurements):
         _validate(f"{registry.name} [[measurement]] #{index + 1}", measurement, seen)
