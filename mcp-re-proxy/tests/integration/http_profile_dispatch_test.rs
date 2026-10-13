@@ -177,7 +177,9 @@ fn tier_over(store: Arc<dyn AsyncAtomicReplayStore>) -> AsyncReplayTier {
 }
 
 fn durable_tier() -> AsyncReplayTier {
-    tier_over(Arc::new(DurableTestStore(InMemoryAsyncAtomicReplayStore::new())))
+    tier_over(Arc::new(DurableTestStore(
+        InMemoryAsyncAtomicReplayStore::new(),
+    )))
 }
 
 /// The in-memory async store as it declares itself: the single-process reference class.
@@ -194,7 +196,9 @@ fn dispatch(
     tokio::runtime::Builder::new_current_thread()
         .build()
         .expect("runtime")
-        .block_on(dispatch_request_with_async_tier(verified, tier, None, cfg, NOW))
+        .block_on(dispatch_request_with_async_tier(
+            verified, tier, None, cfg, NOW,
+        ))
 }
 
 // --- AT1: fleet-strict refuses a sub-minimum declared tier -------------------
@@ -207,8 +211,8 @@ fn fleet_strict_refuses_redis_async_tier() {
         fleet_strict: true,
         tier: Some(ReplayDurabilityTier::AsyncReplicatedBounded), // ...but the tier is sub-minimum
     };
-    let err = dispatch(&verified, &tier, &cfg)
-        .expect_err("fleet-strict must refuse a redis-async tier");
+    let err =
+        dispatch(&verified, &tier, &cfg).expect_err("fleet-strict must refuse a redis-async tier");
     assert_eq!(
         err,
         ProxyDispatchError::SubMinimumReplayTier(ReplayDurabilityTier::AsyncReplicatedBounded)
@@ -273,8 +277,7 @@ fn fleet_strict_admits_linearizable_tier() {
         fleet_strict: true,
         tier: Some(ReplayDurabilityTier::Linearizable),
     };
-    dispatch(&verified, &tier, &cfg)
-        .expect("linearizable meets the strict-production minimum");
+    dispatch(&verified, &tier, &cfg).expect("linearizable meets the strict-production minimum");
 }
 
 // --- AT4: the core single-process refusal fires BENEATH the tier gate --------
