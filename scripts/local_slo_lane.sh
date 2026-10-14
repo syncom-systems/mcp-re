@@ -138,6 +138,15 @@ echo "=== building (-c opt, $BENCH and the proxy it spawns) ==="
 bazel build -c opt "$BENCH" \
   || { echo "local-slo-lane: FAIL — the bench or the proxy did not build." >&2; exit 1; }
 
+# The harness drives the host's `docker` CLI to bring up its Redis fleet. A test's PATH is
+# Bazel's fixed `/bin:/usr/bin:/usr/local/bin` and its HOME is the sandbox's, so a CLI
+# installed elsewhere (Homebrew, colima) and the active docker context are invisible to it.
+# The run is handed PATH, and DOCKER_HOST resolved once from the active context.
+if [[ -z "${DOCKER_HOST:-}" ]]; then
+  DOCKER_HOST="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
+  [[ -n "$DOCKER_HOST" ]] && export DOCKER_HOST
+fi
+
 # One measurement. `--exact` selects the single bench fn; NEVER `--ignored` (see header).
 run_one() {
   local cores="$1" out="$2" log="$3"
@@ -147,7 +156,8 @@ run_one() {
   MCP_RE_LOADGEN_MODE="$MODE" \
   MCP_RE_LOADGEN_HW_CLASS="$HW" \
   MCP_RE_LOADGEN_OUT="$out" \
-    bazel run -c opt --noshow_progress --ui_event_filters=-info "$BENCH" \
+    bazel run -c opt --noshow_progress --ui_event_filters=-info \
+      --test_env=PATH ${DOCKER_HOST:+--test_env=DOCKER_HOST} "$BENCH" \
       -- tls_load_harness_bench --exact --nocapture >"$log" 2>&1 || true
   grep -E 'declared_cores|successes/failures|throughput|added_latency' "$log" || true
 
