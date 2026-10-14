@@ -254,6 +254,10 @@ stage_static() {
     `# #1172: which runs may close assurance, and that the closure job calls the authority.` \
     && tools/verification/assurance-closure --selftest \
     && python3 tools/verification/test_assurance_closure.py \
+    `# #1173: every committed closure record agrees with itself and with its target tree.` \
+    && tools/verification/closure-record --selftest \
+    && python3 tools/verification/test_closure_record.py \
+    && tools/verification/closure-record --verify \
     `# ADR-MCPRE-068 Phase 0C. The premise ontology: every LIVE premise typed, every` \
     `# withdrawn one untyped, an external boundary naming WHO guarantees WHAT across WHICH` \
     `# interface, and a discharging event that is a tagged predicate rather than a sentence.` \

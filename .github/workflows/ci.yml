@@ -642,6 +642,11 @@ jobs:
           # verification.yml's closure job calls the authority rather than counting axes.
           tools/verification/assurance-closure --selftest
           python3 tools/verification/test_assurance_closure.py
+          # #1173. A committed closure record is well formed, its digests are the digests
+          # of the identities it lists, and its target commit resolves to its target tree.
+          tools/verification/closure-record --selftest
+          python3 tools/verification/test_closure_record.py
+          tools/verification/closure-record --verify
           # ADR-MCPRE-068 Phase 0C. The premise ontology, and the composition §7 found
           # missing: which typed premises each declared root ultimately rests on. Both ends
           # of that join carry `unit://` URIs, and comparing them verbatim reported that no

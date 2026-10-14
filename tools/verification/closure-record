@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Check committed assurance-closure records, or compare one with a tree — #1173.
+
+`--verify` (the default) checks every record under `verification/closures/`, or the files
+named: each is well formed, its aggregate digests are the digests of the identities it
+lists, and its target commit resolves to its target tree. A record is a statement about
+its target, so it stays valid however far `main` advances.
+
+`--compare FILE` derives the current tree's identities with `review --json` and names
+every identity that differs from the record's. IDENTICAL is a report about content
+identity. It does not make the compared tree fresh: a closure record is not an attestation
+and establishes nothing about any tree but its target.
+
+Run:  tools/verification/closure-record [--verify] [FILE ...]
+      tools/verification/closure-record --compare FILE
+      tools/verification/closure-record --selftest
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import _closure_record as cr  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TOOLS = REPO_ROOT / "tools" / "verification"
+
+
+def load(path: Path) -> object:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"_unreadable": str(exc)}
+
+
+def verify(paths: list[Path]) -> int:
+    failures = 0
+    for path in paths:
+        record = load(path)
+        found = cr.verify(record, REPO_ROOT) if isinstance(record, dict) and "_unreadable" not in record else [f"unreadable: {record}"]
+        committed = path.parent == REPO_ROOT / cr.DIRECTORY
+        if not found and committed and path.name != f"{record['target']['commit']}.json":
+            found = [f"named {path.name}, but its target is {record['target']['commit']}"]
+        rel = path.relative_to(REPO_ROOT) if path.is_absolute() and path.is_relative_to(REPO_ROOT) else path
+        if found:
+            failures += 1
+            for problem in found:
+                print(f"  FAIL  {rel}: {problem}")
+        else:
+            print(f"  ok    {rel}: {record['target']['commit'][:12]} closed {len(record['units'])} unit(s), {len(record['theorems'])} theorem(s)")
+    print(f"CLOSURE RECORD: {'FAIL' if failures else 'PASS'} — {len(paths)} record(s), {failures} failing")
+    return 1 if failures else 0
+
+
+def compare(path: Path) -> int:
+    record = load(path)
+    found = cr.problems(record)
+    if found:
+        for problem in found:
+            print(f"  FAIL  {problem}")
+        print("CLOSURE COMPARISON: FAIL — the record is malformed")
+        return 1
+    proc = subprocess.run(
+        [str(TOOLS / "review"), "--json", "--attestations", str(REPO_ROOT / ".verification" / "no-attestations")],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stderr.strip())
+        print("CLOSURE COMPARISON: FAIL — review --json did not answer")
+        return 1
+    rc, dirty = cr.git(REPO_ROOT, "status", "--porcelain")
+    tree = None if dirty or rc != 0 else cr.git(REPO_ROOT, "rev-parse", "HEAD^{tree}")[1]
+    moved = cr.compare(record, cr.current_identities(json.loads(proc.stdout), tree))
+    print(f"record {path.name}: target {record['target']['commit']}")
+    for line in moved:
+        print(f"  moved  {line}")
+    print("  (a comparison reports content identity; it establishes nothing about this tree)")
+    print(f"CLOSURE COMPARISON: {'DIFFERENT' if moved else 'IDENTICAL'} — {len(moved)} identit(ies) moved")
+    return 1 if moved else 0
+
+
+def selftest() -> int:
+    """A record agrees with itself; one edited identity is caught by its digest."""
+    review = {
+        "theorems": {"THM-A": {"deprecated": False}},
+        "root_completeness": {"roots": ["THM-A"], "verdict": "COMPLETE"},
+        "identities": {
+            "policy_revision": "p",
+            "review_ledger": "sha256:l",
+            "units": {"u": "sha256:u"},
+            "theorems": {"THM-A": {"fingerprint": "sha256:t", "review_digest": "sha256:r"}},
+        },
+    }
+    closure = {
+        "verdict": "PASS",
+        "target": {"commit": "c", "tree": "t"},
+        "run": {"id": 1, "attempt": 1, "event": "workflow_dispatch", "evidence_commit": "c"},
+        "counts": {"active": 1, "review_current": 1, "evidence_established": 1, "currently_verified": 1, "roots": 1, "roots_established": 1},
+    }
+    record = cr.build(closure, review)
+    tampered = json.loads(json.dumps(record))
+    tampered["units"][0]["fingerprint"] = "sha256:other"
+    cases = [
+        ("a built record has no problems", cr.problems(record) == []),
+        ("an edited unit fingerprint breaks units_digest", bool(cr.problems(tampered))),
+        ("an identical tree compares identical", cr.compare(record, cr.identities(record)) == []),
+    ]
+    for label, ok in cases:
+        print(f"  {'ok  ' if ok else 'FAIL'} {label}")
+    failed = sum(1 for _, ok in cases if not ok)
+    print(f"CLOSURE RECORD: {'FAIL' if failed else 'PASS'} (selftest)")
+    return 1 if failed else 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("files", nargs="*", type=Path)
+    parser.add_argument("--verify", action="store_true", help="the default")
+    parser.add_argument("--compare", type=Path, metavar="FILE")
+    parser.add_argument("--selftest", action="store_true")
+    args = parser.parse_args()
+    if args.selftest:
+        return selftest()
+    if args.compare:
+        return compare(args.compare.resolve())
+    paths = [p.resolve() for p in args.files] or sorted((REPO_ROOT / cr.DIRECTORY).glob("*.json"))
+    return verify(paths)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

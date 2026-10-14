@@ -53,6 +53,16 @@ def text_digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def ledger_identity(repo_root: Path) -> str:
+    """One digest over every ledger file's path and bytes: which approvals were in force."""
+    files = [
+        {"file": path.relative_to(repo_root).as_posix(), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+        for path in sorted(repo_root.glob(LEDGER_GLOB))
+    ]
+    canonical = json.dumps(files, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def load_ledger(repo_root: Path) -> list[dict]:
     """Every ledger line, each with `_file` set to its repository-relative path."""
     out: list[dict] = []
