@@ -14,6 +14,10 @@
 #                                  digest-verified preserved archive
 #   negative    ubuntu-24.04      hostile edits that the production lanes must refuse
 #   aggregate   ubuntu-24.04      `verify --aggregate --gate` over every record above
+#   assurance-closure             a complete run only: `assurance-closure` attests the
+#               ubuntu-24.04      aggregate's evidence into a fresh store and decides whether
+#                                  every theorem is review-current, established and currently
+#                                  verified and every system root complete. It runs no lane.
 #
 # Pull requests and pushes to main measure the units their change affects (`select-units`); a
 # change `select-units` cannot scope (the platform itself, an oversized scope) measures every
@@ -905,6 +909,9 @@ jobs:
     outputs:
       measure: ${{ steps.scope.outputs.measure }}
       args: ${{ steps.scope.outputs.args }}
+      # True only for a run asked for as complete. A pull-request or push run that expands
+      # to every unit is still false: completeness is the request, not the reach.
+      complete: ${{ steps.scope.outputs.complete }}
     steps:
       # Depth 2: a pull request checks out its MERGE commit, and `select-units` measures the
       # change against that commit's first parent, the base it merges into.
@@ -918,7 +925,7 @@ jobs:
           case "${{ github.event_name }}" in
             schedule|workflow_dispatch)
               echo "complete run: a ${{ github.event_name }} event measures every unit"
-              { echo "args="; echo "measure=true"; } >> "$GITHUB_OUTPUT"
+              { echo "args="; echo "measure=true"; echo "complete=true"; } >> "$GITHUB_OUTPUT"
               exit 0 ;;
             push)
               base='${{ github.event.before }}' ;;
@@ -929,6 +936,7 @@ jobs:
                 base='${{ github.event.pull_request.base.sha }}'
               fi ;;
           esac
+          echo "complete=false" >> "$GITHUB_OUTPUT"
           case "$base" in HEAD^1) ;; *) git fetch -q --no-tags --depth=1 origin "$base" || true ;; esac
           mkdir -p .verification/scope
           python3 tools/verification/select-units --base "$base" \
@@ -1205,5 +1213,36 @@ jobs:
         with:
           name: verification-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: .verification/composed
+          if-no-files-found: warn
+          retention-days: 14
+
+  # A complete run's continuation: the evidence `aggregate` composed becomes attestations,
+  # and the theorems are evaluated over them. No lane runs here; everything this job reads
+  # was measured above, bound to the fingerprints it was measured at.
+  assurance-closure:
+    name: establish assurance closure
+    needs: [scope, aggregate]
+    if: ${{ !cancelled() && needs.aggregate.result == 'success' && needs.scope.outputs.complete == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - uses: actions/download-artifact@v8
+        with:
+          name: verification-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence
+      - name: Attest this run's evidence and decide assurance closure
+        run: |
+          ./tools/verification/assurance-closure --evidence "$RUNNER_TEMP/evidence" \
+            --event "${{ github.event_name }}" --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" --out "$RUNNER_TEMP/closure"
+      - name: The attestations, theorem review and closure verdict
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: assurance-closure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/closure
           if-no-files-found: warn
           retention-days: 14
