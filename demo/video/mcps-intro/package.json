@@ -19,12 +19,14 @@
     "@motion-canvas/ffmpeg": "^3.17.2",
     "@motion-canvas/ui": "^3.17.2",
     "@motion-canvas/vite-plugin": "^3.17.2",
+    "fast-glob": "file:vendor/fast-glob",
     "vite": "^8.3.4"
   },
   "devDependencies": {
     "typescript": "^7.0.2"
   },
   "overrides": {
-    "@xmldom/xmldom": "^0.9.12"
+    "@xmldom/xmldom": "^0.9.12",
+    "fast-glob": "$fast-glob"
   }
 }
