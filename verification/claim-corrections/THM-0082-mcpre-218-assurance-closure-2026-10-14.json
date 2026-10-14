@@ -1,0 +1,25 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_claim"
+  ],
+  "corrections": [
+    {
+      "field": "statement",
+      "id": "C1",
+      "new": "The response-signing authority the serving path holds was built by the composition root from\nthe custody state the deployment validated: the root opens one key source through the\nmaterializer and constructs no key source of its own. The materialized signing-role owner, the\nrole-separation witness, retains that source; the root consumes only the established products\nthe witness hands out — its channel credential, its response public key, and the witness itself\nas the response signer — and installs the signing plane from that same witness.\n`SigningPlane::materialize` takes the witness by type and has no other public entry, so a\nsigning plane cannot be built over a source whose two roles were never compared.\n",
+      "old": "The response-signing authority the serving path holds was built by the composition root from\nthe custody state the deployment validated: the root opens one key source through the\nmaterializer, reads it through the role-separation witness's one borrowed projection,\nconstructs no key source of its own, and installs the signing plane from that same witness.\n`SigningPlane::materialize` takes the witness by type and has no other public entry, so a\nsigning plane cannot be built over a source whose two roles were never compared.\n",
+      "reason": "this theorem's own claim, field statement; see the record's reason."
+    }
+  ],
+  "from_fingerprint": "sha256:61b545323919686d1e418879b1e785c5baf3d682210af676e337c5cb86c435fe",
+  "packet": "verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md",
+  "product_behavior_unchanged": true,
+  "reason": "Owner ruling 2026-10-14 item 3. MCPRE-164 (#1111) deleted the witness's borrowed `key_source()` projection; the key source no longer leaves `MaterializedSigningRoles`. The statement now names the current path: the witness retains the source and the root consumes its established products (channel credential, response public key, and the witness itself as the response signer). Security consequence and scope unchanged.",
+  "root_consequence_unchanged": true,
+  "ruling": "Owner ruling of 2026-10-14 for MCPRE-218 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md), which approved this correction and the specification review at the corrected fingerprint. Recorded under the ADR-MCPRE-068 Phase-1 class it belongs to: a precision correction that leaves the accepted promise intact.",
+  "severity_after": "high",
+  "severity_before": "high",
+  "subject": "THM-0082",
+  "to_fingerprint": "sha256:3f5a3cf9b340ccc1afcdda33834c1d5cfaa3200d3ba804060bbbd64352dd3b6a"
+}

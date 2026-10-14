@@ -2715,10 +2715,11 @@ device-resident.
 """
 direct_consequence_severity = "high"
 scope = """
-Establishes refusal by the classifier over the relations it actually decides. Three are live —
+Establishes refusal by the classifier over the relations it actually decides. Four are live —
 X2a, that a delegated channel key object must name a backend the deployment already reaches,
-X6, that a deny list no reachable authorization profile will consult enforces nothing, and
-X9 — and those are what a validated deployment is held to.
+X6, that a deny list no reachable authorization profile will consult enforces nothing, X9, and
+X10, the `ChannelCredentialCustodyState` × `ShardTopology` delegated-TLS-depth relation — and
+those are what a validated deployment is held to.
 
 X9 refuses a `--fleet` deployment whose trust-revocation state has no shared epoch source. It
 reads the epoch-source decision from `TrustRevocationState` and the fleet decision from
@@ -2730,7 +2731,12 @@ fact. It does not establish that the classifier is consulted on every startup pa
 """
 owner = "proxy.cross_machine_legality"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.cross_machine_legality"]
+supported_by = [
+  "unit://proxy.cross_machine_legality",
+  # X10's refusal and its battery live in this unit, which `proxy.cross_machine_legality`
+  # names as X10's owner.
+  "unit://proxy.delegated_tls_depth_refusal",
+]
 depends_on = []
 
 # --- The §28.5 GAP terminals: a real owner, a ratified proposition, no support closure. ---
@@ -4313,8 +4319,10 @@ title = "The serving path signs under the credential source materialization prod
 statement = """
 The response-signing authority the serving path holds was built by the composition root from
 the custody state the deployment validated: the root opens one key source through the
-materializer, reads it through the role-separation witness's one borrowed projection,
-constructs no key source of its own, and installs the signing plane from that same witness.
+materializer and constructs no key source of its own. The materialized signing-role owner, the
+role-separation witness, retains that source; the root consumes only the established products
+the witness hands out — its channel credential, its response public key, and the witness itself
+as the response signer — and installs the signing plane from that same witness.
 `SigningPlane::materialize` takes the witness by type and has no other public entry, so a
 signing plane cannot be built over a source whose two roles were never compared.
 """
@@ -4531,10 +4539,11 @@ depends_on = []
 id = "THM-0092"
 title = "A request whose replay state was not established does not dispatch"
 statement = """
-Under the fleet-strict posture, replay admission refuses before any store side effect when
-the deployment declares no replay tier, declares one below the strict-production minimum, or
-wires a store that self-reports the single-process reference class. The atomic admission is
-the LAST step, and a store that does not answer it refuses the exchange rather than
+Under the fleet-strict posture, a deployment that declares no replay tier is refused at the
+configuration boundary: it names no replay state, so no serving deployment is built over it.
+For a deployment that reaches replay admission, admission refuses before any store side effect
+when the declared tier is below the strict-production minimum or the wired store self-reports
+the single-process reference class. The atomic admission is the LAST step, and a store that does not answer it refuses the exchange rather than
 admitting it — reported as an outage, never as a replay.
 
 Where the store acknowledges admission under a tier at or above the strict-production
@@ -4568,8 +4577,11 @@ It is one-directional and is not a liveness claim: it says an unestablished repl
 not dispatch, never that an established one does.
 
 The two gates it composes are of different kinds and the claim keeps them apart. The
-DECLARED tier is the operator's statement, checked here; the store's self-reported durability
-class is the object's own, checked beneath. A deployment can get the first right and the
+DECLARED tier is the operator's statement: its absence is refused by the configuration owner,
+`proxy.replay_configuration_state`, before a serving deployment exists, and a declared tier
+below the strict-production minimum is refused by the admission owner,
+`proxy.replay_admission_gate`. The store's self-reported durability class is the object's own,
+checked beneath. A deployment can get the first right and the
 second wrong, which is why both refuse, and why neither is called a check on the other.
 
 Outside fleet-strict the tier gate deliberately does not fire, and this claim says nothing
@@ -4601,6 +4613,10 @@ supported_by = [
   # of that carrier's battery — the tier vocabulary and its published guarantees — is NOT
   # here and is not THM-0086's either; it stays in the ADR-069 census.
   "unit://proxy.replay_tier_production_minimum",
+  # Owner ruling 2026-10-14 (MCPRE-218): the undeclared-tier refusal moved to the
+  # configuration boundary, where `ReplayPosture::FleetStrict` cannot be built without a tier,
+  # and the theorem follows the property to that owner.
+  "unit://proxy.replay_configuration_state",
 ]
 depends_on = ["THM-0086", "THM-0106", "THM-0107"]
 
@@ -4741,7 +4757,7 @@ exchange signed — which is why that is now the statement's first sentence and 
 THM-0058/THM-0059 are now premises instead of being silently relied on. The system promise is
 unchanged; what changed is that it names the mechanism that keeps it.
 
-THE NATIVE BINDING IS INSIDE IT. `sdk_python.native_binding` owns what the PyO3 binding does with the values it is handed and with the core's verdict. That `pyo3` delivers the caller's `bytes`, `str`, `int` and `list` arguments to it as the caller passed them (or refuses the call), and returns its result as it produced it, a field left `None` arriving as `None`, is a premise of the claim, ASM-0088, and not something this unit establishes.
+THE NATIVE BINDING IS INSIDE IT. `sdk_binding_core.adapter` owns the binding semantics the two SDKs share: the anchor and policy built from the caller's values, the device-failure report, and the field-for-field projection of the core's verdict. `sdk_python.native_binding` is the PyO3 marshalling adapter around that owner: it hands the caller's values to it and raises what it reports. That `pyo3` delivers the caller's `bytes`, `str`, `int` and `list` arguments to it as the caller passed them (or refuses the call), and returns its result as it produced it, a field left `None` arriving as `None`, is a premise of the claim, ASM-0088, and not something either unit establishes.
 
 CONCURRENCY AND THROUGHPUT ARE OUTSIDE IT. The exchange bound is a resource ceiling, and a
 difference from the TypeScript member there changes nothing about authenticity, correlation
@@ -4878,7 +4894,7 @@ scope = """
 It is one MEMBER of a root family. THM-0076 is the Rust member and THM-0094 the Python one,
 and none establishes anything about the others.
 
-THE NATIVE BINDING IS INSIDE IT. `sdk_typescript.native_binding` owns what the binding does with the values it is handed and with the core's verdict. That `napi` delivers the caller's `Buffer`, string, number and array arguments to it as the caller passed them, and returns its result as it produced it, a member left `None` arriving absent, is a premise of the claim, ASM-0087, and not something this unit establishes.
+THE NATIVE BINDING IS INSIDE IT. `sdk_binding_core.adapter` owns the binding semantics the two SDKs share: the anchor and policy built from the caller's values, the device-failure report, and the field-for-field projection of the core's verdict. `sdk_typescript.native_binding` is the napi marshalling adapter around that owner: it hands the caller's values to it and throws what it reports. That `napi` delivers the caller's `Buffer`, string, number and array arguments to it as the caller passed them, and returns its result as it produced it, a member left `None` arriving absent, is a premise of the claim, ASM-0087, and not something either unit establishes.
 
 CONCURRENCY AND THROUGHPUT ARE OUTSIDE IT, and the exclusion is a decision rather than an
 omission: `send_notification_verified()` running outside the concurrency bound its Python

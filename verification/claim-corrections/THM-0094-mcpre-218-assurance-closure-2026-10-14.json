@@ -1,0 +1,25 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_claim"
+  ],
+  "corrections": [
+    {
+      "field": "scope",
+      "id": "C1",
+      "new": "THE NATIVE BINDING IS INSIDE IT. `sdk_binding_core.adapter` owns the binding semantics the two SDKs share: the anchor and policy built from the caller's values, the device-failure report, and the field-for-field projection of the core's verdict. `sdk_python.native_binding` is the PyO3 marshalling adapter around that owner: it hands the caller's values to it and raises what it reports. That `pyo3` delivers the caller's `bytes`, `str`, `int` and `list` arguments to it as the caller passed them (or refuses the call), and returns its result as it produced it, a field left `None` arriving as `None`, is a premise of the claim, ASM-0088, and not something either unit establishes.",
+      "old": "THE NATIVE BINDING IS INSIDE IT. `sdk_python.native_binding` owns what the PyO3 binding does with the values it is handed and with the core's verdict. That `pyo3` delivers the caller's `bytes`, `str`, `int` and `list` arguments to it as the caller passed them (or refuses the call), and returns its result as it produced it, a field left `None` arriving as `None`, is a premise of the claim, ASM-0088, and not something this unit establishes.",
+      "reason": "this theorem's own claim, field scope; see the record's reason."
+    }
+  ],
+  "from_fingerprint": "sha256:b1c5e9db2fafa872325fb4e8b43ca183dc10d4670794a3f3695b046aa180d51c",
+  "packet": "verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md",
+  "product_behavior_unchanged": true,
+  "reason": "Owner ruling 2026-10-14 item 3. MCPRE-204 (#1151) moved the binding semantics common to both SDKs into `sdk_binding_core.adapter`; `sdk_python.native_binding` is the PyO3 marshalling adapter around it. The scope's ownership sentence now says so. ASM-0088 stays the premise for the PyO3 marshalling boundary. The SDK-root promise is unchanged.",
+  "root_consequence_unchanged": true,
+  "ruling": "Owner ruling of 2026-10-14 for MCPRE-218 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md), which approved this correction and the specification review at the corrected fingerprint. Recorded under the ADR-MCPRE-068 Phase-1 class it belongs to: a precision correction that leaves the accepted promise intact.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0094",
+  "to_fingerprint": "sha256:1f12f52eabfe92b195a330ac1e59722f2a1d5bb0495fc381b5bf298765b42f97"
+}
