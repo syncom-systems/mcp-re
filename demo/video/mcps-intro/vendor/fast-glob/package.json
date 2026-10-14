@@ -1,0 +1,11 @@
+{
+  "name": "fast-glob",
+  "version": "3.3.3-tinyglobby.0",
+  "private": true,
+  "description": "The two fast-glob functions @motion-canvas/vite-plugin calls, over tinyglobby. fast-glob reaches braces <= 3.0.3 (GHSA-vfj7-8cjw-p6xm, no patched release) through micromatch; tinyglobby does not.",
+  "main": "index.js",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "tinyglobby": "^0.2.17"
+  }
+}
