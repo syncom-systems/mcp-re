@@ -25,10 +25,12 @@ Do not assume that MCP-RE currently provides:
 - OS-level filesystem/network sandboxing of wrapped servers;
 - signed tool-manifest enforcement.
 
-Horizontal-scale replay protection, HSM/KMS-backed key custody and full CRL/OCSP
-revocation are gated on the `pkcs11_keysource,redis_replay,online_ocsp` crate features (see
-the README's deployment profiles); they are not linked into the lean default build and must
-not be assumed of it.
+Three capabilities are gated on crate features of `mcp-re-proxy` and are not linked into the
+lean default build, so they must not be assumed of it (see the README's deployment profiles):
+
+- horizontal-scale replay protection: `redis_replay` or `cpstore_etcd`;
+- HSM/KMS-backed key custody: `pkcs11_keysource`, `aws_kms_keysource` or `gcp_kms_keysource`;
+- online OCSP revocation checking: `online_ocsp`.
 
 ## Reporting a vulnerability
 
