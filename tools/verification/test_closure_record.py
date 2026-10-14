@@ -199,6 +199,16 @@ def test_a_historical_record_stays_valid_after_main_advances_and_a_wrong_tree_do
         wrong = cr.build(closure(target, later_tree), review())
         assert any("has tree" in p for p in cr.verify(wrong, repo))
 
+        _git(repo, "checkout", "-q", "-b", "side", target)
+        (repo / "g").write_text("side", encoding="utf-8")
+        _git(repo, "add", "g")
+        _git(repo, *env, "commit", "-qm", "unmerged")
+        side, side_tree = _git(repo, "rev-parse", "HEAD"), _git(repo, "rev-parse", "HEAD^{tree}")
+        _git(repo, "checkout", "-q", "-")
+        unmerged = cr.build(closure(side, side_tree), review())
+        assert any("not an ancestor of HEAD" in p for p in cr.verify(unmerged, repo))
+        assert cr.verify(record, repo) == []
+
         absent = cr.build(closure("0" * 40, tree), review())
         assert any("not in this repository's history" in p for p in cr.verify(absent, repo))
         assert _git(repo, "rev-parse", "--is-shallow-repository") == "false"

@@ -174,11 +174,12 @@ def git(repo: Path, *args: str) -> tuple[int, str]:
 
 
 def verify(record: dict, repo: Path) -> list[str]:
-    """`problems`, and the target commit resolves to the target tree in `repo`'s history.
+    """`problems`, and the target commit is in `HEAD`'s history and resolves to the target tree.
 
-    The history is read, never changed: a commit the clone does not hold is a failure, not
-    something to fetch. A fetch here would mutate the object graph that later ancestry checks
-    in the same job read, and a record naming an unmerged commit must fail, not be satisfied.
+    A record is committed after the tree it closed, so its target is an ancestor of every
+    commit that carries it. A target that is only an object in the store — an unmerged branch,
+    a stale fetch — fails. The history is read, never changed: a fetch here would mutate the
+    object graph that later ancestry checks in the same job read.
     """
     found = problems(record)
     if found:
@@ -186,6 +187,8 @@ def verify(record: dict, repo: Path) -> list[str]:
     commit, tree = record["target"]["commit"], record["target"]["tree"]
     if git(repo, "cat-file", "-e", f"{commit}^{{commit}}")[0] != 0:
         return [f"target commit {commit} is not in this repository's history"]
+    if git(repo, "merge-base", "--is-ancestor", commit, "HEAD")[0] != 0:
+        return [f"target commit {commit} is not an ancestor of HEAD"]
     rc, resolved = git(repo, "rev-parse", f"{commit}^{{tree}}")
     if rc != 0:
         return [f"target commit {commit} does not resolve in this repository"]
