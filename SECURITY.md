@@ -8,29 +8,33 @@ MCP-RE is a security-sensitive project. Please report suspected vulnerabilities 
 
 MCP-RE is currently an experimental/incubating third-party MCP security extension proposal.
 
-The current implementation claim is limited to:
+The current implementation claim is the one stated in the [README](README.md#project-status):
 
-> production-hardened for single-node Rust-native deployments.
+> MCP-RE is production-hardened for single-node Rust-native deployments — and, at the
+> declared shared-tier fleet profile, for horizontally-scaled multi-node deployments
+> within one trust domain / one operator — with a proven end-to-end client-integration
+> path (client-side proxy + Python/TypeScript SDKs) over the RFC 9421 + RFC 9530 HTTP
+> profile, delegated-required response signing.
 
 Do not assume that MCP-RE currently provides:
 
-- horizontally scaled replay protection;
-- HSM/KMS-backed key custody;
-- full CRL/OCSP certificate revocation;
-- reverse-proxy mTLS integration;
-- OS-level filesystem/network sandboxing;
-- signed tool manifest enforcement;
-- official MCP extension status.
+- official MCP extension status;
+- reverse-proxy mTLS integration — the verified transport identity comes only from a
+  locally terminated client certificate;
+- offline-hermetic or air-gapped build reproducibility;
+- OS-level filesystem/network sandboxing of wrapped servers;
+- signed tool-manifest enforcement.
+
+Horizontal-scale replay protection, HSM/KMS-backed key custody and full CRL/OCSP
+revocation are gated on the `pkcs11_keysource,redis_replay,online_ocsp` crate features (see
+the README's deployment profiles); they are not linked into the lean default build and must
+not be assumed of it.
 
 ## Reporting a vulnerability
 
-Please report security issues privately to:
+Please report security issues privately through GitHub's private vulnerability reporting:
 
-```text
-<security-contact@example.com>
-```
-
-Replace this placeholder before public release.
+<https://github.com/syncom-systems/mcp-re/security/advisories/new>
 
 Please include:
 

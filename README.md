@@ -130,7 +130,7 @@ Current implementation claim:
 > client-integration path (client-side proxy + Python/TypeScript SDKs) over the
 > RFC 9421 + RFC 9530 HTTP profile, delegated-required response signing.
 
-### Recent releases (0.6 → 0.12.1)
+### Recent releases (0.6 → 0.17)
 
 Full detail per release is in [`CHANGELOG.md`](CHANGELOG.md); the design lines are
 in [`docs/adr/`](docs/adr/). In brief:
@@ -190,6 +190,21 @@ in [`docs/adr/`](docs/adr/). In brief:
   — a rollout dropped 2 of 590 in-flight requests (a kube-proxy endpoint-propagation
   timing gap; in-process and kind lanes are clean). Topology-independent zero-drop is
   therefore not claimed.
+- **0.13** aligned the RFC 9421 + RFC 9530 serving path with the published rev-2
+  HTTP-profile set (Discussions #414–#416): JSON-mode enforcement on covered exchanges, the
+  MCP transport and version contract, a typed algorithm registry with bounded symmetric
+  clock skew, and the verified-context carrier.
+- **0.14** is a **security-audit release**: 57 finding clusters closed across the serving
+  path, the signing core, the deploy surface and both SDKs, each fix carrying a negative
+  control, plus the first live GKE fleet run of the four coherence proofs.
+- **0.15** restored **TLS session resumption, bound to a trust epoch** (ADR-MCPRE-055), so a
+  withdrawn CA no longer survives in a resumed session without refusing resumption outright.
+- **0.16** accepted performance at the measured GKE release-build figures under the
+  ADR-MCPRE-051 §7 envelope, and introduced the **formal-verification platform**
+  (ADR-MCPRE-059, phases 0–4): units, theorems, attestations and review state.
+- **0.17** is an **assurance-closure release**: little product surface moved; what moved is
+  how much of it is owned, measured and reviewed (126 declared theorems, up from 95, under
+  the same 12 system roots).
 
 Predecessors: **0.5** was a proposal-readiness release (conformance + claim
 hardening over `draft-01`, ADR-MCPS-031..036); **0.4** wired the tiered
