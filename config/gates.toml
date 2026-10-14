@@ -553,7 +553,7 @@ off_merge_path = "a kind-cluster Job-spec rehearsal; its wiring is policed by re
 [[script]]
 path = "tools/verification/assurance-closure"
 stages = [1]
-ci = ["ci.yml:rust", "verification.yml:assurance-closure"]
+ci = ["assurance-closure.yml:closure", "ci.yml:rust", "verification.yml:assurance-closure"]
 selftest = true
 off_merge_path = "binding only at epic end, as a complete verification.yml run's continuation; the pull-request path stays the fast checks, which run its selftest and test_assurance_closure.py"
 

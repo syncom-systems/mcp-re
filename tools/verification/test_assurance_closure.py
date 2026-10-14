@@ -356,6 +356,15 @@ def test_no_workflow_issues_attestations_or_judges_theorems_itself():
                 assert not any(word in body for word in axis_words), (path.name, key)
 
 
+def test_the_earlier_run_entry_point_is_dispatch_only_and_calls_the_authority():
+    """The additional path: re-evaluate a finished run. Never a pull-request or push trigger."""
+    wf = workflow_reader.read(REPO / ".github" / "workflows" / "assurance-closure.yml")
+    assert set(wf.triggers) == {"workflow_dispatch"}
+    assert {key: _invoked(job) for key, job in wf.jobs.items()} == {"closure": {TOOL}}
+    [body] = _runs(wf.jobs["closure"])
+    assert "--run" in body
+
+
 def test_the_closure_record_is_uploaded_by_run_id_and_attempt():
     _, wf, _ = _workflow()
     uploads = [s for s in wf.jobs["assurance-closure"].steps if (s.uses or "").startswith("actions/upload-artifact")]

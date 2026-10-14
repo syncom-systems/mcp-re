@@ -44,5 +44,8 @@ commit whose unit fingerprints have not moved — for example after review recor
 tools/verification/assurance-closure --run <run-id> --out <empty dir>
 ```
 
+Or dispatch `assurance-closure.yml` with `run_id`, which runs the same command on the
+dispatched commit and uploads the same records.
+
 The working tree must be clean. The run must be a `verification` run whose `aggregate` job
 succeeded; its event must be `workflow_dispatch` or `schedule`.
