@@ -11911,38 +11911,6 @@ reason_family = "ND-007"
 recorded = "2026-09-29"
 
 [[disposition]]
-id = "CD-20026"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#custody::active_key::tests::an_identity_naming_another_keyid_is_refused"
-decision = "new-proposition"
-proposition = "NP-204"
-recorded = "2026-09-29"
-
-[[disposition]]
-id = "CD-20027"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#custody::active_key::tests::an_identity_the_request_did_not_name_is_refused"
-decision = "new-proposition"
-proposition = "NP-204"
-recorded = "2026-09-29"
-
-[[disposition]]
-id = "CD-20028"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#custody::active_key::tests::the_credential_id_is_read_out_of_the_credential"
-decision = "new-proposition"
-proposition = "NP-204"
-recorded = "2026-09-29"
-
-[[disposition]]
-id = "CD-20029"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#custody::tests::a_reissue_retires_the_predecessor_under_its_own_credential_id_and_window"
-decision = "new-proposition"
-proposition = "NP-204"
-recorded = "2026-09-29"
-
-[[disposition]]
 id = "CD-20030"
 project = "mcp-re-http-profile"
 control = "src/lib.rs#dispatch::outcome::tests::a_first_leg_preparation_reports_no_continuation"
@@ -12871,6 +12839,7 @@ likely_owner = "http_profile.delegated_signing_custody: both carriers are in its
 consequence = "high"
 root_relationship = "Beside the M97 (attested key) and M98 (echoed claim set) conjuncts already bound to http_profile.delegated_signing_custody; the third leg of 'the credential attests THIS issuance'."
 record = "docs/architecture/control-dispositions.md#np-204"
+ratified_as = "http_profile.delegated_signing_custody"
 
 [[proposition]]
 id = "NP-207"

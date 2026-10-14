@@ -8734,7 +8734,7 @@ tested_symbols = [
 [[unit]]
 id = "http_profile.delegated_signing_custody"
 class = "V0"
-description = "The delegated-signing credential lifecycle: the root is never touched within a key's life, a successor is minted in the overlap window and under an advanced trust epoch, a signature window never outlives the credential it was issued under, an adopted credential's window lies inside the one requested and is open when requested, a predecessor displaced after its own expiry is retired once in the lifecycle events of the step that displaced it, the machine holds only its latest step's lifecycle events however long it runs, a declined epoch advance leaves the advanced epoch installed so the next issuance mints under it, the epoch only moves forward — an advance to a counter below the held one is refused with nothing changed, and the held counter re-issues — and an issuance that fails after expiry fails closed rather than continuing on the predecessor."
+description = "The delegated-signing credential lifecycle: the root is never touched within a key's life, a successor is minted in the overlap window and under an advanced trust epoch, a signature window never outlives the credential it was issued under, an adopted credential's window lies inside the one requested and is open when requested, a predecessor displaced after its own expiry is retired once in the lifecycle events of the step that displaced it, the machine holds only its latest step's lifecycle events however long it runs, a declined epoch advance leaves the advanced epoch installed so the next issuance mints under it, the epoch only moves forward — an advance to a counter below the held one is refused with nothing changed, and the held counter re-issues — and an issuance that fails after expiry fails closed rather than continuing on the predecessor; and one issuance is coherent with itself: the delegated identity admitted for the snapshot names this issuance's own delegated key, an identity or request naming another delegated key is refused, the credential id is read out of this issuance's credential rather than supplied beside it, and a reissue records the retired predecessor under that predecessor's own credential id and validity window."
 paths = [
   "mcp-re-http-profile/src/custody/mod.rs",
   "mcp-re-http-profile/src/custody/issuance_terms.rs",
@@ -8819,6 +8819,13 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::key_window::tests::the_magnitude_ceiling_is_not_this_types_to_apply",
   "//mcp-re-http-profile:delegation_e2e_test#custody_signed_response_verifies_via_attestation_chain",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_credential_carrying_a_claim_the_request_did_not_is_refused",
+  # Issuance coherence (NP-204): the identity, key, credential id and lifecycle record of ONE
+  # delegated issuance agree. Not root-authority rotation, verifier trust-anchor selection or
+  # credential-chain correctness, which this unit does not claim.
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::an_identity_naming_another_keyid_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::an_identity_the_request_did_not_name_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::the_credential_id_is_read_out_of_the_credential",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::a_reissue_retires_the_predecessor_under_its_own_credential_id_and_window",
 ]
 
 [[unit]]

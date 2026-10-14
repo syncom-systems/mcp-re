@@ -4177,6 +4177,7 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `high`.
 **Root relationship.** Beside the M97 (attested key) and M98 (echoed claim set) conjuncts already bound to http_profile.delegated_signing_custody; the third leg of 'the credential attests THIS issuance'.
 **Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+**Ratified:** 2026-10-14 as `unit://http_profile.delegated_signing_custody`, whose description now states issuance coherence and whose battery registers the four controls (owner ruling: `verification/reviews/rulings/np-204-custody-issuance-coherence-2026-10-14.md`).
 
 ## NP-207 — retained continuation bases reach the binding in their own roles
 
