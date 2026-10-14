@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Re-evaluate assurance closure over an EARLIER complete verification run, on the commit this
+# workflow is dispatched at. The usual path is `verification.yml`'s own `assurance-closure`
+# job, which closes over the run it continues; this one exists so an owner can evaluate a run
+# that already finished — for example after review records land and no unit fingerprint
+# moved — without measuring every lane again.
+#
+# It runs no lane. `tools/verification/assurance-closure --run` refuses a run that is not a
+# `verification` run, whose aggregate did not succeed, or whose event was not a dispatch or
+# schedule, and `attest` refuses any unit whose fingerprint moved since that run measured it.
+
+name: assurance-closure
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "the verification.yml run whose evidence to close over"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  closure:
+    name: assurance closure over an earlier run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - name: Attest the run's evidence and decide assurance closure
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          ./tools/verification/assurance-closure --run "$RUN_ID" \
+            --repo "${{ github.repository }}" --out "$RUNNER_TEMP/closure"
+      - name: The attestations, theorem review and closure verdict
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: assurance-closure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/closure
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,515 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Assurance closure over one complete verification run — issue #1172.
+
+There is exactly one repository authority for whether a complete verification run CLOSES
+assurance, and this is it. `verification.yml` calls it as the continuation of a complete
+run; an owner calls it against an earlier run with `--run`. Neither reimplements what it
+decides.
+
+# Why it exists
+
+A green `verify --aggregate --gate` says the machine evidence composes. It says nothing
+about whether the owner's reviews still cover the claims that evidence supports. Epics
+#1106 and #1143 each closed on a green complete run while REVIEW_CURRENT fell from 133 to
+63 to 41, because nothing at epic end measured that axis (#1171).
+
+# What it owns, and what it only calls
+
+It owns ONE decision: the closure condition. For every active (not deprecated) declared
+theorem, REVIEW_CURRENT, EVIDENCE_ESTABLISHED and CURRENTLY_VERIFIED all hold, and every
+declared system root is complete. Each fact inside that condition belongs to an existing
+authority and is obtained by calling it:
+
+| question | authority called |
+|---|---|
+| does the evidence compose to a repository verdict | `verify --aggregate --gate`, read from the run's `bundle.json` |
+| does each record become an attestation at its own fingerprint | `attest` |
+| is each theorem reviewed, established and currently verified | `review --json` |
+| may a root-completeness verdict close | `_review.closure_satisfied` |
+
+`attest` is what refuses evidence measured at a fingerprint other than the tree's now, and
+`review` is what derives the three axes. This command reads their answers; it re-derives
+neither.
+
+# Which runs may close
+
+Only a COMPLETE run: a `workflow_dispatch` or `schedule` event, whose bundle carries no
+`scope` and whose aggregate verdict is `PASS`. A pull-request or push run is refused even
+when its change happened to expand to every unit: completeness is a property of the run
+someone asked for, not of how far one change reached. A scoped bundle is refused before
+anything is attested, and `attest` would refuse it again, because a scoped run's aggregate
+is `INCOMPLETE`.
+
+# The attestation store is fresh
+
+`attest` leaves a previous attestation alone when it refuses a unit. Attesting into a store
+that already held records would let an earlier run's attestation stand in for a unit this
+run did not establish. So `--out` must be empty or absent, and the store is created inside
+it.
+
+# The evidence may have been measured at another commit
+
+Evidence records are content-addressed: each is valid at a unit's fingerprint, not at a
+commit. Run 38513625401 measured `72127a07` and closes `551ba14b`, because the review
+records added between them are no unit's input. The record names both commits, and the
+binding check is `attest`'s: a fingerprint that moved since the run refuses.
+
+Run:  tools/verification/assurance-closure --evidence DIR --event EVENT --out DIR
+      tools/verification/assurance-closure --run RUN_ID --out DIR
+      tools/verification/assurance-closure --selftest
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import _registries  # noqa: E402
+from _evidence import load_bundle  # noqa: E402
+from _review import REVIEWED, closure_satisfied  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TOOLS = REPO_ROOT / "tools" / "verification"
+
+#: The events that ask for a complete run. `verification.yml`'s `scope` job sets
+#: `complete=true` for exactly these.
+COMPLETE_EVENTS = ("workflow_dispatch", "schedule")
+
+#: The workflow and job whose evidence `--run` reads.
+WORKFLOW = "verification"
+AGGREGATE_JOB = "compose the repository verdict"
+
+VERDICT_PREFIX = "ASSURANCE CLOSURE:"
+
+AXES = ("review_current", "evidence_established", "currently_verified")
+AXIS_NAMES = {
+    "review_current": "REVIEW_CURRENT",
+    "evidence_established": "EVIDENCE_ESTABLISHED",
+    "currently_verified": "CURRENTLY_VERIFIED",
+}
+
+
+class ClosureRefused(RuntimeError):
+    """The run cannot be evaluated at all; the reason is the refusal."""
+
+
+# ------------------------------------------------------------------- run identity
+
+
+def run_refusals(bundle: dict | None, event: str) -> list[str]:
+    """Why this run's evidence may not close repository assurance; empty if it may."""
+    found = []
+    if event not in COMPLETE_EVENTS:
+        found.append(
+            f"the run's event is {event!r}, not one of {', '.join(COMPLETE_EVENTS)}. Only a "
+            "run asked for as complete may close assurance, however many units a change "
+            "happened to reach"
+        )
+    if bundle is None:
+        found.append(
+            "the evidence has no bundle.json, so no aggregate verdict was composed; an "
+            "absent verdict is not a pass"
+        )
+        return found
+    if "scope" in bundle:
+        found.append(
+            f"the bundle is scoped to {len(bundle['scope'])} unit(s); scoped evidence "
+            "cannot close repository assurance"
+        )
+    if bundle.get("aggregate") != "PASS":
+        found.append(
+            f"the aggregate verdict is {bundle.get('aggregate', 'UNKNOWN')}, not PASS"
+        )
+    return found
+
+
+# ------------------------------------------------------------------ the decision
+
+
+def dependencies() -> dict[str, list[str]]:
+    """Each theorem's declared `depends_on`, to name a dependency-only blockage."""
+    rows = _registries.rows("theorems", "theorem", REPO_ROOT)
+    return {row["id"]: list(row.get("depends_on", [])) for row in rows}
+
+
+def evaluate(review: dict, depends_on: dict[str, list[str]]) -> dict:
+    """The closure condition over `review --json` output, with every blocker named.
+
+    The three booleans are `review`'s; this reads them and the reasons beside them.
+    """
+    theorems = review["theorems"]
+    roots = review["root_completeness"]
+    active = {tid: s for tid, s in sorted(theorems.items()) if not s["deprecated"]}
+
+    counts = {axis: sum(1 for s in active.values() if s[axis]) for axis in AXES}
+    counts["active"] = len(active)
+    counts["deprecated"] = len(theorems) - len(active)
+    counts["roots"] = len(roots["roots"])
+    counts["roots_established"] = len(roots["established_roots"])
+
+    review_blockers, evidence_blockers, dependency_blockers = [], [], []
+    assumptions: dict[str, dict] = {}
+    units: dict[str, dict] = {}
+    for tid, state in active.items():
+        if not state["review_current"]:
+            cause, reason = state["review"]
+            review_blockers.append({"theorem": tid, "state": cause, "reason": reason})
+        if not state["evidence_established"]:
+            cause, reason = state["evidence"]
+            evidence_blockers.append({"theorem": tid, "state": cause, "reason": reason})
+        if state["review_current"] and state["evidence_established"] and not state["currently_verified"]:
+            dependency_blockers.append(
+                {
+                    "theorem": tid,
+                    "blocked_by": [
+                        dep
+                        for dep in depends_on.get(tid, [])
+                        if not theorems.get(dep, {}).get("currently_verified")
+                    ],
+                }
+            )
+        for asm, (cause, reason) in sorted(state["premise_review"].items()):
+            if cause != REVIEWED:
+                row = assumptions.setdefault(asm, {"state": cause, "reason": reason, "theorems": []})
+                row["theorems"].append(tid)
+        for unit, unit_state in sorted(state["unit_states"].items()):
+            if unit_state != "FRESH":
+                row = units.setdefault(unit, {"state": unit_state, "theorems": []})
+                row["theorems"].append(tid)
+
+    root_blockers = [
+        {"root": root, "blocked_by": roots["blocking"].get(root, [])}
+        for root in roots["roots"]
+        if root not in roots["established_roots"]
+    ]
+    roots_ok = closure_satisfied(roots)
+    passed = (
+        bool(active)
+        and all(counts[axis] == counts["active"] for axis in AXES)
+        and roots_ok
+    )
+    return {
+        "verdict": "PASS" if passed else "FAIL",
+        "counts": counts,
+        "root_verdict": roots["verdict"],
+        "blockers": {
+            "review": review_blockers,
+            "assumptions": [{"assumption": a, **row} for a, row in sorted(assumptions.items())],
+            "evidence": evidence_blockers,
+            "units": [{"unit": u, **row} for u, row in sorted(units.items())],
+            "dependency_only": dependency_blockers,
+            "roots": root_blockers,
+        },
+    }
+
+
+# ---------------------------------------------------------------- the composition
+
+
+def git(*args: str) -> str:
+    proc = subprocess.run(
+        ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=False
+    )
+    if proc.returncode != 0:
+        raise ClosureRefused(f"git {' '.join(args)} exited {proc.returncode}: {proc.stderr.strip()}")
+    return proc.stdout.strip()
+
+
+def target_identity() -> dict[str, str]:
+    """The tree `attest` and `review` measure. A dirty tree has no commit to name."""
+    dirty = git("status", "--porcelain")
+    if dirty:
+        raise ClosureRefused(
+            "the working tree is not clean, so no commit identifies what would be "
+            "measured:\n  " + "\n  ".join(dirty.splitlines()[:10])
+        )
+    return {"commit": git("rev-parse", "HEAD"), "tree": git("rev-parse", "HEAD^{tree}")}
+
+
+def run_step(argv: list[str]) -> tuple[int, str, str]:
+    """One authority's own exit status, stdout and stderr — never read through a pipe."""
+    proc = subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True, check=False)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def close(
+    evidence: Path,
+    out: Path,
+    run: dict,
+    target: dict,
+    runner=run_step,
+    depends_on=None,
+) -> dict:
+    """Attest the run's evidence into a fresh store, evaluate the theorems, decide."""
+    record: dict = {"run": run, "target": target, "timings_seconds": {}}
+    refusals = run_refusals(load_bundle(evidence), run.get("event", ""))
+    if refusals:
+        return {**record, "verdict": "FAIL", "refusals": refusals}
+
+    store = out / "attestations"
+    started = time.monotonic()
+    rc, stdout, stderr = runner(
+        [str(TOOLS / "attest"), "--evidence", str(evidence), "--store", str(store)]
+    )
+    record["timings_seconds"]["attest"] = round(time.monotonic() - started, 2)
+    (out / "attest.log").write_text(stdout + stderr, encoding="utf-8")
+    record["attested"] = len(list(store.glob("*.json"))) if store.is_dir() else 0
+    if rc != 0:
+        refused = [line.strip() for line in stdout.splitlines() if line.strip().startswith("REFUSED")]
+        return {
+            **record,
+            "verdict": "FAIL",
+            "refusals": ["attest refused to issue from this evidence", *refused, stderr.strip()],
+        }
+
+    started = time.monotonic()
+    rc, stdout, stderr = runner(
+        [str(TOOLS / "review"), "--json", "--attestations", str(store)]
+    )
+    record["timings_seconds"]["review"] = round(time.monotonic() - started, 2)
+    (out / "review.json").write_text(stdout, encoding="utf-8")
+    try:
+        review = json.loads(stdout) if rc == 0 else None
+    except json.JSONDecodeError:
+        review = None
+    if review is None:
+        return {
+            **record,
+            "verdict": "FAIL",
+            "refusals": [f"review --json exited {rc} without a readable result", stderr.strip()],
+        }
+    decision = evaluate(review, dependencies() if depends_on is None else depends_on)
+    return {**record, **decision}
+
+
+# -------------------------------------------------------------- an existing run
+
+
+def gh_json(*args: str) -> dict:
+    proc = subprocess.run(["gh", *args], capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        raise ClosureRefused(f"gh {' '.join(args)} exited {proc.returncode}: {proc.stderr.strip()}")
+    return json.loads(proc.stdout)
+
+
+def fetch_run(run_id: str, repo: str | None, dest: Path) -> tuple[dict, Path]:
+    """A prior `verification.yml` run's identity and its composed evidence."""
+    where = ["--repo", repo] if repo else []
+    view = gh_json(
+        "run", "view", run_id, *where, "--json",
+        "workflowName,event,status,headSha,attempt,jobs",
+    )
+    if view.get("workflowName") != WORKFLOW:
+        raise ClosureRefused(f"run {run_id} is a {view.get('workflowName')!r} run, not {WORKFLOW!r}")
+    if view.get("status") != "completed":
+        raise ClosureRefused(f"run {run_id} is {view.get('status')}, not completed")
+    aggregate = [job for job in view.get("jobs", []) if job.get("name") == AGGREGATE_JOB]
+    if not aggregate or aggregate[0].get("conclusion") != "success":
+        raise ClosureRefused(
+            f"run {run_id}'s {AGGREGATE_JOB!r} job did not succeed, so it composed no PASS"
+        )
+    run = {
+        "id": run_id,
+        "attempt": view["attempt"],
+        "event": view["event"],
+        "evidence_commit": view["headSha"],
+    }
+    artifact = f"verification-evidence-{run_id}-{view['attempt']}"
+    proc = subprocess.run(
+        ["gh", "run", "download", run_id, *where, "--name", artifact, "--dir", str(dest)],
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        raise ClosureRefused(f"could not download {artifact}: {proc.stderr.strip()}")
+    return run, dest
+
+
+# ----------------------------------------------------------------------- report
+
+
+def report(record: dict) -> str:
+    run, target = record["run"], record["target"]
+    lines = [
+        f"assurance closure @ {target.get('commit', '?')} from run {run.get('id', 'local')} "
+        f"attempt {run.get('attempt', '?')} ({run.get('event', '?')}, evidence measured at "
+        f"{run.get('evidence_commit', '?')})"
+    ]
+    for step, seconds in record.get("timings_seconds", {}).items():
+        lines.append(f"  {step:<8} {seconds:>7.2f}s")
+    if "attested" in record:
+        lines.append(f"  attested {record['attested']} unit(s) into a fresh store")
+    for refusal in record.get("refusals", []):
+        if refusal:
+            lines.append(f"  REFUSED  {refusal}")
+    counts = record.get("counts")
+    if counts:
+        for axis in AXES:
+            lines.append(f"  {AXIS_NAMES[axis]:<22} {counts[axis]} / {counts['active']}")
+        lines.append(
+            f"  {'system roots':<22} {counts['roots_established']} / {counts['roots']} "
+            f"{record['root_verdict']}"
+        )
+        blockers = record["blockers"]
+        for row in blockers["review"]:
+            lines.append(f"  review      {row['theorem']} {row['state']}: {row['reason']}")
+        for row in blockers["assumptions"]:
+            lines.append(
+                f"  assumption  {row['assumption']} {row['state']}: {row['reason']} "
+                f"(premise of {', '.join(row['theorems'])})"
+            )
+        for row in blockers["evidence"]:
+            lines.append(f"  evidence    {row['theorem']} {row['state']}: {row['reason']}")
+        for row in blockers["units"]:
+            lines.append(
+                f"  unit        unit://{row['unit']} {row['state']} "
+                f"(supports {', '.join(row['theorems'])})"
+            )
+        for row in blockers["dependency_only"]:
+            lines.append(
+                f"  dependency  {row['theorem']} holds locally; blocked by "
+                f"{', '.join(row['blocked_by']) or 'a dependency'}"
+            )
+        for row in blockers["roots"]:
+            causes = "; ".join(f"{b['theorem']} {b['cause']}" for b in row["blocked_by"])
+            lines.append(f"  root        {row['root']} incomplete: {causes}")
+    lines.append(f"{VERDICT_PREFIX} {record['verdict']}")
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------- selftest
+
+
+def _theorem(review=True, evidence=True, verified=None, deprecated=False, units=None, premises=None):
+    return {
+        "deprecated": deprecated,
+        "review_current": review,
+        "evidence_established": evidence,
+        "currently_verified": (review and evidence) if verified is None else verified,
+        "review": ["REVIEWED", "ok"] if review else ["STALE_SEMANTICS", "unit://u semantics moved"],
+        "evidence": ["ESTABLISHED", "1 FRESH"] if evidence else ["NOT_ESTABLISHED", "unit://u UNKNOWN"],
+        "premise_review": premises or {},
+        "unit_states": units or {"u": "FRESH" if evidence else "UNKNOWN"},
+    }
+
+
+def _review(theorems: dict, roots=("THM-A",), blocking=None) -> dict:
+    blocking = blocking or {}
+    return {
+        "theorems": theorems,
+        "root_completeness": {
+            "verdict": "INCOMPLETE" if blocking else ("COMPLETE" if roots else "UNDECLARED"),
+            "roots": list(roots),
+            "established_roots": [r for r in roots if r not in blocking],
+            "blocking": blocking,
+        },
+    }
+
+
+def selftest() -> int:
+    failures = []
+
+    def case(label: str, ok: bool) -> None:
+        print(f"  {'ok  ' if ok else 'FAIL'} {label}")
+        if not ok:
+            failures.append(label)
+
+    complete = _review({"THM-A": _theorem(), "THM-B": _theorem()})
+    case("every axis complete and every root complete passes", evaluate(complete, {})["verdict"] == "PASS")
+
+    stale = evaluate(_review({"THM-A": _theorem(), "THM-B": _theorem(review=False)}), {})
+    case(
+        "a stale review fails and names its cause",
+        stale["verdict"] == "FAIL"
+        and stale["blockers"]["review"][0]["state"] == "STALE_SEMANTICS"
+        and "unit://u" in stale["blockers"]["review"][0]["reason"],
+    )
+
+    missing = evaluate(_review({"THM-A": _theorem(), "THM-B": _theorem(evidence=False)}), {})
+    case(
+        "a missing attestation fails and names the unit",
+        missing["verdict"] == "FAIL" and missing["blockers"]["units"][0]["state"] == "UNKNOWN",
+    )
+
+    dep = evaluate(
+        _review({"THM-A": _theorem(verified=False), "THM-B": _theorem(review=False)}),
+        {"THM-A": ["THM-B"]},
+    )
+    case(
+        "a dependency-only failure names the dependency",
+        dep["verdict"] == "FAIL" and dep["blockers"]["dependency_only"] == [{"theorem": "THM-A", "blocked_by": ["THM-B"]}],
+    )
+
+    scoped = run_refusals({"aggregate": "INCOMPLETE", "scope": ["u"]}, "workflow_dispatch")
+    case("scoped evidence is refused", any("scoped" in r for r in scoped))
+    case("a push run is refused", bool(run_refusals({"aggregate": "PASS"}, "push")))
+
+    if failures:
+        print(f"{VERDICT_PREFIX} FAIL (selftest: {len(failures)} case(s))")
+        return 1
+    print(f"{VERDICT_PREFIX} PASS (selftest)")
+    return 0
+
+
+# -------------------------------------------------------------------------- main
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--evidence", type=Path, help="the composed evidence of the current run")
+    source.add_argument("--run", help="evaluate an earlier verification.yml run by id")
+    parser.add_argument("--event", help="with --evidence: the GitHub event that started the run")
+    parser.add_argument("--run-id", help="with --evidence: recorded in the closure record")
+    parser.add_argument("--run-attempt", help="with --evidence: recorded in the closure record")
+    parser.add_argument("--repo", help="with --run: the repository, if not gh's default")
+    parser.add_argument("--out", type=Path, help="an empty directory for the closure records")
+    parser.add_argument("--selftest", action="store_true")
+    args = parser.parse_args()
+
+    if args.selftest:
+        return selftest()
+    if not args.out or not (args.evidence or args.run):
+        parser.error("--out and one of --evidence or --run are required")
+    if args.evidence and not args.event:
+        parser.error("--evidence needs --event")
+
+    out = args.out.resolve()
+    record: dict = {"run": {}, "target": {}}
+    try:
+        if out.exists() and any(out.iterdir()):
+            raise ClosureRefused(
+                f"{out} is not empty. The attestation store must be fresh, so no earlier "
+                "attestation can stand in for a unit this run did not establish"
+            )
+        out.mkdir(parents=True, exist_ok=True)
+        target = target_identity()
+        if args.run:
+            run, evidence = fetch_run(args.run, args.repo, out / "evidence")
+        else:
+            run = {
+                "id": args.run_id,
+                "attempt": args.run_attempt,
+                "event": args.event,
+                "evidence_commit": target["commit"],
+            }
+            evidence = args.evidence.resolve()
+        record = close(evidence, out, run, target)
+    except ClosureRefused as exc:
+        record = {**record, "verdict": "FAIL", "refusals": [str(exc)]}
+    if out.is_dir():
+        (out / "closure.json").write_text(
+            json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    print(report(record))
+    return 0 if record["verdict"] == "PASS" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

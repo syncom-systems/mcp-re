@@ -638,6 +638,10 @@ jobs:
           # ~4s, one dependency-free crate between them.
           python3 tools/verification/test_structural_lane.py
           python3 tools/verification/test_measured_lane.py
+          # #1172. Which runs may close assurance and what closing requires, and that
+          # verification.yml's closure job calls the authority rather than counting axes.
+          tools/verification/assurance-closure --selftest
+          python3 tools/verification/test_assurance_closure.py
           # ADR-MCPRE-068 Phase 0C. The premise ontology, and the composition §7 found
           # missing: which typed premises each declared root ultimately rests on. Both ends
           # of that join carry `unit://` URIs, and comparing them verbatim reported that no

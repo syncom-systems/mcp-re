@@ -251,6 +251,9 @@ stage_static() {
     `# whose only evidence is that it exists is the class this record was opened about.` \
     && python3 tools/verification/test_structural_lane.py \
     && python3 tools/verification/test_measured_lane.py \
+    `# #1172: which runs may close assurance, and that the closure job calls the authority.` \
+    && tools/verification/assurance-closure --selftest \
+    && python3 tools/verification/test_assurance_closure.py \
     `# ADR-MCPRE-068 Phase 0C. The premise ontology: every LIVE premise typed, every` \
     `# withdrawn one untyped, an external boundary naming WHO guarantees WHAT across WHICH` \
     `# interface, and a discharging event that is a tagged predicate rather than a sentence.` \
