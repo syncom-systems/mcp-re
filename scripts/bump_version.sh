@@ -71,10 +71,33 @@ stage() {  # stage <file> <sed-expression>
 [[ $DRY -eq 1 ]] || printf '%s\n' "$NEW" > VERSION
 [[ $DRY -eq 1 ]] && changed+=("VERSION")
 
-# 2. Rust workspace + every crate carrying a LITERAL version. Anchored to a line that
-#    starts `version = "<old>"` so dependency pins on other crates are untouched.
-for f in Cargo.toml */Cargo.toml; do
-  stage "$f" "s/^version = \"${OLD//./\\.}\"\$/version = \"$NEW\"/"
+# 2. Rust workspace + every member crate carrying a LITERAL version. Anchored to a line
+#    that starts `version = "<old>"` so dependency pins on other crates are untouched. The
+#    members are read from the workspace manifest, not globbed: `*/Cargo.toml` cannot see
+#    a member two levels down (`sdk/binding-core`), and a skipped member ships at the old
+#    version inside a release that names the new one.
+mapfile -t MEMBERS < <(python3 -c '
+import tomllib
+for member in tomllib.load(open("Cargo.toml", "rb"))["workspace"]["members"]:
+    print(member)
+')
+(( ${#MEMBERS[@]} > 0 )) || { echo "no workspace members read from Cargo.toml" >&2; exit 2; }
+stage Cargo.toml "s/^version = \"${OLD//./\\.}\"\$/version = \"$NEW\"/"
+for member in "${MEMBERS[@]}"; do
+  stage "$member/Cargo.toml" "s/^version = \"${OLD//./\\.}\"\$/version = \"$NEW\"/"
+done
+
+# 2a. The member versions every lockfile records. A path dependency's lock entry carries
+#     the member's version and no `source`, so the match is the member's package name
+#     followed directly by the old version. The SDK lockfiles resolve the same members by
+#     path; their own packages keep their independent versions.
+mapfile -t MEMBER_NAMES < <(for member in "${MEMBERS[@]}"; do
+  sed -nE 's/^name = "([^"]+)"$/\1/p' "$member/Cargo.toml" | head -n 1
+done)
+for lock in Cargo.lock sdk/python/Cargo.lock sdk/typescript/Cargo.lock; do
+  for name in "${MEMBER_NAMES[@]}"; do
+    stage "$lock" "/^name = \"${name}\"\$/{n;s/^version = \"${OLD//./\\.}\"\$/version = \"$NEW\"/;}"
+  done
 done
 
 # 2b. The version Bazel gives every Rust target as CARGO_PKG_VERSION.
@@ -96,6 +119,7 @@ stage deploy/helm/mcp-re-proxy/Chart.yaml "s/^appVersion: \"${OLD//./\\.}\"\$/ap
 #    claims to be the new one, and every file still validates.
 stage deploy/helm/mcp-re-proxy/values.yaml "s/^([[:space:]]*tag:[[:space:]]*)\"${OLD//./\\.}\"\$/\\1\"$NEW\"/"
 
+mapfile -t changed < <(printf '%s\n' "${changed[@]}" | awk '!seen[$0]++')
 printf '\n%s file(s) %s:\n' "${#changed[@]}" "$([[ $DRY -eq 1 ]] && echo 'would change' || echo 'changed')"
 printf '  %s\n' "${changed[@]}"
 
