@@ -43,7 +43,7 @@ Three of these are routinely got wrong:
   bump that moves both in lockstep makes the chart version meaningless; a bump that moves
   neither ships a chart pointing at an image tag that does not exist.
 * **The SDKs are NOT the proxy.** They version independently (currently 0.1.x against the
-  proxy's 0.14.x) because they are published to PyPI/npm on their own cadence and their
+  proxy's 0.17.x) because they are published to PyPI/npm on their own cadence and their
   compatibility surface is the wire profile, not the proxy build. Bumping them in sympathy
   publishes a release with no changes in it.
 
@@ -144,6 +144,15 @@ declared root must not fail everyday work. This is the lane where it is binding.
 In Actions the lane is `.github/workflows/release-assurance.yml`, dispatched with the ref to
 qualify and the `verification` run whose evidence records it composes. It runs on the
 self-hosted runner, never on a fork head.
+
+**The verification run comes first, and it must close assurance.** Dispatch
+`verification.yml` on the exact release candidate. A dispatched run is a complete run, so
+after its aggregate succeeds its `assurance-closure` job attests the run's evidence and
+requires every active theorem to be REVIEW_CURRENT, EVIDENCE_ESTABLISHED and
+CURRENTLY_VERIFIED, with every root complete. Only a run whose job printed
+`ASSURANCE CLOSURE: PASS` is the run to hand to release assurance. Commit its
+`closure-record.json` as `verification/closures/<commit>.json`; see
+[`epic-close.md`](epic-close.md).
 
 **Cutting the release then commits the record.** Copy the run's
 `release-assurance.json` to `docs/releases/<version>-release-assurance.json`, register the
