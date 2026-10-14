@@ -2080,11 +2080,12 @@ pub fn hostile(mut config: ClientConfig) -> ValidatedClientConfig {
         config, // STRUCTURAL-PROBE-SITE
         bind_scope: BindScope::decide("127.0.0.1:8640".parse().expect("an address"), false)
             .expect("loopback"),
+        max_clock_skew: mcp_re_core::MaxClockSkew::ZERO,
     }
 }
 """
 [probe.producer_paths]
-module-tree-visibility = "both fields are bare-private to `config::validated`, and the module is private to `config`, which re-exports the TYPE only (`pub use validated::ValidatedClientConfig`). The probe is a sibling module inside `config`, the widest position from which the field privacy rather than the module privacy is what refuses"
+module-tree-visibility = "all three fields are bare-private to `config::validated`, and the module is private to `config`, which re-exports the TYPE only (`pub use validated::ValidatedClientConfig`). The probe is a sibling module inside `config`, the widest position from which the field privacy rather than the module privacy is what refuses"
 alternate-constructors = "`new(ClientConfig)` is the only associated function returning `Self` without parsing, and it runs `check_local`, `check_trust_and_delegation` and `check_routes`; `from_json` and `read` reach it. The projections return shared references or a copied `BindScope` and `Duration`, never the representation; there is no setter, `From`, `Default`, `Deserialize` or `DerefMut`"
 generated-or-deserialization = "the derives are Debug and Clone. No Serialize, no Deserialize: the raw `ClientConfig` is the type serde fills, and it becomes this one only through `new`"
 test-only-construction = "the owner's `#[cfg(test)] mod tests` builds values only through `from_json` and `new`; no test-gated constructor and no test-gated field visibility exists"
@@ -2186,11 +2187,12 @@ construction = """
 pub fn hostile() -> crate::tls_plane::CrlReference {
     crate::tls_plane::CrlReference {
         unix: 0, // STRUCTURAL-PROBE-SITE
+        checked_with_crls: true,
     }
 }
 """
 [probe.producer_paths]
-module-tree-visibility = "the field is bare-private to `tls_plane::crl_reference`; `tls_plane` re-exports the TYPE `pub(crate)`. The probe sits at the crate root, a position that can name the type and is refused the field"
+module-tree-visibility = "both fields are bare-private to `tls_plane::crl_reference`; `tls_plane` re-exports the TYPE `pub(crate)`. The probe sits at the crate root, a position that can name the type and is refused the fields"
 alternate-constructors = "`CrlReference::of(&StartupReading, &CrlRevocationState)` is the only associated function returning `Self`; `unix_seconds` is `pub(super)` and returns a copy"
 generated-or-deserialization = "the derives are Debug, Clone and Copy; no Default, From or Deserialize"
 test-only-construction = "the owner's tests build references only through `of`; no test-gated constructor exists"
