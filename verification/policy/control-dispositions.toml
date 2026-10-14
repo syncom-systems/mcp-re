@@ -89,7 +89,7 @@ policy_revision = "adr-mcpre-069-r1"
 # authority — ADR-MCPRE-068's own boundary statement, which puts the assurance platform
 # outside the product theorem roots in terms.
 
-# ND-001 — 25 carrier(s)
+# ND-001 — 26 carrier(s)
 
 [[disposition]]
 id = "ND-001-001"
@@ -306,6 +306,14 @@ scope = "carrier"
 carrier = "tools/verification/test_feature_lanes.py"
 reason_family = "ND-001"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "ND-001-028"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_assurance_closure.py"
+reason_family = "ND-001"
+recorded = "2026-10-14"
 
 # ND-002 — 7 carrier(s)
 
