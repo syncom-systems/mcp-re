@@ -1,0 +1,32 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_claim"
+  ],
+  "corrections": [
+    {
+      "field": "statement",
+      "id": "C1",
+      "new": "Under the fleet-strict posture, a deployment that declares no replay tier is refused at the\nconfiguration boundary: it names no replay state, so no serving deployment is built over it.\nFor a deployment that reaches replay admission, admission refuses before any store side effect\nwhen the declared tier is below the strict-production minimum or the wired store self-reports\nthe single-process reference class. The atomic admission is the LAST step, and a store that does not answer it refuses the exchange rather than\nadmitting it — reported as an outage, never as a replay.",
+      "old": "Under the fleet-strict posture, replay admission refuses before any store side effect when\nthe deployment declares no replay tier, declares one below the strict-production minimum, or\nwires a store that self-reports the single-process reference class. The atomic admission is\nthe LAST step, and a store that does not answer it refuses the exchange rather than\nadmitting it — reported as an outage, never as a replay.",
+      "reason": "this theorem's own claim, field statement; see the record's reason."
+    },
+    {
+      "field": "scope",
+      "id": "C2",
+      "new": "The two gates it composes are of different kinds and the claim keeps them apart. The\nDECLARED tier is the operator's statement: its absence is refused by the configuration owner,\n`proxy.replay_configuration_state`, before a serving deployment exists, and a declared tier\nbelow the strict-production minimum is refused by the admission owner,\n`proxy.replay_admission_gate`. The store's self-reported durability class is the object's own,\nchecked beneath. A deployment can get the first right and the\nsecond wrong, which is why both refuse, and why neither is called a check on the other.",
+      "old": "The two gates it composes are of different kinds and the claim keeps them apart. The\nDECLARED tier is the operator's statement, checked here; the store's self-reported durability\nclass is the object's own, checked beneath. A deployment can get the first right and the\nsecond wrong, which is why both refuse, and why neither is called a check on the other.",
+      "reason": "this theorem's own claim, field scope; see the record's reason."
+    }
+  ],
+  "from_fingerprint": "sha256:834897b2f51e509fe939537fe59ebc1abacf1df02014f68d7985c997336927c8",
+  "packet": "verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md",
+  "product_behavior_unchanged": true,
+  "reason": "Owner ruling 2026-10-14 item 2 (option 1). Since MCPRE-166 (#1113) a fleet-strict deployment with no declared replay tier is unrepresentable at replay admission (`ReplayPosture::FleetStrict` carries its tier) and is refused at the configuration boundary by `proxy.replay_configuration_state` (`no_declared_tier_yields_no_state`). The statement named replay admission as the locus of that refusal. It now states the two stages: the configuration boundary refuses the undeclared tier before a serving deployment exists; replay admission still refuses the below-minimum tier and the single-process store class before any store side effect; an unanswered store is still an outage. The scope names the configuration owner and the admission owner. `unit://proxy.replay_configuration_state` joins `supported_by`. The security consequence, the dependencies and the Redis/etcd premise treatment are unchanged.",
+  "root_consequence_unchanged": true,
+  "ruling": "Owner ruling of 2026-10-14 for MCPRE-218 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md), which approved this correction and the specification review at the corrected fingerprint. Recorded under the ADR-MCPRE-068 Phase-1 class it belongs to: a precision correction that leaves the accepted promise intact.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0092",
+  "to_fingerprint": "sha256:49569e318ea23f11449d3e262a2be902b477bb8e2c189576ed6271cc62b1f4db"
+}

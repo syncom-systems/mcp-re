@@ -198,7 +198,7 @@ attestations this view cannot see.
 | unit://proxy.delegated_signer_write_authority | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.delegated_signing_configuration_state | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.delegated_signing_credential | source, contracts or evidence | THM-0062, THM-0063 | _no consumer_ |
-| unit://proxy.delegated_tls_depth_refusal | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://proxy.delegated_tls_depth_refusal | source, contracts or evidence | THM-0049 | _no consumer_ |
 | unit://proxy.delegated_tls_key_custody | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.deployment_topology_state | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.dispatch_commitment | source, contracts or evidence | THM-0045, THM-0051, THM-0052, THM-0074 | _no consumer_ |
@@ -253,7 +253,7 @@ attestations this view cannot see.
 | unit://proxy.remote_signer_call_gcp | source, contracts or evidence | THM-0115 | _no consumer_ |
 | unit://proxy.remote_signer_egress_bound | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.replay_admission_gate | source, contracts or evidence | THM-0092 | _no consumer_ |
-| unit://proxy.replay_configuration_state | source, contracts or evidence | THM-0077 | _no consumer_ |
+| unit://proxy.replay_configuration_state | source, contracts or evidence | THM-0077, THM-0092 | _no consumer_ |
 | unit://proxy.replay_materialization | source, contracts or evidence | THM-0086 | _no consumer_ |
 | unit://proxy.replay_materialization_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.replay_store_key | source, contracts or evidence | _no theorem_ | _no consumer_ |

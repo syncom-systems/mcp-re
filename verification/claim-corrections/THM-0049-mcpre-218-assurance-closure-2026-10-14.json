@@ -1,0 +1,25 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_claim"
+  ],
+  "corrections": [
+    {
+      "field": "scope",
+      "id": "C1",
+      "new": "Establishes refusal by the classifier over the relations it actually decides. Four are live —\nX2a, that a delegated channel key object must name a backend the deployment already reaches,\nX6, that a deny list no reachable authorization profile will consult enforces nothing, X9, and\nX10, the `ChannelCredentialCustodyState` × `ShardTopology` delegated-TLS-depth relation — and\nthose are what a validated deployment is held to.",
+      "old": "Establishes refusal by the classifier over the relations it actually decides. Three are live —\nX2a, that a delegated channel key object must name a backend the deployment already reaches,\nX6, that a deny list no reachable authorization profile will consult enforces nothing, and\nX9 — and those are what a validated deployment is held to.",
+      "reason": "this theorem's own claim, field scope; see the record's reason."
+    }
+  ],
+  "from_fingerprint": "sha256:fc4ece44cecbb86d54c6467e3e19ed89f9c7bab6fdebfcff5ab603a0c9775c65",
+  "packet": "verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md",
+  "product_behavior_unchanged": true,
+  "reason": "Owner ruling 2026-10-14 item 3. MCPRE-207 (#1154) added relation X10, the ChannelCredentialCustodyState x ShardTopology delegated-TLS-depth refusal, to the cross-machine pass, so 'Three are live' understated the relations the classifier decides. The scope now names the four. X10's refusal and its battery belong to `unit://proxy.delegated_tls_depth_refusal`, which joins `supported_by` so the closure carries the relation the scope names. Statement and security consequence unchanged.",
+  "root_consequence_unchanged": true,
+  "ruling": "Owner ruling of 2026-10-14 for MCPRE-218 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md), which approved this correction and the specification review at the corrected fingerprint. Recorded under the ADR-MCPRE-068 Phase-1 class it belongs to: a precision correction that leaves the accepted promise intact.",
+  "severity_after": "high",
+  "severity_before": "high",
+  "subject": "THM-0049",
+  "to_fingerprint": "sha256:7c7494bac47f3375990e9a24aee2216da0e6588c5fd28f6142b16d594ee3f319"
+}

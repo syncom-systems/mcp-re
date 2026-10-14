@@ -2,12 +2,12 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:0d750213ca49c16b2b6c69f0f2cde5f15c81683c1238036a1b2984f81cfbb277",
+    "theorem_claim": "sha256:d5a543df1fbb464a9dc1a2ff1c620dcec80a4ea2a89baa302c104b881368a1ef",
     "theorem_dependencies": {},
     "theorem_id": "THM-0049",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G6.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G6.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). The claim was corrected under that ruling before this review was recorded; the record names the corrected fingerprint, and the old and new text are in verification/claim-corrections/THM-0049-mcpre-218-assurance-closure-2026-10-14.json.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -24,21 +24,41 @@
         "mutation_probes": "sha256:2109dfde259178b87ca46e5839d3e05a5dca80f9d6069527d752bab866cc49a2",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:5f9e890aaa959d3eaf112db84c18648a03b8dfa4f08e59e03dd56652b57c512e",
+        "source_inputs": "sha256:f229bf404c319b96e1024b05ec347999528094c887df6e9cb139b04c26119dc0",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:62c36adb4e0f3e804562e004d5608e538803b520e488532628122b7f03c00217",
         "test_selection": "sha256:59575fb3dc3448ba2312acff3f51121ba5b5812a75640768b9d152a72d659e92",
         "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "unit_id": "sha256:93a0ad9870fc733cbb7a464345858ccabce55cf33b740fa087e7f4226615c2cc"
+      },
+      "proxy.delegated_tls_depth_refusal": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:e3e4bf6e6e7d4b3a3ba09249d27191a13e10e0ad858c7b19c53b321cc75a20ae",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:52bf90eed0da55e92f53e393fc339c8529549a9ccb752774d129e1d1b50dcf03",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:2c9f3f3aba65d8a71b3ff838b3da841b9c11af0b7765be06d177ff481240d73d",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:996e74649188d734c97d8e729dd883db19a022847b0563f920fd89153b1978e7",
+        "test_selection": "sha256:a781648f0c39a174568f43461bd2ecac5659fdaf7beb8dd822285ef5ba0d3ee5",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "unit_id": "sha256:b8f6c573d4aa77a4d41d7570a415c15be121916ebcad3b3ed2106b95b523b2e7"
       }
     },
-    "theorem_claim": "sha256:0d750213ca49c16b2b6c69f0f2cde5f15c81683c1238036a1b2984f81cfbb277",
+    "theorem_claim": "sha256:d5a543df1fbb464a9dc1a2ff1c620dcec80a4ea2a89baa302c104b881368a1ef",
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:1f1182c89d12c83d84d16da3cace1fa53a63168c57e90adc124dec7ba68d63ca",
-  "reviewed_fingerprint": "sha256:fc4ece44cecbb86d54c6467e3e19ed89f9c7bab6fdebfcff5ab603a0c9775c65",
+  "review_digest": "sha256:2f673995317ff948c987ec139e96a87f16327fc7a49b2a487aa84734112cfb33",
+  "reviewed_fingerprint": "sha256:7c7494bac47f3375990e9a24aee2216da0e6588c5fd28f6142b16d594ee3f319",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0049"
 }

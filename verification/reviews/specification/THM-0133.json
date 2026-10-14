@@ -7,7 +7,7 @@
     "theorem_id": "THM-0133",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G7.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G7.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -28,7 +28,7 @@
         "mutation_probes": "sha256:15ab1954a52d861fb8689df2e8b8de3713e851706e942627cb08891a8ed2e110",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:ac04d34f962bca0eb332370fb8d4eadc7b4b69216db3da49a6cdf3c491de7396",
+        "source_inputs": "sha256:44d815fd8899dd152313531a07d7351da5dc23ebe19e13f8c7671814cb80a873",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:70eba5122298bbecb828d6bdc287fcaf825e76ae132c05068b20b01877de1184",
         "test_selection": "sha256:4bc560d9fef360155610d37e07d0b2249102fd16a25fc43e5d5f3ce9c0c21fbe",
@@ -41,7 +41,7 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:a1fb18d57e1095295e10d30e7e2d8926dba1e19a85c260a0fd31caf0e91385c6",
+  "review_digest": "sha256:434ad56398be2f1a5f03969ea0b68abacdb4931597ea64da362aadc457281931",
   "reviewed_fingerprint": "sha256:475de73e19b80fd0a868255205d3197eb7292b41bcd2b551bef5d57c24efee8f",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0133"
