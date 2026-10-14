@@ -199,6 +199,10 @@ def test_a_historical_record_stays_valid_after_main_advances_and_a_wrong_tree_do
         wrong = cr.build(closure(target, later_tree), review())
         assert any("has tree" in p for p in cr.verify(wrong, repo))
 
+        absent = cr.build(closure("0" * 40, tree), review())
+        assert any("not in this repository's history" in p for p in cr.verify(absent, repo))
+        assert _git(repo, "rev-parse", "--is-shallow-repository") == "false"
+
 
 if __name__ == "__main__":
     failures = 0

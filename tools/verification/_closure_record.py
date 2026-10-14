@@ -176,15 +176,16 @@ def git(repo: Path, *args: str) -> tuple[int, str]:
 def verify(record: dict, repo: Path) -> list[str]:
     """`problems`, and the target commit resolves to the target tree in `repo`'s history.
 
-    A shallow clone may not hold the commit; it is fetched from `origin` by id before the
-    record is judged, and an unresolvable commit is a failure, never a pass.
+    The history is read, never changed: a commit the clone does not hold is a failure, not
+    something to fetch. A fetch here would mutate the object graph that later ancestry checks
+    in the same job read, and a record naming an unmerged commit must fail, not be satisfied.
     """
     found = problems(record)
     if found:
         return found
     commit, tree = record["target"]["commit"], record["target"]["tree"]
     if git(repo, "cat-file", "-e", f"{commit}^{{commit}}")[0] != 0:
-        git(repo, "fetch", "-q", "--no-tags", "--depth=1", "origin", commit)
+        return [f"target commit {commit} is not in this repository's history"]
     rc, resolved = git(repo, "rev-parse", f"{commit}^{{tree}}")
     if rc != 0:
         return [f"target commit {commit} does not resolve in this repository"]
