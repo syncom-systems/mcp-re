@@ -35,6 +35,7 @@ before any verification toolchain exists — which is exactly the state they are
 | `generate-views` | renders `verification/generated/` from the four catalogues | works |
 | `review-frontier` | minimum review obligation | Phase 4; falls back to everything-dirty |
 | `review` | theorem fingerprints, review state, the establishment conjunction, and root completeness | works |
+| `closure-record` | checks every committed closure record under `verification/closures/` (well formed, digests agree, target commit resolves to target tree); `--compare FILE` names each identity of the current tree that differs from a record's, which is a report and never freshness | works; on the merge path in `ci.yml` |
 | `assurance-closure` | a complete run's closure: attests its evidence into a fresh store, evaluates `review --json`, and fails unless every active theorem is REVIEW_CURRENT, EVIDENCE_ESTABLISHED and CURRENTLY_VERIFIED and every root is complete; names each blocker | works; `verification.yml` runs it after `aggregate` on a dispatch or schedule run, `--run <id>` re-evaluates an earlier run |
 
 **A battery's result includes the RUNTIME it ran on**, where the ecosystem has one. An

@@ -44,7 +44,13 @@ from _assurance_graph import (  # noqa: E402
     unmet_obligations,
 )
 from _evidence_class import SEVERITIES  # noqa: E402
-from _approvals import ApprovalError, entry_text, ledger_state, load_ledger  # noqa: E402
+from _approvals import (  # noqa: E402
+    ApprovalError,
+    entry_text,
+    ledger_identity,
+    ledger_state,
+    load_ledger,
+)
 import _registries  # noqa: E402
 from _fingerprint import (  # noqa: E402
     fingerprint_theorem,
@@ -430,9 +436,27 @@ def main() -> int:
     roots = root_completeness(theorems, assurance)
 
     if args.json:
+        # The content identities the verdicts above were derived at, so a closure record
+        # can name exactly what it closed over.
+        identities = {
+            "policy_revision": doc["policy_revision"],
+            "review_ledger": ledger_identity(REPO_ROOT),
+            "units": {unit_id: row["fingerprint"] for unit_id, row in current.items()},
+            "theorems": {
+                theorem_id: {
+                    "fingerprint": fingerprints[theorem_id]["fingerprint"],
+                    "review_digest": (
+                        review_digests[theorem_id]["fingerprint"]
+                        if review_digests[theorem_id]
+                        else None
+                    ),
+                }
+                for theorem_id in fingerprints
+            },
+        }
         print(
             json.dumps(
-                {"theorems": assurance, "root_completeness": roots},
+                {"theorems": assurance, "root_completeness": roots, "identities": identities},
                 indent=2,
                 sort_keys=True,
                 default=list,

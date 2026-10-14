@@ -68,7 +68,9 @@ class Runner:
             store = Path(argv[argv.index("--store") + 1])
             if self.attest[0] == 0:
                 store.mkdir(parents=True, exist_ok=True)
-                (store / "u.json").write_text("{}", encoding="utf-8")
+                (store / "u.json").write_text(
+                    json.dumps({"unit_id": "u", "fingerprint": "sha256:u"}), encoding="utf-8"
+                )
             return self.attest
         return 0, json.dumps(self.review_doc), ""
 
@@ -187,6 +189,46 @@ def test_an_attestation_refusal_fails_closure_and_names_the_unit():
     assert record["verdict"] == "FAIL"
     assert runner.tools() == ["attest"], "nothing is evaluated over a refused issuance"
     assert any(r.startswith("REFUSED  u") for r in record["refusals"])
+
+
+# --- the record a PASS leaves -------------------------------------------------
+
+
+def test_a_pass_writes_a_closure_record_that_agrees_with_itself():
+    import _closure_record
+
+    with tempfile.TemporaryDirectory() as tmp:
+        evidence, out = Path(tmp) / "evidence", Path(tmp) / "out"
+        evidence.mkdir()
+        out.mkdir()
+        bundle(evidence)
+        record = closure.close(evidence, out, COMPLETE_RUN, TARGET, Runner(review_doc=COMPLETE_REVIEW), {})
+        assert record["verdict"] == "PASS"
+        written = json.loads((out / "closure-record.json").read_text(encoding="utf-8"))
+        assert _closure_record.problems(written) == []
+        assert written["target"] == TARGET
+        assert [row["unit"] for row in written["units"]] == ["u"]
+
+
+def test_a_failed_closure_writes_no_record():
+    with tempfile.TemporaryDirectory() as tmp:
+        evidence, out = Path(tmp) / "evidence", Path(tmp) / "out"
+        evidence.mkdir()
+        out.mkdir()
+        bundle(evidence)
+        stale = review({"THM-A": theorem(), "THM-B": theorem(review=False)})
+        record = closure.close(evidence, out, COMPLETE_RUN, TARGET, Runner(review_doc=stale), {})
+        assert record["verdict"] == "FAIL"
+        assert not (out / "closure-record.json").exists()
+
+
+def test_an_attested_fingerprint_review_did_not_derive_fails_closure():
+    """The record's unit set is the set this run attested; a disagreement is not papered over."""
+    drifted = json.loads(json.dumps(COMPLETE_REVIEW))
+    drifted["identities"]["units"]["u"] = "sha256:other"
+    record, _, out = run_close({}, Runner(review_doc=drifted))
+    assert record["verdict"] == "FAIL"
+    assert any("unit://u attested sha256:u" in r for r in record["refusals"])
 
 
 # --- the three axes and the roots ---------------------------------------------

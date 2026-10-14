@@ -30,10 +30,33 @@ Dispatch `verification.yml` on the final `main` commit. A dispatched or schedule
 It prints each blocker — a stale review and the component that moved, a stale or unreviewed
 assumption, a non-FRESH unit, a dependency-only blockage, an incomplete root and its blocker —
 and exactly one `ASSURANCE CLOSURE: PASS|FAIL` line. The job uploads
-`assurance-closure-<run>-<attempt>`: the attestations, `review.json`, `attest.log` and
-`closure.json`.
+`assurance-closure-<run>-<attempt>`: the attestations, `review.json`, `attest.log`,
+`closure.json` and, on a PASS, `closure-record.json`.
 
-The epic closes when that line says `PASS`.
+The epic closes when that line says `PASS` and its closure record is committed.
+
+## The committed closure record
+
+The CI artifact expires; the record does not. Commit the PASS's `closure-record.json` as
+`verification/closures/<target commit>.json`, or run the `--run` form below with `--record`,
+which writes it there. It is tens of kilobytes. It states that the target tree closed at the
+identities it lists:
+
+- the target commit and tree, and the run (id, attempt, event, evidence commit);
+- the verification policy revision and the review-ledger identity;
+- every unit with its full fingerprint, and a canonical digest of that set;
+- every active theorem with its fingerprint and semantic review digest, and a canonical
+  digest of that set;
+- the declared roots, the three axis counts and the root counts.
+
+`tools/verification/closure-record --verify` runs on every pull request. It checks that each
+record is well formed, that its digests are the digests of the identities it lists, and that its
+target commit resolves to its target tree. A record stays valid as `main` advances, because
+it is a statement about its target.
+
+`tools/verification/closure-record --compare <record>` names each identity of the current tree
+that differs from the record. IDENTICAL is a report. A record is not an attestation and makes no
+later tree fresh; only attestations issued for that tree do.
 
 ## Re-evaluating an earlier run
 

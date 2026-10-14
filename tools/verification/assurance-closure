@@ -55,8 +55,16 @@ commit. Run 38513625401 measured `72127a07` and closes `551ba14b`, because the r
 records added between them are no unit's input. The record names both commits, and the
 binding check is `attest`'s: a fingerprint that moved since the run refuses.
 
+# The record a PASS leaves
+
+A PASS writes `closure-record.json` beside `closure.json` (`_closure_record`): the target
+commit and tree, the run, the policy revision, the review-ledger identity, every unit's and
+every active theorem's identity, and the counts. `--record` also writes it to
+`verification/closures/<commit>.json` for committing. It is a statement about that target
+and is never an attestation.
+
 Run:  tools/verification/assurance-closure --evidence DIR --event EVENT --out DIR
-      tools/verification/assurance-closure --run RUN_ID --out DIR
+      tools/verification/assurance-closure --run RUN_ID --out DIR [--record]
       tools/verification/assurance-closure --selftest
 """
 
@@ -71,6 +79,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import _closure_record  # noqa: E402
 import _registries  # noqa: E402
 from _evidence import load_bundle  # noqa: E402
 from _review import REVIEWED, closure_satisfied  # noqa: E402
@@ -286,7 +295,34 @@ def close(
             "refusals": [f"review --json exited {rc} without a readable result", stderr.strip()],
         }
     decision = evaluate(review, dependencies() if depends_on is None else depends_on)
-    return {**record, **decision}
+    drift = attested_drift(store, review)
+    if drift:
+        return {
+            **record,
+            "verdict": "FAIL",
+            "refusals": ["the attested fingerprints are not the fingerprints review derived", *drift],
+        }
+    record = {**record, **decision}
+    if record["verdict"] == "PASS":
+        (out / "closure-record.json").write_text(
+            _closure_record.dumps(_closure_record.build(record, review)), encoding="utf-8"
+        )
+    return record
+
+
+def attested_drift(store: Path, review: dict) -> list[str]:
+    """Units whose attestation and whose `review` identity disagree — the record's unit set
+    must be the set this run attested, not a second measurement of it."""
+    units = review.get("identities", {}).get("units", {})
+    attested = {}
+    for path in store.glob("*.json"):
+        row = json.loads(path.read_text(encoding="utf-8"))
+        attested[row["unit_id"]] = row["fingerprint"]
+    return [
+        f"unit://{unit} attested {attested.get(unit)} but derives {units.get(unit)}"
+        for unit in sorted(attested.keys() | units.keys())
+        if attested.get(unit) != units.get(unit)
+    ]
 
 
 # -------------------------------------------------------------- an existing run
@@ -402,6 +438,15 @@ def _theorem(review=True, evidence=True, verified=None, deprecated=False, units=
 def _review(theorems: dict, roots=("THM-A",), blocking=None) -> dict:
     blocking = blocking or {}
     return {
+        "identities": {
+            "policy_revision": "p",
+            "review_ledger": "sha256:ledger",
+            "units": {"u": "sha256:u"},
+            "theorems": {
+                tid: {"fingerprint": f"sha256:{tid}", "review_digest": f"sha256:r-{tid}"}
+                for tid in theorems
+            },
+        },
         "theorems": theorems,
         "root_completeness": {
             "verdict": "INCOMPLETE" if blocking else ("COMPLETE" if roots else "UNDECLARED"),
@@ -470,6 +515,11 @@ def main() -> int:
     parser.add_argument("--run-attempt", help="with --evidence: recorded in the closure record")
     parser.add_argument("--repo", help="with --run: the repository, if not gh's default")
     parser.add_argument("--out", type=Path, help="an empty directory for the closure records")
+    parser.add_argument(
+        "--record",
+        action="store_true",
+        help="on PASS, also write the closure record to verification/closures/<commit>.json",
+    )
     parser.add_argument("--selftest", action="store_true")
     args = parser.parse_args()
 
@@ -503,6 +553,12 @@ def main() -> int:
         record = close(evidence, out, run, target)
     except ClosureRefused as exc:
         record = {**record, "verdict": "FAIL", "refusals": [str(exc)]}
+    written = out / "closure-record.json"
+    if args.record and record["verdict"] == "PASS" and written.is_file():
+        destination = REPO_ROOT / _closure_record.path_for(record["target"]["commit"])
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(written.read_text(encoding="utf-8"), encoding="utf-8")
+        print(f"  recorded {destination.relative_to(REPO_ROOT)}")
     if out.is_dir():
         (out / "closure.json").write_text(
             json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
