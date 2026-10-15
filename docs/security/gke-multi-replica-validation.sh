@@ -1099,11 +1099,26 @@ while [ \$(date +%s) -lt \$end ]; do \
     || { echo \"DROP \$(echo \$why | tr '\\n' ' ')\"; drops=\$((drops+1)); }; \
   n=\$((n+1)); \
 done; echo \"loadgen: \$n requests, \$drops drop(s)\""
-  kubectl -n "$NAMESPACE" exec "$LOADGEN_POD" -- sh -c "$REMOTE" > /tmp/mcps90.load 2>&1 & LOAD=$!
+  # The loop runs DETACHED in the pod, writing to a file named for this run, and short execs
+  # read the file back. Holding one exec stream open for the whole window made the result
+  # depend on that stream: when it was torn down mid-run the runtime SIGKILLed the loop
+  # (exit 137) and no summary existed to read. The file is new to this run, so a summary
+  # left by an earlier run can never be read as this one's.
+  LOAD_OUT="/tmp/mcps90-$(date +%s)-$$.load"
+  printf '%s\n' "$REMOTE" | kubectl -n "$NAMESPACE" exec -i "$LOADGEN_POD" -- sh -c "cat > $LOAD_OUT.sh" \
+    && kubectl -n "$NAMESPACE" exec "$LOADGEN_POD" -- \
+         sh -c "nohup sh $LOAD_OUT.sh > $LOAD_OUT 2>&1 < /dev/null &" \
+    || fail "could not start the in-cluster load generator"
   sleep 2  # let the load loop establish steady traffic before the rollout starts
   kubectl -n "$NAMESPACE" set env deploy/"$DEPLOY" ROLLOUT_NONCE="$(date +%s)"
   kubectl -n "$NAMESPACE" rollout status deploy/"$DEPLOY" --timeout=300s
-  wait $LOAD || true
+  load_deadline=$(( $(date +%s) + SECS + 120 ))
+  : > /tmp/mcps90.load
+  while (( $(date +%s) < load_deadline )); do
+    kubectl -n "$NAMESPACE" exec "$LOADGEN_POD" -- cat "$LOAD_OUT" > /tmp/mcps90.load 2>/dev/null || true
+    grep -q '^loadgen: ' /tmp/mcps90.load && break
+    sleep 5
+  done
   tail -1 /tmp/mcps90.load || true
   # HONESTY GUARD: the loop MUST have run to completion (it prints a `loadgen:` summary
   # with its request count). A killed/empty exec proves nothing — treat a missing
@@ -1155,7 +1170,17 @@ trap 'restore_epoch; stop_port_forwards' EXIT
 # goes to zero first, waiting out the drain (a draining pod still polls and would repair),
 # then the key is removed, then the fleet comes back.
 kubectl -n "$NAMESPACE" scale deploy/"$DEPLOY" --replicas=0 >/dev/null
-kubectl -n "$NAMESPACE" wait --for=delete pod -l app.kubernetes.io/name=mcp-re-proxy --timeout=180s >/dev/null \
+# Polled rather than `kubectl wait --for=delete`, which fails on an already-empty selector
+# in some kubectl versions; an empty listing is told apart from a failed query.
+drained=""
+for _ in $(seq 1 60); do
+  if pods="$(kubectl -n "$NAMESPACE" get pod -l app.kubernetes.io/name=mcp-re-proxy -o name)" \
+       && [[ -z "$pods" ]]; then
+    drained=1; break
+  fi
+  sleep 3
+done
+[[ -n "$drained" ]] \
   || fail "the proxy fleet did not reach zero replicas; the counter cannot be removed with no live peer"
 kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- redis-cli DEL mcp-re:trust:epoch >/dev/null
 kubectl -n "$NAMESPACE" scale deploy/"$DEPLOY" --replicas="$REPLICAS" >/dev/null
