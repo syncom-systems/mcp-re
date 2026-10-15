@@ -28,15 +28,13 @@ build failure — are in [`docs/dev/version-bump.md`](dev/version-bump.md). Run
 - [ ] `scripts/local_gate.sh --with-kind` is green — every stage, on this machine,
       before any cloud run or baseline declaration
       ([`docs/dev/local-gate-order.md`](dev/local-gate-order.md)).
-- [ ] The ADR-MCPRE-051 §7 SLO lane ran where nothing else was scheduled on the box.
-      The loadgen is co-located, so a loaded box produces an environmental FAIL and a
-      meaningless number. The release-grade run is
+- [ ] No performance claim is made for the release without performance evidence for it.
+      Release qualification does not require an SLO run: release assurance asks no
+      performance question, and absent or stale performance evidence does not fail it. A
+      measurement is an owner or operator decision, run with
       [`.github/workflows/slo.yml`](../.github/workflows/slo.yml) on the self-hosted
-      runner — trigger it with `workflow_dispatch` if the release did not move the
-      declared performance surface. A local stage-4 run is a pre-flight, and its
-      hardware class is a different measurement context, not a substitute.
-- [ ] A minor release does **not** owe a whole SLO run. It owes a green build and a
-      green test battery. Spend the measurement where the performance surface moved.
+      runner. A local stage-4 run is a different measurement context, not a substitute,
+      and a loaded box produces an environmental FAIL and a meaningless number.
 - [ ] No lane was reported green on a run that selected zero tests (`--ignored` on
       `tls_load_harness_bench` is the known trap; the lane script refuses it).
 

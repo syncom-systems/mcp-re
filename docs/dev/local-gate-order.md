@@ -127,7 +127,8 @@ is no override for that handling and none may be added.
 
 **Stage 4 stays.** The two run in different measurement contexts, which the identity model
 already keeps apart: different `hardware_class`, different context digest, separate records.
-Run it here as a pre-flight; read the runner's for a release.
+Run it here as a pre-flight; the runner's is the controlled-context measurement when one is
+wanted. Neither is a release-qualification input.
 
 ## One anchor per hardware class
 

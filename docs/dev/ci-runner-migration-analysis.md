@@ -1,6 +1,10 @@
 # CI Runner Migration Analysis — GitHub-Hosted vs Self-Hosted
 
 **Date:** 2026-09-28  
+> Superseded by [`hosted-runner-findings.md`](hosted-runner-findings.md): verification and
+> release assurance now run on GitHub-hosted runners, and release assurance no longer reads the
+> SLO store. Kept as the dated analysis it was.
+
 **Conclusion:** No migration required; ci.yml already on GitHub-hosted runners; four specialist workflows have documented architectural blockers.
 
 ## Executive Summary

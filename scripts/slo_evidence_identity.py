@@ -44,9 +44,9 @@ self-hosted runner measures as from it.
 
 THE TRIGGER SET IS PART OF THE DECLARATION — but the SURFACE is the stronger half, and as of
 2026-09-14 it is the only half. `.github/workflows/slo.yml` is `workflow_dispatch` ONLY: an
-SLO run belongs to a release, not to a pull request, because the lane takes the self-hosted
-host exclusively and every PR that queued one drained the other repository's runners through
-the host arbiter — usually to conclude REUSE.
+SLO run is a deliberate measurement, not a pull-request or push gate, because the lane takes
+the self-hosted host exclusively and every PR that queued one drained the other repository's
+runners through the host arbiter — usually to conclude REUSE.
 
 Two mechanisms can answer "must this be re-measured?", and they are not equals. A `paths:`
 filter answers it by NAME; `--decide` answers it by CONTENT, folding the declared surface and
@@ -62,9 +62,11 @@ So `trigger_defects()` polices what remains true rather than what used to be the
     lost `workflow_dispatch` could never run at all, and a lane nobody can start is worse
     than one that starts too often.
 
-Where the question is now asked: `tools/verification/release-assurance` runs `--decide` as a
-step, so a release whose surface has moved fails there and names which of surface, context or
-freshness moved. A pull request cannot answer that usefully; a release must.
+Where the question is asked: `scripts/local_gate.sh` stage 4, which `slo.yml` runs, calls
+`--decide` before measuring, on the machine whose context it describes. `--decide` derives
+that context from the host and Docker daemon it runs on, so it answers only where the
+measurement would run. It is not a release-qualification input: an SLO result is
+observational performance evidence, and release assurance does not consult it.
 
 Run:  python3 scripts/slo_evidence_identity.py                 # validate the declaration
       python3 scripts/slo_evidence_identity.py --emit
@@ -575,7 +577,7 @@ def trigger_defects(text: str | None = None) -> list[str]:
         if len(uncovered) > 5:
             found.append(f"{trigger}: …and {len(uncovered) - 5} more uncovered surface input(s)")
 
-    # And the lane must remain startable. `workflow_dispatch` is how a release runs it now,
+    # And the lane must remain startable. `workflow_dispatch` is how it is started,
     # so losing it would leave a declared surface with no lane at all — the same defect as an
     # absent workflow, one line further in.
     if "workflow_dispatch" not in triggers:

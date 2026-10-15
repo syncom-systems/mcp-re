@@ -61,7 +61,8 @@ Three of these are routinely got wrong:
 4. **Bump the Helm chart version** *only* if `deploy/helm/` changed in this release.
 5. **`scripts/local_gate.sh --with-kind`** — the full battery. Stage 1 runs the image-tag
    gate; stage 5 deploys the chart against freshly built images, which is what proves the
-   tag actually resolves.
+   tag actually resolves. Stage 4 is a local performance regression measurement; its result
+   is performance evidence, not a release-qualification input.
 6. **Commit the regenerated `MODULE.bazel.lock`.** Stage 3 rewrites it because the crate
    `Cargo.toml` hashes it records all moved. Leaving it out is invisible until someone
    diffs the tree in an unrelated branch.
@@ -127,23 +128,20 @@ commit, the tree, the root-completeness verdict and the overall verdict. It refu
 working tree and refuses a `--target` that is not the checked-out commit, because a release
 record is about one immutable thing.
 
-One of its steps is the SLO question. The lane itself is `workflow_dispatch` only — an SLO
-run belongs to a release, not to a pull request — so `slo_evidence_identity.py --decide` is
-what asks whether the attested result is still reusable, by folding the declared performance
-surface and the measurement context into two digests. `REUSE` passes; `REMEASURE` fails the
-release and names which of surface, context or freshness moved, and the remedy is to
-dispatch `.github/workflows/slo.yml` and re-run release assurance.
-
-That is the owner's rule of 2026-09-08 made executable: a minor release needs no SLO run,
-only one where perf-relevant code was touched.
+**Release qualification does not include performance.** `ReleaseQualified(R)` and
+`PerformanceMeasured(R, context)` are independent propositions: release assurance asks no
+SLO question, and absent or stale performance evidence never fails it. A performance
+*claim* about a release does need performance evidence, which comes from
+`.github/workflows/slo.yml` — a manual, self-hosted measurement facility that an owner or
+operator dispatches when a measurement is wanted, never as a step of qualifying a release.
 
 `review --require-root-complete` is the **binding** closure mode. Ordinary CI runs the
 report-only form deliberately (ADR-MCPRE-059 §28.8): an honest unresolved GAP under a
 declared root must not fail everyday work. This is the lane where it is binding.
 
 In Actions the lane is `.github/workflows/release-assurance.yml`, dispatched with the ref to
-qualify and the `verification` run whose evidence records it composes. It runs on the
-self-hosted runner, never on a fork head.
+qualify and the `verification` run whose evidence records it composes. It runs on a
+GitHub-hosted runner and refuses a target that is not reachable from `main`.
 
 **The verification run comes first, and it must close assurance.** Dispatch
 `verification.yml` on the exact release candidate. A dispatched run is a complete run, so
@@ -155,7 +153,10 @@ CURRENTLY_VERIFIED, with every root complete. Only a run whose job printed
 [`epic-close.md`](epic-close.md).
 
 **Cutting the release then commits the record.** Copy the run's
-`release-assurance.json` to `docs/releases/<version>-release-assurance.json`, register the
+`release-assurance.json` to `docs/releases/<version>-release-assurance.json`, check its
+provenance with `python3 scripts/release_assurance_gate.py --verify-run <that file>` (GitHub
+must report the producing run as `release-assurance.yml` on `main`, a successful dispatch,
+whose uploaded record is byte-identical to the file), register the
 provenance document as `mechanized` in `scripts/release_assurance_gate.py`, and paste the
 block the gate renders into it. The gate then checks the document against the record on
 every CI run, which is the point: a provenance document may explain a result, but it may not
