@@ -130,7 +130,7 @@ Current implementation claim:
 > client-integration path (client-side proxy + Python/TypeScript SDKs) over the
 > RFC 9421 + RFC 9530 HTTP profile, delegated-required response signing.
 
-### Recent releases (0.6 → 0.17)
+### Recent releases (0.6 → 0.18)
 
 Full detail per release is in [`CHANGELOG.md`](CHANGELOG.md); the design lines are
 in [`docs/adr/`](docs/adr/). In brief:
@@ -205,6 +205,9 @@ in [`docs/adr/`](docs/adr/). In brief:
 - **0.17** is an **assurance-closure release**: little product surface moved; what moved is
   how much of it is owned, measured and reviewed (126 declared theorems, up from 95, under
   the same 12 system roots).
+- **0.18** gives each security fact **one owner** across two architecture epics, refuses an
+  out-of-range clock skew instead of clamping it, and is the first release qualified with
+  every theorem's review current on the released tree (133 theorems, 12 roots).
 
 Predecessors: **0.5** was a proposal-readiness release (conformance + claim
 hardening over `draft-01`, ADR-MCPS-031..036); **0.4** wired the tiered
