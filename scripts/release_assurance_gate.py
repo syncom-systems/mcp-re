@@ -226,8 +226,11 @@ def producer_problems(record: dict) -> list[str]:
 def run_provenance_problems(run: dict, artifact: bytes | None, committed: bytes) -> list[str]:
     """What GitHub records about the producing run, against the record about to be committed."""
     problems = []
-    if run.get("path") != str(WORKFLOW):
-        problems.append(f"run is of {run.get('path')!r}, not {WORKFLOW}")
+    # Measured 2026-10-15: this API returns the bare path. GitHub documents a `@<ref>` suffix
+    # form too, which is accepted only when the ref is main.
+    path, _, ref = str(run.get("path") or "").partition("@")
+    if path != str(WORKFLOW) or ref not in ("", "main", "refs/heads/main"):
+        problems.append(f"run is of {run.get('path')!r}, not {WORKFLOW} on main")
     if run.get("head_branch") != "main":
         problems.append(f"run was dispatched from {run.get('head_branch')!r}, not main")
     if run.get("event") != "workflow_dispatch":
@@ -381,7 +384,8 @@ def selftest() -> int:
 
     good_run = {"path": str(WORKFLOW), "head_branch": "main", "event": "workflow_dispatch", "conclusion": "success"}
     assert run_provenance_problems(good_run, b"x", b"x") == []
-    for field, value in (("path", ".github/workflows/other.yml"), ("head_branch", "x"),
+    assert run_provenance_problems(dict(good_run, path=f"{WORKFLOW}@main"), b"x", b"x") == []
+    for field, value in (("path", ".github/workflows/other.yml"), ("path", f"{WORKFLOW}@x"), ("head_branch", "x"),
                          ("event", "push"), ("conclusion", "failure")):
         assert run_provenance_problems(dict(good_run, **{field: value}), b"x", b"x"), (
             f"a run whose {field} is {value!r} must not vouch for a record"
