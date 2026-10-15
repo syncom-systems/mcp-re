@@ -22,9 +22,9 @@ checkouts with the same pins compute the same tag; changing any pin changes it.
 
 THERE IS NO REGISTRY IN THIS PATH. The assurance requirement is that Lean evidence names
 the environment that produced it and is invalidated when that environment changes, and a
-content digest does that whether the bytes sit in a local image store or a registry. The
-lane runs on one self-hosted runner and no proposition claims cross-machine reproduction,
-so publishing would add a distribution mechanism nothing asks for. Ruling:
+content digest does that wherever the bytes sit. The preserved archive is distributed as
+GitHub Release assets that hosted verification downloads and checks against the lock's
+`archive_digest`; publishing one is a manual, reviewed act outside this tool. Ruling:
 verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md.
 
 BUT A DIGEST IS IDENTITY, NOT PRESERVATION. The local image store is disposable, and this
@@ -35,7 +35,8 @@ longer reproducible. So `identity` also PERSISTS the artifact outside Docker's s
 under its own digest, and `load` is what every consumer runs: it checks the preserved bytes
 and hands back an image id, never a tag. See `_extraction_artifact`.
 
-The platform is linux/arm64 because the consumer is a self-hosted Apple Silicon runner.
+The platform is linux/arm64 because the consumer is the hosted `ubuntu-24.04-arm` extraction
+job in `verification.yml`.
 An amd64 build of the same pins is a DIFFERENT image with a different digest, and the lock
 file records one platform for that reason.
 """

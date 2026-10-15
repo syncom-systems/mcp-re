@@ -17,26 +17,20 @@
 #
 # WHAT THIS JOB RELIES ON, stated plainly because the exclusivity claim is the point:
 #
-#   * dev1 enforces a HOST-LEVEL EXCLUSIVE RESERVATION for release-grade SLO measurement.
+#   * dev1 enforces a HOST-LEVEL EXCLUSIVE RESERVATION for controlled SLO measurement.
 #     All runner applications sharing the physical host honour it at pre-job admission,
 #     work already executing drains before measurement, and the lane begins only after
 #     bounded quiescence has been established.
 #
-#     The previous version of this comment said a single registered runner made contention
-#     "structurally impossible". That was MEASURED FALSE on 2026-09-10: dev1 hosts three
-#     registered runner applications —
-#
-#         dev1         -> github.com/matssun/code       (macOS)
-#         dev1-mcp-re  -> github.com/matssun/mcp-re     (macOS)
-#         dev1-linux   -> github.com/matssun/code       (colima VM, 4 of 14 cores)
-#
-#     — which serve DIFFERENT repositories and therefore never compete for jobs, only for
-#     the machine. A failed rep ran at host load 12.43 beside another runner. The assurance
-#     now comes from coordination, not from topology: the host does not need to have one
-#     runner, and this file no longer claims that it does. See tools/slo/host_gate.py.
-#   * The `concurrency` group below serialises this workflow against itself, so a push and a
-#     deliberate operator run cannot interleave two measurements. `cancel-in-progress` is
-#     false: cancelling a measurement mid-run is how a release ends up with no number at all.
+#     A single registered runner does not make contention impossible: the host can carry
+#     several runner applications serving different repositories, which never compete for
+#     jobs, only for the machine, and a failed rep has run at host load 12.43 beside one.
+#     The assurance comes from coordination, not from topology: every runner application on
+#     the host must participate in admission, and the host gate refuses when it cannot
+#     confirm that. See tools/slo/host_gate.py.
+#   * The `concurrency` group below serialises this workflow against itself, so two dispatches
+#     cannot interleave two measurements. `cancel-in-progress` is
+#     false: cancelling a measurement mid-run leaves no number at all.
 #
 # WHAT IT DOES NOT ESTABLISH: that the host is idle. Nothing in GitHub Actions can assert
 # that, so the lane MEASURES it instead — `scripts/local_slo_lane.sh` reads the 1-minute load
@@ -49,36 +43,31 @@
 # 8000 requests / cold TLS1.3-mTLS), same gates. Only the machine is different — which makes
 # this a different MEASUREMENT CONTEXT under the two-identity model in
 # `config/performance-surface.toml`, not a different or a better verdict about the old one.
-# The class is `[[context.class]] github_actions_runner = true`, it has no committed
-# regression anchor yet, and `scripts/adr051_slo_gate.py` reports UNANCHORED rather than
-# comparing this machine's numbers against a developer workstation's.
+# The class is `[[context.class]] github_actions_runner = true` (`dev1-slo-v1`), and its
+# regression anchor is `docs/bench/adr-051-baseline-dev1-slo-v1.json`, so its reports are
+# compared against this machine's own anchor and never against a developer workstation's.
 
 name: slo
 
-# WHEN THIS LANE RUNS — the owner's rule, 2026-09-14: an SLO run belongs to a RELEASE, not
-# to a pull request.
+# WHAT THIS LANE IS. An SLO result is observational performance evidence bound to an
+# immutable software subject and a measurement context. This workflow MEASURES when an owner
+# or operator decides a performance measurement is wanted. It is an independent facility:
+# not a pull-request gate, not a push gate and not a release gate. Release qualification
+# (`tools/verification/release-assurance`) does not ask a performance question, and nothing
+# dispatches this workflow automatically. A performance CLAIM about a release needs evidence
+# from here; a release does not.
 #
-# `workflow_dispatch` ONLY. It previously ran on `pull_request` and on `push` to main behind
-# a `paths:` filter derived from the declared performance surface, and the measured effect
-# was waste rather than assurance: the lane takes the self-hosted host EXCLUSIVELY, so every
-# PR touching the serving path -- or merely `scripts/local_gate.sh` -- queued a job that
-# drained the other repository's runners through the host arbiter. One such run sat in
-# "Set up runner" for twenty minutes and would then have concluded REUSE, because the
-# surface had not moved at all.
+# `workflow_dispatch` ONLY. The lane takes the self-hosted host exclusively, so an automatic
+# trigger would drain the other runners on the host through the arbiter for a measurement
+# nobody asked for.
 #
-# NOTHING IS LOST BY REMOVING THE FILTER, and this is the part worth reading. A `paths:`
-# filter answers "did an input change?" by NAME. `scripts/slo_evidence_identity.py --decide`
-# answers it by CONTENT -- it folds the declared surface (source, build configuration,
-# harness, envelope, images) and the measurement context (hardware, OS and container-runtime
-# classes, benchmark configuration) into two digests and compares them against the attested
-# results in the durable store. The filter was the weaker of the two mechanisms and the only
-# one that cost a host.
-#
-# So the question moves to where a release already asks it:
-# `tools/verification/release-assurance` runs `--decide` as a step, and a release whose
-# surface HAS moved fails there, naming which of surface, context or freshness moved and
-# telling the operator to dispatch this lane. A PR cannot answer that question usefully; a
-# release must.
+# Whether a measurement is needed at all is answered by CONTENT, not by a `paths:` filter:
+# `scripts/local_gate.sh` stage 4 runs `scripts/slo_evidence_identity.py --decide` first,
+# which folds the declared performance surface (source, build configuration, harness,
+# envelope, images) and the measurement context (hardware, OS and container-runtime classes,
+# benchmark configuration) into two digests and compares them against the attested results
+# in the durable store. A dispatch whose identity is already attested reuses that result
+# unless `force_remeasure` is set.
 on:
   workflow_dispatch:
     inputs:
@@ -96,8 +85,8 @@ permissions:
   contents: read
 
 # Serialised against itself, never cancelled. Two measurements interleaved on one host is
-# the contention this workflow exists to remove, and a cancelled measurement is a release
-# with no number rather than a fast one.
+# the contention this workflow exists to remove, and a cancelled measurement is no number
+# rather than a fast one.
 concurrency:
   group: slo-self-hosted
   cancel-in-progress: false
@@ -105,10 +94,10 @@ concurrency:
 jobs:
   lane:
     name: ADR-MCPRE-051 §7 SLO lane (self-hosted)
-    # Same-repository refs only, exactly as both `verification.yml` jobs are. This job
+    # Same-repository refs only, should a pull_request trigger ever be added. This job
     # executes the checked-out tree's own `scripts/*` on a persistent self-hosted Mac mini
     # that holds the pinned toolchains and the operator's cloud credentials, so a fork pull
-    # request reaching this runner is arbitrary code execution on the release verification
+    # request reaching this runner is arbitrary code execution on the controlled measurement
     # host, not a sandboxed CI job. The runner is not ephemeral: anything a run leaves behind
     # is read by every later run.
     if: >-
@@ -217,7 +206,7 @@ jobs:
       # ASK the host authority; do not become it. The admission state machine lives on the
       # host in tools/slo/host_gate.py, installed at /opt/verification/runner-arbiter, and
       # this step reads its verdict rather than re-deriving exclusivity in YAML. A non-zero
-      # exit here means the reservation, the drain, the participation of all three runner
+      # exit here means the reservation, the drain, the participation of every runner
       # applications, or the quiescence could not be established — in which case the lane
       # must NOT publish a number.
       - name: Assert physical-host exclusivity (host arbiter)

@@ -189,7 +189,7 @@ def load_record_obj(record: object) -> dict | None:
     """A parsed object, if it is a release-assurance record this gate can read."""
     if not isinstance(record, dict) or record.get("kind") != "release-assurance":
         return None
-    if record.get("schema_version") != 1:
+    if record.get("schema_version") != 2:
         return None
     return record
 
@@ -231,7 +231,7 @@ def selftest() -> int:
 
     record = {
         "kind": "release-assurance",
-        "schema_version": 1,
+        "schema_version": 2,
         "verdict": "PASS",
         "root_completeness": "PASS",
         "recorded_at": "2026-01-01T00:00:00Z",

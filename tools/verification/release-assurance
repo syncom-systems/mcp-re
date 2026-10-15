@@ -27,7 +27,6 @@ existing authority and is obtained by calling it:
 
 | question | authority called |
 |---|---|
-| is the attested SLO result still reusable | `slo_evidence_identity.py --decide` |
 | does the evidence compose to a repository verdict | `verify --aggregate --gate` |
 | does each record become an attestation at its own fingerprint | `attest` |
 | are the trusted premises accounted for | `check-assumptions` |
@@ -44,8 +43,8 @@ only attest what verify established — is the same rule this command applies to
 its steps. It is deliberately not reused, and the reason is one word in its phase 1: it
 calls `verify` WITHOUT `--aggregate`, so it RUNS THE LANES.
 
-Release assurance must not run them. The formal lanes execute on the verification host,
-inside the pinned extraction container, in their own workflow; this command composes the
+Release assurance must not run them. The formal lanes execute in `verification.yml`'s own
+jobs, the extraction lanes inside the pinned extraction container; this command composes the
 records they left. Giving `evidence` a second mode would make one tool answer two different
 questions — *run the lanes here* and *compose records produced elsewhere* — which is the
 duplication worth avoiding, not the one avoided by folding them together.
@@ -70,27 +69,21 @@ naming a commit whose tree is not the one measured would be a false identity. `-
 must name the commit that is checked out, for the same reason — this command measures
 here, it does not fetch.
 
-# Where the SLO question is asked, and why it is asked HERE
+# What it does not ask: performance
 
-The SLO lane is `workflow_dispatch` only: an SLO run belongs to a release, not to a pull
-request, because it takes the self-hosted host exclusively and every PR that queued one
-drained the other repository's runners through the host arbiter.
+Release qualification and performance measurement are independent propositions. A release
+is qualified by the authorities above; a performance claim about a release needs its own
+evidence from `.github/workflows/slo.yml`, bound to a measurement context. Absent or stale
+performance evidence is therefore never a release-assurance failure, and this command neither
+reads the SLO evidence store nor asks `slo_evidence_identity.py` anything.
 
-Removing that trigger would be a loss if nothing else asked the question, so this command
-asks it. `slo_evidence_identity.py --decide` answers by CONTENT where a `paths:` filter
-answered by name: it folds the declared performance surface and the measurement context into
-two digests and compares them against the attested results in the durable store. `REUSE`
-(exit 0) passes; `REMEASURE` (exit 10) fails the release and names which of surface, context
-or freshness moved.
-
-That is the owner's rule of 2026-09-08 made executable rather than remembered — *a minor
-release needs no SLO run, only one where perf-relevant code was touched* — and the `exit 10`
-is preserved in the record beside the verdict, so a reader can tell "must measure" from
-"could not decide".
+It could not be answered here either: `slo_evidence_identity.py --decide` derives the
+measurement context from the machine and Docker daemon it runs on, so from a release-assurance
+job it would describe that job's host rather than the controlled context `slo.yml` measures in.
 
 # The evidence was produced somewhere else, and the record says so
 
-The formal lanes run on the verification host and leave records behind; this command
+The formal lanes run in `verification.yml` and leave records behind; this command
 COMPOSES them. Those records are content-addressed — each is valid at a unit's fingerprint,
 not at a commit — so evidence produced at one commit legitimately composes at another when
 nothing a unit depends on moved between them.
@@ -125,7 +118,7 @@ TOOLS = REPO_ROOT / "tools" / "verification"
 
 #: Bumped whenever a reader would interpret an existing field differently. A record with an
 #: unknown version is refused by its consumers rather than read optimistically.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 #: The composition. Each entry is (step id, argv, what it establishes). The ORDER is the
 #: order a reader should think in — identity, then evidence, then premises, then the
@@ -157,12 +150,15 @@ STEPS: tuple[tuple[str, list[str], str], ...] = (
         [sys.executable, str(REPO_ROOT / "scripts" / "claim_surface_gate.py")],
         "every published claim is a declared root reviewed at its current fingerprint",
     ),
-    (
-        "slo_evidence_freshness",
-        [sys.executable, str(REPO_ROOT / "scripts" / "slo_evidence_identity.py"), "--decide"],
-        "the attested SLO result is reusable for this performance surface and context",
-    ),
 )
+
+
+def performance_steps(steps) -> list[str]:
+    """Steps whose command is an SLO / performance-evidence tool. Always empty for `STEPS`."""
+    return [
+        step_id for step_id, argv, _ in steps
+        if any("slo" in Path(word).name.lower() for word in argv)
+    ]
 
 
 def git(*args: str) -> str:
@@ -341,8 +337,16 @@ def selftest() -> int:
         "trusted_premises",
         "root_completeness",
         "published_claims",
-        "slo_evidence_freshness",
     ], "the release-assurance composition changed; a step may not be removed silently"
+
+    # Release qualification never asks a performance question: a step consulting the SLO
+    # evidence identity or its store would make a stale or absent measurement fail a release.
+    assert performance_steps(STEPS) == [], (
+        f"release assurance invokes performance evidence: {performance_steps(STEPS)}"
+    )
+    assert performance_steps(
+        STEPS + (("p", [sys.executable, "scripts/slo_evidence_identity.py", "--decide"], "e"),)
+    ) == ["p"], "the performance-step detector must catch an SLO evidence step"
 
     ok = compose(identity, green, lambda argv: (0, "VERDICT: PASS"))
     assert ok["verdict"] == "PASS", "every authority passing must compose to PASS"

@@ -78,12 +78,37 @@ different instrument.
    from libtest's failure summary, which can only add `FAILED`.
 3. `prepare_python_matrix.sh` used a BSD-only `mktemp -t` template.
 
+## Publishing a new extraction archive
+
+`extraction-image.yml` builds, smoke-checks and preserves a new instrument and uploads the
+archive as a workflow artifact that expires after 30 days. Hosted verification reads only the
+GitHub Release `extraction-archive-<first 8 hex of artifact_digest>`. The step between them is
+manual and reviewed, because publishing an instrument and pinning it are what change which
+prover the formal evidence names. Nothing in a workflow performs it.
+
+1. Dispatch `extraction-image.yml` and read the `[extraction_container]` entry in its summary.
+2. Download the artifact: `gh run download <run> -n extraction-archive-<run> -D <dir>`. The
+   archive is `<dir>/sha256/<artifact digest hex>.tar`.
+3. Check `sha256sum` of that file equals the reported `archive_digest`.
+4. Split it into 1500 MiB parts, which keeps each asset under the 2 GiB release limit:
+   `split -b 1500M -d -a 2 <file> archive.part-` (GNU `split`). Check that
+   `cat archive.part-* | sha256sum` still equals `archive_digest`.
+5. Create the pre-release `extraction-archive-<8 hex>` with the parts as assets. Its body names
+   the artifact digest, the tag, the platform and `archive_digest`, and says to concatenate in
+   order.
+6. Record the identity in `verification/policy/toolchains.lock.toml` `[extraction_container]` in a
+   separate reviewed commit. Until it merges, verification keeps loading the previous archive.
+
 ## Remaining self-hosted use
 
 | workload | reason, measured or structural |
 |---|---|
-| `slo.yml` (manual, `workflow_dispatch`) | takes the host exclusively and records absolute throughput; a shared hosted VM cannot give a controlled-host measurement. Not triggerable by PR code. |
-| `release-assurance.yml` (manual) | reads the attested SLO evidence store `/opt/verification/slo`, which only the SLO runs on dev1 produce. It can move to hosted when SLO evidence is published as an artifact. |
+| `slo.yml` (manual, `workflow_dispatch`) | takes the host exclusively and records absolute throughput; a shared hosted VM cannot give a controlled-host measurement. Not triggerable by PR code. An independent performance-measurement facility, not a release gate. |
+
+`release-assurance.yml` runs on `ubuntu-24.04`. It had stayed self-hosted only to read the SLO
+evidence store `/opt/verification/slo`, through a binding `slo_evidence_identity.py --decide`
+step. Release qualification no longer asks a performance question, so it has no host
+dependency left.
 
 `extraction-image.yml` is now a manual hosted arm64 build that uploads its archive; a rebuild
 mints a new instrument and its lock record is a separate reviewed commit.

@@ -16,12 +16,15 @@
 # target, gives the command the evidence to compose, runs it, and keeps what it produced.
 # It decides nothing: a verdict computed in YAML is a verdict with no owner and no tests.
 #
-# `workflow_dispatch` only, and the target must be REACHABLE FROM `main` — a step below
-# refuses anything else. Being a ref of this repository was never the property that made a
-# target safe to execute: a collaborator can point a branch or a tag at any code, and this
-# lane runs the target's own tooling on the shared self-hosted host in main's Actions cache
-# scope. The `R9-C025` boundary is not crossed here and is not claimed to be closed by this
-# lane.
+# `workflow_dispatch` only, on an ephemeral GitHub-hosted runner with a read-only token and
+# no secrets. The target must be REACHABLE FROM `main` -- a step below refuses anything else
+# -- because a release candidate is a commit of `main`: release assurance qualifies the tree
+# that was merged, never a branch or a tag that merely names a commit.
+#
+# Release qualification does not ask a performance question. An SLO result is observational
+# performance evidence bound to a software subject and a measurement context, produced by
+# `.github/workflows/slo.yml` when an owner wants one; its absence or staleness is never a
+# release-assurance failure.
 
 name: release assurance
 
@@ -47,14 +50,8 @@ permissions:
 jobs:
   release-assurance:
     name: release assurance (binding closure)
-    environment: privileged-self-hosted
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
-    env:
-      # The durable SLO evidence store, outside the checkout. `--decide` FAILS CLOSED when
-      # this is unset or resolves inside the workspace, so naming it here is what lets the
-      # `slo_evidence_freshness` step answer REUSE instead of refusing to decide.
-      MCP_RE_SLO_EVIDENCE_STORE: /opt/verification/slo
     steps:
       - uses: actions/checkout@v7
         with:
@@ -63,21 +60,13 @@ jobs:
           # depth-1 checkout has neither.
           fetch-depth: 0
 
-      # Everything below RUNS THE TARGET'S OWN TOOLING: `tools/verification/release-assurance`
-      # and the five authorities it calls are Python read from the checked-out ref, executing
-      # on a persistent self-hosted host, in a job whose Actions cache scope is the DISPATCH
-      # branch's -- normally `main`, whose cache every branch cut from it restores. So the
-      # target ref decides what runs, and an arbitrary ref would decide it in main's context.
+      # The release candidate is a commit of `main`. The steps below run the target's own
+      # `tools/verification/release-assurance`, so this guard is what makes "the target's
+      # authority" mean the authority that was merged. It lives in the workflow file, which
+      # comes from the dispatch branch: the target ref cannot edit the guard that admits it.
       #
-      # This step is the boundary, and it is here rather than in the command because it is a
-      # fact about WHERE this lane may execute, not about what a release verdict composes
-      # from. It lives in the workflow file, which comes from the dispatch branch: the target
-      # ref cannot edit the guard that admits it.
-      #
-      # Reachable from `origin/main` is the admitted set. Qualifying an UNMERGED commit is
-      # refused on purpose -- do not relax this to `origin/*` or to tags, both of which any
-      # collaborator can point at arbitrary code; merge first, or change this guard in a
-      # commit that says why.
+      # Do not relax this to `origin/*` or to tags, both of which can name an unmerged
+      # commit; merge first, or change this guard in a commit that says why.
       - name: The target must be reachable from main
         run: |
           set -euo pipefail
@@ -85,8 +74,7 @@ jobs:
           sha="$(git rev-parse HEAD)"
           git merge-base --is-ancestor "$sha" FETCH_HEAD || {
             echo "release assurance refuses $sha: it is not reachable from origin/main." >&2
-            echo "This lane executes the target's own verification tooling on the shared" >&2
-            echo "self-hosted host, in main's Actions cache scope. Merge the commit first." >&2
+            echo "A release candidate is a commit of main. Merge the commit first." >&2
             exit 1
           }
           echo "target $sha is reachable from origin/main ($(git rev-parse FETCH_HEAD))"
