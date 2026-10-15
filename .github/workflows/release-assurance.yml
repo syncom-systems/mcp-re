@@ -23,7 +23,7 @@
 #
 # Release qualification does not ask a performance question. An SLO result is observational
 # performance evidence bound to a software subject and a measurement context, produced by
-# `.github/workflows/slo.yml` when an owner wants one; its absence or staleness is never a
+# by an owner-run local measurement (`scripts/local_slo_lane.sh`) when one is wanted; its absence or staleness is never a
 # release-assurance failure.
 
 name: release assurance

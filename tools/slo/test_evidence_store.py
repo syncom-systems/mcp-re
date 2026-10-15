@@ -1,9 +1,9 @@
 """Controls for the durable SLO evidence store (A5.4).
 
-THE DEFECT UNDER REPAIR. The store was `REPO/.verification/slo` -- inside the checkout. The
-Actions workspace is cleaned between runs, so an authoritative PASS was written and then
-destroyed, and the next run with an IDENTICAL performance-surface fingerprint answered
-REMEASURE where it should have answered REUSE. The two-identity model of #845 was never
+THE DEFECT UNDER REPAIR. The store was `REPO/.verification/slo` -- inside the checkout. A
+clean checkout discards it, so an attested PASS was written and then destroyed, and the next
+run with an IDENTICAL performance-surface fingerprint answered REMEASURE where it should have
+answered REUSE. The two-identity model of #845 was never
 wrong; only its storage was, and these controls exist to keep that distinction.
 
 The headline control is cross-checkout reuse: write a record from one checkout, destroy
@@ -64,30 +64,20 @@ def test_store_resolution() -> None:
     local = run(["--emit"], {})
     check("a local run works with no store configured", local.returncode == 0)
 
-    # The authoritative Actions lane must NAME a durable store; no silent fallback.
-    ci_env = {
-        "GITHUB_ACTIONS": "true",
-        "GITHUB_WORKFLOW_REF": "matssun/mcp-re/" + ".github/workflows/slo.yml" + "@refs/heads/main",
-        "GITHUB_WORKSPACE": str(REPO),
-    }
-    unset = dict(ci_env)
-    unset.pop("MCP_RE_SLO_EVIDENCE_STORE", None)
-    got = run(["--decide"], unset)
-    check("CI with NO durable store configured is refused",
-          got.returncode not in (0, 10) and "durable store" in got.stderr,
-          f"rc={got.returncode} err={got.stderr[:120]}")
+    # A store named in MCP_RE_SLO_EVIDENCE_STORE is accepted, even from a runner that
+    # pretends to be a GitHub Actions job: no workflow is special-cased any more
+    # (0 REUSE / 10 REMEASURE are both fine here).
+    ci_like = {"GITHUB_ACTIONS": "true", "GITHUB_WORKSPACE": str(REPO),
+               "MCP_RE_SLO_EVIDENCE_STORE": str(store)}
+    named = run(["--decide"], ci_like)
+    check("a named durable store is accepted",
+          named.returncode in (0, 10), f"rc={named.returncode} err={named.stderr[:140]}")
 
-    # ...and a store INSIDE the disposable workspace is refused rather than accepted.
-    inside = run(["--decide"], {**ci_env,
-                                "MCP_RE_SLO_EVIDENCE_STORE": str(REPO / ".verification" / "slo")})
-    check("CI with a store inside GITHUB_WORKSPACE is refused",
-          "GITHUB_WORKSPACE" in inside.stderr,
-          f"rc={inside.returncode} err={inside.stderr[:140]}")
-
-    # A store outside the workspace is accepted (0 REUSE / 10 REMEASURE are both fine here).
-    outside = run(["--decide"], {**ci_env, "MCP_RE_SLO_EVIDENCE_STORE": str(store)})
-    check("CI with a durable store outside the workspace proceeds",
-          outside.returncode in (0, 10), f"rc={outside.returncode} err={outside.stderr[:140]}")
+    # With nothing named, even an Actions-shaped environment keeps the in-checkout default:
+    # nothing is refused, because no CI workflow runs the SLO.
+    unnamed = run(["--decide"], {"GITHUB_ACTIONS": "true", "GITHUB_WORKSPACE": str(REPO)})
+    check("no store named: the in-checkout default applies, with no refusal",
+          unnamed.returncode in (0, 10), f"rc={unnamed.returncode} err={unnamed.stderr[:140]}")
 
 
 # ==========================================================================================

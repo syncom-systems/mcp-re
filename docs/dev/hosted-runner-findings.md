@@ -103,7 +103,7 @@ prover the formal evidence names. Nothing in a workflow performs it.
 
 | workload | reason, measured or structural |
 |---|---|
-| `slo.yml` (manual, `workflow_dispatch`) | takes the host exclusively and records absolute throughput; a shared hosted VM cannot give a controlled-host measurement. Not triggerable by PR code. An independent performance-measurement facility, not a release gate. |
+| (none) | `slo.yml` was removed 2026-10-15. The SLO takes the host exclusively and records absolute throughput, which a shared hosted VM cannot give; it now runs locally on dev1 and is not part of pre-merge, post-merge or release. |
 
 `release-assurance.yml` runs on `ubuntu-24.04`. It had stayed self-hosted only to read the SLO
 evidence store `/opt/verification/slo`, through a binding `slo_evidence_identity.py --decide`

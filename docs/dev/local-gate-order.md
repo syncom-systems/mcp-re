@@ -111,9 +111,8 @@ release that wants a fresher number than the standing policy.
 Keying the evidence removed the re-measurements that had no reason to happen. It did not
 make the remaining ones comparable — this machine runs editors, other workspaces and a
 multi-gigabyte container VM, and none of that is declared anywhere.
-[`.github/workflows/slo.yml`](../../.github/workflows/slo.yml) runs the same lane on the
-self-hosted runner, through `scripts/local_gate.sh --from 4`, so stage 4 has one definition
-and the workflow schedules it rather than re-typing it.
+The owner runs the same lane on dev1, the controlled measurement host, through
+`scripts/local_gate.sh --from 4`, so stage 4 has one definition.
 
 **What that buys, and what it does not.** A self-hosted runner application executes one job
 at a time, so no other Actions job runs on the host while the lane measures; the workflow's

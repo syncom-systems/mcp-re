@@ -346,8 +346,7 @@ stage_static() {
     && python3 scripts/rehearsal_claim_gate.py \
     `# The SLO lane's evidence identity: the declared performance surface must exist and` \
     `# be git-tracked, every attested result must derive its filename from the identity it` \
-    `# carries, every declared hardware class must name an anchor measured on ITSELF, and` \
-    `# the surface-filtered .github/workflows/slo.yml must trigger on every surface input.` \
+    `# carries, and every declared hardware class must name an anchor measured on ITSELF.` \
     `# No measurement and no Docker — this is the declaration, not the lane.` \
     && python3 scripts/slo_evidence_identity.py --selftest \
     && python3 scripts/slo_evidence_identity.py \

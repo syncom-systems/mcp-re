@@ -149,9 +149,10 @@ fields = [
 #   regression_anchor   the committed baseline `adr051_slo_gate.py` compares it against,
 #                       or "" when no anchor has been declared for this class yet
 #   github_actions_runner
-#                       true on the ONE class the self-hosted Actions runner measures as.
-#                       `.github/workflows/slo.yml` resolves the value from here rather than
-#                       restating it, for the reason `config/ports.toml` exists.
+#                       true on the ONE class the controlled measurement host (dev1) measures as
+#                       (the key keeps its old name: renaming it would change the surface).
+#                       `slo_evidence_identity.py --runner-class` resolves the value from here
+#                       rather than restating it, for the reason `config/ports.toml` exists.
 #   reason              why `slo_declarable = false`, printed by the gate that refuses
 
 [[context.class]]
