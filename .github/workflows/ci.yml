@@ -415,6 +415,20 @@ jobs:
       - name: Heavy-lane disk preflight (adjudication selftest)
         run: python3 scripts/heavy_lane_disk_preflight.py --selftest
 
+      # The local gate may not reach a cloud. Stage 5's fleet proofs and Job-spec rehearsal
+      # are provider-neutral by construction (provisioning lives in drivers the local closure
+      # does not reach); this refuses a provider CLI, credential or registry anywhere in the
+      # closure of local_gate.sh. The three selftests after it are the units that split made
+      # testable: the Proof 4 pod selector, the literal Job template, the cloud renderer.
+      - name: Provider-neutral local closure + harness units
+        run: |
+          python3 scripts/provider_neutral_closure_gate.py --selftest
+          python3 scripts/provider_neutral_closure_gate.py
+          python3 docs/security/fleet_pod_select.py --selftest
+          python3 tools/slo/render_slo_job.py --selftest
+          python3 tools/cloud/render_cloud_config.py --selftest
+          python3 tools/perf/lightsail/ceiling.py selftest
+
       # ADR-MCPRE-059. The verification workflow is `paths:`-filtered, and its filter list
       # and the units' fingerprint closures are ONE dependency set written down twice. When
       # the closure grows past the filter, the workflow does not go red — it stops running,

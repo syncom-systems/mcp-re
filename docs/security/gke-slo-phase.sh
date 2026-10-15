@@ -4,7 +4,7 @@
 # ADR-MCPRE-051 §7 SLO baseline — the GKE phase, as ONE deterministic script.
 #
 # This is docs/security/gke-slo-baseline-runbook.md §4 turned into a rerunnable
-# script (no copy-paste). It runs AFTER the four fleet proofs
+# script (no copy-paste). It runs AFTER the eight fleet proofs
 # (gke-multi-replica-validation.sh), on the SAME Standard zonal cluster, and fits the
 # free-trial 16-vCPU CPUS_ALL_REGIONS cap by dropping the 4-vCPU fleet pool and running
 # the two 8-vCPU class pools concurrently (8 + 8 = 16). The SLO Job is self-contained
@@ -14,9 +14,8 @@
 #   docs/security/gke-slo-phase.sh                 # run the baseline (4 jobs) + gate
 #   docs/security/gke-slo-phase.sh --teardown      # delete the two class pools
 #
-# Env: PROJECT_ID, CLUSTER, ZONE, NAMESPACE, RELEASE (defaults below); BENCH_IMG
-# overrides the SLO bench image (default: current-source AR tag rebuilt by
-# deploy/cloudbuild/mcp-re-images.yaml).
+# Env: PROJECT_ID and BENCH_IMG (required, named by the operator); CLUSTER, ZONE,
+# NAMESPACE, RELEASE (defaults below).
 #
 # PRECONDITION — `scripts/local_gate.sh` green, including its stage-4 local SLO lane
 # (docs/dev/local-gate-order.md). That lane measures the SAME v2 envelope this phase
@@ -25,7 +24,7 @@
 set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-PROJECT_ID="${PROJECT_ID:-project-b19bbb5e-9be8-4fcb-a2f}"
+PROJECT_ID="${PROJECT_ID:?set PROJECT_ID (named, never defaulted: a default project is one nobody chose for this run)}"
 CLUSTER="${CLUSTER:-mcp-re-fleet}"
 ZONE="${ZONE:-us-central1-a}"
 NAMESPACE="${NAMESPACE:-mcp-re}"
@@ -43,6 +42,9 @@ if [[ "${1:-}" == "--teardown" ]]; then
   gke node-pools delete "$POOL_C3" --cluster "$CLUSTER" --quiet || true
   exit 0
 fi
+
+: "${BENCH_IMG:?set BENCH_IMG=<region>-docker.pkg.dev/$PROJECT_ID/mcp-re/mcp-re-slo-bench:<VERSION>}"
+export BENCH_IMG
 
 gcloud container clusters get-credentials "$CLUSTER" --project "$PROJECT_ID" --zone "$ZONE"
 
@@ -64,13 +66,13 @@ gke node-pools describe "$POOL_C3" --cluster "$CLUSTER" >/dev/null 2>&1 \
        --machine-type c3-standard-8 --num-nodes 1 --disk-size 40 --workload-metadata=GKE_METADATA
 
 # --- Four measurements: {e2,c3} x {1-core, 8-core}, canonical v2 envelope ------
-# run_slo_job.sh pins concurrency 128 / 8000 requests (v2) and emits the machine
+# run_slo_job_cloud.sh resolves the pool label; run_slo_job.sh pins concurrency 128 / 8000 requests (v2) and emits the machine
 # report between markers. Each Job pins its pool via nodeSelector.
 say "SLO Jobs (v2 envelope: concurrency 128 / 8000 requests)"
-NS="$NAMESPACE" tools/slo/run_slo_job.sh "$POOL_E2" e2-standard-8 1 "$OUT_DIR/e2_1core.json"
-NS="$NAMESPACE" tools/slo/run_slo_job.sh "$POOL_E2" e2-standard-8 8 "$OUT_DIR/e2_8core.json"
-NS="$NAMESPACE" tools/slo/run_slo_job.sh "$POOL_C3" c3-standard-8 1 "$OUT_DIR/c3_1core.json"
-NS="$NAMESPACE" tools/slo/run_slo_job.sh "$POOL_C3" c3-standard-8 8 "$OUT_DIR/c3_8core.json"
+PROVIDER=gke NS="$NAMESPACE" tools/slo/run_slo_job_cloud.sh "$POOL_E2" e2-standard-8 1 "$OUT_DIR/e2_1core.json"
+PROVIDER=gke NS="$NAMESPACE" tools/slo/run_slo_job_cloud.sh "$POOL_E2" e2-standard-8 8 "$OUT_DIR/e2_8core.json"
+PROVIDER=gke NS="$NAMESPACE" tools/slo/run_slo_job_cloud.sh "$POOL_C3" c3-standard-8 1 "$OUT_DIR/c3_1core.json"
+PROVIDER=gke NS="$NAMESPACE" tools/slo/run_slo_job_cloud.sh "$POOL_C3" c3-standard-8 8 "$OUT_DIR/c3_8core.json"
 
 # --- Gate: capacity on the 8-core report + 1->N scaling, per class ------------
 say "Gate e2-standard-8"

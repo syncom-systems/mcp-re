@@ -345,6 +345,12 @@ ci = ["ci.yml:rust"]
 selftest = true
 
 [[script]]
+path = "scripts/provider_neutral_closure_gate.py"
+stages = [1]
+ci = ["ci.yml:rust"]
+selftest = true
+
+[[script]]
 path = "scripts/rehearsal_claim_gate.py"
 stages = [1]
 ci = []

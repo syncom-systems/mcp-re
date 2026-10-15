@@ -4,8 +4,13 @@
 
 A **rerunnable** procedure to stand the MCP-RE HTTP-profile fleet up on a real GKE
 cluster, re-prove the live obligations, and measure the ADR-MCPRE-051 §7 SLO
-baseline on declared cloud hardware. Use it to **re-baseline on a new major
-release** or **before/after a performance-optimisation pass**.
+baseline on declared cloud hardware. Use it **before/after a performance-optimisation
+pass**; performance is independent of release qualification, and no release requires it.
+
+> **Historical substrate.** The GCP project named below has its billing closed and must
+> not be contacted. The current AWS performance experiment is the Lightsail ceiling
+> runbook, [`docs/bench/lightsail-ceiling-runbook.md`](../bench/lightsail-ceiling-runbook.md).
+> Any cloud step here needs the owner's GO for that operation.
 
 Everything here is **torn down after each run** (see [Teardown](#teardown)); the
 repo keeps the *setup*, not live cloud resources. First run took ~40 min end to
@@ -43,8 +48,8 @@ suites, Bazel parity and the ADR-051 §7 SLO lane — see
 scripts/local_gate.sh --with-kind    # stages 1-5, including the fleet proofs on kind
 ```
 
-Stage 5 runs the **identical** harness, chart and images this runbook deploys, on a
-local kind cluster (`PROVIDER=kind docs/security/gke-multi-replica-validation.sh`).
+Stage 5 runs the **identical** proof core (`docs/security/fleet-proofs-core.sh`), chart
+and images this runbook deploys, on a local kind cluster (`docs/security/fleet-proofs-kind.sh`).
 That rehearsal has already found six deploy defects — three of which would have
 failed the GKE run outright — every one of them *after* `gcloud builds submit` would
 have run and while a cluster was billing. Stage 4 is the local SLO lane; if it is
@@ -53,8 +58,9 @@ regression.
 
 Stage 5 also rehearses the **exact** SLO Job spec this runbook schedules —
 `tools/slo/rehearse_job_spec.sh` builds the bench image, side-loads it into the kind
-cluster the proofs just used, and runs
-`PROVIDER=kind tools/slo/run_slo_job.sh - kind-local 1 …`: the same manifest, the same
+cluster the proofs just used, and runs the provider-neutral
+`tools/slo/run_slo_job.sh kind-local 1 …` that `tools/slo/run_slo_job_cloud.sh` runs here:
+the same rendered manifest (`tools/slo/slo-job.yaml`), the same
 Redis sidecars, the same marker-delimited report extraction. Every piece of plumbing
 between `kubectl apply` and a parsed report is therefore proven before a cloud node exists.
 
@@ -97,7 +103,7 @@ warms `target/` so the Job runs with no recompile.
 
 > **One cluster shape, scripted.** `docs/security/gke-multi-replica-validation.sh`
 > (PROVIDER=gke) now creates EXACTLY this cluster — Standard, **zonal**, `e2-standard-2
-> ×2`, **`--workload-pool`** for Cloud-KMS-via-Workload-Identity — so the four proofs
+> ×2`, **`--workload-pool`** for Cloud-KMS-via-Workload-Identity — so the eight proofs
 > and the §4 SLO phase share one capacity-correct cluster that fits the 16-vCPU cap.
 > (An earlier harness used Autopilot + a regional placement and blew the cap —
 > FailedScheduling.) The manual commands below are what that script runs; prefer the
@@ -235,7 +241,7 @@ Proof 2 trust-epoch — see the [trust-epoch note](#trust-epoch-caveat)).
 > **The SLO Job is self-contained.** `tools/slo/run_slo_job.sh` runs
 > `tls_load_harness_bench`, which spawns its **own** `mcp-re-proxy` + echo backend
 > *inside the Job pod* and drives them with in-pod clients — it does **not** use the
-> deployed fleet Service. So the fleet only needs to be up for the four live proofs
+> deployed fleet Service. So the fleet only needs to be up for the eight live proofs
 > (§3), **not** for the SLO measurement. That is what lets the baseline fit inside
 > the 16-vCPU free-trial quota (below).
 
