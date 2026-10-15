@@ -53,31 +53,44 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      # A dispatch runs the workflow file of the branch it names, so a copy on another branch
+      # could drop every guard below. This refusal states the rule; what ENFORCES it is
+      # outside any branch's reach: the record names this run, and
+      # `scripts/release_assurance_gate.py --verify-run` refuses to let a record be
+      # committed unless GitHub reports the run as this workflow, on `main`, a successful
+      # dispatch, whose uploaded record is byte-identical to the file.
+      - name: Dispatched from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "release assurance runs only from main's copy of this workflow, not ${GITHUB_REF}" >&2
+          exit 1
+
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           # The reachability guard below needs main and the target in one history, and a
-          # depth-1 checkout has neither.
+          # depth-1 checkout has neither. A full fetch also brings `origin/main`, so no later
+          # step needs the token, and it is not left in the git config.
           fetch-depth: 0
+          persist-credentials: false
 
       # The release candidate is a commit of `main`. The steps below run the target's own
       # `tools/verification/release-assurance`, so this guard is what makes "the target's
-      # authority" mean the authority that was merged. It lives in the workflow file, which
-      # comes from the dispatch branch: the target ref cannot edit the guard that admits it.
+      # authority" mean the authority that was merged.
       #
       # Do not relax this to `origin/*` or to tags, both of which can name an unmerged
       # commit; merge first, or change this guard in a commit that says why.
       - name: The target must be reachable from main
         run: |
           set -euo pipefail
-          git fetch --no-tags --quiet origin main
+          main="$(git rev-parse refs/remotes/origin/main)"
           sha="$(git rev-parse HEAD)"
-          git merge-base --is-ancestor "$sha" FETCH_HEAD || {
+          git merge-base --is-ancestor "$sha" "$main" || {
             echo "release assurance refuses $sha: it is not reachable from origin/main." >&2
             echo "A release candidate is a commit of main. Merge the commit first." >&2
             exit 1
           }
-          echo "target $sha is reachable from origin/main ($(git rev-parse FETCH_HEAD))"
+          echo "target $sha is reachable from origin/main ($main)"
 
       # The command refuses a dirty tree and refuses a `--target` that is not the checked-out
       # commit, so this resolves the input to the immutable thing the record will name.

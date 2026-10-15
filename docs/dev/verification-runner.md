@@ -1,6 +1,6 @@
 # The verification runner (dev1)
 
-> The ADR-MCPRE-059 verification lanes now run on GitHub-hosted Linux (`.github/workflows/verification.yml`; measurements and design in `hosted-runner-findings.md`). dev1 remains for the manual SLO measurement lane only (release assurance runs hosted), and the text below describes what that lane still needs from it.
+> The ADR-MCPRE-059 verification lanes now run on GitHub-hosted Linux (`.github/workflows/verification.yml`; measurements and design in `hosted-runner-findings.md`). dev1 remains for the manual SLO measurement lane only; release assurance runs hosted. "The preserved extraction artifact" and "Required-check health" below describe the retired self-hosted verification setup and are not SLO prerequisites. "Job PATH" still applies: the SLO lane builds through Bazel too.
 
 Historically the ADR-MCPRE-059 verification lanes did not run on GitHub-hosted runners. Verus is
 pinned to an install root under `/opt/verification`, and the extraction pipeline runs a

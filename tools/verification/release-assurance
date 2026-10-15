@@ -108,6 +108,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -249,7 +250,24 @@ def run_step(argv: list[str]) -> tuple[int, str]:
     return proc.returncode, proc.stdout
 
 
-def compose(identity: dict[str, str], steps=STEPS, runner=run_step, evidence=None) -> dict:
+def producer(env=os.environ) -> dict:
+    """The run that produced this record, as Actions names it; `local` outside Actions.
+
+    The record is only as trustworthy as the run that wrote it, and these values are what
+    `scripts/release_assurance_gate.py --verify-run` checks against GitHub's own account of
+    that run before the record is committed.
+    """
+    if env.get("GITHUB_ACTIONS") != "true":
+        return {"source": "local", "workflow_ref": None, "run_id": None, "run_attempt": None}
+    return {
+        "source": "actions",
+        "workflow_ref": env.get("GITHUB_WORKFLOW_REF"),
+        "run_id": env.get("GITHUB_RUN_ID"),
+        "run_attempt": env.get("GITHUB_RUN_ATTEMPT"),
+    }
+
+
+def compose(identity: dict[str, str], steps=STEPS, runner=run_step, evidence=None, made_by=None) -> dict:
     """Call each authority in order, stop at the first refusal, and state one verdict."""
     results = []
     verdict = "PASS"
@@ -273,6 +291,7 @@ def compose(identity: dict[str, str], steps=STEPS, runner=run_step, evidence=Non
         "kind": "release-assurance",
         "target": identity,
         "evidence": evidence or {"source": "local", "run_id": None, "commit": None},
+        "producer": made_by or producer(),
         "recorded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "steps": results,
         "root_completeness": next(
@@ -292,6 +311,11 @@ def summarize(record: dict) -> str:
         f"  tree            {target['tree']}",
         f"  recorded at     {record['recorded_at']}",
     ]
+    made = record.get("producer") or {}
+    lines.append(
+        f"  produced by     run {made['run_id']} of {made['workflow_ref']}"
+        if made.get("source") == "actions" else "  produced by     a local invocation"
+    )
     evidence = record.get("evidence") or {}
     if evidence.get("source") == "local":
         lines.append("  evidence        this checkout's store")
@@ -401,6 +425,15 @@ def selftest() -> int:
         evidence={"source": "verification-run", "run_id": "42", "commit": identity["commit"]},
     )
     assert "DIFFERENT commit" not in summarize(same)
+
+    assert producer({})["source"] == "local", "a record made outside Actions must say so"
+    made = producer(
+        {"GITHUB_ACTIONS": "true", "GITHUB_WORKFLOW_REF": "o/r/.github/workflows/w.yml@refs/heads/main",
+         "GITHUB_RUN_ID": "7", "GITHUB_RUN_ATTEMPT": "1"}
+    )
+    assert made == {"source": "actions", "workflow_ref": "o/r/.github/workflows/w.yml@refs/heads/main",
+                    "run_id": "7", "run_attempt": "1"}, "the producing run must be named as Actions names it"
+    assert "producer" in ok, "every record names the run that produced it"
 
     assert "RELEASE ASSURANCE: PASS" in summarize(ok)
     assert "RELEASE ASSURANCE: FAIL" in summarize(red)

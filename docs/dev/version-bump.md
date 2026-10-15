@@ -153,7 +153,10 @@ CURRENTLY_VERIFIED, with every root complete. Only a run whose job printed
 [`epic-close.md`](epic-close.md).
 
 **Cutting the release then commits the record.** Copy the run's
-`release-assurance.json` to `docs/releases/<version>-release-assurance.json`, register the
+`release-assurance.json` to `docs/releases/<version>-release-assurance.json`, check its
+provenance with `python3 scripts/release_assurance_gate.py --verify-run <that file>` (GitHub
+must report the producing run as `release-assurance.yml` on `main`, a successful dispatch,
+whose uploaded record is byte-identical to the file), register the
 provenance document as `mechanized` in `scripts/release_assurance_gate.py`, and paste the
 block the gate renders into it. The gate then checks the document against the record on
 every CI run, which is the point: a provenance document may explain a result, but it may not
