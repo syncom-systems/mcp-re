@@ -28,8 +28,11 @@ failure — are in [`docs/dev/version-bump.md`](dev/version-bump.md). Run
 
 ## Run the local gate first
 
-- [ ] `scripts/local_gate.sh --with-kind` is green — every stage, on this machine
-      ([`docs/dev/local-gate-order.md`](dev/local-gate-order.md)).
+- [ ] `scripts/local_gate.sh --with-kind` is green on stages 1–3 and 5, on this machine
+      ([`docs/dev/local-gate-order.md`](dev/local-gate-order.md)). Stage 4 is a local
+      performance measurement: its result is performance evidence and does not hold a
+      release. If it fails, resume with `scripts/local_gate.sh --from 5` and record the
+      stage-4 result as information.
 - [ ] No performance claim is made for the release without performance evidence for it.
       Release qualification does not require an SLO run: release assurance asks no
       performance question, and absent or stale performance evidence does not fail it. A
