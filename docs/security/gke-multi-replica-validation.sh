@@ -677,7 +677,8 @@ port_free "$LOCAL_PORT_B" "replica B"
 
 kubectl -n "$NAMESPACE" port-forward "pod/${PODS[0]}" "${LOCAL_PORT_A}:${BIND_PORT}" >/dev/null 2>&1 & PF_A=$!
 kubectl -n "$NAMESPACE" port-forward "pod/${PODS[1]}" "${LOCAL_PORT_B}:${BIND_PORT}" >/dev/null 2>&1 & PF_B=$!
-trap 'kill $PF_A $PF_B 2>/dev/null || true' EXIT
+stop_port_forwards() { kill $PF_A $PF_B 2>/dev/null || true; }
+trap stop_port_forwards EXIT
 
 # WAIT for each tunnel to actually accept, rather than sleeping and hoping.
 #
@@ -1098,11 +1099,26 @@ while [ \$(date +%s) -lt \$end ]; do \
     || { echo \"DROP \$(echo \$why | tr '\\n' ' ')\"; drops=\$((drops+1)); }; \
   n=\$((n+1)); \
 done; echo \"loadgen: \$n requests, \$drops drop(s)\""
-  kubectl -n "$NAMESPACE" exec "$LOADGEN_POD" -- sh -c "$REMOTE" > /tmp/mcps90.load 2>&1 & LOAD=$!
+  # The loop runs DETACHED in the pod, writing to a file named for this run, and short execs
+  # read the file back. Holding one exec stream open for the whole window made the result
+  # depend on that stream: when it was torn down mid-run the runtime SIGKILLed the loop
+  # (exit 137) and no summary existed to read. The file is new to this run, so a summary
+  # left by an earlier run can never be read as this one's.
+  LOAD_OUT="/tmp/mcps90-$(date +%s)-$$.load"
+  printf '%s\n' "$REMOTE" | kubectl -n "$NAMESPACE" exec -i "$LOADGEN_POD" -- sh -c "cat > $LOAD_OUT.sh" \
+    && kubectl -n "$NAMESPACE" exec "$LOADGEN_POD" -- \
+         sh -c "nohup sh $LOAD_OUT.sh > $LOAD_OUT 2>&1 < /dev/null &" \
+    || fail "could not start the in-cluster load generator"
   sleep 2  # let the load loop establish steady traffic before the rollout starts
   kubectl -n "$NAMESPACE" set env deploy/"$DEPLOY" ROLLOUT_NONCE="$(date +%s)"
   kubectl -n "$NAMESPACE" rollout status deploy/"$DEPLOY" --timeout=300s
-  wait $LOAD || true
+  load_deadline=$(( $(date +%s) + SECS + 120 ))
+  : > /tmp/mcps90.load
+  while (( $(date +%s) < load_deadline )); do
+    kubectl -n "$NAMESPACE" exec "$LOADGEN_POD" -- cat "$LOAD_OUT" > /tmp/mcps90.load 2>/dev/null || true
+    grep -q '^loadgen: ' /tmp/mcps90.load && break
+    sleep 5
+  done
   tail -1 /tmp/mcps90.load || true
   # HONESTY GUARD: the loop MUST have run to completion (it prints a `loadgen:` summary
   # with its request count). A killed/empty exec proves nothing — treat a missing
@@ -1130,7 +1146,7 @@ fi
 # kill switch inert or let a restarted replica mint under a rolled-back epoch. The proxy
 # says exactly that and exits.
 #
-# RUNS LAST, after the rolling update, because it deliberately breaks a replica.
+# RUNS LAST, after the rolling update, because it deliberately takes the fleet down.
 log "Proof 8 — an unavailable security dependency refuses to serve"
 EPOCH_SAVED="$(kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- \
   redis-cli GET mcp-re:trust:epoch 2>/dev/null | tr -d '\r')"
@@ -1139,21 +1155,52 @@ EPOCH_SAVED="$(kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- \
 restore_epoch() {  # always, even on failure: the fleet must not be left broken
   kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- \
     redis-cli SET mcp-re:trust:epoch "$EPOCH_SAVED" >/dev/null 2>&1 || true
+  kubectl -n "$NAMESPACE" scale deploy/"$DEPLOY" --replicas="$REPLICAS" >/dev/null 2>&1 || true
 }
-trap restore_epoch EXIT
+# The port-forwards stop on this exit too: replacing the EXIT trap must not drop that.
+trap 'restore_epoch; stop_port_forwards' EXIT
 
+# The counter must be absent with NO live replica able to repair it. A serving replica
+# that reads a vanished counter refuses to mint and repairs it as a forward rotation,
+# writing one past its high-water mark (signing_plane/epoch_watch.rs) — so deleting the
+# key under a live fleet and restarting one replica races the peers' next poll, and a
+# replacement that starts after the repair finds the counter present and serves. That is
+# the repair working, not the startup posture failing; the startup posture is what a
+# replica with no mark does, and only a fleet with no live member has none. So the fleet
+# goes to zero first, waiting out the drain (a draining pod still polls and would repair),
+# then the key is removed, then the fleet comes back.
+kubectl -n "$NAMESPACE" scale deploy/"$DEPLOY" --replicas=0 >/dev/null
+# Polled rather than `kubectl wait --for=delete`, which fails on an already-empty selector
+# in some kubectl versions; an empty listing is told apart from a failed query.
+drained=""
+for _ in $(seq 1 60); do
+  if pods="$(kubectl -n "$NAMESPACE" get pod -l app.kubernetes.io/name=mcp-re-proxy -o name)" \
+       && [[ -z "$pods" ]]; then
+    drained=1; break
+  fi
+  sleep 3
+done
+[[ -n "$drained" ]] \
+  || fail "the proxy fleet did not reach zero replicas; the counter cannot be removed with no live peer"
 kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- redis-cli DEL mcp-re:trust:epoch >/dev/null
-VICTIM="$(kubectl -n "$NAMESPACE" get pod -l app.kubernetes.io/name=mcp-re-proxy \
-  -o jsonpath='{.items[0].metadata.name}')"
-[[ -n "$VICTIM" ]] || fail "could not resolve a replica to restart"
-kubectl -n "$NAMESPACE" delete pod "$VICTIM" --wait=false >/dev/null
+kubectl -n "$NAMESPACE" scale deploy/"$DEPLOY" --replicas="$REPLICAS" >/dev/null
 
 # It must NOT come up. Waiting for a NEGATIVE needs a bound: 90s is far longer than a
-# healthy start, which the proofs above have already demonstrated repeatedly.
+# healthy start, which the proofs above have already demonstrated repeatedly. The line
+# matched is the STARTUP refusal (trust_epoch.rs), never a serving replica's
+# `WARNING: the shared trust epoch is unreadable (...)` repair line, which quotes the
+# same cause; and it is read from the current or the previous container, since a refused
+# replica is restarting.
+proxy_logs() {
+  local pod
+  for pod in $(kubectl -n "$NAMESPACE" get pod -l app.kubernetes.io/name=mcp-re-proxy -o name); do
+    kubectl -n "$NAMESPACE" logs "$pod" --tail=40 2>/dev/null || true
+    kubectl -n "$NAMESPACE" logs "$pod" --previous --tail=40 2>/dev/null || true
+  done
+}
 refused=""
 for _ in $(seq 1 30); do
-  if kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/name=mcp-re-proxy --tail=40 2>/dev/null \
-       | grep -q 'trust-epoch key .* does not exist'; then
+  if proxy_logs | grep -v 'WARNING' | grep -q 'trust-epoch key .* does not exist'; then
     refused=1; break
   fi
   sleep 3
@@ -1161,31 +1208,20 @@ done
 [[ -n "$refused" ]] \
   || fail "no replica reported the absent trust-epoch dependency; a security dependency was removed and nothing refused"
 
-# WAIT for the ready count to drop; do not sample it once.
-#
-# The refusal log appears as soon as the REPLACEMENT crashes, but the pod that was
-# deleted to force that replacement is still draining at that instant — it spends
-# drainPreStopSeconds still serving and Ready, by design, and the kubelet's grace clock
-# runs to drainGracePeriodSeconds. So a single sample taken the moment the log line
-# shows up counts the draining victim among the Ready and reads REPLICAS, which is not
-# "it did not fail closed" — it is "the old pod has not finished leaving yet". Measured:
-# at t=15s ready=3 with the refusal already logged, at t=30s ready=2 with the
-# replacement in CrashLoopBackOff. Sampling once turned a passing property into a
-# failure whose message named the wrong cause.
-#
-# The bound must therefore exceed the drain budget rather than assume a fixed one, so
-# this stays correct if the chart's drain values move again.
-ready_deadline=$(( $(date +%s) + 180 ))
-ready_now="$REPLICAS"
+# No replica may become Ready while the dependency is absent. Every pod is new, so there
+# is no draining pod to count; the window is sampled, not read once, because a replica
+# that served after a slow start would otherwise be missed.
+ready_deadline=$(( $(date +%s) + 60 ))
+ready_now=0
 while (( $(date +%s) < ready_deadline )); do
   ready_now="$(kubectl -n "$NAMESPACE" get pods -l app.kubernetes.io/name=mcp-re-proxy \
     -o jsonpath='{range .items[*]}{.status.containerStatuses[0].ready}{"\n"}{end}' | grep -c true || true)"
-  (( ready_now < REPLICAS )) && break
+  (( ready_now == 0 )) || break
   sleep 5
 done
-(( ready_now < REPLICAS )) \
-  || fail "every replica is Ready with the trust-epoch dependency ABSENT — it did not fail closed"
-echo "  OK: the dependency was removed and the replica refused to serve, naming it."
+(( ready_now == 0 )) \
+  || fail "$ready_now replica(s) Ready with the trust-epoch dependency ABSENT — it did not fail closed"
+echo "  OK: the dependency was removed and every replica refused to serve, naming it."
 
 # THE POSITIVE CONTROL. "Not ready" is also what a broken image, a bad Secret or an
 # unschedulable node look like, so the same replica must RECOVER once the dependency comes
@@ -1194,7 +1230,7 @@ restore_epoch
 kubectl -n "$NAMESPACE" delete pod -l app.kubernetes.io/name=mcp-re-proxy --wait=false >/dev/null
 kubectl -n "$NAMESPACE" rollout status deploy/"$DEPLOY" --timeout=300s >/dev/null \
   || fail "the fleet did not recover after the security dependency was restored — 'not ready' above cannot be attributed to the dependency"
-trap - EXIT
+trap stop_port_forwards EXIT
 printf '%s\n' "$REQ" | client --remote-addr "$REPLICA_A" --expect accepted >/dev/null 2>&1 \
   || echo "  note: replica A's port-forward did not survive the restart; recovery is established by the rollout above"
 echo "  OK: serving restored once the dependency returned, with no rollback."

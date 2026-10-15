@@ -12,6 +12,216 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-10-14
+
+v0.18 makes the project's assurance claim something a release can be held to, and gives
+each security fact one owner. Its product-visible changes are deliberate: the MCP transport
+contract is mandatory, the exchange model refuses a success it cannot vouch for, an
+out-of-range clock skew is refused instead of clamped, the four compact-JWS consumers share
+one claim window, and the SDKs report a signing-device failure as a typed local failure.
+It adds a second transparency mechanism leaf exercised against a Transparency Service
+somebody else operates, the `mcp-re-auditor`, and the first theorem proved from extracted
+production Rust (THM-0128). Two architecture epics (#1106, #1143) give each security fact one
+owner. A campaign then brought every theorem's review back to the current tree (#1171), and
+the epic-end assurance-closure gate and committed closure record (#1172, #1173) keep it
+there.
+
+### Changed — an out-of-range clock skew is refused, never clamped (BREAKING)
+
+The clock-skew tolerance crosses every seam as a `MaxClockSkew`. A value outside its range is
+refused where an operator states it — the sidecar configuration, an SDK verification call, an
+audit profile — and the refusal names the bound. Before, the delegation policy clamped it, and
+the audit profile accepted up to 3600 seconds that the verifier then cut to 300. A
+configuration that relied on the clamp no longer starts. The SDKs no longer restate the
+300-second bound: the transport ceiling and the correlation store's consumed-id grace read
+`max_clock_skew_bound()` from the native core, and the sidecar and the SDK binding core reach
+one verdict on a 301-second skew. THM-0060 states the bound as the type, by owner ruling of
+2026-10-13. (#1160, #1125)
+
+### Changed — one compact-JWS codec and one claim window for all four consumers
+
+The admission assertion, the authorization decision, the authoritative admission record and
+the delegation credential share one compact-JWS codec (`delegation::jose`) and one
+`ClaimWindow`: `nbf - skew <= now < exp + skew`, `nbf < exp`, `iat <= now + skew`. The
+expiry edge is half-open: `exp + skew` is the first stale instant (RFC 7519 §4.1.4). The
+delegation credential moves onto that edge from its former inclusive one, and gains the
+degenerate-window and future-`iat` refusals it lacked. A credential presented exactly at
+`exp + skew`, or with `exp <= nbf`, or with `iat` beyond `now + skew`, is now refused. Owner
+ruling: one policy for all four consumers. (#1144, #1119)
+
+### Changed — a signing-device failure reaches the SDK caller typed, not as a wire code (SDK surface)
+
+When the signing device fails, or answers anything but a 64-octet signature, the signing call
+returns a device failure instead of `mcp-re.invalid_signature`: nothing was signed or sent, so
+no peer rejected anything.
+
+- **Python:** a refusal is `_core.WireRefusal` with the token in `.wire_code`. A device failure
+  is `_core.SigningDeviceFailure`, with the device's exception as `__cause__`. Both are
+  `ValueError` subclasses.
+- **TypeScript:** a thrown error's `code` is the token, `SIGNING_DEVICE_FAILURE` (with the
+  device's error as `cause`), or `InvalidArg`.
+- The `"mcp-re: "` message rendering and the `_peer_wire_code` / `peerWireCode` regex parsers
+  are removed. A caller that parsed messages must read the typed field. (#1158, #1124)
+
+### Changed — the SDKs share one binding core
+
+`mcp-re-binding-core` (`sdk/binding-core`) holds what the PyO3 and napi bindings each
+restated: the typed sign and verify arguments, the signing-input reading and its refusal
+order, the device seam, the pinned-issuer anchor, the verify preamble and the verdict
+projection. The two native bindings only marshal host values into it and back.
+`scripts/sdk_wire_code_gate.py` checks every `mcp-re.*` token in the SDK trees against the
+frozen taxonomy. It found two test fixtures carrying codes no server emits. (#1151, #1123)
+
+### Changed — delegated channel custody with one worker per shard is refused at configuration
+
+Delegated channel custody beside an operator-stated `--workers-per-shard 1` is refused by the
+configuration boundary, as relation X10, before any plane materializes. It was previously
+refused by `serve_fleet` after materialization. The refusal sentence is unchanged. (#1154,
+#1128)
+
+### Fixed — the audit drain no longer reports a stream that never opened
+
+A stderr deployment refused before its sink opened printed "every record handed to the audit
+writer reached stderr" over zero records. The drain now reports only when this process opened
+a stream, and names that run. The argv path validates the deployment once and hands the proof
+to `run`. (#1109, #1097)
+
+### Fixed — the HTTP-profile proof front classifies continuation failures as the serving path does
+
+`examples/http_profile_proxy.rs` (the proof scripts' and SDK end-to-end tests' front) re-derived
+the continuation sequence and differed in three places:
+
+- a store outage on the answer leg read as a forged continuation (409) instead of 503;
+- an unanswered spend became the caller's 409;
+- an open-leg collision became 503 instead of 409 `ContinuationConflict`.
+
+It now calls the serving path's `ContinuationPlane` (`read_answer`, `record_open`, `retire`).
+(#1108, #1102)
+
+### Changed — verification runs on GitHub-hosted Linux and is authoritative there
+
+`verification.yml` runs scoped on pull requests and pushes. A change that cannot be scoped
+runs every unit before merge. It runs in full on the schedule and on dispatch, on GitHub-hosted
+Linux, with Verus pinned per host and the extraction image built on hosted arm64.
+
+- The self-hosted verification job and `verification-pr.yml` are removed.
+- Two registration-leaf units had declared their 32 tests against a target that did not
+  compile them; they now name `proxy_auditor_unit_test`.
+- A failed test whose result line was split by interleaved output is read from libtest's
+  failure summary, rather than as never run. (#1094)
+
+### Changed — internal ownership: one owner per security fact (epics #1106, #1143)
+
+No operator-visible behaviour change unless stated above. Each line names the owner that now
+holds a fact that was previously restated or reconstructed elsewhere.
+
+- Fingerprint read set: `fingerprint_read_set` records what each unit's fingerprint reads, and
+  the verification trigger gate derives its required inputs from it. The `pull_request` and
+  `push` filters are held equal. Fingerprints are unchanged. (#1107, MCPRE-181)
+- Continuation-correlation lookup has one owner, `http_profile_serve::continuation`. (#1108,
+  MCPRE-182)
+- The prepared dispatch takes the replay store's answer (`PreparedDispatch::admit`). The sync
+  proxy entry point `dispatch_request_with_tier_gate` is deleted. (#1110, MCPRE-184)
+- The key-source owner hands the root an established channel credential
+  (`EstablishedChannelCredential`), and the source never leaves the witness. (#1111, MCPRE-185)
+- One workflow reader (`scripts/workflow_reader.py`) for every gate that reads
+  `.github/workflows`. (#1112, MCPRE-186)
+- The replay tier and its declared posture travel as one value (`ReplayAdmission`), so
+  fleet-strict without a declared tier cannot be stated. (#1113)
+- The control runtime is started by the arm whose projection needs it. (#1114, MCPRE-188)
+- One policy-registry reader (`_registries.py`), and `check-registries` checks every
+  cross-registry reference on the merge path. (#1115)
+- The freshness owner projects the RFC 9421 verifier policy, and the typed skew crosses the
+  seams. (#1116, MCPRE-191)
+- One owner for Rust module-tree resolution (`_module_tree.py`). (#1117, MCPRE-190)
+- One owner for the production view of a Rust file (`_rust_source.py`). Four provenance gates
+  had been under-counting production lines. (#1145, MCPRE-193)
+- The materializing runtime owns its lifecycle, and `MaterializationSucceeded` has one producer.
+  (#1146, MCPRE-195)
+- The admission owner projects its enforcer; `AdmissionGate` is deleted. (#1147, MCPRE-196)
+- One ratchet register with a three-state baseline (`_ratchet.py`). An unreadable baseline now
+  fails instead of reading as absent. (#1148, MCPRE-201)
+- `FleetConfig` carries the resolved topology and in-flight basis whole, and the host CPU count
+  is read once. (#1149, MCPRE-197)
+- One lane catalogue (`_lanes.py`). (#1150, MCPRE-206)
+- `ValidatedClientConfig` is the only form the client runs on, and a loopback bind scope cannot
+  be re-targeted off-host. (#1152, MCPRE-202)
+- Production Rust targets come from the build-graph table. (#1153, MCPRE-216)
+- One gate registry, `config/gates.toml`, with one row per script. (#1155, MCPRE-205)
+- One toolchain-pin reader (`_toolchains.py`). (#1156, MCPRE-213)
+- A connection-bounds owner (`config_state::connection_bounds`) for the read, write and
+  request-deadline timeouts, the connection ceiling and the drain window. Refusal text is
+  unchanged. (#1157, MCPRE-204)
+- `_registries` only reads; cross-references move to `_registry_refs` and seams to `_seams`.
+  (#1159, MCPRE-215)
+- One producer, `response_authority_plans`, pairs the trust and signing plans on one epoch.
+  (#1161, MCPRE-209)
+- `SigningWindow` is the only public producer of delegated signatures; the public
+  `*_with_owned_key` emitters are removed. (#1162, MCPRE-211)
+- Request-role evidence has one owner (`RequestRoleEvidence::of_signed_request`). (#1163,
+  MCPRE-212)
+- The startup clock reading is a value (`clock::StartupReading`), and only `CrlReference::of`
+  can hand the TLS plane a CRL comparison instant. (#1164, MCPRE-210)
+- CRL revocation and the client-certificate lifetime ceiling leave `transport.rs` (EX-018's
+  recorded action); no behaviour change. (#1165, MCPRE-207)
+- Every gate has a `--selftest` that injects the defect it exists to catch. (#1166, MCPRE-217)
+- `ChannelBindingState` projects its serving effects once. (#1167, MCPRE-208)
+- A unit's four measurement declarations are checked against its registered measurement row
+  (ADR-MCPRE-068 A3/A4 stand). (#1168, MCPRE-214)
+- Structural probes S57 and S60 supply every field of the types they attack. (#1169)
+- The delegated-signing custody unit states issuance coherence, and NP-204 is ratified into it
+  by owner ruling of 2026-10-14. (#1170)
+
+### Added — assurance closure is measured at epic end, and recorded
+
+- **Review currency restored (#1171).** Across epics #1106 and #1143, REVIEW_CURRENT had fallen
+  to 41 of 133 theorems while every full verification run stayed green. Every non-current
+  review was re-read against the change that invalidated it. 87 clean re-reviews were ratified
+  in one owner batch, and five claims were corrected with old and new text recorded: THM-0092,
+  THM-0049, THM-0082, THM-0094 and THM-0095. ASM-0069 was reviewed at its current text. On
+  `main` 551ba14b, with run 38513625401's evidence (all 308 unit fingerprints unchanged),
+  REVIEW_CURRENT, EVIDENCE_ESTABLISHED and CURRENTLY_VERIFIED are each 133 of 133, and all 12
+  system roots are complete. (#1174, #1175)
+- **The closure gate (#1172).** `tools/verification/assurance-closure` decides closure for a
+  complete run. It refuses scoped, pull-request and push evidence. It attests the run's evidence
+  into a fresh store with `attest` and evaluates `review --json`. It fails unless every active
+  theorem holds all three axes and every root is complete, naming each blocker. In
+  `verification.yml`, a dispatched or scheduled run continues into an `assurance-closure` job.
+  `assurance-closure.yml` re-evaluates an earlier run. The pull-request path is unchanged.
+  (#1176)
+- **The committed closure record (#1173).** A passing closure writes a compact,
+  content-addressed record (`verification/closures/<commit>.json`). It holds the target commit
+  and tree, the run, the policy revision, the review-ledger identity, every unit's and every
+  active theorem's identity with canonical digests, and the counts.
+  `tools/verification/closure-record --verify` checks every committed record on the merge path.
+  `--compare` names each identity a tree differs at. A record is a statement about its target,
+  is not an attestation, and makes no later tree fresh. (#1177)
+
+### Fixed — `braces` leaves the demo's dependency graph, and the intro video builds again
+
+GHSA-vfj7-8cjw-p6xm (braces <= 3.0.3) has no patched release. The demo's only path to braces
+was `@motion-canvas/vite-plugin` → `fast-glob` → `micromatch`. The plugin calls two `fast-glob`
+functions, which `demo/video/mcps-intro/vendor/fast-glob` now provides over tinyglobby, and
+`npm audit` reports 0 vulnerabilities. `vite build` was failing under Vite 8, which rejects the
+plugin's `modules` build target; the demo now sets the browser set that alias named. (#1178)
+
+### Changed — dependencies
+
+- Rust: `hyper` 1.12.0, `zeroize` 1.9.1, and, in the TypeScript SDK, `napi` 3.14.2 and
+  `napi-derive` 3.6.12. (#1092)
+- TypeScript SDK: `@modelcontextprotocol/client` and `@modelcontextprotocol/core` 2.3.1,
+  `@napi-rs/cli` 3.10.8, `vitest` and `@vitest/coverage-v8` 5.0.3. The demo moves to `vite`
+  8.3.4. (#1085)
+
+### Changed — public documentation states the current claim
+
+- The README release list runs to 0.17.
+- `SECURITY.md` quotes the README's implementation claim and non-claims instead of the
+  pre-fleet single-node sentence. It names the repository's private vulnerability reporting in
+  place of a placeholder address.
+- `docs/dev/version-bump.md` names the complete verification run whose `assurance-closure` job
+  must pass, and the committed closure record. (#1179)
+
 ### Changed — a SCITT trust pin states both of its profiles
 
 A `mcp-re-scitt-service-trust-pin/v1` document that omits `leaf_profile` or
