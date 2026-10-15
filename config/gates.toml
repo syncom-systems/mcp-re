@@ -35,8 +35,9 @@
 [[script]]
 path = "scripts/adr051_slo_gate.py"
 stages = [1]
-ci = ["ci.yml:release-gates"]
+ci = []
 selftest = true
+off_merge_path = "an SLO control: the SLO is not part of pre-merge, post-merge or release; checked locally by local_gate.sh stage 1"
 
 [[script]]
 path = "scripts/assurance_obligation_gate.py"
@@ -226,20 +227,18 @@ selftest = true
 [[script]]
 path = "scripts/local_gate.sh"
 stages = []
-ci = ["slo.yml:lane"]
+ci = []
 selftest = false
 not_a_control = "the driver that runs the other gates in cost order"
 
-# The SLO lane runs in CI through .github/workflows/slo.yml, which is `paths:`-filtered on
-# the declared performance surface (slo_evidence_identity.py refuses a narrower filter) and
-# invokes it through `local_gate.sh --from 4`, so this path is not named literally there.
+# The SLO lane is run locally on dev1 through `local_gate.sh --from 4`; no workflow runs it.
 [[script]]
 path = "scripts/local_slo_lane.sh"
 stages = [4]
 ci = []
 selftest = false
 not_a_control = "an SLO measurement, not an admissibility control"
-off_merge_path = "an SLO measurement, not an admissibility control; scheduled by the surface-filtered .github/workflows/slo.yml via local_gate.sh stage 4"
+off_merge_path = "an SLO measurement, not an admissibility control; run locally on dev1 via local_gate.sh stage 4"
 
 [[script]]
 path = "scripts/merge_path_gate.py"
@@ -348,8 +347,9 @@ selftest = true
 [[script]]
 path = "scripts/rehearsal_claim_gate.py"
 stages = [1]
-ci = ["ci.yml:rust"]
+ci = []
 selftest = true
+off_merge_path = "it guards the SLO runbooks' rehearsal claim: the SLO is not part of pre-merge, post-merge or release; checked locally by local_gate.sh stage 1"
 
 [[script]]
 path = "scripts/release_assurance_gate.py"
@@ -445,20 +445,23 @@ selftest = true
 [[script]]
 path = "scripts/slo_evidence_identity.py"
 stages = [1, 4]
-ci = ["ci.yml:rust", "slo.yml:lane"]
+ci = []
 selftest = true
+off_merge_path = "an SLO control: the SLO is not part of pre-merge, post-merge or release; checked locally by local_gate.sh stages 1 and 4"
 
 [[script]]
 path = "scripts/slo_gate.py"
 stages = [1]
-ci = ["ci.yml:release-gates"]
+ci = []
 selftest = true
+off_merge_path = "an SLO control: the SLO is not part of pre-merge, post-merge or release; checked locally by local_gate.sh stage 1"
 
 [[script]]
 path = "scripts/slo_invocation_gate.py"
 stages = [1]
-ci = ["ci.yml:rust"]
+ci = []
 selftest = true
+off_merge_path = "an SLO control: the SLO is not part of pre-merge, post-merge or release; checked locally by local_gate.sh stage 1"
 
 [[script]]
 path = "scripts/stage_image_binaries.sh"

@@ -15,9 +15,8 @@
 # A class with no declared anchor yields UNANCHORED (exit 4), which is neither a pass
 # nor a regression: nothing has been recorded for that class to be compared against.
 #
-# Release-grade runs happen on the self-hosted runner (.github/workflows/slo.yml),
-# where nothing else is scheduled on the box. Run here for a pre-flight, or when that
-# runner is the machine you are on.
+# Release-grade runs happen on dev1, where nothing else is scheduled on the box. Run
+# elsewhere for a pre-flight.
 #
 # WHY A SCRIPT AND NOT A DOCUMENTED COMMAND: `tls_load_harness_bench` is NOT
 # `#[ignore]` — the whole file is gated to the `redis_replay` feature lane instead,

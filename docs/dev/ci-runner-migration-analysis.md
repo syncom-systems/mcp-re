@@ -33,8 +33,8 @@ All four retain `[self-hosted, macOS, ARM64]` with documented architectural reas
 |---|---|---|---|
 | `extraction-image.yml` | `build` | Preserves non-reproducible artifact | `/opt/verification/extraction-artifacts/` (5.6 GiB, cannot rebuild) |
 | `verification.yml` | `verification` | **Required status check**; depends on artifact; unified "one ordered job" | Artifact dependency + Verus native + single evidence directory |
-| `slo.yml` | `lane` | Performance measurement; exclusive host required | `/opt/verification/slo/` + `/opt/verification/runner-arbiter/` + noisy-box refusal |
-| `release-assurance.yml` | `release-assurance` | Manual; couples to slo.yml evidence | `/opt/verification/slo/` (shared store) |
+| `slo.yml` | `lane` | **Removed 2026-10-15.** Performance measurement; exclusive host required. The SLO now runs locally on dev1 | `/opt/verification/slo/` + `/opt/verification/runner-arbiter/` + noisy-box refusal |
+| `release-assurance.yml` | `release-assurance` | Manual; reads local SLO evidence if present (no SLO workflow exists) | `/opt/verification/slo/` (shared store) |
 
 ## Why Migration Is Not Possible
 
@@ -73,7 +73,7 @@ The `verification` job:
 
 ### 3. SLO Measurement Requires Exclusive Host
 
-**Source:** `.github/workflows/slo.yml`, `CLAUDE.md` ("Measure on a quiet box"), `tools/slo/host_gate.py`
+**Source:** the SLO workflow (removed 2026-10-15; the lane now runs locally on dev1), `CLAUDE.md` ("Measure on a quiet box"), `tools/slo/host_gate.py`
 
 The SLO lane:
 - Measures proxy throughput under controlled conditions
@@ -121,7 +121,7 @@ If GitHub (or another platform) ever offers:
 - Host-level exclusive reservation mechanism for performance measurement
 - Multi-machine test orchestration with shared state directories
 
-Then `extraction-image.yml` and `slo.yml` could be reconsidered. `verification.yml` would still require the artifact preservation invariant to hold.
+Then `extraction-image.yml` could be reconsidered. `verification.yml` would still require the artifact preservation invariant to hold.
 
 ---
 

@@ -48,3 +48,6 @@ not implemented.
 - `slo.yml` stays manual, privileged, self-hosted and host-exclusive, unchanged in what it
   measures. It is an independent performance-measurement facility, not a pull-request, push
   or release gate.
+  **Amended later on 2026-10-15 (owner):** `slo.yml` was removed, with the CI steps that
+  checked it. No workflow runs the SLO; the lane runs locally on dev1
+  (`scripts/local_slo_lane.sh`) and is part of none of pre-merge, post-merge or release.

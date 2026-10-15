@@ -39,34 +39,19 @@ the context field that decides WHICH QUESTION a number answers, so the vocabular
 values, each class's own regression anchor, and whether a class may ever carry an absolute
 production-SLO verdict are declared once and read by every consumer:
 `scripts/adr051_slo_gate.py` resolves a report's anchor from it, `scripts/slo_gate.py`
-resolves its refusal set from it, and `.github/workflows/slo.yml` resolves the class the
-self-hosted runner measures as from it.
+resolves its refusal set from it, and `--runner-class` reports the class the controlled
+measurement host (dev1) measures as.
 
-THE TRIGGER SET IS PART OF THE DECLARATION — but the SURFACE is the stronger half, and as of
-2026-09-14 it is the only half. `.github/workflows/slo.yml` is `workflow_dispatch` ONLY: an
-SLO run is a deliberate measurement, not a pull-request or push gate, because the lane takes
-the self-hosted host exclusively and every PR that queued one drained the other repository's
-runners through the host arbiter — usually to conclude REUSE.
+NO CI WORKFLOW RUNS THE SLO. An SLO run is a deliberate measurement made locally on dev1, not a
+pull-request, post-merge or release step. "Must this be re-measured?" is answered by CONTENT:
+`--decide` folds the declared surface and the measurement context into two digests and compares
+them against the attested results in the durable store.
 
-Two mechanisms can answer "must this be re-measured?", and they are not equals. A `paths:`
-filter answers it by NAME; `--decide` answers it by CONTENT, folding the declared surface and
-the measurement context into two digests and comparing them against the attested results in
-the durable store. The filter was the weaker one and the only one that cost a host.
-
-So `trigger_defects()` polices what remains true rather than what used to be there:
-
-  * every trigger that EXISTS and carries a `paths:` filter must cover the surface — a
-    filter narrower than the surface does not go red, it stops running, and every check
-    stays green while nothing re-measures;
-  * the workflow must remain REACHABLE. With no filtered trigger left, a workflow that also
-    lost `workflow_dispatch` could never run at all, and a lane nobody can start is worse
-    than one that starts too often.
-
-Where the question is asked: `scripts/local_gate.sh` stage 4, which `slo.yml` runs, calls
-`--decide` before measuring, on the machine whose context it describes. `--decide` derives
-that context from the host and Docker daemon it runs on, so it answers only where the
-measurement would run. It is not a release-qualification input: an SLO result is
-observational performance evidence, and release assurance does not consult it.
+Where the question is asked: `scripts/local_gate.sh` stage 4 calls `--decide` before
+measuring, on the machine whose context it describes. `--decide` derives that context from the
+host and Docker daemon it runs on, so it answers only where the measurement would run. It is
+not a release-qualification input: an SLO result is observational performance evidence, and
+release assurance does not consult it.
 
 Run:  python3 scripts/slo_evidence_identity.py                 # validate the declaration
       python3 scripts/slo_evidence_identity.py --emit
@@ -91,15 +76,14 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 SURFACE_TOML = REPO / "config" / "performance-surface.toml"
-#: Where a developer's records live when nothing else is configured. Inside the checkout,
-#: which is right for a local run and WRONG for self-hosted Actions -- see evidence_store().
+#: Where a developer's records live when nothing else is configured: inside the checkout.
+#: See evidence_store() for naming a durable store outside it.
 LOCAL_STORE = REPO / ".verification" / "slo"
 
 #: The one authority naming the durable store. Named consistently with the existing
 #: MCP_RE_LOADGEN_HW_CLASS convention in this file.
 STORE_ENV = "MCP_RE_SLO_EVIDENCE_STORE"
 BASELINE = REPO / "docs" / "bench" / "adr-051-baseline-local.json"
-WORKFLOW = REPO / ".github" / "workflows" / "slo.yml"
 TARGETS = REPO / "docs" / "bench" / "adr-051-slo-targets.json"
 SCHEMA = "mcp-re-slo-evidence/v1"
 
@@ -260,66 +244,15 @@ def _write_atomic(path: Path, text: str, encoding: str = "utf-8") -> None:
     os.replace(tmp, path)
 
 
-def is_authoritative_actions_slo() -> bool:
-    """Is this the self-hosted Actions run of the SLO workflow itself?
-
-    Identified by workflow IDENTITY rather than by a job title or a bare GITHUB_ACTIONS
-    check, so that an unrelated workflow in CI keeps the ordinary developer default and
-    only the authoritative lane is held to the durable-store requirement.
-    """
-    if os.environ.get("GITHUB_ACTIONS") != "true":
-        return False
-    ref = os.environ.get("GITHUB_WORKFLOW_REF", "")
-    return ref.split("@", 1)[0].endswith("/" + str(WORKFLOW.relative_to(REPO)))
-
-
 def evidence_store() -> Path:
     """The one resolved SLO evidence-store path.
 
-    WHY THIS IS NOT SIMPLY A CONSTANT
-    =================================
-
-    The store used to be `REPO/.verification/slo`, inside the checkout. On self-hosted
-    Actions that directory is DISPOSABLE: the workspace is cleaned between runs, so a PASS
-    was written and then destroyed, and the next run with an identical performance-surface
-    fingerprint said REMEASURE where it should have said REUSE. The identity model was
-    never wrong -- its storage was.
-
-    Two callers, two correct answers, one authority:
-
-        local developer run          -> REPO/.verification/slo   (the default)
-        authoritative Actions SLO    -> whatever MCP_RE_SLO_EVIDENCE_STORE names, and it
-                                        must be outside GITHUB_WORKSPACE
-
-    The authoritative lane FAILS CLOSED rather than falling back. A silent fallback to the
-    disposable path is precisely the defect being repaired: it would look like it worked,
-    publish a record, and lose it -- indistinguishable from success until a later run
-    re-measured for no reason.
+    `MCP_RE_SLO_EVIDENCE_STORE` names a durable store outside the checkout (the owner's
+    measurement host keeps one, so a clean checkout does not lose attested results);
+    without it the records live in `REPO/.verification/slo`.
     """
     configured = os.environ.get(STORE_ENV)
-    store = Path(configured).expanduser() if configured else LOCAL_STORE
-    if not is_authoritative_actions_slo():
-        return store
-
-    if not configured:
-        raise SystemExit(
-            f"error: the authoritative self-hosted SLO must name a durable store in "
-            f"{STORE_ENV}. Refusing to write evidence into the Actions checkout, which is "
-            f"cleaned between runs."
-        )
-    workspace = os.environ.get("GITHUB_WORKSPACE")
-    if workspace:
-        try:
-            store.resolve().relative_to(Path(workspace).resolve())
-        except ValueError:
-            pass  # outside the workspace, which is what we require
-        else:
-            raise SystemExit(
-                f"error: {STORE_ENV}={store} resolves INSIDE GITHUB_WORKSPACE "
-                f"({workspace}), which Actions cleans between runs. A record written there "
-                f"cannot survive to be reused."
-            )
-    return store
+    return Path(configured).expanduser() if configured else LOCAL_STORE
 
 
 def record_path(surface: str, context: str) -> Path:
@@ -476,7 +409,7 @@ def hardware_classes() -> dict[str, dict[str, object]]:
 
     The one vocabulary. `adr051_slo_gate.py` asks it which anchor a report may be compared
     against, `slo_gate.py` asks it which classes can never be an absolute SLO verdict, and
-    the workflow asks it what the self-hosted runner measures as. A class absent from here
+    `--runner-class` reports what the controlled measurement host measures as. A class absent from here
     is not an error in itself — an unrecognised class simply has no anchor and no
     declarability — but it is what those gates read instead of each keeping its own list.
     """
@@ -485,9 +418,9 @@ def hardware_classes() -> dict[str, dict[str, object]]:
 
 
 def runner_class() -> str:
-    """The class the self-hosted Actions runner measures as.
+    """The class the controlled measurement host (dev1) measures as.
 
-    Exactly one entry may claim it. The workflow reads this rather than restating the name,
+    Exactly one entry may claim it. Callers read this rather than restating the name,
     for the reason `config/ports.toml` exists: a literal in a second place is a fact that
     can drift, and a drifted class name would key a record to a context nobody declared.
     """
@@ -533,62 +466,6 @@ def class_defects() -> list[str]:
     return found
 
 
-def trigger_defects(text: str | None = None) -> list[str]:
-    """Declared surface inputs the SLO workflow's `paths:` filters do not cover.
-
-    The workflow and GitHub's path-matching semantics are read by `workflow_reader.py`
-    rather than a second copy here: `**` crosses a separator and `*` does not, and two
-    implementations of that rule are two chances to accept a filter narrower than GitHub
-    actually applies. Imported inside the function so that the ordinary identity commands
-    stay dependency-free.
-    """
-    if text is None:
-        if not WORKFLOW.is_file():
-            return [
-                f"{WORKFLOW.relative_to(REPO)} does not exist — the declared surface has no lane"
-            ]
-        text = WORKFLOW.read_text(encoding="utf-8")
-    sys.path.insert(0, str(REPO / "scripts"))
-    from workflow_reader import glob_matches, parse  # noqa: PLC0415
-
-    read = parse(text).triggers
-    triggers = {name: list(trigger.paths or ()) for name, trigger in read.items()}
-    inputs = [str(path.relative_to(REPO)) for path in declared_inputs()]
-    found: list[str] = [
-        f"{name}: filters with `paths-ignore:`, which names what does NOT start the lane; "
-        "coverage of the declared surface cannot be read from it"
-        for name, trigger in sorted(read.items())
-        if trigger.paths_ignore is not None
-    ]
-
-    # Every FILTERED trigger must cover the surface. A trigger that is absent is not a
-    # defect — the lane is dispatched, and `--decide` answers by content what a filter
-    # answered by name. A trigger that is present and too narrow IS a defect, because it
-    # fails by going quiet.
-    for trigger, patterns in sorted(triggers.items()):
-        if not patterns:
-            continue  # declared with no `paths:` filter: every change reaches it
-        uncovered = [p for p in inputs if not any(glob_matches(g, p) for g in patterns)]
-        found.extend(
-            f"{trigger}: no path filter matches {path!r}, which is a declared performance-"
-            f"surface input — a change to it would move the surface with nothing re-measuring"
-            for path in uncovered[:5]
-        )
-        if len(uncovered) > 5:
-            found.append(f"{trigger}: …and {len(uncovered) - 5} more uncovered surface input(s)")
-
-    # And the lane must remain startable. `workflow_dispatch` is how it is started,
-    # so losing it would leave a declared surface with no lane at all — the same defect as an
-    # absent workflow, one line further in.
-    if "workflow_dispatch" not in triggers:
-        found.append(
-            f"{WORKFLOW.name} declares no `workflow_dispatch` trigger. With no `paths:`-"
-            "filtered trigger left, nothing could start this lane, and a declared "
-            "performance surface with no lane is a surface nothing can ever measure."
-        )
-    return found
-
-
 def check() -> int:
     """Validate the declaration and every stored record. No measurement, no Docker."""
     surface, digests = performance_surface()
@@ -606,7 +483,6 @@ def check() -> int:
         elif record_path(doc["performance_surface"], doc["measurement_context_digest"]).name != path.name:
             bad.append(f"{path.name}: filename does not derive from the identity it carries")
     bad.extend(class_defects())
-    bad.extend(trigger_defects())
     for line in bad:
         print(f"  ✗ {line}")
     if bad:
@@ -617,8 +493,7 @@ def check() -> int:
     print(
         f"slo-evidence-identity: OK — {len(digests)} declared input(s), all git-tracked; "
         f"surface {surface[:23]}…; {len(stored)} attested result(s); {len(classes)} declared "
-        f"hardware class(es), {anchored} anchored; the {WORKFLOW.name} trigger set covers "
-        f"every surface input it filters on, and the lane is dispatchable"
+        f"hardware class(es), {anchored} anchored"
     )
     return 0
 
@@ -671,42 +546,9 @@ def selftest() -> int:
     )
     assert not class_defects(), f"the declared classes are malformed: {class_defects()}"
 
-    # The trigger check must be sensitive to a NARROWER filter, not merely parse one: a
-    # coverage check that passes on every input it is handed reports OK for having compared
-    # nothing. Run against the real matcher with a filter that covers one input only.
-    sys.path.insert(0, str(REPO / "scripts"))
-    from workflow_reader import glob_matches  # noqa: PLC0415
-
-    assert glob_matches("mcp-re-proxy/src/**", "mcp-re-proxy/src/app.rs"), "`**` stopped matching"
-    assert not glob_matches("mcp-re-proxy/*", "mcp-re-proxy/src/app.rs"), "`*` crossed a separator"
-    assert not trigger_defects(), (
-        f"the SLO workflow's trigger set is narrower than the surface: {trigger_defects()}"
-    )
-
-    # The mutation probe for both directions the invariant now has. Without these the check
-    # is satisfied by a rule that answers "no defects" to everything, which is the shape of
-    # every silent control this repository has had to repair.
-    assert trigger_defects("name: slo\non:\n  push:\n    branches: [main]\n"), (
-        "a workflow with no `workflow_dispatch` cannot be started at all, and a declared "
-        "surface with no lane must be refused"
-    )
-    narrow = (
-        "name: slo\non:\n  workflow_dispatch:\n  push:\n    branches: [main]\n"
-        "    paths:\n      - \"docs/bench/adr-051-slo-targets.json\"\n"
-    )
-    defects = trigger_defects(narrow)
-    assert defects and any("no path filter matches" in d for d in defects), (
-        "a FILTERED trigger narrower than the surface must be refused: it does not go red, "
-        "it stops running, and every check stays green while nothing re-measures"
-    )
-    assert not trigger_defects("name: slo\non:\n  workflow_dispatch:\n"), (
-        "dispatch-only is the current shape and must pass: `--decide` answers by content "
-        "what a `paths:` filter answered by name"
-    )
-
     print(
         f"slo_evidence_identity selftest: OK — {len(digests)} declared inputs, 9 identity "
-        f"cases, {len(classes)} hardware classes, trigger coverage: filtered triggers cover the surface, and the lane is dispatchable"
+        f"cases, {len(classes)} hardware classes"
     )
     return 0
 
@@ -719,7 +561,7 @@ def main() -> int:
     parser.add_argument("--verdict", default="PASS", choices=("PASS", "FAIL", "INCONCLUSIVE"))
     parser.add_argument("--max-age-days", type=int, help="override the declared reuse window")
     parser.add_argument("--runner-class", action="store_true",
-                        help="print the hardware_class the self-hosted Actions runner measures as")
+                        help="print the hardware_class the controlled measurement host measures as")
     parser.add_argument("--selftest", action="store_true")
     args = parser.parse_args()
 

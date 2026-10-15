@@ -132,8 +132,8 @@ record is about one immutable thing.
 `PerformanceMeasured(R, context)` are independent propositions: release assurance asks no
 SLO question, and absent or stale performance evidence never fails it. A performance
 *claim* about a release does need performance evidence, which comes from
-`.github/workflows/slo.yml` — a manual, self-hosted measurement facility that an owner or
-operator dispatches when a measurement is wanted, never as a step of qualifying a release.
+`scripts/local_slo_lane.sh` — a measurement facility that an owner or operator runs on
+dev1 when a measurement is wanted, never as a step of qualifying a release.
 
 `review --require-root-complete` is the **binding** closure mode. Ordinary CI runs the
 report-only form deliberately (ADR-MCPRE-059 §28.8): an honest unresolved GAP under a

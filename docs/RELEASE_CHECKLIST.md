@@ -36,10 +36,10 @@ failure — are in [`docs/dev/version-bump.md`](dev/version-bump.md). Run
 - [ ] No performance claim is made for the release without performance evidence for it.
       Release qualification does not require an SLO run: release assurance asks no
       performance question, and absent or stale performance evidence does not fail it. A
-      measurement is an owner or operator decision, run with
-      [`.github/workflows/slo.yml`](../.github/workflows/slo.yml) on the self-hosted
-      runner. A local stage-4 run is a different measurement context, not a substitute,
-      and a loaded box produces an environmental FAIL and a meaningless number.
+      measurement is an owner or operator decision, run with `scripts/local_slo_lane.sh`
+      on dev1, the controlled measurement host. A run on any other machine is a different
+      measurement context, not a substitute, and a loaded box produces an environmental
+      FAIL and a meaningless number.
 - [ ] No lane was reported green on a run that selected zero tests (`--ignored` on
       `tls_load_harness_bench` is the known trap; the lane script refuses it).
 
