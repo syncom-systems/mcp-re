@@ -40,7 +40,9 @@ predeclared pass threshold. Its facts are **measured, not declared**: before any
 `ceiling.py` records the bundle id, architecture, online and usable vCPUs, CPU model and
 flags presented to the guest, hypervisor, RAM, block devices, distribution, kernel,
 clocksource, governor, SMT, THP, Redis version, Bazel, file-descriptor and ephemeral-port
-limits — and stops (exit 3) unless the host is 32 usable vCPUs, x86_64, ≥128 GiB.
+limits — and stops (exit 3) unless the host is 32 online and usable vCPUs on x86_64 with
+the bundle's memory (checked as ≥ 120 GiB nominal, i.e. ≥ ~112 GiB visible to the kernel,
+so a "128 GB" label in either unit passes and a smaller bundle does not).
 Hardware-independent correctness still applies: every canonical rep must account for all
 8000 requests, and a rig row with >0.5% failures is INVALID.
 
@@ -198,7 +200,7 @@ $SSH 'sudo install -d -o ubuntu /srv/mcp-re /srv/mcp-re/stage'
 scp -i $W/ssh/id_ed25519 -o UserKnownHostsFile=$W/ssh/known_hosts \
   $W/subject.tar.gz $W/tooling.tar.gz $W/identity.json $W/SHA256SUMS ubuntu@$IP:/srv/mcp-re/stage/
 $SSH 'cd /srv/mcp-re && tar -xzf stage/tooling.tar.gz && python3 /srv/mcp-re/tooling/tools/perf/lightsail/ceiling.py \
-  inventory /srv/mcp-re/precheck --bundle '"$BUNDLE"' --expect-vcpus 32 --expect-arch x86_64 --expect-mem-gib 128'
+  inventory /srv/mcp-re/precheck --bundle '"$BUNDLE"' --expect-vcpus 32 --expect-arch x86_64 --expect-mem-gib 120'
 ```
 Exit 3 = not the declared context → step 7 immediately, no measurement.
 
@@ -212,8 +214,10 @@ $SSH "tmux new -d -s ceiling 'bash /srv/mcp-re/tooling/tools/perf/lightsail/run_
 $SSH "tail -n 5 /srv/mcp-re/runs/$RUN_ID/logs/campaign.log"        # progress, polled
 ```
 Diagnostic pass only after `summary.json` exists, on the configuration the summary flags:
-`python3 /srv/mcp-re/tooling/tools/perf/lightsail/ceiling.py diagnose /srv/mcp-re/runs/$RUN_ID --bin-dir /srv/mcp-re/bin --cores <N>`
-(then re-pack the run directory exactly as `run_campaign.sh` does).
+`python3 /srv/mcp-re/tooling/tools/perf/lightsail/ceiling.py diagnose /srv/mcp-re/runs/$RUN_ID --bin-dir /srv/mcp-re/bin --cores <N> --window 30`
+— `perf record -g -p <proxy>` attached for the window while the rig runs unmodified (the
+rig's own profiling-wrapper hook is not used: it changes how every child is torn down) —
+then re-pack the run directory exactly as `run_campaign.sh` does.
 
 **6 — download and verify.**
 ```sh

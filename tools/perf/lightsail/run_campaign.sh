@@ -17,7 +17,7 @@ echo "nofile=$(ulimit -n)" > "$RUN/logs/launcher.txt"
 python3 "$TOOLS/ceiling.py" campaign "$RUN" --bin-dir "$ROOT/bin" \
   --identity "$ROOT/stage/identity.json" --build-identity "$ROOT/build-identity.json" \
   --ports-toml "$ROOT/tooling/config/ports.toml" --bundle "$BUNDLE" \
-  --expect-vcpus 32 --expect-arch x86_64 --expect-mem-gib 128 --require-telemetry \
+  --expect-vcpus 32 --expect-arch x86_64 --expect-mem-gib 120 --require-telemetry \
   > "$RUN/logs/campaign.stdout" 2>&1
 rc=$?
 echo "campaign_rc=$rc" >> "$RUN/logs/launcher.txt"

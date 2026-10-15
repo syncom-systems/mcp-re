@@ -206,32 +206,57 @@ def finish(run_dir: Path, vcpus: int) -> dict:
     return summary
 
 
+def _find_proxy(deadline_s: float = 120) -> int | None:
+    """The pid of the running proxy, by executable name, polled until it appears."""
+    end = time.time() + deadline_s
+    while time.time() < end:
+        for entry in os.listdir("/proc"):
+            if entry.isdigit():
+                try:
+                    if os.path.basename(os.readlink(f"/proc/{entry}/exe")).startswith("mcp-re-proxy"):
+                        return int(entry)
+                except OSError:
+                    continue
+        time.sleep(0.5)
+    return None
+
+
 def diagnose(args: argparse.Namespace) -> int:
-    """perf on the proxy for ONE rig point, after the authoritative numbers exist."""
+    """perf on the proxy for ONE rig point, after the authoritative numbers exist.
+
+    perf ATTACHES to the running proxy (`-p`) for a fixed window; it never wraps it. The rig's
+    MCP_RE_PROFILE_WRAPPER hook changes how it tears down EVERY child — the unwrapped backend
+    included, which it then waits on forever — so the instrument is left exactly as measured."""
+    import subprocess
     run_dir = Path(args.run_dir).resolve()
     if not (run_dir / "summary.json").is_file():
         raise SystemExit("ceiling: diagnose runs only after the authoritative summary is written")
     bins = binaries(Path(args.bin_dir))
     diag = run_dir / "diagnostic" / f"c{args.cores}"
     diag.mkdir(parents=True, exist_ok=True)
-    wrapper = diag / "proxy-perf.sh"
-    wrapper.write_text(f'#!/bin/sh\nexec perf record -F 99 -g -o "{diag}/perf.data" -- "{bins.proxy_ext}" "$@"\n')
-    wrapper.chmod(0o755)
     tier = Tier(run_dir / "diagnostic", ports(Path(args.ports_toml)))
     tier.up(run_dir)
     try:
         env = dict(base_env(), MCP_RE_SAT_REDIS_URL=tier.url, MCP_RE_SAT_WORKERS_PER_SHARD=str(args.workers),
-                   MCP_RE_PROXY_CLI=str(wrapper), MCP_RE_PROFILE_WRAPPER="perf",
-                   MCP_RE_SAT_BACKEND=str(bins.backend), MCP_RE_SAT_LOADGEN=str(bins.loadgen),
-                   MCP_RE_SAT_OUT=str(diag / "rig.json"))
-        rc, _ = run_logged([str(bins.rig), "--cores", str(args.cores), "--mode", args.mode,
-                            "--fixed-generators", str(args.generators), "--connections", str(args.connections)],
-                           diag / "rig.log", env=env, timeout=3600)
+                   MCP_RE_PROXY_CLI=str(bins.proxy_ext), MCP_RE_SAT_BACKEND=str(bins.backend),
+                   MCP_RE_SAT_LOADGEN=str(bins.loadgen), MCP_RE_SAT_OUT=str(diag / "rig.json"))
+        argv = [str(bins.rig), "--cores", str(args.cores), "--mode", args.mode, "--fixed-generators",
+                str(args.generators), "--connections", str(args.connections)]
+        with open(diag / "rig.log", "wb") as out:
+            rig = subprocess.Popen(argv, stdout=out, stderr=subprocess.STDOUT, env=env)
+            pid = _find_proxy()
+            if pid is not None:
+                time.sleep(args.warmup)
+                run_logged(["perf", "record", "-F", "99", "-g", "-p", str(pid), "-o", str(diag / "perf.data"),
+                            "--", "sleep", str(args.window)], diag / "perf-record.log", timeout=args.window + 120)
+            rc = rig.wait(timeout=3600)
         run_logged(["sh", "-c", f'perf report -i "{diag}/perf.data" --stdio --no-children --percent-limit 0.5 '
                                 f'> "{diag}/perf-report.txt" 2>&1'], diag / "perf-report.log", timeout=1800)
+        write_json(diag / "diagnose.json", {"argv": argv, "proxy_pid": pid, "window_s": args.window,
+                                            "warmup_s": args.warmup, "rig_rc": rc})
     finally:
         tier.down()
-    return rc
+    return rc if pid is not None else 6
 
 
 def selftest() -> int:
@@ -278,6 +303,8 @@ def main(argv: list[str]) -> int:
     d.add_argument("--mode", default="cold")
     d.add_argument("--generators", type=int, default=8)
     d.add_argument("--connections", type=int, default=256)
+    d.add_argument("--warmup", type=float, default=5.0, help="seconds after the proxy appears before sampling")
+    d.add_argument("--window", type=int, default=30, help="perf record window, seconds")
     d.add_argument("--ports-toml", default=str(HERE.parent.parent.parent / "config" / "ports.toml"))
     sub.add_parser("selftest")
     args = parser.parse_args(argv)

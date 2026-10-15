@@ -53,8 +53,10 @@ tar -xzf "$STAGE/subject.tar.gz" -C "$ROOT/tmp-extract"
 mv "$ROOT/tmp-extract/subject" "$SUBJECT" && rmdir "$ROOT/tmp-extract"
 # Re-derive the git tree from the files. Equality with the tag's tree is the proof that the
 # build input is the tagged tree byte for byte (content, modes, symlinks, nothing added).
+# `--force`: the tag tracks files its own .gitignore matches, and a plain `add -A` would
+# silently leave them out and derive a different tree.
 git -C "$SUBJECT" init -q
-git -C "$SUBJECT" add -A
+git -C "$SUBJECT" add -A --force
 DERIVED_TREE="$(git -C "$SUBJECT" write-tree)"
 [[ "$DERIVED_TREE" == "$PRODUCT_TREE" ]] || die "extracted tree $DERIVED_TREE != tagged tree $PRODUCT_TREE"
 GIT_AUTHOR_NAME=subject GIT_AUTHOR_EMAIL=subject@invalid GIT_COMMITTER_NAME=subject \
