@@ -1,10 +1,9 @@
 # Version bump — what has to move, in what order, and what proves it
 
 `VERSION` is not just a label. It is the **image tag** every deploy artefact names, so a
-bump that lands unevenly does not fail at build time — it fails as `ImagePullBackOff` on a
-cluster that is already billing, after `gcloud builds submit` has run. That is the failure
-this document exists to prevent, and `scripts/deploy_image_tag_gate.py` is the gate that
-catches it.
+bump that lands unevenly does not fail at build time — it fails as `ImagePullBackOff` when
+the deploy surface is next used. That is the failure this document exists to prevent, and
+`scripts/deploy_image_tag_gate.py` is the gate that catches it.
 
 Run `scripts/bump_version.sh <new-version>` rather than editing by hand. This document
 says what it does and why, so the gate output is readable when something drifts.
@@ -66,7 +65,8 @@ Three of these are routinely got wrong:
 6. **Commit the regenerated `MODULE.bazel.lock`.** Stage 3 rewrites it because the crate
    `Cargo.toml` hashes it records all moved. Leaving it out is invisible until someone
    diffs the tree in an unrelated branch.
-7. **Commit, PR, merge.** Tag the release commit on `main`.
+7. **Commit, PR, merge.** Then qualify the merged commit (below) and tag it on `main`.
+   No cloud operation is a step of releasing: no image build, no registry push, no SLO run.
 
 ## Choosing the number
 
@@ -94,23 +94,23 @@ surface references — `unbuilt_images()`, the deployed-but-never-built defect.
 
 It does **not** check:
 
-* that the build actually ran and the registry holds the tag — only `gcloud builds submit`
-  does that, and a bumped tag with a build config but no run is an `ImagePullBackOff`
-  waiting to happen;
+* that any registry holds images at the tag — no release step builds or pushes them (see
+  below);
 * the SDK versions, deliberately (see above);
 * the Helm chart's own `version`, which is a human judgement about whether templates moved.
 
-## After the bump
+## Deploy images are not release artifacts
 
-The images at the new tag do not exist until they are built. Before any cloud run:
+The deploy surface (`deploy/cloudbuild/`, `deploy/k8s/`, the Helm chart, the GKE and EKS
+runbooks) is infrastructure for a cloud deployment or performance run, and AWS and Google
+Cloud are used only for such runs when the owner authorizes that specific run. No release
+step builds, pushes or inspects cloud images, and a release is not held because a registry
+lacks images at its tag. A run that needs them builds them as part of its own authorized
+plan.
 
-```sh
-gcloud builds submit --config deploy/cloudbuild/mcp-re-images.yaml .
-```
-
-and note that the kind lane (`local_gate.sh --with-kind`) builds its own images locally and
-stamps them with the git revision, so a green kind stage does **not** prove the registry
-holds the tag — only that the source builds and deploys.
+The kind lane (`local_gate.sh --with-kind`) builds its own images locally and stamps them with
+the git revision, so a green kind stage proves the source builds and deploys at the tag; it
+says nothing about any registry.
 
 ## Release assurance — the binding closure run
 
