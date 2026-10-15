@@ -6,8 +6,8 @@ Use this checklist before a public release or MCP proposal submission.
 
 This checklist is about whether the project is READY to release. The mechanics of moving
 the version number — which of the ~22 files carry it, what deliberately does not move, and
-why an uneven bump surfaces as `ImagePullBackOff` on a billing cluster rather than as a
-build failure — are in [`docs/dev/version-bump.md`](dev/version-bump.md). Run
+why an uneven bump surfaces as `ImagePullBackOff` on a cluster rather than as a build
+failure — are in [`docs/dev/version-bump.md`](dev/version-bump.md). Run
 `scripts/bump_version.sh` from there; do the readiness items here.
 
 ## Bump the version
@@ -20,13 +20,15 @@ build failure — are in [`docs/dev/version-bump.md`](dev/version-bump.md). Run
       `appVersion` tracks `VERSION` and moves every time.
 - [ ] The SDK versions were **not** bumped in sympathy — they are on an independent
       cadence.
-- [ ] `gcloud builds submit --config deploy/cloudbuild/mcp-re-images.yaml .` has run: the
-      images do not exist at the new tag until it does, and no local gate can tell you so.
+- [ ] No cloud operation is part of releasing. A release is qualified by verification,
+      assurance closure, release assurance and its provenance record, and is tagged and
+      published on GitHub. Container images in a cloud registry are deployment
+      infrastructure for a separately authorized cloud run; building or pushing them is
+      not a release step, and their absence at the new tag does not hold a release.
 
 ## Run the local gate first
 
-- [ ] `scripts/local_gate.sh --with-kind` is green — every stage, on this machine,
-      before any cloud run or baseline declaration
+- [ ] `scripts/local_gate.sh --with-kind` is green — every stage, on this machine
       ([`docs/dev/local-gate-order.md`](dev/local-gate-order.md)).
 - [ ] No performance claim is made for the release without performance evidence for it.
       Release qualification does not require an SLO run: release assurance asks no

@@ -134,6 +134,5 @@ Next:
   2. scripts/local_gate.sh --with-kind
   2b. commit the MODULE.bazel.lock that stage 3 regenerates — it hashes every Cargo.toml,
       so a bump invalidates all of them, and Bazel rewrites it silently rather than failing
-  3. gcloud builds submit --config deploy/cloudbuild/mcp-re-images.yaml .   (the tag does
-     not exist in the registry until this runs)
+  3. qualify and tag per docs/dev/version-bump.md; no cloud operation is a release step
 EOF
