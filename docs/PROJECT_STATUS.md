@@ -8,6 +8,23 @@ MCP-RE is an experimental third-party security extension proposal for MCP.
 
 It is not an official MCP extension unless accepted through the official MCP governance and proposal process.
 
+**v0.18.0 — RELEASED and tagged 2026-10-15** at `9dab7082`, tag object `3f8de319`. The
+tag points at the qualified release object, not at the commits that record it. Qualification:
+complete verification run 38672416934; assurance closure REVIEW_CURRENT, EVIDENCE_ESTABLISHED
+and CURRENTLY_VERIFIED each 133/133 with 12/12 roots; release assurance PASS. No container
+images are published with it and no performance claim is made: release qualification
+includes neither, and no cloud operation is a release step. Record:
+[`releases/v0.18.0-provenance.md`](releases/v0.18.0-provenance.md).
+
+v0.18 gives each security fact one owner (epics #1106 and #1143) and makes the assurance
+claim something a release is held to: every theorem's review is current on the released
+tree, and the epic-end assurance-closure gate and committed closure record keep it so.
+Product-visible changes: the MCP transport contract is mandatory; the exchange model refuses
+a success it cannot vouch for; an out-of-range clock skew is refused instead of clamped
+(BREAKING); the four compact-JWS consumers share one claim window; the SDKs report a
+signing-device failure as a typed local failure. Full detail in
+[`CHANGELOG.md`](../CHANGELOG.md).
+
 **v0.17.0 — RELEASED and tagged 2026-09-08** at `c1365e22`, tag object `38fcdd5f`. All
 four images are published at `0.17.0` in
 `us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re` by Cloud Build
@@ -61,8 +78,10 @@ found the cloud SLO lane had always measured a **debug** build, so the declared 
 targets are marked `invalidated-pending-remeasurement` — see
 [`docs/security/gke-slo-baseline-runbook.md`](security/gke-slo-baseline-runbook.md).
 
-**Current release: v0.17.0** (2026-09-08) — the assurance-closure release summarised
+**Current release: v0.18.0** (2026-10-15) — the one-owner-per-fact release summarised
 above.
+
+**v0.17.0** (2026-09-08) — the assurance-closure release summarised above.
 
 **v0.16.0** (2026-09-04) — the exchange-lifecycle release, whose accepted GKE performance
 figures and their three non-comparable measurement classes are in
