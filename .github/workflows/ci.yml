@@ -115,17 +115,6 @@ jobs:
           python3 scripts/fixture_feature_gate.py --selftest
           python3 scripts/fixture_feature_gate.py
 
-      # SLO-harness invocation gate: `tls_load_harness_bench` is NOT an #[ignore]
-      # test (the file is gated to the redis_replay feature lane), so a documented
-      # `-- --ignored` selects ZERO tests, exits 0 and writes no report — a lane that
-      # looks green while measuring nothing. That form had propagated into four
-      # places, the bench image's own ENTRYPOINT among them. This keeps every
-      # runnable invocation honest. Fast, python-only.
-      - name: SLO-harness invocation gate (no command that measures nothing)
-        run: |
-          python3 scripts/slo_invocation_gate.py --selftest
-          python3 scripts/slo_invocation_gate.py
-
       # OS-entropy census gate: `boundary.os_entropy` names exactly the production files
       # that acquire OS entropy through `getrandom`. ASM-0068 states that count and requires
       # owner review of a new site; the count was kept by hand and went stale once. Fast,
@@ -426,37 +415,19 @@ jobs:
       - name: Heavy-lane disk preflight (adjudication selftest)
         run: python3 scripts/heavy_lane_disk_preflight.py --selftest
 
-      # Prose is a claim. Both cloud SLO runbooks stated that local-gate stage 5 rehearses
-      # the exact SLO Job spec they schedule, while `tools/slo/run_slo_job.sh` had zero
-      # callers anywhere in the tree — `merge_path_gate.py`'s class one layer up, where a
-      # control is DESCRIBED and nothing invokes it. This refuses the sentence when its
-      # caller comes loose, and refuses the registry entry when the sentence is deleted.
-      - name: Documented-rehearsal claim gate
+      # The local gate may not reach a cloud. Stage 5's fleet proofs and Job-spec rehearsal
+      # are provider-neutral by construction (provisioning lives in drivers the local closure
+      # does not reach); this refuses a provider CLI, credential or registry anywhere in the
+      # closure of local_gate.sh. The three selftests after it are the units that split made
+      # testable: the Proof 4 pod selector, the literal Job template, the cloud renderer.
+      - name: Provider-neutral local closure + harness units
         run: |
-          python3 scripts/rehearsal_claim_gate.py --selftest
-          python3 scripts/rehearsal_claim_gate.py
-
-      # The SLO lane was the ONLY evidence here that was not content-addressed, so an
-      # unchanged tree was asked to prove itself twice and the second attempt failed on
-      # host contention. It is keyed now — on a declared performance surface AND a
-      # measurement context, because a throughput number is a claim about a tree running
-      # on something, not a theorem about the tree. This validates the declaration: every
-      # declared input exists and is git-tracked, and every stored record derives its
-      # filename from the identity it carries. No measurement happens here.
-      #
-      # It validates two more halves of the same declaration. The hardware-class vocabulary:
-      # `hardware_class` is the context field that decides WHICH QUESTION a number answers,
-      # and an anchor declared for a class must be a measurement OF that class — a
-      # cross-class comparison is not a stricter gate, it is a gate about something else.
-      # And the trigger set of `.github/workflows/slo.yml`, which runs the lane on the
-      # self-hosted runner: that workflow is `paths:`-filtered on the performance surface, so
-      # the filter and the surface are one dependency set written twice. When the surface
-      # grows past the filter the workflow does not go red, it stops running — the same class
-      # `verification_trigger_gate.py` exists for, one lane over.
-      - name: SLO evidence identity (declaration + classes + records + trigger set)
-        run: |
-          python3 scripts/slo_evidence_identity.py --selftest
-          python3 scripts/slo_evidence_identity.py
+          python3 scripts/provider_neutral_closure_gate.py --selftest
+          python3 scripts/provider_neutral_closure_gate.py
+          python3 docs/security/fleet_pod_select.py --selftest
+          python3 tools/slo/render_slo_job.py --selftest
+          python3 tools/cloud/render_cloud_config.py --selftest
+          python3 tools/perf/lightsail/ceiling.py selftest
 
       # ADR-MCPRE-059. The verification workflow is `paths:`-filtered, and its filter list
       # and the units' fingerprint closures are ONE dependency set written down twice. When
@@ -1004,23 +975,6 @@ jobs:
         run: >-
           scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
           //mcp-re-proxy:tls_load_harness_bench
-
-      # §7 — SLO gate mechanism self-check (MCPRE-110/123). Proves the gate logic
-      # (correctness floors bite; declared capacity/scaling targets enforce; null
-      # targets skip). Representative capacity ENFORCEMENT runs on the declared
-      # hardware class per docs/bench/adr-051-slo-targets.md — the one HITL step.
-      - name: Release gate — SLO gate mechanism (self-test)
-        run: python3 scripts/slo_gate.py --selftest
-
-      # §7 — the LOCAL-REGRESSION gate's comparability rules. One anchor per hardware
-      # class, and never a comparison across two: the gate resolves a report's anchor from
-      # the report's own `config.hardware_class`, and a class with no committed anchor
-      # yields NOT COMPARABLE rather than a pass or a regression. It matters here because
-      # the lane now also runs on the self-hosted runner, which is a different measurement
-      # context from the developer workstation the committed anchor was recorded on — and
-      # because on that workstation these rules never fire, so nothing else establishes them.
-      - name: Release gate — local-regression gate comparability (self-test)
-        run: python3 scripts/adr051_slo_gate.py --selftest
 
       # LIVENESS of the standardized capacity instrument, not a measurement.
       #

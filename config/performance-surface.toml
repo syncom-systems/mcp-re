@@ -80,6 +80,8 @@ harness = [
   "scripts/adr051_slo_gate.py",
   "scripts/slo_gate.py",
   "tools/slo/run_slo_job.sh",
+  "tools/slo/render_slo_job.py",
+  "tools/slo/slo-job.yaml",
 ]
 
 # The envelope and the anchor. The envelope says what load is applied; the anchor says what
@@ -149,9 +151,10 @@ fields = [
 #   regression_anchor   the committed baseline `adr051_slo_gate.py` compares it against,
 #                       or "" when no anchor has been declared for this class yet
 #   github_actions_runner
-#                       true on the ONE class the self-hosted Actions runner measures as.
-#                       `.github/workflows/slo.yml` resolves the value from here rather than
-#                       restating it, for the reason `config/ports.toml` exists.
+#                       true on the ONE class the controlled measurement host (dev1) measures as
+#                       (the key keeps its old name: renaming it would change the surface).
+#                       `slo_evidence_identity.py --runner-class` resolves the value from here
+#                       rather than restating it, for the reason `config/ports.toml` exists.
 #   reason              why `slo_declarable = false`, printed by the gate that refuses
 
 [[context.class]]
@@ -219,12 +222,27 @@ redis_image = "redis:7-alpine"
 redis_image_digest = "sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
 
 [[context.class]]
+name = "aws-lightsail-32vcpu-v1"
+kind = "cloud-vm-characterization"
+slo_declarable = false
+regression_anchor = ""
+github_actions_runner = false
+reason = "a NEW hardware context: the first run is a characterization with no anchor and no predeclared pass threshold, and its absolute numbers answer a different question from every GKE, EKS, runner or workstation class"
+note = """One AWS Lightsail Linux instance with 32 vCPUs, the load generators, the backend and a
+host-local Redis primary + 2 replicas CO-LOCATED with the proxy (docs/bench/lightsail-ceiling-runbook.md).
+The instance's actual facts — bundle id, CPU model presented to the guest, RAM, storage,
+distribution, kernel, Redis version — are NOT declared here: they are measured on the host
+before any measurement (tools/perf/lightsail/hostfacts.py) and recorded in that run's
+manifest, and a host that is not 32 usable vCPUs on x86_64 with 128 GiB is refused. A second
+run on a different bundle, region or blueprint is a different class (v2), not this one."""
+
+[[context.class]]
 name = "kind-local"
 kind = "plumbing-rehearsal"
 slo_declarable = false
 regression_anchor = ""
 github_actions_runner = false
-reason = "a single unpinned node on a developer box (PROVIDER=kind — a plumbing rehearsal)"
+reason = "a single unpinned node on a developer box (the kind Job-spec rehearsal — plumbing only)"
 
 [[context.class]]
 name = "smoke"

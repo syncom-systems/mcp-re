@@ -344,10 +344,22 @@ stage_static() {
     `# exact SLO Job spec; run_slo_job.sh had zero callers, so it had never been true.` \
     && python3 scripts/rehearsal_claim_gate.py --selftest \
     && python3 scripts/rehearsal_claim_gate.py \
+    `# The local gate may not reach a cloud. Everything stage 5 runs is provider-neutral:` \
+    `# provisioning lives in drivers this closure does not reach, and a provider CLI,` \
+    `# credential or registry anywhere in the closure is refused here, before a tripwire.` \
+    && python3 scripts/provider_neutral_closure_gate.py --selftest \
+    && python3 scripts/provider_neutral_closure_gate.py \
+    && python3 docs/security/fleet_pod_select.py --selftest \
+    `# Literal template text is never shell-evaluated (the Job manifest), and a cloud` \
+    `# configuration is rendered to an untracked file, never substituted in place.` \
+    && python3 tools/slo/render_slo_job.py --selftest \
+    && python3 tools/cloud/render_cloud_config.py --selftest \
+    `# The Lightsail ceiling orchestration, end to end against fake instruments: rules,` \
+    `# attribution, the host-identity stop, the offered-load ladder, the run directory.` \
+    && python3 tools/perf/lightsail/ceiling.py selftest \
     `# The SLO lane's evidence identity: the declared performance surface must exist and` \
     `# be git-tracked, every attested result must derive its filename from the identity it` \
-    `# carries, every declared hardware class must name an anchor measured on ITSELF, and` \
-    `# the surface-filtered .github/workflows/slo.yml must trigger on every surface input.` \
+    `# carries, and every declared hardware class must name an anchor measured on ITSELF.` \
     `# No measurement and no Docker — this is the declaration, not the lane.` \
     && python3 scripts/slo_evidence_identity.py --selftest \
     && python3 scripts/slo_evidence_identity.py \
@@ -635,9 +647,9 @@ stage_slo() {
   return $rc
 }
 
-# --- stage 5 (opt-in): the seven fleet proofs on a local kind cluster -------------
-# IDENTICAL harness, chart and images the GKE run uses — only the cluster substrate
-# differs. This is what caught six deploy defects before a single cloud charge.
+# --- stage 5 (opt-in): the eight fleet proofs on a local kind cluster -------------
+# The provider-neutral proof core the cloud drivers run, with the same chart and images —
+# only the substrate driver differs, and the local one reaches no cloud. This is what caught six deploy defects before a single cloud charge.
 stage_kind() {
   if [[ "$WITH_KIND" != 1 ]]; then echo "not requested (pass --with-kind)."; return 0; fi
 
@@ -701,7 +713,7 @@ stage_kind() {
   export MCP_RE_TLS_KEY="${MCP_RE_TLS_KEY:-$fx/client_key_short.pem}"
   export MCP_RE_SERVER_CA="${MCP_RE_SERVER_CA:-$fx/server_ca.pem}"
 
-  PROVIDER=kind docs/security/gke-multi-replica-validation.sh || return $?
+  docs/security/fleet-proofs-kind.sh || return $?
 
   # The cloud runbooks state that this stage rehearses the EXACT SLO Job spec they
   # schedule. That sentence was false for as long as it existed — `tools/slo/run_slo_job.sh`

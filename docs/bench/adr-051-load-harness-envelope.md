@@ -102,10 +102,9 @@ scripts/local_slo_lane.sh          # 6 anchor reps + the gate on each
 scripts/local_slo_lane.sh --reps 1 # quick pre-flight
 ```
 
-The release-grade run is the same lane on the self-hosted runner
-([`.github/workflows/slo.yml`](../../.github/workflows/slo.yml)), where nothing else is
-scheduled on the box while it measures. It triggers on a change to the declared
-performance surface and on `workflow_dispatch`; it does not run on every push.
+The release-grade run is the same lane, run by the owner on dev1 (the controlled
+measurement host), where nothing else is scheduled on the box while it measures. It is
+run when a measurement is wanted; it does not run on every push.
 
 It reads the anchor config out of `docs/bench/adr-051-baseline-local.json`, builds
 both the test AND the `mcp-re-proxy` bin the harness spawns, refuses to measure on a

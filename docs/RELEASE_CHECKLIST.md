@@ -6,8 +6,8 @@ Use this checklist before a public release or MCP proposal submission.
 
 This checklist is about whether the project is READY to release. The mechanics of moving
 the version number — which of the ~22 files carry it, what deliberately does not move, and
-why an uneven bump surfaces as `ImagePullBackOff` on a billing cluster rather than as a
-build failure — are in [`docs/dev/version-bump.md`](dev/version-bump.md). Run
+why an uneven bump surfaces as `ImagePullBackOff` on a cluster rather than as a build
+failure — are in [`docs/dev/version-bump.md`](dev/version-bump.md). Run
 `scripts/bump_version.sh` from there; do the readiness items here.
 
 ## Bump the version
@@ -20,23 +20,26 @@ build failure — are in [`docs/dev/version-bump.md`](dev/version-bump.md). Run
       `appVersion` tracks `VERSION` and moves every time.
 - [ ] The SDK versions were **not** bumped in sympathy — they are on an independent
       cadence.
-- [ ] `gcloud builds submit --config deploy/cloudbuild/mcp-re-images.yaml .` has run: the
-      images do not exist at the new tag until it does, and no local gate can tell you so.
+- [ ] No cloud operation is part of releasing. A release is qualified by verification,
+      assurance closure, release assurance and its provenance record, and is tagged and
+      published on GitHub. Container images in a cloud registry are deployment
+      infrastructure for a separately authorized cloud run; building or pushing them is
+      not a release step, and their absence at the new tag does not hold a release.
 
 ## Run the local gate first
 
-- [ ] `scripts/local_gate.sh --with-kind` is green — every stage, on this machine,
-      before any cloud run or baseline declaration
-      ([`docs/dev/local-gate-order.md`](dev/local-gate-order.md)).
-- [ ] The ADR-MCPRE-051 §7 SLO lane ran where nothing else was scheduled on the box.
-      The loadgen is co-located, so a loaded box produces an environmental FAIL and a
-      meaningless number. The release-grade run is
-      [`.github/workflows/slo.yml`](../.github/workflows/slo.yml) on the self-hosted
-      runner — trigger it with `workflow_dispatch` if the release did not move the
-      declared performance surface. A local stage-4 run is a pre-flight, and its
-      hardware class is a different measurement context, not a substitute.
-- [ ] A minor release does **not** owe a whole SLO run. It owes a green build and a
-      green test battery. Spend the measurement where the performance surface moved.
+- [ ] `scripts/local_gate.sh --with-kind` is green on stages 1–3 and 5, on this machine
+      ([`docs/dev/local-gate-order.md`](dev/local-gate-order.md)). Stage 4 is a local
+      performance measurement: its result is performance evidence and does not hold a
+      release. If it fails, resume with `scripts/local_gate.sh --from 5` and record the
+      stage-4 result as information.
+- [ ] No performance claim is made for the release without performance evidence for it.
+      Release qualification does not require an SLO run: release assurance asks no
+      performance question, and absent or stale performance evidence does not fail it. A
+      measurement is an owner or operator decision, run with `scripts/local_slo_lane.sh`
+      on dev1, the controlled measurement host. A run on any other machine is a different
+      measurement context, not a substitute, and a loaded box produces an environmental
+      FAIL and a meaningless number.
 - [ ] No lane was reported green on a run that selected zero tests (`--ignored` on
       `tls_load_harness_bench` is the known trap; the lane script refuses it).
 

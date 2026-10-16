@@ -863,6 +863,14 @@ reason_family = "ND-003"
 recorded = "2026-09-19"
 
 [[disposition]]
+id = "CD-20488"
+project = ""
+control = "gate#scripts/provider_neutral_closure_gate.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-10-15"
+
+[[disposition]]
 id = "CD-0020"
 project = ""
 control = "gate#scripts/release_assurance_gate.py"

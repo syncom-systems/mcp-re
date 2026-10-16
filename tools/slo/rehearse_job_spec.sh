@@ -74,15 +74,18 @@ if [[ "${REBUILD_BENCH:-0}" == 1 ]] || ! docker image inspect "$IMAGE" >/dev/nul
     -t "$IMAGE" . || fail "the bench image did not build"
 fi
 
-# imagePullPolicy is Never for PROVIDER=kind, so the image has to be side-loaded: a kind
+# imagePullPolicy is Never for this rehearsal, so the image has to be side-loaded: a kind
 # node has no registry credentials and a pull would fail with the cluster already up.
 echo "loading $IMAGE into kind cluster '$KIND_CLUSTER'"
 kind load docker-image "$IMAGE" --name "$KIND_CLUSTER" || fail "kind load failed"
 
-# THE POINT OF THE WHOLE SCRIPT: the exact command the runbooks name, unmodified.
-PROVIDER=kind NS="$NAMESPACE" \
+# THE POINT OF THE WHOLE SCRIPT: the provider-neutral runner the cloud wrapper
+# (tools/slo/run_slo_job_cloud.sh) runs, rendering the same Job template. Only the facts the
+# wrapper resolves differ: a side-loaded image, never pulled, and no node-pool pin.
+printf '\n*** kind — PLUMBING DRY-RUN ONLY: a single unpinned node is not a hardware class ***\n\n'
+BENCH_IMG="$IMAGE" PULL_POLICY=Never NS="$NAMESPACE" \
   CPU_REQUEST="${CPU_REQUEST:-1}" MEM_REQUEST="${MEM_REQUEST:-512Mi}" \
-  tools/slo/run_slo_job.sh - kind-local 1 "$OUT" \
+  tools/slo/run_slo_job.sh kind-local 1 "$OUT" \
   || fail "the Job did not complete or produced no extractable report"
 
 python3 - "$OUT" <<'PY' || fail "the extracted report does not answer the rehearsal's question"

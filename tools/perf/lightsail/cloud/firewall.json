@@ -1,0 +1,12 @@
+{
+  "portInfos": [
+    {
+      "fromPort": 22,
+      "toPort": 22,
+      "protocol": "tcp",
+      "cidrs": ["@@OPERATOR_CIDR@@"],
+      "ipv6Cidrs": [],
+      "cidrListAliases": []
+    }
+  ]
+}

@@ -15,9 +15,8 @@
 # A class with no declared anchor yields UNANCHORED (exit 4), which is neither a pass
 # nor a regression: nothing has been recorded for that class to be compared against.
 #
-# Release-grade runs happen on the self-hosted runner (.github/workflows/slo.yml),
-# where nothing else is scheduled on the box. Run here for a pre-flight, or when that
-# runner is the machine you are on.
+# Release-grade runs happen on dev1, where nothing else is scheduled on the box. Run
+# elsewhere for a pre-flight.
 #
 # WHY A SCRIPT AND NOT A DOCUMENTED COMMAND: `tls_load_harness_bench` is NOT
 # `#[ignore]` — the whole file is gated to the `redis_replay` feature lane instead,
@@ -138,6 +137,29 @@ echo "=== building (-c opt, $BENCH and the proxy it spawns) ==="
 bazel build -c opt "$BENCH" \
   || { echo "local-slo-lane: FAIL — the bench or the proxy did not build." >&2; exit 1; }
 
+# The harness drives the host's `docker` CLI to bring up its Redis fleet. A test's PATH is
+# Bazel's fixed `/bin:/usr/bin:/usr/local/bin` and its HOME is the sandbox's, so a CLI
+# installed elsewhere (Homebrew, colima) and the active docker context are invisible to it.
+# The run is handed PATH, and DOCKER_HOST resolved once from the active context. A context
+# that reaches its daemon over TLS keeps its certificates beside it, under the context's
+# TLS store, and the CLI reads them only through that context; an endpoint override alone
+# would reach a TLS-only daemon without them. So a context with TLS material also hands over
+# DOCKER_CERT_PATH and DOCKER_TLS_VERIFY, and a caller's own DOCKER_* settings pass as given.
+if [[ -z "${DOCKER_HOST:-}" ]]; then
+  DOCKER_HOST="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
+  [[ -n "$DOCKER_HOST" ]] && export DOCKER_HOST
+  docker_tls="$(docker context inspect --format '{{.Storage.TLSPath}}' 2>/dev/null || true)/docker"
+  if [[ -f "$docker_tls/ca.pem" ]]; then
+    export DOCKER_CERT_PATH="$docker_tls"
+    skip="$(docker context inspect --format '{{.Endpoints.docker.SkipTLSVerify}}' 2>/dev/null || true)"
+    [[ "$skip" == "true" ]] && export DOCKER_TLS=1 || export DOCKER_TLS_VERIFY=1
+  fi
+fi
+DOCKER_ENV=()
+for var in DOCKER_HOST DOCKER_CERT_PATH DOCKER_TLS_VERIFY DOCKER_TLS; do
+  [[ -n "${!var:-}" ]] && DOCKER_ENV+=("--test_env=$var")
+done
+
 # One measurement. `--exact` selects the single bench fn; NEVER `--ignored` (see header).
 run_one() {
   local cores="$1" out="$2" log="$3"
@@ -147,7 +169,8 @@ run_one() {
   MCP_RE_LOADGEN_MODE="$MODE" \
   MCP_RE_LOADGEN_HW_CLASS="$HW" \
   MCP_RE_LOADGEN_OUT="$out" \
-    bazel run -c opt --noshow_progress --ui_event_filters=-info "$BENCH" \
+    bazel run -c opt --noshow_progress --ui_event_filters=-info \
+      --test_env=PATH ${DOCKER_ENV[@]+"${DOCKER_ENV[@]}"} "$BENCH" \
       -- tls_load_harness_bench --exact --nocapture >"$log" 2>&1 || true
   grep -E 'declared_cores|successes/failures|throughput|added_latency' "$log" || true
 

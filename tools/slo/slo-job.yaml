@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The ADR-MCPRE-051 §7 SLO Job. A LITERAL template: nothing in this file is ever evaluated
+# by a shell. `tools/slo/render_slo_job.py` substitutes the double-at placeholders below,
+# each against its own pattern, and refuses an unresolved one — so a backtick or a `$( )` in
+# a comment here is text, not a command.
+apiVersion: batch/v1
+kind: Job
+metadata: { name: @@JOB@@ }
+spec:
+  backoffLimit: 0
+  completions: 1
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector: @@NODE_SELECTOR@@
+      # The async per-core serving plane refuses node-local replay, so the bench needs
+      # a shared primary+2-replica Redis (WAIT 2 durability tier). Docker is unavailable
+      # in a Job pod, so provide it as native sidecars (initContainers restartPolicy:
+      # Always, Kubernetes >=1.29) sharing the pod netns on localhost; the bench points at
+      # them via MCP_RE_LOADGEN_REDIS_URL. Sidecars are torn down when the bench exits.
+      initContainers:
+        - name: redis-primary
+          image: "@@REDIS_IMG@@"
+          restartPolicy: Always
+          args: ["redis-server","--port","6379","--appendonly","yes"]
+        - name: redis-r1
+          image: "@@REDIS_IMG@@"
+          restartPolicy: Always
+          args: ["redis-server","--port","6380","--replicaof","127.0.0.1","6379","--appendonly","yes"]
+        - name: redis-r2
+          image: "@@REDIS_IMG@@"
+          restartPolicy: Always
+          args: ["redis-server","--port","6381","--replicaof","127.0.0.1","6379","--appendonly","yes"]
+      containers:
+        - name: bench
+          image: "@@BENCH_IMG@@"
+          imagePullPolicy: @@PULL_POLICY@@
+          # Wait for the two replicas to report online (so WAIT 2 is satisfiable), then run
+          # ONLY the tls_load_harness_bench test (the file's other tests need Docker) and
+          # emit the report between markers. The image's bench binary is the Bazel-built
+          # release harness; `1 passed` is the guard that it measured something.
+          command: ["bash","-c","set -o pipefail && sleep 8 && tls_load_harness_bench tls_load_harness_bench --exact --nocapture | tee /tmp/bench.log && grep -q 'test result: ok. 1 passed' /tmp/bench.log && echo && echo '===REPORT_JSON_BEGIN===' && cat \"$MCP_RE_LOADGEN_OUT\" && echo && echo '===REPORT_JSON_END==='"]
+          env:
+            - { name: MCP_RE_LOADGEN_REDIS_URL, value: "redis://127.0.0.1:6379" }
+            - { name: MCP_RE_LOADGEN_HW_CLASS, value: "@@HW@@" }
+            - { name: MCP_RE_LOADGEN_CORES, value: "@@CORES@@" }
+            # ADR-MCPRE-051 §1 (amended 2026-08-06) second topology axis. 0 lets the proxy
+            # auto-resolve min(8, cpus) workers per shard — the SHIPPED default, which is
+            # what a CAPACITY number must be measured at.
+            #
+            # The SCALING run pins WORKERS_PER_SHARD=1 instead. The gate computes
+            # tput_N / (tput_1 * N) and expects >= 0.6, which assumes --cores N means N
+            # serving threads. Under the default it does not: on an 8-vCPU node --cores 1
+            # already resolves to 8 workers and saturates the node, so the ratio tends to
+            # 1/N by construction. Pinning 1 restores cores == threads.
+            - { name: MCP_RE_LOADGEN_WORKERS_PER_SHARD, value: "@@WORKERS_PER_SHARD@@" }
+            # The CANONICAL v2 envelope (concurrency 128 / 8000 requests), so a cluster run
+            # is the same involved config as the local baseline.
+            - { name: MCP_RE_LOADGEN_CONCURRENCY, value: "@@CONCURRENCY@@" }
+            - { name: MCP_RE_LOADGEN_REQUESTS, value: "@@REQUESTS@@" }
+          resources:
+            requests: { cpu: "@@CPU_REQUEST@@", memory: "@@MEM_REQUEST@@" }

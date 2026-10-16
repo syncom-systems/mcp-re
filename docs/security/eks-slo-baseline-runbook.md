@@ -2,14 +2,21 @@
 
 # EKS ADR-051 §7 SLO baseline + AWS KMS live lanes — runbook
 
+> **Not the performance experiment.** Throughput scaling and ceiling measurement on AWS is
+> the Lightsail experiment, [`docs/bench/lightsail-ceiling-runbook.md`](../bench/lightsail-ceiling-runbook.md),
+> which uses no EKS, ECR, KMS or IAM. This runbook remains the procedure for the EKS fleet
+> proofs and the AWS KMS live lanes. Performance is independent of release qualification,
+> and every step below is a cloud operation that needs the owner's GO for that operation.
+
 The AWS counterpart to [`gke-slo-baseline-runbook.md`](gke-slo-baseline-runbook.md).
 Same envelope, same Job spec, same gate — only the cluster substrate and the
 registry differ. Everything here is **torn down after each run**; the repo keeps the
 *setup*, not live cloud resources.
 
 - Account `455880745808`, region `eu-north-1`.
-- Artifacts: `deploy/eks/mcp-re-slo-cluster.yaml`, `deploy/docker/Dockerfile.bench`,
-  `tools/slo/run_slo_job.sh`, `scripts/slo_gate.py`,
+- Artifacts: `deploy/eks/mcp-re-slo-cluster.yaml` (a template, rendered by
+  `tools/cloud/render_cloud_config.py`), `deploy/docker/Dockerfile.bench`,
+  `tools/slo/run_slo_job_cloud.sh` → `tools/slo/run_slo_job.sh`, `scripts/slo_gate.py`,
   `docs/bench/adr-051-slo-targets.json`, `scripts/test-aws-cloud.sh.example`.
 
 ## Run everything locally first (non-negotiable)
@@ -23,9 +30,9 @@ scripts/local_gate.sh --with-kind    # stages 1-5, including the fleet proofs on
 
 Stage 5 additionally rehearses the **exact** SLO Job spec this runbook schedules.
 `tools/slo/rehearse_job_spec.sh` builds the bench image, side-loads it into the kind
-cluster the fleet proofs just used, and runs
-`PROVIDER=kind tools/slo/run_slo_job.sh - kind-local 1 kind_1core.json` — the same
-manifest, the same Redis sidecars, the same bench image and the same marker-based report
+cluster the fleet proofs just used, and runs the provider-neutral
+`tools/slo/run_slo_job.sh kind-local 1 kind_1core.json` that `tools/slo/run_slo_job_cloud.sh`
+runs here — the same rendered manifest (`tools/slo/slo-job.yaml`), the same Redis sidecars, the same bench image and the same marker-based report
 extraction on a local kind node. Its value is that every piece of plumbing between
 `kubectl apply` and a parsed report is proven before an EC2 instance exists.
 
@@ -126,9 +133,10 @@ first: whether EKS projects the token at the path the adapter reads, with an aud
 the trust policy accepts. That is what an on-cluster run is for — the GKE twin found
 its equivalent (the WI metadata token URL) exactly this way.
 
-## 0c. The four fleet coherence proofs on EKS
+## 0c. The eight fleet proofs on EKS
 
-Same harness, same chart, same assertions as GKE — only the substrate differs:
+The provider-neutral proof core (`docs/security/fleet-proofs-core.sh`), run by the cloud
+driver after it provisions EKS — same chart, same assertions as kind and GKE:
 
 ```sh
 export ECR_REGISTRY=<acct>.dkr.ecr.eu-north-1.amazonaws.com
@@ -146,7 +154,8 @@ same state the v0.11/v0.12.1 GKE runs were in, where the four proofs passed and 
 inner-plane policy filtered no packets, so any pod could POST past the PEP with no
 signature, no replay admission and no audit record.
 
-Run `PROVIDER=kind` first. It is the identical test for free.
+Run `docs/security/fleet-proofs-kind.sh` (local-gate stage 5) first. It is the same
+proof core for free.
 
 ## 1. ECR repository + the bench image
 
@@ -173,17 +182,24 @@ docker push $ECR_REGISTRY/mcp-re-slo-bench:$TAG
 
 ## 2. Cluster
 
-The cluster config carries a literal `OPERATOR_CIDR` placeholder for the
-control-plane endpoint allowlist. eksctl's default is `0.0.0.0/0` — the Kubernetes
-API reachable from the whole internet for the life of the run — so the placeholder is
-there to make an unset allowlist FAIL rather than silently mean "everyone".
+The cluster config is a tracked TEMPLATE with an `@@OPERATOR_CIDR@@` placeholder for the
+control-plane endpoint allowlist. eksctl's default is the whole internet — the Kubernetes
+API reachable from anywhere for the life of the run — so the placeholder makes an unset
+allowlist FAIL rather than silently mean "everyone". The template is never edited in place:
+it is rendered to an untracked run directory, and that exact file is kept for teardown.
 
 ```sh
-sed -i "s|OPERATOR_CIDR|$(curl -fsS https://checkip.amazonaws.com)/32|" \
-  deploy/eks/mcp-re-slo-cluster.yaml
-eksctl create cluster -f deploy/eks/mcp-re-slo-cluster.yaml
+RUN_ID=eks-slo-$(date -u +%Y%m%dT%H%M%SZ)
+CLUSTER_CFG="$(python3 tools/cloud/render_cloud_config.py \
+  --template deploy/eks/mcp-re-slo-cluster.yaml --run-id "$RUN_ID" \
+  --set OPERATOR_CIDR=<operator-ip>/32)"          # -> work/cloud-runs/$RUN_ID/...
+eksctl create cluster -f "$CLUSTER_CFG"
 kubectl create namespace mcp-re
 ```
+
+The renderer refuses an unresolved placeholder, an open-to-the-world CIDR and a path git
+would track, and records the template digest, the values and the rendered digest beside the
+file.
 
 Two managed nodegroups, `m7g.2xlarge` and `c7g.2xlarge`, 8 vCPU each. 16 vCPU total
 against the account's 32-vCPU `L-1216C47A` quota, so both classes run concurrently.
@@ -241,7 +257,7 @@ eksctl create nodegroup --cluster mcp-re-slo --region eu-north-1 \
 PROVIDER=eks CPU_REQUEST=1 MEM_REQUEST=1Gi \
   REDIS_IMG=public.ecr.aws/docker/library/redis:7-alpine \
   ECR_REGISTRY=$ECR_REGISTRY \
-  tools/slo/run_slo_job.sh ng-t4gs t4g.small 1 t4g_1core.json
+  tools/slo/run_slo_job_cloud.sh ng-t4gs t4g.small 1 t4g_1core.json
 ```
 
 `t4g.small` allocatable is `cpu=1930m mem=1399616Ki`, so the declared-hardware
@@ -257,7 +273,7 @@ burstable instance — and is recorded only to show the lane ran. What it establ
 pod node      = ip-192-168-24-104.eu-north-1.compute.internal
 pod selector  = {"eks.amazonaws.com/nodegroup":"ng-t4gs"}
 pull event    = Successfully pulled image
-                455880745808.dkr.ecr.eu-north-1.amazonaws.com/mcp-re-slo-bench:0.17.0
+                455880745808.dkr.ecr.eu-north-1.amazonaws.com/mcp-re-slo-bench:0.18.0
                 in 36.158s. Image size: 887881847 bytes.
 ```
 
@@ -275,10 +291,10 @@ supply the WAIT-2 durability tier.
 
 ```sh
 export ECR_REGISTRY REDIS_IMG=public.ecr.aws/docker/library/redis:7-alpine
-PROVIDER=eks tools/slo/run_slo_job.sh ng-m7g2x m7g.2xlarge 1 m7g_1core.json
-PROVIDER=eks tools/slo/run_slo_job.sh ng-m7g2x m7g.2xlarge 8 m7g_8core.json
-PROVIDER=eks tools/slo/run_slo_job.sh ng-c7g2x c7g.2xlarge 1 c7g_1core.json
-PROVIDER=eks tools/slo/run_slo_job.sh ng-c7g2x c7g.2xlarge 8 c7g_8core.json
+PROVIDER=eks tools/slo/run_slo_job_cloud.sh ng-m7g2x m7g.2xlarge 1 m7g_1core.json
+PROVIDER=eks tools/slo/run_slo_job_cloud.sh ng-m7g2x m7g.2xlarge 8 m7g_8core.json
+PROVIDER=eks tools/slo/run_slo_job_cloud.sh ng-c7g2x c7g.2xlarge 1 c7g_1core.json
+PROVIDER=eks tools/slo/run_slo_job_cloud.sh ng-c7g2x c7g.2xlarge 8 c7g_8core.json
 
 python3 scripts/slo_gate.py --report m7g_8core.json \
   --baseline m7g_1core.json --scaled m7g_8core.json \
@@ -297,7 +313,8 @@ run, which is what makes the three comparable.
 ## Teardown
 
 ```sh
-eksctl delete cluster -f deploy/eks/mcp-re-slo-cluster.yaml --disable-nodegroup-eviction
+python3 tools/cloud/render_cloud_config.py --verify "$CLUSTER_CFG"   # the file creation used
+eksctl delete cluster -f "$CLUSTER_CFG" --disable-nodegroup-eviction
 aws ecr delete-repository --region eu-north-1 --repository-name mcp-re-slo-bench --force
 ```
 

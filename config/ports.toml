@@ -22,7 +22,7 @@
 #                             mcp_re_proxy.port and CI-gated by
 #                             scripts/check_port_registry.py (ADR-MCPS-048 idiom:
 #                             a mirrored value, staleness-checked, never a hopeful comment)
-#   * validation harness  ->  docs/security/gke-multi-replica-validation.sh
+#   * validation harness  ->  docs/security/fleet-proofs-core.sh
 #
 # ENV OVERRIDE. A port may be overridden at run time with <KEY>_PORT (e.g.
 # MCP_RE_PROXY_PORT=8650), matching the monorepo's <SERVICE_NAME>_PORT convention.
@@ -49,13 +49,13 @@ description = "MCP-RE proxy — TLS-terminating PEP (ADR-MCPS-014 / ADR-MCPRE-05
 host = "127.0.0.1"
 port = 8610
 scheme = "https"
-description = "gke-multi-replica-validation.sh — local forward to replica A."
+description = "fleet-proofs-core.sh — local forward to replica A."
 
 [services.mcp_re_validation_fwd_b]
 host = "127.0.0.1"
 port = 8611
 scheme = "https"
-description = "gke-multi-replica-validation.sh — local forward to replica B."
+description = "fleet-proofs-core.sh — local forward to replica B."
 
 # The HTTP-profile proxy front for the LOCAL plain-HTTP proof (ADR-MCPRE-050).
 # Distinct from mcp_re_proxy (8600, https/TLS): this is the application-layer
@@ -84,6 +84,21 @@ host = "127.0.0.1"
 port = 8630
 scheme = "tcp"
 description = "Shared Redis replay tier (primary; replicas provide WAIT quorum acks)."
+
+# The two replicas of a HOST-LOCAL replay tier: the Lightsail ceiling experiment runs a
+# primary (mcp_re_redis) plus these two as plain processes on one machine, so the proxy's
+# `redis-wait-quorum:2:2000` is met without Docker (tools/perf/lightsail/redis_tier.py).
+[services.mcp_re_redis_replica_1]
+host = "127.0.0.1"
+port = 8631
+scheme = "tcp"
+description = "Host-local replay tier — replica 1 of 2 (WAIT 2 quorum)."
+
+[services.mcp_re_redis_replica_2]
+host = "127.0.0.1"
+port = 8632
+scheme = "tcp"
+description = "Host-local replay tier — replica 2 of 2 (WAIT 2 quorum)."
 
 # The mcp-re-client sidecar's LOCAL plain-MCP listener. The local client speaks
 # ordinary MCP here and never sees an MCP-RE field; the sidecar signs outbound and

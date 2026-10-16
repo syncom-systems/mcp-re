@@ -1,10 +1,9 @@
 # Version bump — what has to move, in what order, and what proves it
 
 `VERSION` is not just a label. It is the **image tag** every deploy artefact names, so a
-bump that lands unevenly does not fail at build time — it fails as `ImagePullBackOff` on a
-cluster that is already billing, after `gcloud builds submit` has run. That is the failure
-this document exists to prevent, and `scripts/deploy_image_tag_gate.py` is the gate that
-catches it.
+bump that lands unevenly does not fail at build time — it fails as `ImagePullBackOff` when
+the deploy surface is next used. That is the failure this document exists to prevent, and
+`scripts/deploy_image_tag_gate.py` is the gate that catches it.
 
 Run `scripts/bump_version.sh <new-version>` rather than editing by hand. This document
 says what it does and why, so the gate output is readable when something drifts.
@@ -61,11 +60,13 @@ Three of these are routinely got wrong:
 4. **Bump the Helm chart version** *only* if `deploy/helm/` changed in this release.
 5. **`scripts/local_gate.sh --with-kind`** — the full battery. Stage 1 runs the image-tag
    gate; stage 5 deploys the chart against freshly built images, which is what proves the
-   tag actually resolves.
+   tag actually resolves. Stage 4 is a local performance regression measurement; its result
+   is performance evidence, not a release-qualification input.
 6. **Commit the regenerated `MODULE.bazel.lock`.** Stage 3 rewrites it because the crate
    `Cargo.toml` hashes it records all moved. Leaving it out is invisible until someone
    diffs the tree in an unrelated branch.
-7. **Commit, PR, merge.** Tag the release commit on `main`.
+7. **Commit, PR, merge.** Then qualify the merged commit (below) and tag it on `main`.
+   No cloud operation is a step of releasing: no image build, no registry push, no SLO run.
 
 ## Choosing the number
 
@@ -93,23 +94,23 @@ surface references — `unbuilt_images()`, the deployed-but-never-built defect.
 
 It does **not** check:
 
-* that the build actually ran and the registry holds the tag — only `gcloud builds submit`
-  does that, and a bumped tag with a build config but no run is an `ImagePullBackOff`
-  waiting to happen;
+* that any registry holds images at the tag — no release step builds or pushes them (see
+  below);
 * the SDK versions, deliberately (see above);
 * the Helm chart's own `version`, which is a human judgement about whether templates moved.
 
-## After the bump
+## Deploy images are not release artifacts
 
-The images at the new tag do not exist until they are built. Before any cloud run:
+The deploy surface (`deploy/cloudbuild/`, `deploy/k8s/`, the Helm chart, the GKE and EKS
+runbooks) is infrastructure for a cloud deployment or performance run, and AWS and Google
+Cloud are used only for such runs when the owner authorizes that specific run. No release
+step builds, pushes or inspects cloud images, and a release is not held because a registry
+lacks images at its tag. A run that needs them builds them as part of its own authorized
+plan.
 
-```sh
-gcloud builds submit --config deploy/cloudbuild/mcp-re-images.yaml .
-```
-
-and note that the kind lane (`local_gate.sh --with-kind`) builds its own images locally and
-stamps them with the git revision, so a green kind stage does **not** prove the registry
-holds the tag — only that the source builds and deploys.
+The kind lane (`local_gate.sh --with-kind`) builds its own images locally and stamps them with
+the git revision, so a green kind stage proves the source builds and deploys at the tag; it
+says nothing about any registry.
 
 ## Release assurance — the binding closure run
 
@@ -127,23 +128,20 @@ commit, the tree, the root-completeness verdict and the overall verdict. It refu
 working tree and refuses a `--target` that is not the checked-out commit, because a release
 record is about one immutable thing.
 
-One of its steps is the SLO question. The lane itself is `workflow_dispatch` only — an SLO
-run belongs to a release, not to a pull request — so `slo_evidence_identity.py --decide` is
-what asks whether the attested result is still reusable, by folding the declared performance
-surface and the measurement context into two digests. `REUSE` passes; `REMEASURE` fails the
-release and names which of surface, context or freshness moved, and the remedy is to
-dispatch `.github/workflows/slo.yml` and re-run release assurance.
-
-That is the owner's rule of 2026-09-08 made executable: a minor release needs no SLO run,
-only one where perf-relevant code was touched.
+**Release qualification does not include performance.** `ReleaseQualified(R)` and
+`PerformanceMeasured(R, context)` are independent propositions: release assurance asks no
+SLO question, and absent or stale performance evidence never fails it. A performance
+*claim* about a release does need performance evidence, which comes from
+`scripts/local_slo_lane.sh` — a measurement facility that an owner or operator runs on
+dev1 when a measurement is wanted, never as a step of qualifying a release.
 
 `review --require-root-complete` is the **binding** closure mode. Ordinary CI runs the
 report-only form deliberately (ADR-MCPRE-059 §28.8): an honest unresolved GAP under a
 declared root must not fail everyday work. This is the lane where it is binding.
 
 In Actions the lane is `.github/workflows/release-assurance.yml`, dispatched with the ref to
-qualify and the `verification` run whose evidence records it composes. It runs on the
-self-hosted runner, never on a fork head.
+qualify and the `verification` run whose evidence records it composes. It runs on a
+GitHub-hosted runner and refuses a target that is not reachable from `main`.
 
 **The verification run comes first, and it must close assurance.** Dispatch
 `verification.yml` on the exact release candidate. A dispatched run is a complete run, so
@@ -155,7 +153,10 @@ CURRENTLY_VERIFIED, with every root complete. Only a run whose job printed
 [`epic-close.md`](epic-close.md).
 
 **Cutting the release then commits the record.** Copy the run's
-`release-assurance.json` to `docs/releases/<version>-release-assurance.json`, register the
+`release-assurance.json` to `docs/releases/<version>-release-assurance.json`, check its
+provenance with `python3 scripts/release_assurance_gate.py --verify-run <that file>` (GitHub
+must report the producing run as `release-assurance.yml` on `main`, a successful dispatch,
+whose uploaded record is byte-identical to the file), register the
 provenance document as `mechanized` in `scripts/release_assurance_gate.py`, and paste the
 block the gate renders into it. The gate then checks the document against the record on
 every CI run, which is the point: a provenance document may explain a result, but it may not

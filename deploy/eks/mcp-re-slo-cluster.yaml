@@ -98,15 +98,17 @@ vpc:
   # VPC, so `publicAccess: false` would make the cluster undrivable. The bound that
   # fits is a CIDR allowlist.
   #
-  # REQUIRED before `eksctl create cluster`. Substitute the operator's own address:
+  # This file is a TEMPLATE and is never edited in place. Render it, with the operator's
+  # own address, to an untracked run directory and create the cluster from THAT file:
   #
-  #   sed -i "s|OPERATOR_CIDR|$(curl -fsS https://checkip.amazonaws.com)/32|" \
-  #     deploy/eks/mcp-re-slo-cluster.yaml
+  #   python3 tools/cloud/render_cloud_config.py --template deploy/eks/mcp-re-slo-cluster.yaml \
+  #     --run-id <run-id> --set OPERATOR_CIDR=<operator-ip>/32
   #
-  # Left as a literal placeholder rather than 0.0.0.0/0 so `eksctl` fails on it: an
+  # The renderer refuses an unresolved placeholder and an open-to-the-world CIDR, and keeps
+  # the rendered file for teardown. Left unrendered, `eksctl` fails on the placeholder: an
   # unset allowlist must not silently mean "everyone".
   clusterEndpoints:
     publicAccess: true
     privateAccess: true
   publicAccessCIDRs:
-    - OPERATOR_CIDR
+    - @@OPERATOR_CIDR@@
