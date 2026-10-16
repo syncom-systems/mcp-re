@@ -13,10 +13,12 @@ stopping before any measurement, and a summary that states its rule set.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
+import tarfile
 import tempfile
 from pathlib import Path
 
@@ -35,6 +37,13 @@ fail_marker = os.environ.get("FAKE_FAIL_REP_AT", "")
 rep = out.rsplit("rep", 1)[-1].split(".")[0]
 if fail_marker == f"c{cores}-rep{rep}":
     print("thread panicked: simulated"); sys.exit(101)
+# The real harness writes a trust document under the inherited umask, and the proxy refuses a
+# group-writable one; an Ubuntu login shell's 0002 makes every rep fail exactly like this.
+trust = out + ".trust.json"
+open(trust, "w").close()
+if os.stat(trust).st_mode & 0o022:
+    print(f"trust document is group-writable (mode {os.stat(trust).st_mode & 0o777:o}) and was refused"); sys.exit(101)
+os.unlink(trust)
 tput = 1000.0 * (cores if cores else 3) ** 0.8
 json.dump({"schema": "mcp-re-load-harness-report/v2", "config": {"declared_cores": cores},
            "results": {"successes": req, "failures": 0, "throughput_rps": tput,
@@ -175,7 +184,9 @@ def campaign_case() -> None:
         assert not (run_dir / "phase-a").exists(), "measured on an undeclared host"
         assert json.loads((run_dir / "host" / "identity-check.json").read_text())["problems"]
 
-        result = subprocess.run(base + expect_ok, env=env, capture_output=True, text=True)
+        # Launched as the `ubuntu` login shell launches it: umask 0002.
+        result = subprocess.run(base + expect_ok, env=env, capture_output=True, text=True,
+                                preexec_fn=lambda: os.umask(0o002))
         assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-3000:]
         for rel in ("manifest.json", "summary.json", "summary.md", "SHA256SUMS", "logs/steps.json",
                     "logs/campaign.log", "host/inventory-before.json", "host/inventory-after.json",
@@ -185,6 +196,21 @@ def campaign_case() -> None:
             assert (run_dir / rel).is_file(), rel
         manifest = json.loads((run_dir / "manifest.json").read_text())
         assert manifest["binaries"]["bench"]["sha256"].startswith("sha256:") and manifest["finished"]
+        assert (manifest["umask"], manifest["umask_inherited"]) == ("0022", "0002"), manifest
+        assert not stale_sums(run_dir), f"SHA256SUMS stale after the campaign: {stale_sums(run_dir)}"
+        # The launcher writes after the campaign; `pack` re-seals before archiving.
+        with open(run_dir / "logs" / "launcher.txt", "a") as fh:
+            fh.write("campaign_rc=0\n")
+        packed = subprocess.run([sys.executable, str(HERE / "ceiling.py"), "pack", str(run_dir)],
+                                capture_output=True, text=True)
+        assert packed.returncode == 0, packed.stdout + packed.stderr
+        archive = root / "run.tar.gz"
+        digest, name = (root / "run.tar.gz.sha256").read_text().split()
+        assert name == "run.tar.gz" and digest == hashlib.sha256(archive.read_bytes()).hexdigest()
+        unpacked = root / "unpacked"
+        with tarfile.open(archive) as tar:
+            tar.extractall(unpacked, filter="data")
+        assert not stale_sums(unpacked / "run"), f"packed SHA256SUMS stale: {stale_sums(unpacked / 'run')}"
         c2 = json.loads((run_dir / "phase-a" / "scaling" / "c2" / "point.json").read_text())
         assert c2["status"] == "INCOMPLETE" and not c2["reps"][1]["valid"], c2["reps"]
         b4 = json.loads((run_dir / "phase-b" / "scaling" / "c4" / "attempt1" / "point.json").read_text())
@@ -197,6 +223,18 @@ def campaign_case() -> None:
         assert summary["phase_b"]["scaling"]["rows"][0]["rps_proxy_median"] == 5000.0
         md = (run_dir / "summary.md").read_text()
         assert "Curve 1 — canonical" in md and "Curve 2 — proxy saturation" in md
+
+
+def stale_sums(run_dir: Path) -> list[str]:
+    """Files whose SHA256SUMS line does not match, plus files the list omits."""
+    listed = {}
+    for line in (run_dir / "SHA256SUMS").read_text().splitlines():
+        digest, rel = line.split("  ", 1)
+        listed[rel] = digest
+    bad = [rel for rel, d in listed.items()
+           if hashlib.sha256((run_dir / rel).read_bytes()).hexdigest() != d]
+    present = {str(p.relative_to(run_dir)) for p in run_dir.rglob("*") if p.is_file() and p.name != "SHA256SUMS"}
+    return sorted(bad + [f"unlisted:{r}" for r in present - set(listed)])
 
 
 def telemetry_case() -> None:

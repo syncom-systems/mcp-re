@@ -217,7 +217,7 @@ Diagnostic pass only after `summary.json` exists, on the configuration the summa
 `python3 /srv/mcp-re/tooling/tools/perf/lightsail/ceiling.py diagnose /srv/mcp-re/runs/$RUN_ID --bin-dir /srv/mcp-re/bin --cores <N> --window 30`
 — `perf record -g -p <proxy>` attached for the window while the rig runs unmodified (the
 rig's own profiling-wrapper hook is not used: it changes how every child is torn down) —
-then re-pack the run directory exactly as `run_campaign.sh` does.
+then `python3 /srv/mcp-re/tooling/tools/perf/lightsail/ceiling.py pack /srv/mcp-re/runs/$RUN_ID`, which re-seals SHA256SUMS and rewrites the archive. perf runs through `sudo -n` (Ubuntu's `perf_event_paranoid=4` refuses an unprivileged attach); the measured processes stay unprivileged.
 
 **6 — download and verify.**
 ```sh

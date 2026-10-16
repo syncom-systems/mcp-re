@@ -23,7 +23,7 @@ EXPECT_ARCH="${EXPECT_ARCH:-x86_64}"
 EXPECT_MEM_GIB="${EXPECT_MEM_GIB:-120}"
 read -r -a EXTRA <<< "${CAMPAIGN_ARGS:-}"
 {
-  echo "nofile=$(ulimit -n)"
+  echo "nofile=$(ulimit -n) umask_inherited=$(umask)"
   echo "expect_vcpus=$EXPECT_VCPUS expect_arch=$EXPECT_ARCH expect_mem_gib=$EXPECT_MEM_GIB"
   echo "campaign_args=${CAMPAIGN_ARGS:-}"
 } > "$RUN/logs/launcher.txt"
@@ -35,6 +35,7 @@ python3 "$TOOLS/ceiling.py" campaign "$RUN" --bin-dir "$ROOT/bin" \
 rc=$?
 echo "campaign_rc=$rc" >> "$RUN/logs/launcher.txt"
 cp "$ROOT/build-identity.json" "$ROOT/build.log" "$RUN/host/" 2>/dev/null || true
-tar -C "$ROOT/runs" -czf "$ROOT/runs/$RUN_ID.tar.gz" "$RUN_ID"
-( cd "$ROOT/runs" && sha256sum "$RUN_ID.tar.gz" > "$RUN_ID.tar.gz.sha256" )
+# The last write to the run directory is above; `pack` seals SHA256SUMS over it and archives it.
+python3 "$TOOLS/ceiling.py" pack "$RUN" > "$ROOT/runs/$RUN_ID.pack.log" 2>&1 \
+  || echo "PACK FAILED — see $ROOT/runs/$RUN_ID.pack.log"
 echo "CAMPAIGN DONE rc=$rc -> $ROOT/runs/$RUN_ID.tar.gz"

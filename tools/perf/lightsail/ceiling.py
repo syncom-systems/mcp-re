@@ -7,6 +7,7 @@ Run on the measurement host, against binaries built from the released subject:
   ceiling.py campaign  RUN_DIR --bin-dir DIR --identity identity.json [--ports-toml F]
   ceiling.py inventory RUN_DIR [--expect-vcpus 32 --expect-arch x86_64 --expect-mem-gib 128]
   ceiling.py summarize RUN_DIR
+  ceiling.py pack      RUN_DIR                            # final SHA256SUMS + RUN_DIR.tar.gz(.sha256)
   ceiling.py diagnose  RUN_DIR --bin-dir DIR --cores N   # perf pass, AFTER the authoritative run
   ceiling.py selftest                                     # local, no host, no cloud
 
@@ -24,11 +25,19 @@ import argparse
 import json
 import os
 import sys
+import tarfile
 import time
 import traceback
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+# Every file the instruments create is created under this mask. The proxy refuses a
+# group-writable trust document, and an interactive Ubuntu login (the `ubuntu` user over SSH,
+# then tmux) runs with umask 0002 — under that mask the harness's own trust file is refused
+# and the smoke fails. The mask is part of the instrument's environment, so it is fixed here
+# and recorded in the manifest next to the one inherited.
+UMASK = 0o022
+INHERITED_UMASK = os.umask(UMASK)
 sys.path.insert(0, str(HERE))
 
 from analysis import RULES, render_markdown, summarize_run  # noqa: E402
@@ -91,6 +100,7 @@ def campaign(args: argparse.Namespace) -> int:
     build = read_json(Path(args.build_identity)) if args.build_identity else {}
     manifest = {
         "schema": "mcp-re-lightsail-ceiling-run/v1", "started": utc_now(), "hardware_class": HW_CLASS,
+        "umask": f"{UMASK:04o}", "umask_inherited": f"{INHERITED_UMASK:04o}",
         "identity": identity,
         "binaries": {k: {"path": str(getattr(bins, k)), "sha256": sha256_file(getattr(bins, k))} for k in BIN_NAMES},
         "envelope": {"concurrency": 128, "requests": 8000, "mode": "cold", "reps": args.reps,
@@ -198,12 +208,29 @@ def finish(run_dir: Path, vcpus: int) -> dict:
     manifest["finished"] = utc_now()
     write_json(run_dir / "manifest.json", manifest)
     (run_dir / "summary.md").write_text(render_markdown(summary, manifest))
+    log(run_dir, f"summary: {summary['ceiling']['statement']}")
+    seal(run_dir)
+    return summary
+
+
+def seal(run_dir: Path) -> None:
+    """SHA256SUMS over every file in the run directory, written after the last write to any."""
     sums = []
     for path in sorted(p for p in run_dir.rglob("*") if p.is_file() and p.name != "SHA256SUMS"):
         sums.append(f"{sha256_file(path).split(':', 1)[1]}  {path.relative_to(run_dir)}")
     (run_dir / "SHA256SUMS").write_text("\n".join(sums) + "\n")
-    log(run_dir, f"summary: {summary['ceiling']['statement']}")
-    return summary
+
+
+def pack(run_dir: Path) -> Path:
+    """Re-seal (the launcher and a diagnose pass write after `finish`), then archive the run
+    directory beside itself with a `sha256sum -c`-readable digest file."""
+    seal(run_dir)
+    archive = run_dir.parent / f"{run_dir.name}.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(run_dir, arcname=run_dir.name)
+    digest = sha256_file(archive).split(":", 1)[1]
+    (run_dir.parent / f"{archive.name}.sha256").write_text(f"{digest}  {archive.name}\n")
+    return archive
 
 
 def _find_proxy(deadline_s: float = 120) -> int | None:
@@ -242,21 +269,43 @@ def diagnose(args: argparse.Namespace) -> int:
                    MCP_RE_SAT_LOADGEN=str(bins.loadgen), MCP_RE_SAT_OUT=str(diag / "rig.json"))
         argv = [str(bins.rig), "--cores", str(args.cores), "--mode", args.mode, "--fixed-generators",
                 str(args.generators), "--connections", str(args.connections)]
+        perf = _perf_argv()
+        record_rc = None
         with open(diag / "rig.log", "wb") as out:
             rig = subprocess.Popen(argv, stdout=out, stderr=subprocess.STDOUT, env=env)
             pid = _find_proxy()
             if pid is not None:
                 time.sleep(args.warmup)
-                run_logged(["perf", "record", "-F", "99", "-g", "-p", str(pid), "-o", str(diag / "perf.data"),
-                            "--", "sleep", str(args.window)], diag / "perf-record.log", timeout=args.window + 120)
+                record_rc, _ = run_logged(perf + ["record", "-F", "99", "-g", "-p", str(pid), "-o", str(diag / "perf.data"),
+                                                  "--", "sleep", str(args.window)], diag / "perf-record.log",
+                                          timeout=args.window + 120)
             rc = rig.wait(timeout=3600)
-        run_logged(["sh", "-c", f'perf report -i "{diag}/perf.data" --stdio --no-children --percent-limit 0.5 '
-                                f'> "{diag}/perf-report.txt" 2>&1'], diag / "perf-report.log", timeout=1800)
+        if perf[0] == "sudo" and (diag / "perf.data").exists():
+            # Recorded as root, mode 0600: hand it back so the report, the seal and the pack
+            # (all unprivileged) can read it. perf report itself accepts a file the caller owns.
+            run_logged(["sudo", "-n", "chown", f"{os.getuid()}:{os.getgid()}", str(diag / "perf.data")],
+                       diag / "perf-chown.log", timeout=60)
+        report_rc, _ = run_logged(["sh", "-c", f'perf report -i "{diag}/perf.data" --stdio --no-children '
+                                               f'--percent-limit 0.5 > "{diag}/perf-report.txt" 2>&1'],
+                                  diag / "perf-report.log", timeout=1800)
         write_json(diag / "diagnose.json", {"argv": argv, "proxy_pid": pid, "window_s": args.window,
-                                            "warmup_s": args.warmup, "rig_rc": rc})
+                                            "warmup_s": args.warmup, "rig_rc": rc, "perf": perf,
+                                            "perf_record_rc": record_rc, "perf_report_rc": report_rc})
     finally:
         tier.down()
-    return rc if pid is not None else 6
+    if pid is None:
+        return 6
+    if record_rc != 0 or report_rc != 0:
+        log(run_dir, f"DIAGNOSE: perf failed (record rc={record_rc}, report rc={report_rc}); see {diag}")
+        return 7
+    return rc
+
+
+def _perf_argv() -> list[str]:
+    """perf, through `sudo -n` when not root: Ubuntu kernels set kernel.perf_event_paranoid=4,
+    which refuses an unprivileged attach outright. The measured processes stay unprivileged;
+    only the observer is elevated, and `-n` fails rather than prompts."""
+    return ["perf"] if os.geteuid() == 0 else ["sudo", "-n", "perf"]
 
 
 def selftest() -> int:
@@ -306,6 +355,8 @@ def main(argv: list[str]) -> int:
     d.add_argument("--warmup", type=float, default=5.0, help="seconds after the proxy appears before sampling")
     d.add_argument("--window", type=int, default=30, help="perf record window, seconds")
     d.add_argument("--ports-toml", default=str(HERE.parent.parent.parent / "config" / "ports.toml"))
+    k = sub.add_parser("pack")
+    k.add_argument("run_dir")
     sub.add_parser("selftest")
     args = parser.parse_args(argv)
     if args.cmd == "campaign":
@@ -324,6 +375,9 @@ def main(argv: list[str]) -> int:
         return 0
     if args.cmd == "diagnose":
         return diagnose(args)
+    if args.cmd == "pack":
+        print(pack(Path(args.run_dir).resolve()))
+        return 0
     return selftest()
 
 

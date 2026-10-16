@@ -16,6 +16,8 @@
 #   5  run_campaign.sh inside tmux, with a shrunken sweep (CAMPAIGN_ARGS) and the stand-in's
 #      own expectations — the launcher records both; it also refuses binaries whose SHA-256
 #      differs from build-identity.json
+#   5b the diagnostic pass (perf attached to the proxy) and `ceiling.py pack`, as the runbook
+#      orders them
 #   6  scp download and the two checksum verifications
 #   7  the stand-in is deleted
 #
@@ -104,6 +106,11 @@ for _ in $(seq 1 720); do
 done
 $SSH "cat /srv/mcp-re/runs/$RUN_ID/logs/launcher.txt; tail -n 5 /srv/mcp-re/runs/$RUN_ID/logs/campaign.log" || true
 
+say "5b — diagnostic pass (perf attached as the runbook runs it), then re-pack"
+$SSH "python3 /srv/mcp-re/tooling/tools/perf/lightsail/ceiling.py diagnose /srv/mcp-re/runs/$RUN_ID --bin-dir /srv/mcp-re/bin --cores 1 --generators 2 --connections 64 --warmup 2 --window 5" \
+  || die "diagnose failed"
+$SSH "python3 /srv/mcp-re/tooling/tools/perf/lightsail/ceiling.py pack /srv/mcp-re/runs/$RUN_ID"
+
 say "6 — download and verify"
 mkdir -p "$W/results"
 $SCP "ubuntu@$IP:/srv/mcp-re/runs/$RUN_ID.tar.gz" "ubuntu@$IP:/srv/mcp-re/runs/$RUN_ID.tar.gz.sha256" "$W/results/"
@@ -123,6 +130,13 @@ s = json.loads((run / "summary.json").read_text())
 a = s["phase_a"]["scaling"]["rows"]
 assert all(r["reps_valid"] == r["reps_total"] for r in a), a
 assert {"scaling", "partitioned", "shipped-auto"} <= set(s["phase_b"]), set(s["phase_b"])
+diag = json.loads((run / "diagnostic" / "c1" / "diagnose.json").read_text())
+assert diag["perf_record_rc"] == 0 and diag["perf_report_rc"] == 0, diag
+report = (run / "diagnostic" / "c1" / "perf-report.txt").read_text()
+assert "mcp-re-proxy" in report or "mcp_re" in report, report[:2000]
+print("diagnose: perf", " ".join(diag["perf"]), "| report lines:", len(report.splitlines()))
+manifest = json.loads((run / "manifest.json").read_text())
+print("umask:", manifest["umask"], "inherited:", manifest["umask_inherited"])
 build = json.loads((run / "host" / "build-identity.json").read_text())
 print("binaries:", build["binaries"])
 print("phase A:", [(r["cores"], round(r["throughput_median"])) for r in a])
