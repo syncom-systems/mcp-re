@@ -83,7 +83,7 @@ impl MaterializedReplay {
         let established = match plan.store() {
             PlannedStore::Etcd { endpoint } => establish_etcd(endpoint, tier, freshness)?,
             PlannedStore::Redis { url, pool } => {
-                establish_redis(url, pool, tier, freshness, control)?
+                establish_redis(url, pool.get(), tier, freshness, control)?
             }
         };
         Self::accept(established, tier.clone())

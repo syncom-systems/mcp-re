@@ -12,7 +12,6 @@
 
 use crate::async_replay::AsyncReplayTier;
 use crate::control_runtime::ControlRuntimeProvision;
-use crate::deployment_request::ReplayRedisPoolSize;
 use crate::replay_tier::ReplayDurabilityTier;
 
 /// The retention padding this deployment's shared store applies, stated at startup.
@@ -70,12 +69,13 @@ pub(super) fn establish_etcd(
 /// be audited but unenforced. The same value sizes the client-side response timeout, so a
 /// declared `redis-wait-quorum:2:2000` can actually wait 2000ms.
 ///
-/// `pool` is how many connections the store holds open. Each one runs the same tier, so
-/// it bounds how many admissions can be waiting on `WAIT` at once and nothing else.
+/// `pool` is how many connections the store holds open — the plan's pool size, whose
+/// range its owner already checked. Each one runs the same tier, so it bounds how many
+/// admissions can be waiting on `WAIT` at once and nothing else.
 #[cfg_attr(not(feature = "redis_replay"), allow(unused_variables))]
 pub(super) fn establish_redis(
     url: &str,
-    pool: ReplayRedisPoolSize,
+    pool: usize,
     tier: &ReplayDurabilityTier,
     freshness: crate::config_state::FreshnessWindow,
     control: &ControlRuntimeProvision,
@@ -89,7 +89,7 @@ pub(super) fn establish_redis(
                 url,
                 connection.clock,
                 connection.wait_quorum,
-                connection.pool.get(),
+                connection.pool,
             ))
             .map_err(|e| format!("connect redis async replay store: {e:?}"))?;
         eprintln!("mcp-re-proxy: replay tier = shared (horizontally-scaled; async Redis backend)");
@@ -107,11 +107,10 @@ pub(super) fn establish_redis(
 
 /// The effective Redis replay pool, stated at startup beside the tier it serves.
 #[cfg(feature = "redis_replay")]
-fn pool_audit_line(pool: ReplayRedisPoolSize) -> String {
+fn pool_audit_line(pool: usize) -> String {
     format!(
-        "replay redis pool = {} connections (--replay-redis-pool-size; default {})",
-        pool.get(),
-        ReplayRedisPoolSize::DEFAULT.get()
+        "replay redis pool = {pool} connections (--replay-redis-pool-size; default {})",
+        crate::RedisAsyncAtomicReplayStore::DEFAULT_POOL_SIZE
     )
 }
 
@@ -124,7 +123,7 @@ struct RedisConnection {
     runtime: tokio::runtime::Handle,
     clock: crate::async_redis_store::UnixClock,
     wait_quorum: Option<(u32, u64)>,
-    pool: ReplayRedisPoolSize,
+    pool: usize,
 }
 
 /// The handle is asked for HERE, by the arm whose plan selected Redis, so the store that
@@ -133,7 +132,7 @@ struct RedisConnection {
 #[cfg(feature = "redis_replay")]
 fn redis_connection(
     tier: &ReplayDurabilityTier,
-    pool: ReplayRedisPoolSize,
+    pool: usize,
     freshness: crate::config_state::FreshnessWindow,
     control: &ControlRuntimeProvision,
 ) -> Result<RedisConnection, String> {
@@ -185,7 +184,7 @@ mod tests {
         let control = crate::control_runtime::ControlRuntimeProvision::idle();
         let connection = super::redis_connection(
             plan.tier(),
-            crate::deployment_request::ReplayRedisPoolSize::DEFAULT,
+            crate::deployment_request::ReplayRedisPoolSize::DEFAULT.get(),
             crate::config_state::test_support::freshness(60),
             &control,
         )
@@ -200,15 +199,14 @@ mod tests {
     fn the_redis_arm_connects_with_the_planned_pool_and_reports_it() {
         let plan = crate::config_state::test_support::redis_replay_plan();
         let control = crate::control_runtime::ControlRuntimeProvision::idle();
-        let pool = crate::deployment_request::ReplayRedisPoolSize::new(32).expect("in range");
         let connection = super::redis_connection(
             plan.tier(),
-            pool,
+            32,
             crate::config_state::test_support::freshness(60),
             &control,
         )
         .unwrap_or_else(|e| panic!("a planned redis tier connects on the control runtime: {e}"));
-        assert_eq!(connection.pool, pool);
+        assert_eq!(connection.pool, 32);
         assert_eq!(connection.wait_quorum, Some((1, 100)));
         let line = super::pool_audit_line(connection.pool);
         assert!(
@@ -226,7 +224,7 @@ mod tests {
         let mut control = crate::control_runtime::ControlRuntimeProvision::idle();
         let connection = super::redis_connection(
             plan.tier(),
-            crate::deployment_request::ReplayRedisPoolSize::DEFAULT,
+            crate::deployment_request::ReplayRedisPoolSize::DEFAULT.get(),
             crate::config_state::test_support::freshness(60),
             &control,
         )
