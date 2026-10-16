@@ -43,7 +43,9 @@ or wire-format compatibility while the design lines from
 - The Lightsail 32-vCPU scaling and ceiling experiment: `docs/bench/lightsail-ceiling-runbook.md`,
   `tools/perf/lightsail/` (staging, host bootstrap, campaign, telemetry, attribution), and the
   `aws-lightsail-32vcpu-v1` measurement context. Nothing in it is run by a gate except its
-  selftest.
+  selftest. `tools/perf/lightsail/rehearse_host.sh` runs the runbook's host steps (staging,
+  bootstrap with the native Bazel build of the staged release, campaign, diagnose, pack,
+  download) against a local Ubuntu 24.04 stand-in before any instance exists.
 
 ## [0.18.0] — 2026-10-14
 

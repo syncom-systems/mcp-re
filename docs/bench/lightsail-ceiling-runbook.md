@@ -148,6 +148,19 @@ attribution and confidence; inconclusive points) and `SHA256SUMS` over all of it
 `PRE-CLOUD LOCAL READINESS: PASS` from one uninterrupted `scripts/local_gate.sh --with-kind`
 on the tree that stages the run, plus `python3 tools/perf/lightsail/ceiling.py selftest`.
 
+Then `tools/perf/lightsail/rehearse_host.sh lightsail-rehearsal-<stamp>` must end
+`REHEARSAL: PASS`. It runs steps 0 and 3-7 below against a local Ubuntu 24.04 container
+standing in for the instance (the blueprint's `ubuntu` user, passwordless sudo, sshd, python3,
+and the rendered user-data): the same SSH and scp commands, `bootstrap.sh` with its native
+`bazel build -c opt` of the staged release, `run_campaign.sh` in tmux with a shrunken sweep,
+the diagnostic pass, `pack`, the download and both checksum verifications. It reaches what
+the selftest's fake instruments cannot: Ubuntu 24.04's own git, the `ubuntu` login umask
+(0002, under which the proxy refuses the harness's trust document as group-writable), the run
+seal over files the launcher writes last, and `perf` under `perf_event_paranoid=4`. What it cannot cover: the cloud calls, and — on an arm64 Docker host —
+the x86_64 compile; the instance's architecture-dependent steps (the x86_64 Bazel binary
+and its digest, toolchain resolution and repository fetch for an x86_64 Linux exec platform)
+are then checked by a separate emulated x86_64 container through `bazel build --nobuild`.
+
 ## 10. The execution packet (each numbered step needs the owner's GO; none has run)
 
 Variables: `RUN_ID=lightsail-ceiling-<UTC stamp>`, `REGION=eu-north-1`, `AZ=eu-north-1a`,
@@ -204,7 +217,9 @@ $SSH 'cd /srv/mcp-re && tar -xzf stage/tooling.tar.gz && python3 /srv/mcp-re/too
 ```
 Exit 3 = not the declared context → step 7 immediately, no measurement.
 
-**4 — bootstrap and build (~45-75 min).**
+**4 — bootstrap and build (~10-20 min).** The rehearsal measured 127 s end to end on 8 arm64
+cores (packages, Bazel, a cold 886-action `-c opt` build); the estimate allows for a slower
+mirror and the x86_64 toolchain downloads.
 `$SSH 'cd /srv/mcp-re && sudo -E bash /srv/mcp-re/tooling/tools/perf/lightsail/bootstrap.sh'` — ends
 `BOOTSTRAP: PASS`, or the run stops.
 
@@ -245,7 +260,7 @@ aws lightsail get-buckets --region "$REGION" --query 'buckets[].name'
 aws lightsail get-container-services --region "$REGION" --query 'containerServices[].containerServiceName'
 ```
 
-**Budget.** ≈ 7 h instance lifetime expected (bootstrap ~1 h, campaign ~5-6 h, transfer and
-teardown minutes) ≈ $9 at $1.21/h. Hard ceiling: 12 h of instance lifetime ≈ $15; past 10 h
+**Budget.** ≈ 6.5 h instance lifetime expected (bootstrap ≤ 20 min, campaign ~5-6 h, transfer
+and teardown minutes) ≈ $8 at $1.21/h. Hard ceiling: 12 h of instance lifetime ≈ $15; past 10 h
 the campaign is stopped, partial results are downloaded and the instance is deleted. Transfer
 (a few hundred MB out) is inside the bundle's allowance. Expected maximum: **$20**.
