@@ -21,16 +21,18 @@
 #     build each SDK's published artifact — the wheel, the npm package — with its native
 #     module from Bazel, install it into a clean environment (fresh venv / empty npm
 #     project), and run the SDK test suite against it.
-name: CI
+#
+# Pre-merge: every pull request. post-merge.yml calls this workflow on main after a merge.
+# Public repository, so every job runs on a GitHub-hosted runner.
+name: pre-merge
 
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_call:
 
 # Cancel superseded runs on the same ref.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: pre-merge-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
