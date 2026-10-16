@@ -92,7 +92,7 @@ $SSH "cd /srv/mcp-re && tar -xzf stage/tooling.tar.gz && python3 /srv/mcp-re/too
 
 say "4 — bootstrap and native build"
 started=$(date +%s)
-$SSH 'cd /srv/mcp-re && sudo -E bash /srv/mcp-re/tooling/tools/perf/lightsail/bootstrap.sh' 2>&1 | tee "$W/bootstrap.out"
+$SSH 'cd /srv/mcp-re && sudo -E bash /srv/mcp-re/tooling/tools/perf/lightsail/bootstrap.sh' 2>&1 | tee "$W/bootstrap.out" || true
 grep -q '^=== BOOTSTRAP: PASS' "$W/bootstrap.out" || die "bootstrap did not pass (see $W/bootstrap.out)"
 echo "bootstrap_seconds=$(( $(date +%s) - started ))" | tee "$W/bootstrap.timing"
 

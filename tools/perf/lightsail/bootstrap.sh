@@ -59,8 +59,9 @@ git -C "$SUBJECT" init -q
 git -C "$SUBJECT" add -A --force
 DERIVED_TREE="$(git -C "$SUBJECT" write-tree)"
 [[ "$DERIVED_TREE" == "$PRODUCT_TREE" ]] || die "extracted tree $DERIVED_TREE != tagged tree $PRODUCT_TREE"
+# A fixed epoch date, spelled in ISO 8601: Ubuntu 24.04's git 2.43 refuses both `@0` and `0 +0000`.
 GIT_AUTHOR_NAME=subject GIT_AUTHOR_EMAIL=subject@invalid GIT_COMMITTER_NAME=subject \
-GIT_COMMITTER_EMAIL=subject@invalid GIT_AUTHOR_DATE=@0 GIT_COMMITTER_DATE=@0 \
+GIT_COMMITTER_EMAIL=subject@invalid GIT_AUTHOR_DATE=1970-01-01T00:00:00Z GIT_COMMITTER_DATE=1970-01-01T00:00:00Z \
   git -C "$SUBJECT" commit -q -m "subject $PRODUCT_COMMIT (tree $PRODUCT_TREE)"
 chown -R "$OWNER" "$SUBJECT"
 
