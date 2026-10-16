@@ -12,6 +12,41 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Changed — the local gate's execution closure reaches no cloud
+
+- The fleet harness is split along the provider line: `docs/security/fleet-proofs-core.sh`
+  runs the eight proofs against whatever cluster it is given;
+  `docs/security/fleet-proofs-kind.sh` (local-gate stage 5) provisions kind and runs it;
+  `docs/security/gke-multi-replica-validation.sh` provisions GKE/EKS, decides KMS custody by
+  workload identity, and runs the same core. The kind driver roots the issuer in the mounted
+  seed only. The SLO Job is split the same way: `tools/slo/run_slo_job.sh` renders and runs
+  the literal template `tools/slo/slo-job.yaml`; `tools/slo/run_slo_job_cloud.sh` resolves the
+  registry image and node-pool label first. The GKE wrappers no longer default to a project.
+- `scripts/provider_neutral_closure_gate.py` (stage 1, CI) refuses a provider CLI, cloud
+  credential or registry host anywhere in the execution closure of `scripts/local_gate.sh`,
+  and refuses the cloud drivers being reachable from it.
+
+### Fixed
+
+- Proof 4 no longer selects a terminating load-generator pod: a pod with a
+  `deletionTimestamp` is excluded, and zero or several eligible pods are retried rather than
+  tie-broken (`docs/security/fleet_pod_select.py`).
+- The SLO Job manifest is no longer shell-evaluated: template text with backticks or `$( )`
+  stays text, and every substituted value is pattern-checked (`tools/slo/render_slo_job.py`).
+- Cloud configuration needing substitution is rendered to an untracked `work/cloud-runs/`
+  file and kept for teardown, refusing unresolved placeholders and open-to-the-world CIDRs
+  (`tools/cloud/render_cloud_config.py`); the EKS runbook no longer edits a tracked template
+  with `sed -i`.
+
+### Added
+
+- The Lightsail 32-vCPU scaling and ceiling experiment: `docs/bench/lightsail-ceiling-runbook.md`,
+  `tools/perf/lightsail/` (staging, host bootstrap, campaign, telemetry, attribution), and the
+  `aws-lightsail-32vcpu-v1` measurement context. Nothing in it is run by a gate except its
+  selftest. `tools/perf/lightsail/rehearse_host.sh` runs the runbook's host steps (staging,
+  bootstrap with the native Bazel build of the staged release, campaign, diagnose, pack,
+  download) against a local Ubuntu 24.04 stand-in before any instance exists.
+
 ## [0.18.0] — 2026-10-14
 
 v0.18 makes the project's assurance claim something a release can be held to, and gives

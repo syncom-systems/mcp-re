@@ -35,7 +35,7 @@ container_runtime_free_gib = 12
 derivation = "redis tier + AOF growth (container runtime); release target/ tree (host)"
 
 [lanes.kind]
-description = "docs/security/gke-multi-replica-validation.sh + the SLO Job-spec rehearsal"
+description = "docs/security/fleet-proofs-kind.sh + the SLO Job-spec rehearsal"
 host_free_gib = 25
 container_runtime_free_gib = 20
 # The widest lane, and the one that failed. Resident: kindest/node 1.27 GB, mcp-re-proxy

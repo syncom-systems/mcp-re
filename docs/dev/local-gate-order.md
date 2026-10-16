@@ -23,7 +23,7 @@ cost, so the cheapest thing that can be wrong fails first.
 | 2 | The lint lane (`bazel build --config=lint //...`, clippy under the workspace policy) and its ratchet, then `bazel test //...` — every flavor, feature-gated backends included — the local demo, and both SDK downloader suites (the Bazel-built wheel and npm package, each with its coverage bar and the parity-oracle regeneration), and the repository verdict | minutes |
 | 3 | The Gazelle drift gate and the Rust target table's freshness | minutes |
 | 4 | The ADR-MCPRE-051 §7 local SLO lane (`scripts/local_slo_lane.sh`) | ~5 min |
-| 5 | The four fleet proofs on a local kind cluster — identical harness, chart and images to GKE (opt-in) | ~15 min |
+| 5 | The eight fleet proofs on a local kind cluster — the provider-neutral proof core the cloud drivers run, same chart and images (opt-in); then the SLO Job-spec rehearsal | ~15 min |
 
 ## Which script runs where: the gate registry
 
@@ -152,13 +152,32 @@ anchor is a deliberate act — a `workflow_dispatch` run on the quiet runner, it
 committed as that class's anchor, and `regression_anchor` pointed at the file. Until then,
 nothing borrows a developer workstation's numbers to adjudicate a different machine's.
 
+## Stage 5 reaches no cloud — by construction, and checked
+
+The execution closure of `scripts/local_gate.sh --with-kind` is provider-neutral: no AWS,
+GCP or Azure CLI, no provider account, project or registry discovery, no cloud credential.
+The fleet harness is split along that line — `docs/security/fleet-proofs-kind.sh` provisions
+the local substrate and runs `docs/security/fleet-proofs-core.sh`, the proof core that
+`docs/security/gke-multi-replica-validation.sh` also runs after provisioning GKE or EKS — and
+the SLO Job the same way (`tools/slo/run_slo_job.sh` renders and runs the Job;
+`tools/slo/run_slo_job_cloud.sh` resolves a registry and node pool first). Two independent
+controls hold it:
+
+- `scripts/provider_neutral_closure_gate.py` (stage 1 and CI) walks every script reachable
+  from `local_gate.sh` and refuses a provider CLI, a cloud credential or a registry host in
+  any of them, and refuses the cloud drivers being reachable at all. Its selftest injects the
+  exact `gcloud config get-value project` line the v0.18.0 rehearsal hit.
+- A PATH tripwire at run time — stub `aws`, `gcloud`, `eksctl`, `az`, `terraform` that log
+  and fail — catches what a text gate cannot see (a Bazel-built binary shelling out).
+
 ## Stage 5 rehearses the SLO Job spec — and did not, for months
 
 After the eight fleet proofs, stage 5 rehearses the **exact** SLO Job spec the cloud
 runbooks schedule: `tools/slo/rehearse_job_spec.sh` builds the bench image, side-loads it
 into the kind cluster the proofs left up, and runs
-`PROVIDER=kind tools/slo/run_slo_job.sh - kind-local 1 …` — the same manifest, the same
-Redis sidecars, the same marker-delimited report extraction.
+the provider-neutral `tools/slo/run_slo_job.sh kind-local 1 …` that the cloud wrapper
+`tools/slo/run_slo_job_cloud.sh` runs — the same rendered manifest (`tools/slo/slo-job.yaml`),
+the same Redis sidecars, the same marker-delimited report extraction.
 
 Both cloud runbooks said this all along. **It was not true.** `tools/slo/run_slo_job.sh`
 was invoked by no gate and no harness, so the manifest, the sidecar wiring and the report

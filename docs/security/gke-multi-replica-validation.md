@@ -3,9 +3,11 @@
 # Live multi-replica (GKE) validation — runbook (MCPS-90 / MCPS-91)
 
 Re-proves the horizontally-scaled fleet's coherence guarantees on **real GKE
-infrastructure**, not just in-process. The four proofs — cross-replica replay
+infrastructure**, not just in-process. The eight proofs — cross-replica replay
 coherence, cross-replica trust-epoch revocation, MRT continuation across a
-replica switch, and a zero-drop rolling update — are the live counterpart of the
+replica switch, a zero-drop rolling update, stale and misbound requests failing
+closed, containment of refused requests, and startup posture on an unavailable
+security dependency — are the live counterpart of the
 in-repo tests (`replay_race_harness_test`, the trust-epoch flush tests,
 `async_drain_test`), and are the release gate ADR-MCPS-049 clause and the
 single-node non-claim retirement (MCPS-91) depend on.
@@ -18,9 +20,12 @@ single-node non-claim retirement (MCPS-91) depend on.
 
 ## How to run
 
-**Precondition: `scripts/local_gate.sh --with-kind` green.** Stage 5 runs these four
-proofs against the identical harness, chart and images on a local kind cluster, for
-free — `PROVIDER=kind ./docs/security/gke-multi-replica-validation.sh`. That rehearsal
+**Precondition: `scripts/local_gate.sh --with-kind` green.** Stage 5 runs these eight
+proofs — the same provider-neutral core, `docs/security/fleet-proofs-core.sh`, with the
+same chart and images — on a local kind cluster, for free, through
+`docs/security/fleet-proofs-kind.sh`, whose closure reaches no cloud. This file's
+`gke-multi-replica-validation.sh` is the cloud driver: it provisions GKE (or EKS),
+then runs the same core. Running it is a cloud operation and needs the owner's GO. That rehearsal
 has already caught six deploy defects (three fatal to the GKE run) that would
 otherwise have surfaced only after `gcloud builds submit`, on a billing cluster. See
 [`docs/dev/local-gate-order.md`](../dev/local-gate-order.md).
@@ -67,7 +72,7 @@ maximal-security posture — there is no strict toggle) over a shared
 Redis replay + trust-epoch tier — the fleet guardrail refuses to start on a
 node-local cache, so a green rollout already proves the shared tier is wired.
 
-The four proofs are driven by the HTTP-profile client `mcp_re_gke_client.py` (one
+The eight proofs are driven by the HTTP-profile client `mcp_re_gke_client.py` (one
 signed mTLS POST per request; MCP-RE owns no stdio client) using its proof flags —
 `--nonce` (pin a nonce across two replicas for the replay proof), `--expect`
 (assert the proxy verdict), and `--save-cont`/`--load-cont` (persist an MRT
@@ -76,10 +81,10 @@ from `config/ports.toml` (the reserved 8600–8699 band); nothing is hardcoded.
 
 ## The physical step — the reproduction runbook
 
-Provisioning a GKE cluster + the TLS/trust Secret and running the four proofs is a
+Provisioning a GKE cluster + the TLS/trust Secret and running the eight proofs is a
 live-infra action (authenticated project, billing). This run **was performed** — the
 v0.11 fleet proof and the v0.12.1 KMS-via-Workload-Identity run — and everything it
-needs (chart, guardrails, the four proof procedures, teardown) is authored here, so
+needs (chart, guardrails, the eight proof procedures, teardown) is authored here, so
 this remains the reproduction runbook.
 
 ## What the green run unlocked (MCPS-91)
@@ -90,6 +95,6 @@ the dedicated MRT-survives-replica-switch proof (MCPS-82) and the live multi-nod
 run (MCPS-90, v0.11). The retirement is bounded to that declared tier — it validates the
 exercised GKE deployment shape, not a universal production SLO or a blanket zero-drop
 guarantee across topologies (`--fleet` still fails closed on a node-local cache). To
-re-verify, run `gke-multi-replica-validation.sh` (all four proofs; Proof 4's residual is
+re-verify, run `gke-multi-replica-validation.sh` (all eight proofs; Proof 4's residual is
 noted above) and attach the run's output as evidence. The claim boundary tracks reality,
 not intent — do not broaden it beyond the declared tier without new evidence.

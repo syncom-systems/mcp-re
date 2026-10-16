@@ -36,8 +36,11 @@ Companion to the measurement envelope
 ([`adr-051-load-harness-envelope.md`](adr-051-load-harness-envelope.md) /
 [`adr-051-benchmark-envelope.json`](adr-051-benchmark-envelope.json)). The
 envelope pins the measurement **conditions**; this document declares the
-release **SLO targets** and the gate that enforces them, per ADR-MCPRE-051 §7
-("benchmark-first, SLO-gated releases").
+**SLO targets** and the gate that enforces them, per ADR-MCPRE-051 §7
+("benchmark-first, SLO-gated releases"). Since the 2026-10-15 ruling
+([`release-qualification-excludes-performance-2026-10-15.md`](../../verification/reviews/rulings/release-qualification-excludes-performance-2026-10-15.md))
+release qualification asks no performance question: these targets are what the SLO lane
+and a declared-hardware measurement are judged against, not a release gate.
 
 The machine-readable targets are [`adr-051-slo-targets.json`](adr-051-slo-targets.json),
 split into three blocks with **two complementary gates**:
