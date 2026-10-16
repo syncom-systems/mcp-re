@@ -22,11 +22,34 @@ or wire-format compatibility while the design lines from
   transcript states the effective size. A pool with no `--replay-redis-url` is refused.
   `SET NX PX`, `WAIT`, the durability tier and fail-closed handling are unchanged.
 - Helm: `replay.poolSize` renders the flag; unset leaves the proxy's default.
+- Measured on one co-located 32-vCPU host: pool 32 raised keep-alive throughput 38-48% at 24
+  serving cores and 17-32% at 32 over the default 8; pool 64 added 6% / 13% more. It does not
+  make throughput scale linearly, and it does not remove the 24 -> 32-core drop on a host that
+  also runs Redis (`docs/bench/replay-pool-size-2026-10-16.md`,
+  `docs/bench/replay-path-cpu-scheduling-2026-10-16.md`). Sizing guidance:
+  `docs/sidecar-deployment-guide.md`.
 - The Lightsail ceiling harness takes `--replay-redis-pool-size` and passes it to every
   proxy it starts. The smoke refuses a run whose proxy states another pool, Phase B counts
   a success only when it carries the backend's echo, and every point records the replay
   store's connections, how many are blocked in `WAIT` and their queued bytes, as seen
   from the primary. The tier's configuration is recorded in the manifest.
+
+### Changed — the Lightsail measurement harness (tooling only)
+
+- A saturation-rig rung is evidence only if every step of it was served: a rung with any
+  generator error, any failure, or a replay-store `SET` count that differs from what the rig's
+  steps sent is INVALID, never a PROXY or CLIENT verdict. Requests per generator are capped so a
+  rung stays under the proxy's 800,000-entry per-signer retention bound, which is unchanged.
+- New evidence per point: per-thread CPU and run-queue delay for the proxy's control runtime,
+  serving threads and each Redis process; per-replica acknowledgement offsets; the proxy's own
+  stage timers (`--stage-timers`); the CPU each watched thread runs on, counted only for threads
+  that ran in the sample.
+- `--isolate-replay-path` reserves physical cores (from the sysfs SMT topology) for the Redis
+  primary and the control runtime and confines everything else to the remaining CPUs; the
+  proxy's own pins are re-applied per thread after it starts, because they are absolute.
+- The Lightsail firewall takes a list of approved single-host source addresses
+  (`OPERATOR_CIDRS`); ranges and global networks are refused, and the runbook forbids opening a
+  port globally, even to diagnose.
 
 ### Changed — the local gate's execution closure reaches no cloud
 
