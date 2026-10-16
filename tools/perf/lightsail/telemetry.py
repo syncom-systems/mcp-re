@@ -15,7 +15,8 @@ Two layers, both cheap enough to run during every authoritative measurement:
     proxy's control runtime (`mcp-re-control`, which drives the Redis connections), its
     serving threads, its other threads, and each Redis process by role (primary, replica-1,
     replica-2). Run-queue delay is time a thread was runnable and not running — direct
-    evidence of host scheduling, which CPU totals cannot show.
+    evidence of host scheduling, which CPU totals cannot show. The CPUs a group ran on count a
+    thread only in a sample in which it consumed CPU time (`active_cpu`).
 
 Heavy profiling (perf, flamegraphs) is NOT here: it belongs to the diagnostic pass, after the
 authoritative numbers are written, because it moves them.
@@ -128,6 +129,18 @@ def last_cpu(stat_text: str) -> int | None:
     return int(fields[36]) if len(fields) > 36 else None
 
 
+def active_cpu(before: tuple | None, now: tuple) -> int | None:
+    """The CPU a watched thread ran on in the last interval, or None if it did not run.
+
+    `processor` is where a task LAST ran: a thread that has slept since it was moved keeps the
+    CPU it ran on before, so reading it unconditionally reports a placement the scheduler can
+    no longer produce. It counts only when the thread consumed CPU time since the previous
+    sample (`now`/`before` are `(group, cpu ns, run-queue delay ns, processor)`)."""
+    if before is None or before[0] != now[0] or now[1] <= before[1]:
+        return None
+    return now[3]
+
+
 def parse_schedstat(text: str) -> tuple[int, int] | None:
     """(cpu ns, run-queue delay ns) from one /proc/<pid>/task/<tid>/schedstat."""
     fields = text.split()
@@ -234,12 +247,13 @@ class Sampler(threading.Thread):
                 watch_now = self._watched(procs)
                 dt = now - prev_t
                 watch: dict[str, dict] = {}
-                for key, (group, cpu_ns, delay_ns, ran_on) in watch_now.items():
+                for key, (group, cpu_ns, delay_ns, _ran_on) in watch_now.items():
                     row = watch.setdefault(group, {"cores": 0.0, "run_delay": 0.0, "threads": 0, "cpus": []})
                     row["threads"] += 1
+                    before = prev_watch.get(key)
+                    ran_on = active_cpu(before, watch_now[key])
                     if ran_on is not None and ran_on not in row["cpus"]:
                         row["cpus"].append(ran_on)
-                    before = prev_watch.get(key)
                     if before is not None and before[0] == group:
                         row["cores"] += (cpu_ns - before[1]) / 1e9 / dt
                         row["run_delay"] += (delay_ns - before[2]) / 1e9 / dt

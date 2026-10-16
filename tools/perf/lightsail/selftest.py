@@ -268,6 +268,15 @@ def units() -> None:
     else:
         raise AssertionError("a plan on three physical cores")
 
+    # Where a thread ran counts only if it ran: an idle thread's `processor` is stale (the
+    # 2026-10-16 isolation run reported the pinned Redis primary "off its CPU" from bio threads
+    # that had slept since before the pin).
+    from telemetry import active_cpu
+    assert active_cpu(("redis:primary", 100, 0, 5), ("redis:primary", 100, 0, 5)) is None, "slept: stale"
+    assert active_cpu(("redis:primary", 100, 0, 5), ("redis:primary", 900, 0, 14)) == 14
+    assert active_cpu(None, ("redis:primary", 900, 0, 14)) is None, "first sight: no interval yet"
+    assert active_cpu(("proxy:serve", 100, 0, 3), ("proxy:control", 900, 0, 15)) is None, "a reused tid"
+
     # The proxy's stage timers: cumulative snapshots, differenced to one window.
     snap = ("stage,count,total_ms,mean_us\nreplay_wait,{n},{ms},0\nscheduler_latency,{s},{sms},0\n"
             "replay_inflight,{n},64,{m}\n")
