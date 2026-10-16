@@ -68,6 +68,12 @@ struct Args {
     server_ca: String,
     out: Option<String>,
     id: String,
+    /// Replaces the per-process nonce salt, so a second run re-sends the first run's
+    /// nonces. Only the replay smoke sets it; a measured run must never.
+    nonce_salt: Option<String>,
+    /// Alters one byte of each signed body after signing, so every request must be
+    /// refused. Only the negative smoke sets it.
+    tamper: bool,
 }
 
 fn args() -> Args {
@@ -81,6 +87,8 @@ fn args() -> Args {
         server_ca: String::new(),
         out: None,
         id: "gen0".into(),
+        nonce_salt: None,
+        tamper: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -95,6 +103,8 @@ fn args() -> Args {
             "--server-ca" => a.server_ca = val(),
             "--out" => a.out = Some(val()),
             "--id" => a.id = val(),
+            "--nonce-salt" => a.nonce_salt = Some(val()),
+            "--tamper" => a.tamper = true,
             other => panic!("unknown flag {other}"),
         }
     }
@@ -164,6 +174,16 @@ fn wire(signed: &SignedRequest, keep_alive: bool) -> Vec<u8> {
     let mut out = head.into_bytes();
     out.extend_from_slice(&req.body);
     out
+}
+
+/// Change the signed echo text in place, keeping the length, so the body no longer
+/// matches the digest the signature covers.
+fn tamper(wire: &mut [u8]) {
+    let at = wire
+        .windows(5)
+        .rposition(|w| w == b"hello")
+        .expect("the signed body carries the echo text");
+    wire[at] = b'j';
 }
 
 /// Read one HTTP response far enough to know it completed. Content-Length only — the
@@ -330,21 +350,27 @@ fn main() {
     // probe looked FASTER than the run it was probing, and every row was stamped CLIENT
     // on a gain that was pure replay rejection. The pid/start salt makes each process's
     // corpus its own.
-    let salt = format!(
-        "{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    );
+    let salt = a.nonce_salt.clone().unwrap_or_else(|| {
+        format!(
+            "{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        )
+    });
     let corpus: Arc<Vec<Vec<u8>>> = Arc::new(
         (0..a.requests)
             .map(|i| {
-                wire(
+                let mut bytes = wire(
                     &sign(&format!("sat-{salt}-{}-{i}", a.id), &signer),
                     keep_alive,
-                )
+                );
+                if a.tamper {
+                    tamper(&mut bytes);
+                }
+                bytes
             })
             .collect(),
     );
