@@ -222,7 +222,7 @@ deliberately deferred (see note).
    SDKs, and frozen vectors/manifests, so a rename would ripple destructively and
    trip the drift guards. Comments make the map clear without that blast radius. ✅
 8. **CI vocabulary firewall** — `scripts/jcs_vocabulary_gate.py`, wired as a fast
-   step in the `cargo` CI job (`.github/workflows/ci.yml`). ✅
+   step in the `cargo` CI job (`.github/workflows/pre-merge.yml`). ✅
 9. **Runtime / feature-flag boundary** — ⏸ **deferred.** Making legacy JCS a
    default-off, opt-in, `--strict`-rejected runtime flag is a *behaviour-changing
    migration*: the native/object path is still the default-on carrier on the live

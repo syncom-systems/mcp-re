@@ -74,7 +74,7 @@ STRUCTURAL = [
 VERIFICATION_SUITES = "tools/verification"
 
 #: The merge-path workflow whose Python gates the batch gate also runs.
-CI_WORKFLOW = ".github/workflows/ci.yml"
+CI_WORKFLOW = ".github/workflows/pre-merge.yml"
 
 #: CI invocations the batch gate does NOT run: the clippy ratchet and its compile probes
 #: (authorized only at an integration boundary, and STRUCTURAL already carries the ratchet),

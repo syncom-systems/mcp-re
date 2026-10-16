@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Thresholds for the DEFAULT clippy lane — the one every `cargo clippy --all-targets --
-# -D warnings` invocation in `scripts/local_gate.sh` and `.github/workflows/ci.yml` runs.
+# -D warnings` invocation in `scripts/local_gate.sh` and `.github/workflows/pre-merge.yml` runs.
 #
 # Keep this file conservative. A threshold here applies to ALL targets including test code,
 # and every lane treats warnings as errors, so tightening one turns the build red on the
