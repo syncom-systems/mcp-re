@@ -44,7 +44,8 @@ sys.path.insert(0, str(HERE))
 from analysis import RULES, render_markdown, summarize_run  # noqa: E402
 from common import HW_CLASS, base_env, log, ports, read_json, run_logged, sha256_file, utc_now, write_json  # noqa: E402
 from hostfacts import check_expected, inventory  # noqa: E402
-from phases import (DEFAULT_REPLAY_POOL, STARTUP_LOG_ENV, Binaries, Context, phase_a_point,  # noqa: E402
+from phases import (DEFAULT_REPLAY_POOL, RUNG_REQUEST_CEILING, SIGNER_RETENTION_BUDGET, STARTUP_LOG_ENV,  # noqa: E402
+                    Binaries, Context, phase_a_point,
                     phase_b_point, proxy_launcher, startup_facts)
 from redis_queue import config_get  # noqa: E402
 from redis_tier import Tier  # noqa: E402
@@ -156,7 +157,11 @@ def campaign(args: argparse.Namespace) -> int:
                                                         "shipped-auto": "--cores 0 --workers-per-shard 0 (proxy defaults)"},
                  "phase_b": {"modes": args.b_modes, "repeats": args.b_repeats, "partitioned": args.partitioned,
                              "generator_cap": args.gen_cap, "connections_ladder": args.ladder,
-                             "requests_per_connection": args.requests_per_connection}},
+                             "requests_per_connection": args.requests_per_connection,
+                             "signer_retention_budget": SIGNER_RETENTION_BUDGET,
+                             "rung_request_ceiling": RUNG_REQUEST_CEILING,
+                             "requests_per_generator_cap": RUNG_REQUEST_CEILING // sum(range(2, args.gen_cap + 1)),
+                             "stage_timers": args.stage_timers}},
         "rules": RULES,
     }
     manifest["build"] = build
@@ -192,7 +197,8 @@ def campaign(args: argparse.Namespace) -> int:
     write_json(run_dir / "manifest.json", manifest)
     ctx = Context(run_dir, launchers(run_dir, bins, pool), redis_url, vcpus, args.require_telemetry, tier,
                   ladder=tuple(int(x) for x in args.ladder.split(",")), gen_cap=args.gen_cap,
-                  requests_per_connection=args.requests_per_connection, replay_pool=pool)
+                  requests_per_connection=args.requests_per_connection, replay_pool=pool,
+                  stage_timers=args.stage_timers)
     try:
         smoke_ok = _step(run_dir, steps, "smoke", lambda: smoke(ctx))
         if not smoke_ok:
@@ -392,6 +398,9 @@ def main(argv: list[str]) -> int:
     c.add_argument("--reps", type=int, default=6)
     c.add_argument("--b-modes", default="cold,keepalive")
     c.add_argument("--b-repeats", type=int, default=3)
+    c.add_argument("--stage-timers", action="store_true",
+                   help="set MCP_RE_STAGE_TIMERS for every Phase B rung: the proxy's own per-stage wall "
+                        "times (replay SET+WAIT round trip, scheduler latency, replay calls in flight)")
     c.add_argument("--partitioned", default="1,2,4,8,16")
     c.add_argument("--ladder", default="256,512,1024,2048", help="rig connections per generator, climbed on CLIENT")
     c.add_argument("--gen-cap", type=int, default=12, help="rig --max-generators; keep < 20 (see phases.py)")

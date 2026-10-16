@@ -4,7 +4,7 @@
       "fromPort": 22,
       "toPort": 22,
       "protocol": "tcp",
-      "cidrs": ["@@OPERATOR_CIDR@@"],
+      "cidrs": ["@@OPERATOR_CIDRS@@"],
       "ipv6Cidrs": [],
       "cidrListAliases": []
     }

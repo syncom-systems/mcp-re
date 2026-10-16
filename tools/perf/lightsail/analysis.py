@@ -23,6 +23,8 @@ from common import read_json
 RULES = {
     "knee": "first N in the sweep whose incremental efficiency (T(N)-T(prev)) / (T(prev) * (N/prev - 1)) < 0.5",
     "plateau": "T(N) <= 1.05 * T(prev) for the scaling sweep",
+    "invalid_rung": "INVALID, never PROXY or CLIENT, when the rig log has any generator error, the row counts any "
+                    "failure, or the replay store's SET count over the rung differs from what the rig's steps sent",
     "ceiling_reached": "two consecutive plateau points at the top of the sweep, each PROXY-verdict and stable",
     "stable": "(max - min) / median <= 0.10 across the attempts at one point",
     "still_scaling_at_top": "incremental efficiency between the last two sweep points >= 0.5",
@@ -82,6 +84,10 @@ def classify(telemetry: dict, *, cores: int, workers: int, vcpus: int, verdict: 
     `verdict` is the instrument's own (rig PROXY/CLIENT/INVALID; None for Phase A).
     The proxy's budget is its serving threads: N under the scaling topology (one worker per
     shard), the whole host under the shipped auto topology (cores=0)."""
+    if verdict == "INVALID":
+        return {"label": "INVALID", "confidence": "high",
+                "why": "the rung is not evidence: a step hit errors or failures, or the replay store did not see "
+                       "every request the rig's steps sent"}
     if not telemetry or not telemetry.get("available"):
         return {"label": "UNATTRIBUTED", "confidence": "none", "why": "no telemetry for this point"}
     cats = telemetry.get("categories", {})
@@ -112,8 +118,6 @@ def classify(telemetry: dict, *, cores: int, workers: int, vcpus: int, verdict: 
     def out(label: str, confidence: str, why: str) -> dict:
         return {"label": label, "confidence": confidence, "why": why, "evidence": evidence}
 
-    if verdict == "INVALID":
-        return out("INVALID", "high", "the instrument refused the row: >0.5% of requests failed")
     if steal >= RULES["steal_significant"]:
         return out("HOST_SCHEDULING", "medium", f"steal {steal:.1%} >= {RULES['steal_significant']:.0%}: the VM "
                    "was not given the CPU it was scheduled for; a Lightsail/host limitation until proven otherwise")
@@ -185,7 +189,8 @@ def phase_b_summary(points: list[dict], vcpus: int) -> dict:
             attempts = [p for p in points if p["sweep"] == sweep and p["cores"] == cores]
             finals = [a["final"] for a in attempts if a.get("final")]
             proxy_rps = [f["row"]["rps"] for f in finals if f["verdict"] == "PROXY"]
-            all_rps = [f["row"]["rps"] for f in finals]
+            # An INVALID rung measured nothing; its number is never a best, a median or a curve point.
+            all_rps = [f["row"]["rps"] for f in finals if f["verdict"] in {"PROXY", "CLIENT"}]
             med = median(proxy_rps)
             last = attempts[-1]
             final_proxy = ((last.get("final") or {}).get("proxy") or {})

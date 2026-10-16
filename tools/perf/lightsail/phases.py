@@ -14,6 +14,20 @@ therefore kept exactly (5%), and offered load is raised the other way: the gener
 stays <= GEN_CAP (one step >= 8.3%) and the connections per generator climb a ladder, with
 requests scaled to keep the per-connection request count constant. A point still CLIENT at
 the top rung is a floor, and `analysis.py` decides whether the host could have said more.
+
+A RUNG IS EVIDENCE ONLY IF EVERY STEP OF IT WAS SERVED. The rig climbs M -> M+1 inside one
+proxy process and keeps the better of the two rows; a probe step whose generators hit errors
+comes out SLOWER, and the rig then reads its collapse as "one more generator bought nothing"
+and stamps the row PROXY. So a rung is INVALID — never PROXY, never CLIENT — when the rig log
+carries any `generator error:`, when its row counts any failure, or when the replay store's
+own SET count over the rung — read from the primary immediately before and after it — differs from what the
+rig's steps sent (`rig_steps`). The last check is independent of the rig: a generator that died without reporting cannot hide from it.
+
+THE SIGNER RETENTION BUDGET. Every rig generator signs as the same actor, and one proxy
+process admits at most `SIGNER_RETENTION_BUDGET` fresh nonces from one actor while they are
+retained (the security bound in `mcp-re-proxy/src/async_replay/bounds.rs`, kept as is). The
+requests per generator are therefore capped so that a rung climbing all the way to
+`gen_cap` stays below it; the cap and whether it applied are recorded per rung.
 """
 
 from __future__ import annotations
@@ -26,6 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import redis_queue
+import stage_sampler
 from common import HW_CLASS, base_env, log, read_json, run_logged, write_json
 from redis_tier import Tier
 from telemetry import Telemetry, summarize
@@ -38,6 +53,13 @@ REQUESTS_PER_CONNECTION = 40000 / 256  # the rig's own default ratio
 DEFAULT_REPLAY_POOL = 8
 #: Where the launcher appends each proxy's startup transcript; set per rep / rung.
 STARTUP_LOG_ENV = "MCP_RE_CEILING_PROXY_LOG"
+#: The proxy's per-actor retention budget (`async_replay/bounds.rs`: 1,000,000 entries per
+#: replica, of which one actor may hold 800,000 under pressure). Each fresh rig nonce is
+#: retained for its signature window (3600 s), so one rung's proxy refuses the rig's
+#: 800,001st request — fail closed, `mcp-re.replay_cache_unavailable`.
+SIGNER_RETENTION_BUDGET = 800_000
+#: What a rung may send at most: the budget less a 5% margin.
+RUNG_REQUEST_CEILING = SIGNER_RETENTION_BUDGET * 95 // 100
 
 
 @dataclass
@@ -63,6 +85,47 @@ class Context:
     gen_cap: int = GEN_CAP
     requests_per_connection: float = REQUESTS_PER_CONNECTION
     replay_pool: int | None = None   # None: the flag is omitted and the proxy's default applies
+    stage_timers: bool = False       # set MCP_RE_STAGE_TIMERS for every Phase B rung
+
+
+def rung_requests(conns: int, requests_per_connection: float, gen_cap: int) -> tuple[int, bool]:
+    """(requests per generator, whether the signer budget capped it) for one rung: the rig may
+    run every step from 2 to `gen_cap` generators, so the worst case sends the sum of them."""
+    wanted = int(conns * requests_per_connection)
+    ceiling = RUNG_REQUEST_CEILING // sum(range(2, gen_cap + 1))
+    return min(wanted, ceiling), wanted > ceiling
+
+
+def rig_steps(row: dict, gen_cap: int) -> list[int]:
+    """The generator count of every step `saturation_rig` ran for `row`. It starts at 2 and
+    adds one generator per step; a probe at M+1 that did not beat M (gain <= 0) is not folded
+    into the row, so it ran IN ADDITION to the steps up to M."""
+    gens = row["generators"]
+    steps = list(range(2, gens + 1))
+    gain = row.get("last_gain_pct")
+    if gain is not None and gain <= 0 and gens < gen_cap:
+        steps.append(gens + 1)
+    return steps
+
+
+def rig_verdict(row: dict, log_text: str, store_sets: int | None, expected_sets: int) -> tuple[str, list[str]]:
+    """PROXY / CLIENT from the rig's criterion, or INVALID with every reason that applies."""
+    reasons = []
+    if row.get("failures", 0) or row.get("failure_pct", 0.0) > 0:
+        reasons.append(f"the row counts {row.get('failures')} failure(s)")
+    errors = [line.strip() for line in log_text.splitlines() if "generator error:" in line]
+    if errors:
+        codes = sorted(set(re.findall(r'"wire_code":"([a-z0-9_.-]+)"', "\n".join(errors))))
+        reasons.append(f"{len(errors)} generator error(s) in the rung" + (f" ({', '.join(codes)})" if codes else ""))
+    if store_sets is None:
+        reasons.append("the replay store's SET count over the rung could not be read")
+    elif store_sets != expected_sets:
+        reasons.append(f"the replay store saw {store_sets} SETs; the rig's steps sent {expected_sets}")
+    if reasons:
+        return "INVALID", reasons
+    return ("PROXY" if row.get("saturated") else "CLIENT"), []
+
+
 
 
 def proxy_launcher(out_dir: Path, binary: Path, pool: int | None) -> Path:
@@ -98,6 +161,13 @@ def startup_facts(log_path: Path) -> dict:
 def _snapshot_redis(ctx: Context, path: Path) -> None:
     if ctx.tier is not None:
         ctx.tier.snapshot(path)
+
+
+def _redis_roles(ctx: Context) -> dict[int, str]:
+    """Each replay-tier process's pid -> role, for per-process telemetry."""
+    if ctx.tier is None:
+        return {}
+    return {proc.pid: role for role, proc in ctx.tier.procs.items()}
 
 
 def _healthy(ctx: Context) -> bool:
@@ -141,7 +211,7 @@ def phase_a_point(ctx: Context, topology: str, cores: int, workers: int, reps: i
         write_json(point / "point.json", record)
         return record
     _snapshot_redis(ctx, point / "redis-before.json")
-    tel = Telemetry(point, ctx.vcpus, ctx.require_telemetry)
+    tel = Telemetry(point, ctx.vcpus, ctx.require_telemetry, redis_roles=_redis_roles(ctx))
     queue = redis_queue.Window(ctx.redis_url, point)
     with tel, queue:
         for rep in range(1, reps + 1):
@@ -192,12 +262,6 @@ def _windowed(tel: Telemetry, windows: list[list[float]], vcpus: int, name: str 
     return summary
 
 
-def rig_verdict(row: dict) -> str:
-    if row.get("failure_pct", 0.0) > 0.5:
-        return "INVALID"
-    return "PROXY" if row.get("saturated") else "CLIENT"
-
-
 def _pin_wrapper(point: Path, proxy: Path, cpus: str) -> Path:
     wrapper = point / "proxy-pinned.sh"
     wrapper.write_text(f'#!/bin/sh\nexec taskset -c {cpus} "{proxy}" "$@"\n')
@@ -226,26 +290,34 @@ def phase_b_point(ctx: Context, sweep: str, cores: int, workers: int, mode: str,
         prefix = ["taskset", "-c", f"{cores}-{ctx.vcpus - 1}"]
         record["cpu_partition"] = {"proxy": f"0-{cores - 1}", "load": f"{cores}-{ctx.vcpus - 1}"}
     _snapshot_redis(ctx, point / "redis-before.json")
-    tel = Telemetry(point, ctx.vcpus, ctx.require_telemetry)
+    tel = Telemetry(point, ctx.vcpus, ctx.require_telemetry, redis_roles=_redis_roles(ctx))
     queue = redis_queue.Window(ctx.redis_url, point)
+    stages = stage_sampler.Window(point, ctx.stage_timers)
     final = None
-    with tel, queue:
+    with tel, queue, stages:
         for rung, conns in enumerate(ctx.ladder, 1):
             out = point / f"rung{rung}.json"
-            requests = int(conns * ctx.requests_per_connection)
+            requests, capped = rung_requests(conns, ctx.requests_per_connection, ctx.gen_cap)
+            timers = stages.path_for(point / f"rung{rung}.stage-timers.csv")
             # MCP_RE_SAT_REQUIRE_ECHO: a 2xx counts as a success only if it carries the
             # backend's echo, so every success in the row is a request the backend served.
             env = dict(base_env(), MCP_RE_SAT_REDIS_URL=ctx.redis_url, MCP_RE_SAT_WORKERS_PER_SHARD=str(workers),
                        MCP_RE_SAT_OUT=str(out), MCP_RE_PROXY_CLI=str(proxy_cli),
                        MCP_RE_SAT_BACKEND=str(ctx.bins.backend), MCP_RE_SAT_LOADGEN=str(ctx.bins.loadgen),
                        MCP_RE_SAT_REQUIRE_ECHO="1", **{STARTUP_LOG_ENV: str(point / f"rung{rung}.proxy-startup.log")})
+            if timers is not None:
+                env[stage_sampler.STAGE_TIMERS_ENV] = str(timers)
             argv = prefix + [str(ctx.bins.rig), "--cores", str(cores), "--mode", mode, "--generators", "2",
                              "--max-generators", str(ctx.gen_cap), "--connections", str(conns),
                              "--requests", str(requests)]
+            sets_before = redis_queue.set_calls(ctx.redis_url)
             start = time.time()
             rc, secs = run_logged(argv, point / f"rung{rung}.log", env=env, timeout=5400)
-            record["windows"].append([start, time.time()])
+            end = time.time()
+            sets_after = redis_queue.set_calls(ctx.redis_url)
+            record["windows"].append([start, end])
             entry = {"rung": rung, "connections_per_generator": conns, "requests_per_generator": requests,
+                     "requests_capped_by_signer_budget": capped,
                      "rc": rc, "seconds": round(secs, 3), "backend_echo_required": True,
                      "proxy": startup_facts(point / f"rung{rung}.proxy-startup.log")}
             try:
@@ -257,11 +329,18 @@ def phase_b_point(ctx: Context, sweep: str, cores: int, workers: int, mode: str,
                 record["rungs"].append(entry)
                 log(ctx.run_dir, f"B {sweep} c{cores} a{attempt} rung{rung}: ERROR (rc={rc})")
                 break
-            entry.update(row=row, verdict=rig_verdict(row))
+            steps = rig_steps(row, ctx.gen_cap)
+            store_sets = None if sets_before is None or sets_after is None else sets_after - sets_before
+            verdict, reasons = rig_verdict(row, (point / f"rung{rung}.log").read_text(errors="replace"),
+                                           store_sets, requests * sum(steps))
+            entry.update(row=row, verdict=verdict, invalid_reasons=reasons, steps=steps,
+                         store_sets=store_sets, expected_sets=requests * sum(steps),
+                         stage_timers=stages.summary([[start, end]]))
             record["rungs"].append(entry)
             final = entry
             log(ctx.run_dir, f"B {sweep} c{cores} a{attempt} rung{rung} conns={conns}: "
-                             f"{row['rps']:.1f} rps gens={row['generators']} -> {entry['verdict']}")
+                             f"{row['rps']:.1f} rps gens={row['generators']} -> {verdict}"
+                             + (f" ({'; '.join(reasons)})" if reasons else ""))
             if entry["verdict"] != "CLIENT":
                 break
     _snapshot_redis(ctx, point / "redis-after.json")

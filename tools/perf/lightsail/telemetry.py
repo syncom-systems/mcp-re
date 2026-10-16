@@ -9,7 +9,13 @@ Two layers, both cheap enough to run during every authoritative measurement:
   * a /proc sampler at 0.25 s (a canonical rep can last about a second) that attributes CPU to the tiers the attribution rules need —
     proxy, client (bench / rig / generators), backend, Redis — and records host busy, steal,
     context switches, run queue, TIME_WAIT and file descriptors. Its per-point summary is
-    what `analysis.py` classifies.
+    what `analysis.py` classifies;
+  * in the same pass, per-thread schedstat (`/proc/<pid>/task/<tid>/schedstat`: CPU time and
+    RUN-QUEUE DELAY, both in ns) for the groups a replay-tier question needs apart: the
+    proxy's control runtime (`mcp-re-control`, which drives the Redis connections), its
+    serving threads, its other threads, and each Redis process by role (primary, replica-1,
+    replica-2). Run-queue delay is time a thread was runnable and not running — direct
+    evidence of host scheduling, which CPU totals cannot show.
 
 Heavy profiling (perf, flamegraphs) is NOT here: it belongs to the diagnostic pass, after the
 authoritative numbers are written, because it moves them.
@@ -115,6 +121,25 @@ def parse_netstat(text: str) -> dict[str, int]:
     return out
 
 
+def parse_schedstat(text: str) -> tuple[int, int] | None:
+    """(cpu ns, run-queue delay ns) from one /proc/<pid>/task/<tid>/schedstat."""
+    fields = text.split()
+    if len(fields) < 2:
+        return None
+    return int(fields[0]), int(fields[1])
+
+
+def watch_group(category: str, thread_comm: str, pid: int, redis_roles: dict[int, str]) -> str | None:
+    """The schedstat group a thread belongs to, or None when it is not watched."""
+    if category == "proxy":
+        if thread_comm.startswith("mcp-re-control"):
+            return "proxy:control"
+        return "proxy:serve" if thread_comm.startswith("mcp-re-serve") else "proxy:other"
+    if category == "redis":
+        return f"redis:{redis_roles.get(pid, 'other')}"
+    return None
+
+
 def _cpu_busy(prev: list[int], cur: list[int]) -> tuple[float, float, float]:
     """(busy fraction, steal fraction, iowait fraction) between two /proc/stat cpu rows."""
     delta = [c - p for p, c in zip(prev, cur)]
@@ -124,9 +149,10 @@ def _cpu_busy(prev: list[int], cur: list[int]) -> tuple[float, float, float]:
 
 
 class Sampler(threading.Thread):
-    def __init__(self, out: Path, period: float = 0.25):
+    def __init__(self, out: Path, period: float = 0.25, redis_roles: dict[int, str] | None = None):
         super().__init__(daemon=True)
         self.out, self.period = out, period
+        self.redis_roles = redis_roles or {}
         self.stop_event = threading.Event()
         self.samples: list[dict] = []
 
@@ -146,6 +172,25 @@ class Sampler(threading.Thread):
                 if stat is not None:
                     ticks[(pid, int(tid))] = stat["ticks"]
         return ticks
+
+    def _watched(self, procs: dict[int, tuple[str, dict]]) -> dict[tuple[int, int], tuple[str, int, int]]:
+        """(group, cpu ns, run-queue delay ns) per watched thread."""
+        out = {}
+        for pid, (name, _) in procs.items():
+            category = categorize(name)
+            if category not in ("proxy", "redis"):
+                continue
+            try:
+                tids = os.listdir(f"/proc/{pid}/task")
+            except OSError:
+                continue
+            for tid in tids:
+                group = watch_group(category, _read(f"/proc/{pid}/task/{tid}/comm").strip(), pid,
+                                    self.redis_roles)
+                stat = parse_schedstat(_read(f"/proc/{pid}/task/{tid}/schedstat"))
+                if group is not None and stat is not None:
+                    out[(pid, int(tid))] = (group, *stat)
+        return out
 
     def _processes(self) -> dict[int, tuple[str, dict]]:
         found = {}
@@ -171,6 +216,7 @@ class Sampler(threading.Thread):
         prev_stat = parse_proc_stat(_read("/proc/stat"))
         prev_procs = self._processes()
         prev_threads = self._proxy_threads(prev_procs)
+        prev_watch = self._watched(prev_procs)
         prev_t = time.monotonic()
         with open(self.out, "w") as sink:
             while not self.stop_event.wait(self.period):
@@ -178,7 +224,16 @@ class Sampler(threading.Thread):
                 stat = parse_proc_stat(_read("/proc/stat"))
                 procs = self._processes()
                 threads = self._proxy_threads(procs)
+                watch_now = self._watched(procs)
                 dt = now - prev_t
+                watch: dict[str, dict] = {}
+                for key, (group, cpu_ns, delay_ns) in watch_now.items():
+                    row = watch.setdefault(group, {"cores": 0.0, "run_delay": 0.0, "threads": 0})
+                    row["threads"] += 1
+                    before = prev_watch.get(key)
+                    if before is not None and before[0] == group:
+                        row["cores"] += (cpu_ns - before[1]) / 1e9 / dt
+                        row["run_delay"] += (delay_ns - before[2]) / 1e9 / dt
                 heat = [(threads[k] - prev_threads[k]) / CLK_TCK / dt for k in threads if k in prev_threads]
                 per_cpu = {name: _cpu_busy(prev_stat["cpus"][name], row)
                            for name, row in stat["cpus"].items() if name in prev_stat["cpus"]}
@@ -210,11 +265,13 @@ class Sampler(threading.Thread):
                     "proxy_thread_max": max(heat, default=0.0),
                     "proxy_threads_hot": sum(1 for h in heat if h >= 0.85),
                     "categories": categories,
+                    "watch": watch,
                 }
                 sink.write(json.dumps(sample) + "\n")
                 sink.flush()
                 self.samples.append(sample)
                 prev_stat, prev_procs, prev_threads, prev_t = stat, procs, threads, now
+                prev_watch = watch_now
 
 
 def summarize(samples: list[dict], vcpus: int) -> dict:
@@ -260,7 +317,22 @@ def summarize(samples: list[dict], vcpus: int) -> dict:
         "proxy_thread_max_avg": sum(s.get("proxy_thread_max", 0.0) for s in samples) / len(samples),
         "proxy_threads_hot_avg": sum(s.get("proxy_threads_hot", 0) for s in samples) / len(samples),
         "categories": per_cat,
+        "watch": _watch_summary(samples),
     }
+
+
+def _watch_summary(samples: list[dict]) -> dict:
+    """Per schedstat group: mean cores, mean and peak run-queue delay (s per s, summed over
+    the group's threads), and the thread count."""
+    groups = sorted({g for s in samples for g in s.get("watch", {})})
+    out = {}
+    for group in groups:
+        rows = [s.get("watch", {}).get(group, {}) for s in samples]
+        out[group] = {"cores_avg": sum(r.get("cores", 0.0) for r in rows) / len(rows),
+                      "run_delay_avg": sum(r.get("run_delay", 0.0) for r in rows) / len(rows),
+                      "run_delay_max": max(r.get("run_delay", 0.0) for r in rows),
+                      "threads_max": max(r.get("threads", 0) for r in rows)}
+    return out
 
 
 def _snapshot(path: Path) -> None:
@@ -281,9 +353,10 @@ class Telemetry:
     """Context manager around one measurement point: snapshots before/after, collectors
     and the sampler during. `require=True` refuses a host without /proc or sysstat."""
 
-    def __init__(self, point_dir: Path, vcpus: int, require: bool):
+    def __init__(self, point_dir: Path, vcpus: int, require: bool, redis_roles: dict[int, str] | None = None):
         self.dir = point_dir / "telemetry"
         self.vcpus, self.require = vcpus, require
+        self.redis_roles = redis_roles or {}
         self.external: list[subprocess.Popen] = []
         self.sampler: Sampler | None = None
         self.result: dict = {"available": False}
@@ -303,7 +376,7 @@ class Telemetry:
                 handle = open(self.dir / name, "w")
                 self.external.append(subprocess.Popen(argv, stdout=handle, stderr=subprocess.STDOUT,
                                                       env=dict(os.environ, LC_ALL="C", S_TIME_FORMAT="ISO")))
-        self.sampler = Sampler(self.dir / "proc-samples.jsonl")
+        self.sampler = Sampler(self.dir / "proc-samples.jsonl", redis_roles=self.redis_roles)
         self.sampler.start()
         return self
 

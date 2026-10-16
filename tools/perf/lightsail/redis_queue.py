@@ -8,7 +8,11 @@ module samples them from the server side over its own connection, standard libra
   * every 0.25 s, CLIENT LIST rows whose last command was SET or WAIT (the replay store's
     two commands): how many such connections exist, how many are blocked (flag `b`), and
     their query-buffer bytes — the pipelined work queued behind a WAIT;
-  * INFO clients / commandstats: blocked_clients and the cumulative SET and WAIT calls.
+  * INFO clients / commandstats: blocked_clients and the cumulative SET and WAIT calls;
+  * INFO replication: the primary's `master_repl_offset` and, per replica, the offset it has
+    ACKNOWLEDGED and the seconds since its last ack. The byte gap between the two is the
+    replication backlog a `WAIT` is waiting out; it is what separates "the replicas are slow
+    to acknowledge" from "the pool's connections are all occupied".
 
 Its own connection and any replica link are excluded. `config_get` records the tier's
 configuration once. Nothing here changes what the proxy sends.
@@ -25,6 +29,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 STORE_COMMANDS = {"set", "wait"}
+SAMPLE_PERIOD_S = 0.25
 
 
 def endpoint(url: str) -> tuple[str, int]:
@@ -107,10 +112,34 @@ def store_clients(listing: str, exclude: set[str]) -> list[dict]:
     return rows
 
 
+def replication(info: dict[str, str]) -> dict:
+    """The primary's offset and each replica's acknowledged offset, gap and ack age."""
+    master = int(info.get("master_repl_offset", "0"))
+    replicas = []
+    for key in sorted(k for k in info if k.startswith("slave") and k[5:].isdigit()):
+        fields = dict(kv.split("=", 1) for kv in info[key].split(",") if "=" in kv)
+        offset = int(fields.get("offset", "0"))
+        replicas.append({"port": int(fields.get("port", "0")), "offset": offset, "gap_bytes": master - offset,
+                         "ack_age_s": int(fields.get("lag", "0"))})
+    return {"master_offset": master, "replicas": replicas}
+
+
 def calls(info: dict[str, str], command: str) -> int:
     stat = info.get(f"cmdstat_{command}", "")
     fields = dict(kv.split("=", 1) for kv in stat.split(",") if "=" in kv)
     return int(fields.get("calls", "0"))
+
+
+def set_calls(url: str) -> int | None:
+    """The primary's cumulative SET count now (INFO commandstats), or None if unreadable."""
+    try:
+        conn = Conn(*endpoint(url))
+        try:
+            return calls(parse_info(conn.text("INFO", "commandstats")), "set")
+        finally:
+            conn.close()
+    except (OSError, RuntimeError, ValueError):
+        return None
 
 
 def config_get(url: str) -> dict:
@@ -129,7 +158,7 @@ def config_get(url: str) -> dict:
 
 
 class Sampler(threading.Thread):
-    def __init__(self, url: str, out: Path, period: float = 0.25):
+    def __init__(self, url: str, out: Path, period: float = SAMPLE_PERIOD_S):
         super().__init__(daemon=True)
         self.url, self.out, self.period = url, out, period
         self.stop_event = threading.Event()
@@ -148,11 +177,13 @@ class Sampler(threading.Thread):
                 while not self.stop_event.wait(self.period):
                     t = time.time()
                     info = parse_info(conn.text("INFO", "clients") + "\n" + conn.text("INFO", "commandstats"))
+                    repl = replication(parse_info(conn.text("INFO", "replication")))
                     rows = store_clients(conn.text("CLIENT", "LIST"), me)
                     sample = {"t": t, "blocked_clients": int(info.get("blocked_clients", "0")),
                               "store_conns": len(rows), "store_blocked": sum("b" in r["flags"] for r in rows),
                               "qbuf": [r["qbuf"] for r in rows],
-                              "set_calls": calls(info, "set"), "wait_calls": calls(info, "wait")}
+                              "set_calls": calls(info, "set"), "wait_calls": calls(info, "wait"),
+                              "repl": repl}
                     sink.write(json.dumps(sample) + "\n")
                     self.samples.append(sample)
         except (OSError, RuntimeError, ValueError) as exc:
@@ -178,7 +209,19 @@ def summarize(samples: list[dict]) -> dict:
         "qbuf_max_bytes": max((max(s["qbuf"]) for s in loaded), default=0),
         "set_per_s": (samples[-1]["set_calls"] - samples[0]["set_calls"]) / span if span > 0 else None,
         "wait_per_s": (samples[-1]["wait_calls"] - samples[0]["wait_calls"]) / span if span > 0 else None,
+        "replica_gap_bytes": _replica_gaps(samples),
     }
+
+
+def _replica_gaps(samples: list[dict]) -> list[dict]:
+    """Per replica port: mean and peak unacknowledged bytes, peak ack age."""
+    by_port: dict[int, list[dict]] = {}
+    for s in samples:
+        for r in (s.get("repl") or {}).get("replicas", []):
+            by_port.setdefault(r["port"], []).append(r)
+    return [{"port": port, "gap_mean": statistics.mean(r["gap_bytes"] for r in rows),
+             "gap_max": max(r["gap_bytes"] for r in rows), "ack_age_max_s": max(r["ack_age_s"] for r in rows)}
+            for port, rows in sorted(by_port.items())]
 
 
 class Window:
