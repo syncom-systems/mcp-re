@@ -964,6 +964,18 @@ ARGV_CASES: list[tuple[str, dict, list[tuple[str, str]], list[str]]] = [
         [("--replay-clock-divergence-secs", "0")],
         [],
     ),
+    (
+        "an unset replay pool size renders no flag: the proxy's default applies",
+        merged(),
+        [("--replay-redis-url", "rediss://mcp-re-redis:6379")],
+        ["--replay-redis-pool-size"],
+    ),
+    (
+        "a declared replay pool size renders beside the replay store it sizes",
+        merged({"replay": {"poolSize": 32}}),
+        [("--replay-redis-pool-size", "32")],
+        [],
+    ),
     # ADR-MCPRE-053 §7. "The guards refuse a bad config" is only half the property:
     # the chart previously rendered NO admission flag under any values at all, so
     # every chart-deployed fleet ran AdmissionKind::Off. The flag has to appear.
