@@ -48,6 +48,7 @@ from phases import (DEFAULT_REPLAY_POOL, RUNG_REQUEST_CEILING, SIGNER_RETENTION_
                     Binaries, Context, phase_a_point,
                     phase_b_point, proxy_launcher, startup_facts)
 from redis_queue import config_get  # noqa: E402
+import isolation  # noqa: E402
 from redis_tier import Tier  # noqa: E402
 
 SWEEP = (1, 2, 4, 8, 16, 24, 32)
@@ -72,12 +73,12 @@ def replay_pool(value: str) -> int:
     return pool
 
 
-def launchers(run_dir: Path, bins: Binaries, pool: int | None) -> Binaries:
+def launchers(run_dir: Path, bins: Binaries, pool: int | None, isolation_plan: Path | None = None) -> Binaries:
     """The instruments with both proxies behind `proxy_launcher`; everything else as built."""
     out = run_dir / "launchers"
     out.mkdir(parents=True, exist_ok=True)
-    return dataclasses.replace(bins, proxy_deploy=proxy_launcher(out, bins.proxy_deploy, pool),
-                               proxy_ext=proxy_launcher(out, bins.proxy_ext, pool))
+    return dataclasses.replace(bins, proxy_deploy=proxy_launcher(out, bins.proxy_deploy, pool, isolation_plan),
+                               proxy_ext=proxy_launcher(out, bins.proxy_ext, pool, isolation_plan))
 
 
 def redis_config(run_dir: Path, redis_url: str, tier: Tier | None) -> dict:
@@ -185,6 +186,21 @@ def campaign(args: argparse.Namespace) -> int:
     vcpus = facts["vcpus_usable"] or os.cpu_count() or 1
     sweep = tuple(n for n in sweep if n <= vcpus)
 
+    iso_plan, iso_path = None, None
+    if args.isolate_replay_path:
+        if args.redis_url:
+            raise SystemExit("ceiling: --isolate-replay-path pins the harness's own replay tier; "
+                             "it cannot place an operator-managed one")
+        iso_plan = isolation.plan(isolation.topology())
+        iso_path = run_dir / "host" / "isolation-plan.json"
+        write_json(iso_path, iso_plan)
+        # The harness itself and everything it starts (samplers, sysstat, the tier, the
+        # instruments, each launcher's enforcer) inherit the general set; only the Redis
+        # primary and the proxy's control thread are then placed on reserved cores.
+        os.sched_setaffinity(0, iso_plan["general"])
+        log(run_dir, f"isolation: redis primary on {iso_plan['redis_primary']}, control thread on "
+                     f"{iso_plan['control']}, SMT siblings {iso_plan['idle_siblings']} idle, everything else on "
+                     f"{isolation.cpulist(iso_plan['general'])}")
     tier = None
     redis_url = args.redis_url
     if not redis_url:
@@ -192,13 +208,21 @@ def campaign(args: argparse.Namespace) -> int:
         _step(run_dir, steps, "redis-up", lambda: tier.up(run_dir))
         redis_url = tier.url
         tier.snapshot(run_dir / "redis" / "info-before.json")
+        if iso_plan is not None:
+            write_json(run_dir / "redis" / "affinity.json", {
+                role: isolation.pin_process(proc.pid, iso_plan["redis_primary"] if role == "primary"
+                                            else iso_plan["general"])
+                for role, proc in tier.procs.items()})
     manifest = read_json(run_dir / "manifest.json")
     manifest["redis"] = dict(url=redis_url, managed=tier is not None, **redis_config(run_dir, redis_url, tier))
+    manifest["isolation"] = ({"plan": "host/isolation-plan.json", **iso_plan,
+                              "applied": "redis/affinity.json; per proxy launch <startup log>.affinity.jsonl"}
+                             if iso_plan is not None else None)
     write_json(run_dir / "manifest.json", manifest)
-    ctx = Context(run_dir, launchers(run_dir, bins, pool), redis_url, vcpus, args.require_telemetry, tier,
+    ctx = Context(run_dir, launchers(run_dir, bins, pool, iso_path), redis_url, vcpus, args.require_telemetry, tier,
                   ladder=tuple(int(x) for x in args.ladder.split(",")), gen_cap=args.gen_cap,
                   requests_per_connection=args.requests_per_connection, replay_pool=pool,
-                  stage_timers=args.stage_timers)
+                  stage_timers=args.stage_timers, isolation=iso_plan)
     try:
         smoke_ok = _step(run_dir, steps, "smoke", lambda: smoke(ctx))
         if not smoke_ok:
@@ -257,7 +281,8 @@ def smoke(ctx: Context) -> bool:
                MCP_RE_SAT_BACKEND=str(ctx.bins.backend), MCP_RE_SAT_LOADGEN=str(ctx.bins.loadgen),
                MCP_RE_SAT_OUT=str(smoke_dir / "rig-smoke.json"),
                **{STARTUP_LOG_ENV: str(smoke_dir / "rig-smoke.proxy-startup.log")})
-    rc, _ = run_logged([str(ctx.bins.rig), "--smoke"], smoke_dir / "rig-smoke.log", env=env, timeout=600)
+    rc, _ = run_logged(ctx.instrument_prefix() + [str(ctx.bins.rig), "--smoke"], smoke_dir / "rig-smoke.log",
+                       env=env, timeout=600)
     stated = {"phase_a": point["reps"][0]["proxy"], "rig": startup_facts(smoke_dir / "rig-smoke.proxy-startup.log")}
     expected = ctx.replay_pool or DEFAULT_REPLAY_POOL
     manifest = read_json(ctx.run_dir / "manifest.json")
@@ -398,6 +423,9 @@ def main(argv: list[str]) -> int:
     c.add_argument("--reps", type=int, default=6)
     c.add_argument("--b-modes", default="cold,keepalive")
     c.add_argument("--b-repeats", type=int, default=3)
+    c.add_argument("--isolate-replay-path", action="store_true",
+                   help="reserve whole physical cores for the Redis primary and the proxy's control "
+                        "runtime (isolation.py); everything else runs on the remaining CPUs")
     c.add_argument("--stage-timers", action="store_true",
                    help="set MCP_RE_STAGE_TIMERS for every Phase B rung: the proxy's own per-stage wall "
                         "times (replay SET+WAIT round trip, scheduler latency, replay calls in flight)")

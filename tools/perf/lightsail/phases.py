@@ -86,6 +86,15 @@ class Context:
     requests_per_connection: float = REQUESTS_PER_CONNECTION
     replay_pool: int | None = None   # None: the flag is omitted and the proxy's default applies
     stage_timers: bool = False       # set MCP_RE_STAGE_TIMERS for every Phase B rung
+    isolation: dict | None = None    # isolation.plan(): instruments confined to its general CPUs
+
+    def instrument_prefix(self) -> list[str]:
+        """How an instrument (bench, rig and so its generators and backend) is started: under
+        the isolation plan's general CPUs, or unrestricted."""
+        if self.isolation is None:
+            return []
+        from isolation import cpulist
+        return ["taskset", "-c", cpulist(self.isolation["general"])]
 
 
 def rung_requests(conns: int, requests_per_connection: float, gen_cap: int) -> tuple[int, bool]:
@@ -128,20 +137,29 @@ def rig_verdict(row: dict, log_text: str, store_sets: int | None, expected_sets:
 
 
 
-def proxy_launcher(out_dir: Path, binary: Path, pool: int | None) -> Path:
+def proxy_launcher(out_dir: Path, binary: Path, pool: int | None, isolation_plan: Path | None = None) -> Path:
     """The proxy as the instruments start it: an exec wrapper adding the pool flag.
 
     The rig and the bench take the proxy as ONE executable path and build its arguments
     themselves, so a flag can reach it only through a wrapper. `exec` keeps the proxy at the
     wrapper's pid and executable. Its stderr is copied to `$MCP_RE_CEILING_PROXY_LOG` up to
     and including the serving line, then forwarded by `cat` alone: after startup the stream
-    is the per-request audit record, which this never parses or writes to disk."""
+    is the per-request audit record, which this never parses or writes to disk.
+
+    With an isolation plan, `isolation.py enforce` runs beside the proxy (same pid: `exec`)
+    and places its threads per the plan, logging to `<startup log>.affinity.jsonl`."""
     wrapper = out_dir / f"{binary.name}.sh"
     flag = f" --replay-redis-pool-size {pool}" if pool is not None else ""
     default_log = shlex.quote(str(out_dir / "proxy-startup.log"))
+    enforcer = ""
+    if isolation_plan is not None:
+        script = shlex.quote(str(Path(__file__).resolve().parent / "isolation.py"))
+        enforcer = (f'python3 {script} enforce --pid $$ --plan {shlex.quote(str(isolation_plan))} '
+                    '--log "${log%.log}.affinity.jsonl" </dev/null >/dev/null 2>&1 &\n')
     wrapper.write_text(
         "#!/bin/bash\n"
         f'log="${{{STARTUP_LOG_ENV}:-{default_log}}}"\n'
+        + enforcer +
         f'exec {shlex.quote(str(binary))} "$@"{flag} 2> >(\n'
         "  while IFS= read -r line; do\n"
         "    printf '%s\\n' \"$line\" >&2\n"
@@ -228,7 +246,7 @@ def phase_a_point(ctx: Context, topology: str, cores: int, workers: int, reps: i
                        MCP_RE_LOADGEN_OUT=str(out),
                        **{STARTUP_LOG_ENV: str(point / f"rep{rep}.proxy-startup.log")})
             start = time.time()
-            rc, secs = run_logged([str(ctx.bins.bench), "tls_load_harness_bench", "--exact", "--nocapture"],
+            rc, secs = run_logged(ctx.instrument_prefix() + [str(ctx.bins.bench), "tls_load_harness_bench", "--exact", "--nocapture"],
                                   point / f"rep{rep}.log", env=env, timeout=1800)
             record["windows"].append([start, time.time()])
             report, reason = validate_bench_rep(rc, (point / f"rep{rep}.log").read_text(errors="replace"),
@@ -282,7 +300,9 @@ def phase_b_point(ctx: Context, sweep: str, cores: int, workers: int, mode: str,
         write_json(point / "point.json", record)
         return record
     proxy_cli = ctx.bins.proxy_ext
-    prefix: list[str] = []
+    prefix: list[str] = ctx.instrument_prefix()
+    if partition and ctx.isolation is not None:
+        raise ValueError("a partitioned point and an isolation plan both place the proxy; use one")
     if partition:
         if cores >= ctx.vcpus:
             raise ValueError(f"a partitioned point needs spare CPUs: {cores} of {ctx.vcpus}")

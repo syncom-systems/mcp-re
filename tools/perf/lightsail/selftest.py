@@ -34,6 +34,7 @@ from phases import (RUNG_REQUEST_CEILING, rig_steps, rig_verdict, rung_requests,
                     validate_bench_rep)
 from redis_queue import replication, store_clients, summarize as queue_summary  # noqa: E402
 from stage_sampler import parse as parse_stage_timers, window_means  # noqa: E402
+import isolation  # noqa: E402
 
 #: A proxy that states the pool it was given (or FAKE_PROXY_STATES_POOL, to model one that
 #: ignored the flag), serves, and then writes a per-request audit line.
@@ -241,6 +242,31 @@ def units() -> None:
     capped, was = rung_requests(512, 200, 5)
     assert was and capped * sum(range(2, 6)) <= RUNG_REQUEST_CEILING < 800_000, capped
     assert rung_requests(256, 1250, 12)[1], "the 2026-10-16 main-matrix setting is capped"
+
+    # Isolation: physical cores come from sysfs siblings, never from logical numbering.
+    assert isolation.parse_cpulist("0-3,8,10-11\n") == [0, 1, 2, 3, 8, 10, 11]
+    with tempfile.TemporaryDirectory() as tmp:
+        sysfs = Path(tmp)
+        (sysfs / "online").write_text("0-31\n")
+        for cpu in range(32):                      # the AWS shape: SMT siblings are i and i+16
+            (sysfs / f"cpu{cpu}" / "topology").mkdir(parents=True)
+            (sysfs / f"cpu{cpu}" / "topology" / "thread_siblings_list").write_text(f"{cpu % 16},{cpu % 16 + 16}\n")
+        cores = isolation.topology(sysfs)
+        assert len(cores) == 16 and cores[0] == [0, 16] and cores[-1] == [15, 31], cores
+        p = isolation.plan(cores)
+        assert (p["redis_primary"], p["control"], p["idle_siblings"]) == ([14], [15], [30, 31]), p
+        assert p["reserved"] == [14, 15, 30, 31] and len(p["general"]) == 28 and 30 not in p["general"], p
+    assert isolation.target("mcp-re-control", list(range(32)), p) == [15]
+    assert isolation.target("mcp-re-serve-3", [3], p) == [3], "a shard pinned to a general CPU keeps its pin"
+    assert isolation.target("mcp-re-serve-14", [14], p) == p["general"], "a shard on a reserved CPU is moved off"
+    assert isolation.target("mcp-re-serve-30", [30], p) == p["general"], "an idle sibling stays idle"
+    assert isolation.target("mcp-re-audit", list(range(32)), p) == p["general"]
+    try:
+        isolation.plan([[0, 4], [1, 5], [2, 6]])
+    except ValueError as exc:
+        assert "too few" in str(exc)
+    else:
+        raise AssertionError("a plan on three physical cores")
 
     # The proxy's stage timers: cumulative snapshots, differenced to one window.
     snap = ("stage,count,total_ms,mean_us\nreplay_wait,{n},{ms},0\nscheduler_latency,{s},{sms},0\n"
@@ -454,5 +480,6 @@ def run_all() -> int:
     telemetry_case()
     campaign_case()
     print("lightsail ceiling selftest: OK (rules, attribution, identity stop, ladder, failure recording, layout, "
-          "replay pool launch and refusal, invalid rungs, signer budget cap, stage timers, replication gaps)")
+          "replay pool launch and refusal, invalid rungs, signer budget cap, stage timers, replication gaps, "
+          "isolation plan)")
     return 0

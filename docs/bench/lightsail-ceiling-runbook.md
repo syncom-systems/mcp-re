@@ -106,6 +106,21 @@ measurement. The harness caps the requests per generator so that a rung climbing
 cap does not bind: at `--gen-cap 5` a generator may send 54,285 requests (200 per connection at
 256 connections).
 
+**Isolating the replay path (`--isolate-replay-path`).** The proxy pins each serving shard's
+thread to the absolute CPU `core_index % online_cpus`, overriding any mask it was started
+under, and its control runtime (`mcp-re-control`, which drives the replay store's Redis
+connections) is a thread of the same process — so a launch-time `taskset` cannot isolate
+either. `isolation.py` reads the physical-core layout from sysfs (`thread_siblings_list`;
+logical numbers are not assumed to be independent cores), reserves the two highest-numbered
+physical cores — the Redis primary on one, the control thread on the other, each on one
+logical CPU with its SMT sibling idle — and confines the harness, the replicas, the
+instruments and every other proxy thread to the remaining CPUs. Each proxy launch runs
+`isolation.py enforce` beside the proxy, which moves the control thread and any shard pinned
+to a reserved CPU, and logs every move and a settled snapshot of every thread's mask
+(`<startup log>.affinity.jsonl`); `affinity.json` in the run's Redis directory records the tier's masks, and the
+telemetry records the CPU each watched thread last ran on and per-CPU busy. No product
+setting changes.
+
 Sweeps, in order:
 
 1. **scaling, cold** — N ∈ {1, 2, 4, 8, 16, 24, 32}, `WORKERS_PER_SHARD=1`. Authoritative.

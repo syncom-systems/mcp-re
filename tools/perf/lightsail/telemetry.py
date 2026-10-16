@@ -121,6 +121,13 @@ def parse_netstat(text: str) -> dict[str, int]:
     return out
 
 
+def last_cpu(stat_text: str) -> int | None:
+    """The CPU a task last ran on: field 39 (`processor`) of /proc/<pid>/task/<tid>/stat."""
+    close = stat_text.rfind(")")
+    fields = stat_text[close + 2:].split() if close >= 0 else []
+    return int(fields[36]) if len(fields) > 36 else None
+
+
 def parse_schedstat(text: str) -> tuple[int, int] | None:
     """(cpu ns, run-queue delay ns) from one /proc/<pid>/task/<tid>/schedstat."""
     fields = text.split()
@@ -173,8 +180,8 @@ class Sampler(threading.Thread):
                     ticks[(pid, int(tid))] = stat["ticks"]
         return ticks
 
-    def _watched(self, procs: dict[int, tuple[str, dict]]) -> dict[tuple[int, int], tuple[str, int, int]]:
-        """(group, cpu ns, run-queue delay ns) per watched thread."""
+    def _watched(self, procs: dict[int, tuple[str, dict]]) -> dict[tuple[int, int], tuple[str, int, int, int | None]]:
+        """(group, cpu ns, run-queue delay ns, CPU last run on) per watched thread."""
         out = {}
         for pid, (name, _) in procs.items():
             category = categorize(name)
@@ -189,7 +196,7 @@ class Sampler(threading.Thread):
                                     self.redis_roles)
                 stat = parse_schedstat(_read(f"/proc/{pid}/task/{tid}/schedstat"))
                 if group is not None and stat is not None:
-                    out[(pid, int(tid))] = (group, *stat)
+                    out[(pid, int(tid))] = (group, *stat, last_cpu(_read(f"/proc/{pid}/task/{tid}/stat")))
         return out
 
     def _processes(self) -> dict[int, tuple[str, dict]]:
@@ -227,9 +234,11 @@ class Sampler(threading.Thread):
                 watch_now = self._watched(procs)
                 dt = now - prev_t
                 watch: dict[str, dict] = {}
-                for key, (group, cpu_ns, delay_ns) in watch_now.items():
-                    row = watch.setdefault(group, {"cores": 0.0, "run_delay": 0.0, "threads": 0})
+                for key, (group, cpu_ns, delay_ns, ran_on) in watch_now.items():
+                    row = watch.setdefault(group, {"cores": 0.0, "run_delay": 0.0, "threads": 0, "cpus": []})
                     row["threads"] += 1
+                    if ran_on is not None and ran_on not in row["cpus"]:
+                        row["cpus"].append(ran_on)
                     before = prev_watch.get(key)
                     if before is not None and before[0] == group:
                         row["cores"] += (cpu_ns - before[1]) / 1e9 / dt
@@ -266,6 +275,7 @@ class Sampler(threading.Thread):
                     "proxy_threads_hot": sum(1 for h in heat if h >= 0.85),
                     "categories": categories,
                     "watch": watch,
+                    "cpu_busy": {name[3:]: round(v[0], 3) for name, v in per_cpu.items()},
                 }
                 sink.write(json.dumps(sample) + "\n")
                 sink.flush()
@@ -331,7 +341,8 @@ def _watch_summary(samples: list[dict]) -> dict:
         out[group] = {"cores_avg": sum(r.get("cores", 0.0) for r in rows) / len(rows),
                       "run_delay_avg": sum(r.get("run_delay", 0.0) for r in rows) / len(rows),
                       "run_delay_max": max(r.get("run_delay", 0.0) for r in rows),
-                      "threads_max": max(r.get("threads", 0) for r in rows)}
+                      "threads_max": max(r.get("threads", 0) for r in rows),
+                      "cpus_seen": sorted({c for r in rows for c in r.get("cpus", [])})}
     return out
 
 
