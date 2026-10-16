@@ -26,13 +26,38 @@ HERE = Path(__file__).resolve().parent
 
 from analysis import ceiling_statement, classify, describe_curve  # noqa: E402
 from hostfacts import check_expected  # noqa: E402
-from phases import rig_verdict, validate_bench_rep  # noqa: E402
+from phases import rig_verdict, startup_facts, validate_bench_rep  # noqa: E402
+from redis_queue import store_clients, summarize as queue_summary  # noqa: E402
+
+#: A proxy that states the pool it was given (or FAKE_PROXY_STATES_POOL, to model one that
+#: ignored the flag), serves, and then writes a per-request audit line.
+FAKE_PROXY = r'''#!/usr/bin/env python3
+import os, sys
+a = sys.argv[1:]
+pool = int(a[a.index("--replay-redis-pool-size") + 1]) if "--replay-redis-pool-size" in a else 8
+pool = int(os.environ.get("FAKE_PROXY_STATES_POOL", pool))
+for line in ("mcp-re-proxy: replay-store backend=redis tier=REDIS_WAIT_QUORUM guarantee=x",
+             f"mcp-re-proxy: replay redis pool = {pool} connections (--replay-redis-pool-size; default 8)",
+             "mcp-re-proxy: async fleet serving on 127.0.0.1:1 (1 cores)", "audit: per-request record"):
+    print(line, file=sys.stderr)
+'''
+
+#: How each fake instrument starts its proxy: through MCP_RE_PROXY_CLI, reading stderr the
+#: way the real ones do. The audit line after the serving line must still arrive.
+START_PROXY = r'''
+import subprocess
+def start_proxy():
+    p = subprocess.run([os.environ["MCP_RE_PROXY_CLI"], "--bind", "127.0.0.1:0"], capture_output=True, text=True, timeout=30)
+    assert "async fleet serving on" in p.stderr and "audit: per-request record" in p.stderr, p.stderr
+'''
 
 FAKE_BENCH = r'''#!/usr/bin/env python3
 import json, os, sys
+''' + START_PROXY + r'''
 cores = int(os.environ["MCP_RE_LOADGEN_CORES"]); req = int(os.environ["MCP_RE_LOADGEN_REQUESTS"])
 out = os.environ["MCP_RE_LOADGEN_OUT"]
 assert os.environ["MCP_RE_LOADGEN_MODE"] == "cold" and os.environ["MCP_RE_PROXY_CLI"].startswith("/")
+start_proxy()
 fail_marker = os.environ.get("FAKE_FAIL_REP_AT", "")
 rep = out.rsplit("rep", 1)[-1].split(".")[0]
 if fail_marker == f"c{cores}-rep{rep}":
@@ -53,9 +78,12 @@ print("test result: ok. 1 passed; 0 failed")
 
 FAKE_RIG = r'''#!/usr/bin/env python3
 import json, os, sys
+''' + START_PROXY + r'''
 a = sys.argv[1:]
+start_proxy()
 if a == ["--smoke"]:
     print("smoke ok"); sys.exit(0)
+assert os.environ["MCP_RE_SAT_REQUIRE_ECHO"] == "1", "a measured success must carry the backend echo"
 def arg(k, d=None):
     return a[a.index(k) + 1] if k in a else d
 cores = int(arg("--cores")); conns = int(arg("--connections", "256"))
@@ -141,6 +169,22 @@ def units() -> None:
     assert ceiling_statement(rows([1, 2, 4, 8, 16, 24, 32], "INDETERMINATE"))["statement"] == "CEILING ATTRIBUTION: INDETERMINATE"
     assert ceiling_statement(None)["statement"] == "CEILING ATTRIBUTION: INDETERMINATE"
 
+    # The replay store's connections as the primary lists them, and their queueing.
+    listing = ("id=1 addr=x flags=N cmd=client|list qbuf=0\nid=2 addr=x flags=b cmd=wait qbuf=900\n"
+               "id=3 addr=x flags=N cmd=set qbuf=100\nid=4 addr=x flags=S cmd=replconf qbuf=0\nid=5 flags=b cmd=wait qbuf=7")
+    assert store_clients(listing, {"5"}) == [{"flags": "b", "qbuf": 900}, {"flags": "N", "qbuf": 100}]
+    q = queue_summary([{"t": 0.0, "store_conns": 2, "store_blocked": 1, "qbuf": [900, 100], "set_calls": 0, "wait_calls": 0},
+                       {"t": 2.0, "store_conns": 2, "store_blocked": 2, "qbuf": [300, 100], "set_calls": 400, "wait_calls": 398}])
+    assert (q["store_conns_max"], q["blocked_in_wait_mean"], q["qbuf_per_conn_mean_bytes"], q["set_per_s"]) == (2, 1.5, 350, 200), q
+    assert not queue_summary([])["available"]
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Path(tmp) / "startup.log"
+        log.write_text("mcp-re-proxy: replay-store backend=redis tier=REDIS_WAIT_QUORUM guarantee=x\n"
+                       "mcp-re-proxy: replay redis pool = 32 connections (--replay-redis-pool-size; default 8)\n"
+                       "mcp-re-proxy: async fleet serving on 127.0.0.1:1 (1 cores)\n")
+        assert startup_facts(log) == {"launches": 1, "replay_pool": [32], "replay_tier": ["REDIS_WAIT_QUORUM"]}
+        assert startup_facts(Path(tmp) / "absent.log")["replay_pool"] == []
+
     # Identity: a 16-vCPU or arm64 host is not the declared context.
     facts = {"vcpus_usable": 16, "vcpus_online": 16, "architecture": "aarch64", "mem_total_kib": 64 * 1024 * 1024}
     problems = check_expected(facts, 32, "x86_64", 128)
@@ -152,8 +196,10 @@ def campaign_case() -> None:
         root = Path(tmp)
         bins = root / "bin"
         bins.mkdir()
-        for name in ("mcp-re-proxy-deploy", "mcp-re-proxy-ext", "saturation_backend", "saturation_loadgen"):
+        for name in ("saturation_backend", "saturation_loadgen"):
             (bins / name).write_text("#!/bin/sh\nexit 0\n")
+        for name in ("mcp-re-proxy-deploy", "mcp-re-proxy-ext"):
+            (bins / name).write_text(FAKE_PROXY)
         (bins / "tls_load_harness_bench").write_text(FAKE_BENCH)
         (bins / "saturation_rig").write_text(FAKE_RIG)
         for path in bins.iterdir():
@@ -169,8 +215,20 @@ def campaign_case() -> None:
         expect_ok = ["--expect-vcpus", str(usable)] if usable == online else []
         base = [sys.executable, str(HERE / "ceiling.py"), "campaign", str(run_dir), "--bin-dir", str(bins),
                 "--identity", str(identity), "--redis-url", "redis://127.0.0.1:1", "--cores", "1,2,4",
-                "--reps", "2", "--b-modes", "cold", "--b-repeats", "2", "--partitioned", ""]
+                "--reps", "2", "--b-modes", "cold", "--b-repeats", "2", "--partitioned", "",
+                "--replay-redis-pool-size", "16"]
         env = dict(os.environ, FAKE_FAIL_REP_AT="c2-rep2")
+
+        # A pool the proxy does not admit is refused before anything is created.
+        bad = subprocess.run([*base[:-1], "129"], env=env, capture_output=True, text=True)
+        assert bad.returncode == 2 and "between 1 and 128" in bad.stderr and not run_dir.exists(), bad.stderr
+
+        # A proxy that states a pool other than the one asked for fails the smoke: no sweep.
+        ignored = root / "ignored"
+        ig = subprocess.run([*base[:3], str(ignored), *base[4:]], env=dict(env, FAKE_PROXY_STATES_POOL="8"),
+                            capture_output=True, text=True)
+        assert ig.returncode == 4 and not (ignored / "phase-b").exists(), ig.stdout + ig.stderr
+        assert json.loads((ignored / "manifest.json").read_text())["replay_pool"]["effective_at_smoke"]["rig"]["replay_pool"] == [8]
 
         # Binaries that are not the ones the bootstrap built are refused before anything runs.
         build = root / "build-identity.json"
@@ -197,6 +255,13 @@ def campaign_case() -> None:
         manifest = json.loads((run_dir / "manifest.json").read_text())
         assert manifest["binaries"]["bench"]["sha256"].startswith("sha256:") and manifest["finished"]
         assert (manifest["umask"], manifest["umask_inherited"]) == ("0022", "0002"), manifest
+        pool = manifest["replay_pool"]
+        assert (pool["requested"], pool["expected"]) == (16, 16), pool
+        assert {k: v["replay_pool"] for k, v in pool["effective_at_smoke"].items()} == {"phase_a": [16], "rig": [16]}, pool
+        assert not manifest["redis"]["nodes"]["primary"]["available"], "no Redis listens in the selftest"
+        assert manifest["binaries"]["proxy_ext"]["path"].endswith("/mcp-re-proxy-ext"), "the BUILT binary is hashed"
+        startup = (run_dir / "phase-b" / "scaling" / "c4" / "attempt1" / "rung1.proxy-startup.log").read_text()
+        assert "replay redis pool = 16" in startup and "audit:" not in startup, "only the startup transcript is kept"
         assert not stale_sums(run_dir), f"SHA256SUMS stale after the campaign: {stale_sums(run_dir)}"
         # The launcher writes after the campaign; `pack` re-seals before archiving.
         with open(run_dir / "logs" / "launcher.txt", "a") as fh:
@@ -215,14 +280,18 @@ def campaign_case() -> None:
         assert c2["status"] == "INCOMPLETE" and not c2["reps"][1]["valid"], c2["reps"]
         b4 = json.loads((run_dir / "phase-b" / "scaling" / "c4" / "attempt1" / "point.json").read_text())
         assert [r["verdict"] for r in b4["rungs"]] == ["CLIENT", "PROXY"], b4["rungs"]
+        assert [r["proxy"]["replay_pool"] for r in b4["rungs"]] == [[16], [16]], b4["rungs"]
+        assert b4["redis_queue"]["available"] is False and b4["redis_queue"]["reason"], b4["redis_queue"]
         assert (run_dir / "phase-b" / "scaling" / "c4" / "attempt2" / "point.json").is_file(), "no repeat at the high end"
         summary = json.loads((run_dir / "summary.json").read_text())
         assert summary["rules"]["rig_saturation_pct"] == 5.0
         assert "A/scaling/c2: INCOMPLETE" in summary["inconclusive"], summary["inconclusive"]
         assert set(summary["phase_a"]) == {"scaling", "shipped-auto"}
         assert summary["phase_b"]["scaling"]["rows"][0]["rps_proxy_median"] == 5000.0
+        assert summary["phase_b"]["scaling"]["rows"][0]["replay_pool_stated"] == [16]
         md = (run_dir / "summary.md").read_text()
         assert "Curve 1 — canonical" in md and "Curve 2 — proxy saturation" in md
+        assert "replay redis pool: --replay-redis-pool-size 16; expected 16" in md, md
 
 
 def stale_sums(run_dir: Path) -> list[str]:
@@ -265,5 +334,6 @@ def run_all() -> int:
     units()
     telemetry_case()
     campaign_case()
-    print("lightsail ceiling selftest: OK (rules, attribution, identity stop, ladder, failure recording, layout)")
+    print("lightsail ceiling selftest: OK (rules, attribution, identity stop, ladder, failure recording, layout, "
+          "replay pool launch and refusal)")
     return 0

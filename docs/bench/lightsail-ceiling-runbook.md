@@ -228,6 +228,11 @@ mirror and the x86_64 toolchain downloads.
 $SSH "tmux new -d -s ceiling 'bash /srv/mcp-re/tooling/tools/perf/lightsail/run_campaign.sh $RUN_ID $BUNDLE'"
 $SSH "tail -n 5 /srv/mcp-re/runs/$RUN_ID/logs/campaign.log"        # progress, polled
 ```
+A replay-pool run states the pool in `CAMPAIGN_ARGS`, one pool per run directory:
+`tmux new -d -s ceiling 'CAMPAIGN_ARGS="--replay-redis-pool-size 32" bash /srv/mcp-re/tooling/tools/perf/lightsail/run_campaign.sh $RUN_ID $BUNDLE'`.
+Every proxy start then goes through `launchers/*.sh`, the smoke stops the run unless both
+proxies state that pool, and each point's `point.json` carries `redis_queue` (the store's
+connections, blocked in `WAIT`, queued bytes, from the primary).
 Diagnostic pass only after `summary.json` exists, on the configuration the summary flags:
 `python3 /srv/mcp-re/tooling/tools/perf/lightsail/ceiling.py diagnose /srv/mcp-re/runs/$RUN_ID --bin-dir /srv/mcp-re/bin --cores <N> --window 30`
 — `perf record -g -p <proxy>` attached for the window while the rig runs unmodified (the

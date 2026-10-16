@@ -188,12 +188,15 @@ def phase_b_summary(points: list[dict], vcpus: int) -> dict:
             all_rps = [f["row"]["rps"] for f in finals]
             med = median(proxy_rps)
             last = attempts[-1]
+            final_proxy = ((last.get("final") or {}).get("proxy") or {})
             rows.append({
                 "cores": cores, "attempts": len(attempts), "verdicts": [f["verdict"] for f in finals],
                 "rps_attempts": all_rps, "rps_proxy_median": med if proxy_rps else None,
                 "rps_best": max(all_rps, default=0.0),
                 "stable": bool(proxy_rps) and (max(proxy_rps) - min(proxy_rps)) / med <= 0.10 if med else False,
                 "top_rung_connections": (last.get("final") or {}).get("connections_per_generator"),
+                "replay_pool_stated": sorted(set(final_proxy.get("replay_pool", []))),
+                "redis_queue": last.get("redis_queue_final_rung") or {"available": False},
                 "attribution": classify(last.get("telemetry_final_rung") or last.get("telemetry", {}),
                                         cores=cores, workers=last["workers_per_shard"], vcpus=vcpus,
                                         verdict=(last.get("final") or {}).get("verdict"),
@@ -249,8 +252,10 @@ def summarize_run(run_dir: Path, vcpus: int) -> dict:
 def render_markdown(summary: dict, manifest: dict) -> str:
     lines = ["# MCP-RE Lightsail ceiling experiment — summary", ""]
     ident = manifest.get("identity", {})
+    pool = manifest.get("replay_pool", {})
     lines += [f"- product: `{ident.get('release_tag')}` @ `{ident.get('product_commit')}`",
               f"- tooling: `{ident.get('tooling_commit')}`", f"- hardware class: `{manifest.get('hardware_class')}`",
+              f"- replay redis pool: {pool.get('flag')}; expected {pool.get('expected')} connections",
               f"- **{summary['ceiling']['statement']}** — {summary['ceiling'].get('why', '')}", ""]
     lines += ["## Curve 1 — canonical security-path scaling (Phase A, cold mTLS, c=128, 8000 req)", ""]
     for topology, block in summary["phase_a"].items():
@@ -270,12 +275,18 @@ def render_markdown(summary: dict, manifest: dict) -> str:
     for sweep, block in summary["phase_b"].items():
         curve = block["curve"] or {}
         lines += [f"### sweep `{sweep}` — knee: {curve.get('knee')}, plateau from: {curve.get('plateau_from')}", "",
-                  "| cores | attempts | verdicts | PROXY median rps | best rps | stable | attribution | confidence |",
-                  "|---:|---:|---|---:|---:|---|---|---|"]
+                  "| cores | attempts | verdicts | PROXY median rps | best rps | stable | attribution | confidence "
+                  "| pool stated | Redis store conns | blocked in WAIT | qbuf/conn B |",
+                  "|---:|---:|---|---:|---:|---|---|---|---|---:|---:|---:|"]
         for r in block["rows"]:
             med = "" if r["rps_proxy_median"] is None else f"{r['rps_proxy_median']:.0f}"
+            q = r.get("redis_queue") or {}
+            queue = (f"{q['store_conns_max']} | {q['blocked_in_wait_mean']:.1f} | "
+                     f"{'' if q['qbuf_per_conn_mean_bytes'] is None else round(q['qbuf_per_conn_mean_bytes'])}"
+                     if q.get("available") else " |  | ")
             lines.append(f"| {r['cores']} | {r['attempts']} | {','.join(r['verdicts'])} | {med} | {r['rps_best']:.0f} | "
-                         f"{r['stable']} | {r['attribution']['label']} | {r['attribution']['confidence']} |")
+                         f"{r['stable']} | {r['attribution']['label']} | {r['attribution']['confidence']} | "
+                         f"{','.join(map(str, r.get('replay_pool_stated', [])))} | {queue} |")
         lines.append("")
     lines += ["## Highest demonstrated throughput", "",
               f"- canonical harness: {summary['highest_demonstrated']['phase_a_canonical_rps']:.0f} rps",

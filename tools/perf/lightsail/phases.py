@@ -19,10 +19,13 @@ the top rung is a floor, and `analysis.py` decides whether the host could have s
 from __future__ import annotations
 
 import json
+import re
+import shlex
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import redis_queue
 from common import HW_CLASS, base_env, log, read_json, run_logged, write_json
 from redis_tier import Tier
 from telemetry import Telemetry, summarize
@@ -31,6 +34,10 @@ PASS_LINE = "test result: ok. 1 passed"
 GEN_CAP = 12
 LADDER = (256, 512, 1024, 2048)        # connections per generator
 REQUESTS_PER_CONNECTION = 40000 / 256  # the rig's own default ratio
+#: The pool the proxy opens when no `--replay-redis-pool-size` is passed.
+DEFAULT_REPLAY_POOL = 8
+#: Where the launcher appends each proxy's startup transcript; set per rep / rung.
+STARTUP_LOG_ENV = "MCP_RE_CEILING_PROXY_LOG"
 
 
 @dataclass
@@ -55,8 +62,39 @@ class Context:
     ladder: tuple[int, ...] = LADDER
     gen_cap: int = GEN_CAP
     requests_per_connection: float = REQUESTS_PER_CONNECTION
+    replay_pool: int | None = None   # None: the flag is omitted and the proxy's default applies
 
 
+def proxy_launcher(out_dir: Path, binary: Path, pool: int | None) -> Path:
+    """The proxy as the instruments start it: an exec wrapper adding the pool flag.
+
+    The rig and the bench take the proxy as ONE executable path and build its arguments
+    themselves, so a flag can reach it only through a wrapper. `exec` keeps the proxy at the
+    wrapper's pid and executable. Its stderr is copied to `$MCP_RE_CEILING_PROXY_LOG` up to
+    and including the serving line, then forwarded by `cat` alone: after startup the stream
+    is the per-request audit record, which this never parses or writes to disk."""
+    wrapper = out_dir / f"{binary.name}.sh"
+    flag = f" --replay-redis-pool-size {pool}" if pool is not None else ""
+    default_log = shlex.quote(str(out_dir / "proxy-startup.log"))
+    wrapper.write_text(
+        "#!/bin/bash\n"
+        f'log="${{{STARTUP_LOG_ENV}:-{default_log}}}"\n'
+        f'exec {shlex.quote(str(binary))} "$@"{flag} 2> >(\n'
+        "  while IFS= read -r line; do\n"
+        "    printf '%s\\n' \"$line\" >&2\n"
+        "    printf '%s\\n' \"$line\" >> \"$log\"\n"
+        "    if [[ $line == *\"async fleet serving on \"* ]]; then exec cat >&2; fi\n"
+        "  done)\n")
+    wrapper.chmod(0o755)
+    return wrapper
+
+
+def startup_facts(log_path: Path) -> dict:
+    """What each proxy launch logged in `log_path` stated about its replay store."""
+    text = log_path.read_text(errors="replace") if log_path.is_file() else ""
+    return {"launches": text.count("async fleet serving on "),
+            "replay_pool": [int(n) for n in re.findall(r"replay redis pool = (\d+) connections", text)],
+            "replay_tier": re.findall(r"replay-store backend=redis tier=(\S+)", text)}
 def _snapshot_redis(ctx: Context, path: Path) -> None:
     if ctx.tier is not None:
         ctx.tier.snapshot(path)
@@ -104,7 +142,8 @@ def phase_a_point(ctx: Context, topology: str, cores: int, workers: int, reps: i
         return record
     _snapshot_redis(ctx, point / "redis-before.json")
     tel = Telemetry(point, ctx.vcpus, ctx.require_telemetry)
-    with tel:
+    queue = redis_queue.Window(ctx.redis_url, point)
+    with tel, queue:
         for rep in range(1, reps + 1):
             out = point / f"rep{rep}.json"
             env = dict(base_env(),
@@ -116,14 +155,16 @@ def phase_a_point(ctx: Context, topology: str, cores: int, workers: int, reps: i
                        MCP_RE_LOADGEN_CONCURRENCY=str(ctx.envelope["concurrency"]),
                        MCP_RE_LOADGEN_REQUESTS=str(ctx.envelope["requests"]),
                        MCP_RE_LOADGEN_MODE=ctx.envelope["mode"],
-                       MCP_RE_LOADGEN_OUT=str(out))
+                       MCP_RE_LOADGEN_OUT=str(out),
+                       **{STARTUP_LOG_ENV: str(point / f"rep{rep}.proxy-startup.log")})
             start = time.time()
             rc, secs = run_logged([str(ctx.bins.bench), "tls_load_harness_bench", "--exact", "--nocapture"],
                                   point / f"rep{rep}.log", env=env, timeout=1800)
             record["windows"].append([start, time.time()])
             report, reason = validate_bench_rep(rc, (point / f"rep{rep}.log").read_text(errors="replace"),
                                                 out, ctx.envelope["requests"])
-            entry = {"rep": rep, "seconds": round(secs, 3), "valid": report is not None, "reason": reason}
+            entry = {"rep": rep, "seconds": round(secs, 3), "valid": report is not None, "reason": reason,
+                     "proxy": startup_facts(point / f"rep{rep}.proxy-startup.log")}
             if report is not None:
                 r = report["results"]
                 entry.update(throughput_rps=r["throughput_rps"], successes=r["successes"], failures=r["failures"],
@@ -134,6 +175,7 @@ def phase_a_point(ctx: Context, topology: str, cores: int, workers: int, reps: i
                 (f"{entry['throughput_rps']:.1f} rps p99={entry['p99_us']}us" if report else f"INVALID ({reason})"))
     _snapshot_redis(ctx, point / "redis-after.json")
     record["telemetry"] = _windowed(tel, record["windows"], ctx.vcpus)
+    record["redis_queue"] = queue.summary(record["windows"])
     record["status"] = "COMPLETE" if all(r["valid"] for r in record["reps"]) else "INCOMPLETE"
     write_json(point / "point.json", record)
     return record
@@ -185,14 +227,18 @@ def phase_b_point(ctx: Context, sweep: str, cores: int, workers: int, mode: str,
         record["cpu_partition"] = {"proxy": f"0-{cores - 1}", "load": f"{cores}-{ctx.vcpus - 1}"}
     _snapshot_redis(ctx, point / "redis-before.json")
     tel = Telemetry(point, ctx.vcpus, ctx.require_telemetry)
+    queue = redis_queue.Window(ctx.redis_url, point)
     final = None
-    with tel:
+    with tel, queue:
         for rung, conns in enumerate(ctx.ladder, 1):
             out = point / f"rung{rung}.json"
             requests = int(conns * ctx.requests_per_connection)
+            # MCP_RE_SAT_REQUIRE_ECHO: a 2xx counts as a success only if it carries the
+            # backend's echo, so every success in the row is a request the backend served.
             env = dict(base_env(), MCP_RE_SAT_REDIS_URL=ctx.redis_url, MCP_RE_SAT_WORKERS_PER_SHARD=str(workers),
                        MCP_RE_SAT_OUT=str(out), MCP_RE_PROXY_CLI=str(proxy_cli),
-                       MCP_RE_SAT_BACKEND=str(ctx.bins.backend), MCP_RE_SAT_LOADGEN=str(ctx.bins.loadgen))
+                       MCP_RE_SAT_BACKEND=str(ctx.bins.backend), MCP_RE_SAT_LOADGEN=str(ctx.bins.loadgen),
+                       MCP_RE_SAT_REQUIRE_ECHO="1", **{STARTUP_LOG_ENV: str(point / f"rung{rung}.proxy-startup.log")})
             argv = prefix + [str(ctx.bins.rig), "--cores", str(cores), "--mode", mode, "--generators", "2",
                              "--max-generators", str(ctx.gen_cap), "--connections", str(conns),
                              "--requests", str(requests)]
@@ -200,7 +246,8 @@ def phase_b_point(ctx: Context, sweep: str, cores: int, workers: int, mode: str,
             rc, secs = run_logged(argv, point / f"rung{rung}.log", env=env, timeout=5400)
             record["windows"].append([start, time.time()])
             entry = {"rung": rung, "connections_per_generator": conns, "requests_per_generator": requests,
-                     "rc": rc, "seconds": round(secs, 3)}
+                     "rc": rc, "seconds": round(secs, 3), "backend_echo_required": True,
+                     "proxy": startup_facts(point / f"rung{rung}.proxy-startup.log")}
             try:
                 row = read_json(out)["points"][0] if rc == 0 else None
             except (OSError, ValueError, KeyError, IndexError):
@@ -222,6 +269,8 @@ def phase_b_point(ctx: Context, sweep: str, cores: int, workers: int, mode: str,
     # The attribution is about the rung whose verdict stands, so it reads that rung alone.
     record["telemetry_final_rung"] = (_windowed(tel, record["windows"][-1:], ctx.vcpus, "summary-final-rung.json")
                                       if record["windows"] else tel.result)
+    record["redis_queue"] = queue.summary(record["windows"])
+    record["redis_queue_final_rung"] = queue.summary(record["windows"][-1:])
     record["final"] = final
     record["status"] = "COMPLETE" if final is not None and final["verdict"] in {"PROXY", "CLIENT"} else "INCOMPLETE"
     write_json(point / "point.json", record)

@@ -21,6 +21,12 @@ or wire-format compatibility while the design lines from
   the replay owner, and reaches `RedisAsyncAtomicReplayStore::connect_pooled`; the startup
   transcript states the effective size. A pool with no `--replay-redis-url` is refused.
   `SET NX PX`, `WAIT`, the durability tier and fail-closed handling are unchanged.
+- Helm: `replay.poolSize` renders the flag; unset leaves the proxy's default.
+- The Lightsail ceiling harness takes `--replay-redis-pool-size` and passes it to every
+  proxy it starts. The smoke refuses a run whose proxy states another pool, Phase B counts
+  a success only when it carries the backend's echo, and every point records the replay
+  store's connections, how many are blocked in `WAIT` and their queued bytes, as seen
+  from the primary. The tier's configuration is recorded in the manifest.
 
 ### Changed — the local gate's execution closure reaches no cloud
 
