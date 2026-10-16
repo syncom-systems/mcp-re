@@ -171,6 +171,7 @@ not start — absence is a refusal, not a fall back to something weaker.
 | `--replay-durability-tier redis-wait-quorum:<quorum>:<timeout_ms>` | Redis `SET NX` + `WAIT`. Requires `--replay-redis-url`. `quorum` ≥ 1; `timeout_ms` in 1..=30000 — a larger value is refused, not clamped, since admission awaits the `WAIT`. |
 | `--replay-durability-tier linearizable` | A CP / linearizable store. Requires `--cpstore-etcd-endpoint`. |
 | `--replay-redis-url <url>` | Where admitted nonces live, for a Redis tier. Refused beside a linearizable tier. |
+| `--replay-redis-pool-size <n>` | How many connections the Redis replay store holds open, 1..=128 (default 8). Each connection runs the same `SET NX PX` and `WAIT`; the pool bounds how many admissions can be waiting on `WAIT` at once. Refused without `--replay-redis-url`. The effective size is printed at startup. |
 | `--cpstore-etcd-endpoint <url>` | The CP store's endpoint. Refused without a linearizable tier. |
 | `--replay-clock-divergence-secs <n>` | How far two replicas' clocks may disagree, 0..=300 seconds (default 5). Every replay record is kept this much longer than the verifier's window, because the store expires a record on the writing replica's clock. |
 

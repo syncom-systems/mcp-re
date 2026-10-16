@@ -12,6 +12,7 @@
 
 use crate::async_replay::AsyncReplayTier;
 use crate::control_runtime::ControlRuntimeProvision;
+use crate::deployment_request::ReplayRedisPoolSize;
 use crate::replay_tier::ReplayDurabilityTier;
 
 /// The retention padding this deployment's shared store applies, stated at startup.
@@ -68,28 +69,32 @@ pub(super) fn establish_etcd(
 /// closed", so a store built without it would run plain `SET NX PX` and the promise would
 /// be audited but unenforced. The same value sizes the client-side response timeout, so a
 /// declared `redis-wait-quorum:2:2000` can actually wait 2000ms.
+///
+/// `pool` is how many connections the store holds open. Each one runs the same tier, so
+/// it bounds how many admissions can be waiting on `WAIT` at once and nothing else.
 #[cfg_attr(not(feature = "redis_replay"), allow(unused_variables))]
 pub(super) fn establish_redis(
     url: &str,
+    pool: ReplayRedisPoolSize,
     tier: &ReplayDurabilityTier,
     freshness: crate::config_state::FreshnessWindow,
     control: &ControlRuntimeProvision,
 ) -> Result<AsyncReplayTier, String> {
     #[cfg(feature = "redis_replay")]
     {
-        let connection = redis_connection(tier, freshness, control)?;
+        let connection = redis_connection(tier, pool, freshness, control)?;
         let store = connection
             .runtime
-            .block_on(
-                crate::RedisAsyncAtomicReplayStore::connect_with_wait_quorum(
-                    url,
-                    connection.clock,
-                    connection.wait_quorum,
-                ),
-            )
+            .block_on(crate::RedisAsyncAtomicReplayStore::connect_pooled(
+                url,
+                connection.clock,
+                connection.wait_quorum,
+                connection.pool.get(),
+            ))
             .map_err(|e| format!("connect redis async replay store: {e:?}"))?;
         eprintln!("mcp-re-proxy: replay tier = shared (horizontally-scaled; async Redis backend)");
         eprintln!("mcp-re-proxy: {}", tier.startup_audit_line("redis"));
+        eprintln!("mcp-re-proxy: {}", pool_audit_line(connection.pool));
         eprintln!("mcp-re-proxy: {}", divergence_audit_line(freshness));
         Ok(AsyncReplayTier::new(std::sync::Arc::new(store), freshness))
     }
@@ -100,15 +105,26 @@ pub(super) fn establish_redis(
     )
 }
 
+/// The effective Redis replay pool, stated at startup beside the tier it serves.
+#[cfg(feature = "redis_replay")]
+fn pool_audit_line(pool: ReplayRedisPoolSize) -> String {
+    format!(
+        "replay redis pool = {} connections (--replay-redis-pool-size; default {})",
+        pool.get(),
+        ReplayRedisPoolSize::DEFAULT.get()
+    )
+}
+
 /// What connecting the Redis store needs, read off the plan before anything is contacted:
-/// the control runtime's handle, the clock held back by the declared divergence, and the
-/// declared `WAIT` quorum. Separate from the connect so the runtime and the quorum are
+/// the control runtime's handle, the clock held back by the declared divergence, the
+/// declared `WAIT` quorum, and the pool size. Separate from the connect so each is
 /// assertable in the `redis_replay` lane without a live server.
 #[cfg(feature = "redis_replay")]
 struct RedisConnection {
     runtime: tokio::runtime::Handle,
     clock: crate::async_redis_store::UnixClock,
     wait_quorum: Option<(u32, u64)>,
+    pool: ReplayRedisPoolSize,
 }
 
 /// The handle is asked for HERE, by the arm whose plan selected Redis, so the store that
@@ -117,6 +133,7 @@ struct RedisConnection {
 #[cfg(feature = "redis_replay")]
 fn redis_connection(
     tier: &ReplayDurabilityTier,
+    pool: ReplayRedisPoolSize,
     freshness: crate::config_state::FreshnessWindow,
     control: &ControlRuntimeProvision,
 ) -> Result<RedisConnection, String> {
@@ -127,6 +144,7 @@ fn redis_connection(
             .replica_clock_divergence()
             .retention_clock(crate::async_redis_store::system_clock()),
         wait_quorum: tier.wait_quorum_params(),
+        pool,
     })
 }
 
@@ -167,11 +185,36 @@ mod tests {
         let control = crate::control_runtime::ControlRuntimeProvision::idle();
         let connection = super::redis_connection(
             plan.tier(),
+            crate::deployment_request::ReplayRedisPoolSize::DEFAULT,
             crate::config_state::test_support::freshness(60),
             &control,
         )
         .unwrap_or_else(|e| panic!("a planned redis tier connects on the control runtime: {e}"));
         assert_eq!(connection.wait_quorum, Some((1, 100)));
+    }
+
+    /// The pool the plan carries is the pool the store is connected with, and the startup
+    /// line states that effective size.
+    #[cfg(feature = "redis_replay")]
+    #[test]
+    fn the_redis_arm_connects_with_the_planned_pool_and_reports_it() {
+        let plan = crate::config_state::test_support::redis_replay_plan();
+        let control = crate::control_runtime::ControlRuntimeProvision::idle();
+        let pool = crate::deployment_request::ReplayRedisPoolSize::new(32).expect("in range");
+        let connection = super::redis_connection(
+            plan.tier(),
+            pool,
+            crate::config_state::test_support::freshness(60),
+            &control,
+        )
+        .unwrap_or_else(|e| panic!("a planned redis tier connects on the control runtime: {e}"));
+        assert_eq!(connection.pool, pool);
+        assert_eq!(connection.wait_quorum, Some((1, 100)));
+        let line = super::pool_audit_line(connection.pool);
+        assert!(
+            line.contains("replay redis pool = 32 connections"),
+            "{line}"
+        );
     }
 
     /// The Redis arm runs on the shared control runtime, and asking for it is what starts
@@ -183,6 +226,7 @@ mod tests {
         let mut control = crate::control_runtime::ControlRuntimeProvision::idle();
         let connection = super::redis_connection(
             plan.tier(),
+            crate::deployment_request::ReplayRedisPoolSize::DEFAULT,
             crate::config_state::test_support::freshness(60),
             &control,
         )

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Where admitted nonces live, and what durability the deployment claims for them.
 
-use super::{EtcdStoreRequest, RedisStoreRequest};
+use super::{EtcdStoreRequest, RedisStoreRequest, ReplayRedisPoolSize};
 use crate::replay_tier::ReplayDurabilityTier;
 
 /// The replay store this deployment asks for.
@@ -40,7 +40,15 @@ pub struct ReplayStorageRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReplayStoreRequest {
     /// A Redis store, which can serve the quorum-acknowledged tiers.
-    Redis(RedisStoreRequest),
+    Redis {
+        /// Where the store is.
+        store: RedisStoreRequest,
+        /// How many connections to hold open to it. `None` is the operator having said
+        /// nothing, resolved by the replay owner after provenance. It lives inside this
+        /// variant because only a Redis store has a pool: beside an etcd store it would
+        /// be a value with no effect.
+        pool_size: Option<ReplayRedisPoolSize>,
+    },
     /// A CP / linearizable store, which serves the linearizable tier.
     Etcd(EtcdStoreRequest),
 }
@@ -48,7 +56,15 @@ pub enum ReplayStoreRequest {
 impl ReplayStoreRequest {
     /// A Redis store at `url`.
     pub fn redis(url: impl Into<String>) -> Self {
-        ReplayStoreRequest::Redis(RedisStoreRequest { url: url.into() })
+        Self::redis_pooled(url, None)
+    }
+
+    /// A Redis store at `url`, held open over `pool_size` connections when one is given.
+    pub fn redis_pooled(url: impl Into<String>, pool_size: Option<ReplayRedisPoolSize>) -> Self {
+        ReplayStoreRequest::Redis {
+            store: RedisStoreRequest { url: url.into() },
+            pool_size,
+        }
     }
 
     /// A CP store at `endpoint`.
@@ -61,7 +77,7 @@ impl ReplayStoreRequest {
     /// The locator, whichever store this is.
     pub fn locator(&self) -> &str {
         match self {
-            ReplayStoreRequest::Redis(redis) => &redis.url,
+            ReplayStoreRequest::Redis { store, .. } => &store.url,
             ReplayStoreRequest::Etcd(etcd) => &etcd.endpoint,
         }
     }
@@ -70,7 +86,7 @@ impl ReplayStoreRequest {
     /// tell them which one they gave.
     pub fn flag(&self) -> &'static str {
         match self {
-            ReplayStoreRequest::Redis(_) => "--replay-redis-url",
+            ReplayStoreRequest::Redis { .. } => "--replay-redis-url",
             ReplayStoreRequest::Etcd(_) => "--cpstore-etcd-endpoint",
         }
     }
@@ -100,7 +116,10 @@ mod tests {
             store: Some(ReplayStoreRequest::redis("redis://h:6379")),
             replica_clock_divergence_secs: None,
         };
-        assert!(matches!(request.store, Some(ReplayStoreRequest::Redis(_))));
+        assert!(matches!(
+            request.store,
+            Some(ReplayStoreRequest::Redis { .. })
+        ));
         assert_eq!(request.durability, Some(ReplayDurabilityTier::Linearizable));
     }
 }

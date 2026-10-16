@@ -15111,3 +15111,68 @@ control = "vitest#test/smoke.test.ts > mcp-re-sdk smoke (built package) > expose
 decision = "new-proposition"
 proposition = "NP-012"
 recorded = "2026-10-13"
+
+[[proposition]]
+id = "NP-281"
+title = "A Redis replay pool size is bounded and sizes only a Redis replay store"
+carrier = "mcp-re-proxy/src/deployment_request/storage/replay_redis_pool_size.rs and mcp-re-proxy/src/cli/storage_flags.rs"
+likely_owner = ""
+consequence = "medium"
+root_relationship = "under THM-0077 — no deployment serves a posture nobody selected: a pool size is a value an operator states, and one stated beside no Redis store, or outside the admitted range, is refused rather than ignored or clamped"
+record = "docs/architecture/control-dispositions.md#np-281"
+
+[[disposition]]
+id = "CD-20489"
+project = "mcp-re-proxy"
+control = "src/lib.rs#deployment_request::storage::replay_redis_pool_size::tests::the_admitted_range_is_one_through_max"
+decision = "new-proposition"
+proposition = "NP-281"
+recorded = "2026-10-16"
+
+[[disposition]]
+id = "CD-20490"
+project = "mcp-re-proxy"
+control = "src/lib.rs#deployment_request::storage::replay_redis_pool_size::tests::the_default_is_the_eight_connection_pool"
+decision = "new-proposition"
+proposition = "NP-281"
+recorded = "2026-10-16"
+
+[[disposition]]
+id = "CD-20491"
+project = "mcp-re-proxy"
+control = "src/lib.rs#deployment_request::storage::replay_redis_pool_size::tests::parse_refuses_non_integers_and_out_of_range_values"
+decision = "new-proposition"
+proposition = "NP-281"
+recorded = "2026-10-16"
+
+[[disposition]]
+id = "CD-20492"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::storage_flags::tests::a_declared_replay_pool_size_travels_inside_the_redis_store"
+decision = "new-proposition"
+proposition = "NP-281"
+recorded = "2026-10-16"
+
+[[disposition]]
+id = "CD-20493"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::storage_flags::tests::a_replay_pool_size_without_a_redis_store_is_refused"
+decision = "new-proposition"
+proposition = "NP-281"
+recorded = "2026-10-16"
+
+[[disposition]]
+id = "CD-20494"
+project = "mcp-re-proxy"
+control = "src/lib.rs#startup_plan::tests::a_replay_pool_size_beside_the_cp_store_is_refused"
+decision = "new-proposition"
+proposition = "NP-281"
+recorded = "2026-10-16"
+
+[[disposition]]
+id = "CD-20495"
+project = "mcp-re-proxy"
+control = "tests/integration_ext/main.rs#redis_replay_e2e_test::a_maximal_pool_admits_each_nonce_exactly_once_under_concurrent_duplicates"
+decision = "new-proposition"
+proposition = "NP-150"
+recorded = "2026-10-16"

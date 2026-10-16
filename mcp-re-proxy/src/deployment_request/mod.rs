@@ -49,10 +49,8 @@ pub use revocation::{
     RevocationListRequest,
 };
 pub use secret_string::SecretString;
-pub use storage::{
-    ContinuationStoreRequest, EtcdStoreRequest, RedisStoreRequest, ReplayStorageRequest,
-    ReplayStoreRequest, SharedStoreRequest, TrustEpochSource, TrustEpochStoreRequest,
-};
+// `storage/mod.rs` states its public surface; this forwards it rather than restating it.
+pub use storage::*;
 
 pub use signing_source::{
     AwsKmsChannelKeyRequest, AwsKmsSigningSourceRequest, ChannelCredentialRequest,

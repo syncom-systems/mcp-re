@@ -195,6 +195,70 @@ fn single_node_fresh_then_replay() {
     );
 }
 
+/// The largest admitted replay pool admits a nonce exactly once. Concurrent inserts of
+/// ONE key spread round-robin over 128 connections must yield one `Fresh` and every other
+/// a `Replay`, and distinct keys must all be `Fresh`: which connection an insert takes
+/// never changes its decision, so `--replay-redis-pool-size` moves throughput and nothing
+/// the replay tier decides.
+#[test]
+fn a_maximal_pool_admits_each_nonce_exactly_once_under_concurrent_duplicates() {
+    let Some(url) = redis_url() else {
+        eprintln!(
+            "SKIP a_maximal_pool_admits_each_nonce_exactly_once_under_concurrent_duplicates: \
+             MCP_RE_TEST_REDIS_URL unset (no Redis available in this environment)"
+        );
+        return;
+    };
+    let signer = &format!("did:example:host#pooled-exactly-once-{}", run_id());
+    let rt = runtime();
+    let store = std::sync::Arc::new(
+        rt.block_on(RedisAsyncAtomicReplayStore::connect_pooled(
+            &url,
+            mcp_re_proxy::async_redis_store::system_clock(),
+            None,
+            128,
+        ))
+        .expect("connect a 128-connection pool to MCP_RE_TEST_REDIS_URL Redis"),
+    );
+    let retain_until = expires_soon();
+    let duplicate = composite_key(signer, AUD, &mcp_re_test_paths::unique_test_nonce());
+    let distinct =
+        (0..256).map(|_| composite_key(signer, AUD, &mcp_re_test_paths::unique_test_nonce()));
+    let concurrently = |keys: Vec<String>| {
+        rt.block_on(async {
+            let mut set = tokio::task::JoinSet::new();
+            for key in keys {
+                let store = std::sync::Arc::clone(&store);
+                set.spawn(async move {
+                    let insert = ReplayInsert::new(&key, TEST_ACTOR, retain_until, 0);
+                    store.atomic_insert_if_absent(insert).await
+                });
+            }
+            set.join_all().await
+        })
+    };
+    let dup = concurrently(vec![duplicate; 256]);
+    let fresh = concurrently(distinct.collect());
+    let count = |rs: &[Result<ReplayDecision, ReplayStoreError>], d: &ReplayDecision| {
+        rs.iter().filter(|r| r.as_ref().ok() == Some(d)).count()
+    };
+    assert_eq!(
+        count(&dup, &ReplayDecision::Fresh),
+        1,
+        "one key is admitted once"
+    );
+    assert_eq!(
+        count(&dup, &ReplayDecision::Replay),
+        255,
+        "every other sight is a replay"
+    );
+    assert_eq!(
+        count(&fresh, &ReplayDecision::Fresh),
+        256,
+        "distinct nonces are all fresh"
+    );
+}
+
 /// MCPS-090 / H-8 / H-9 — live PTTL confirmation that the inserted key gets a
 /// BOUNDED `retain_until - now` window TTL, NOT the `now = 0` absolute-epoch TTL
 /// (~1.78e9 s × 1000 ≈ 56 years) that let the keyspace grow without bound.

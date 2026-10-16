@@ -28,11 +28,13 @@
 //! another's was meant.
 
 mod continuation_storage;
+mod replay_redis_pool_size;
 mod replay_storage;
 mod shared_store;
 mod trust_epoch_storage;
 
 pub use continuation_storage::ContinuationStoreRequest;
+pub use replay_redis_pool_size::ReplayRedisPoolSize;
 pub use replay_storage::{ReplayStorageRequest, ReplayStoreRequest};
 pub use shared_store::{EtcdStoreRequest, RedisStoreRequest, SharedStoreRequest};
 pub use trust_epoch_storage::{TrustEpochSource, TrustEpochStoreRequest};

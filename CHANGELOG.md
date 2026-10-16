@@ -12,6 +12,16 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Added — `--replay-redis-pool-size`
+
+- The Redis replay store's connection pool is configurable: `--replay-redis-pool-size <n>`,
+  1..=128, default 8 (the size it had). Under `redis-wait-quorum`, each connection's `WAIT`
+  holds that connection until its replicas acknowledge, so the pool is how many admissions
+  can wait at once. The value travels inside the Redis replay-store request, is resolved by
+  the replay owner, and reaches `RedisAsyncAtomicReplayStore::connect_pooled`; the startup
+  transcript states the effective size. A pool with no `--replay-redis-url` is refused.
+  `SET NX PX`, `WAIT`, the durability tier and fail-closed handling are unchanged.
+
 ### Changed — the local gate's execution closure reaches no cloud
 
 - The fleet harness is split along the provider line: `docs/security/fleet-proofs-core.sh`

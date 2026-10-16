@@ -8173,7 +8173,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.redis_replay_establishment"
 class = "V0"
-description = "In a build carrying `redis_replay`, the Redis replay arm reads what connecting needs off the plan before contacting anything: it runs on the shared control runtime, which its own request starts, and connects the store in the `WAIT` quorum the plan declares, so the store that serves runs the fail-closed quorum tier the startup audit line advertises rather than plain `SET NX PX`. Says nothing about what the store does with the quorum once connected (the store's own protocol tests) or which tier a deployment may declare (the configuration owner)."
+description = "In a build carrying `redis_replay`, the Redis replay arm reads what connecting needs off the plan before contacting anything: it runs on the shared control runtime, which its own request starts, and connects the store in the `WAIT` quorum the plan declares, so the store that serves runs the fail-closed quorum tier the startup audit line advertises rather than plain `SET NX PX`; it connects with the pool size the plan carries and states that effective size at startup. Says nothing about what the store does with the quorum once connected (the store's own protocol tests) or which tier a deployment may declare (the configuration owner)."
 paths = [
   "mcp-re-proxy/src/replay_plane/mod.rs",
   "mcp-re-proxy/src/replay_plane/backends.rs",
@@ -8188,6 +8188,7 @@ evidence = [
 ]
 tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#replay_plane::backends::tests::the_redis_arm_connects_in_the_declared_wait_quorum",
+  "//mcp-re-proxy:proxy_ext_unit_test#replay_plane::backends::tests::the_redis_arm_connects_with_the_planned_pool_and_reports_it",
   "//mcp-re-proxy:proxy_ext_unit_test#replay_plane::backends::tests::the_redis_arm_runs_on_the_control_runtime_it_asked_for",
 ]
 
@@ -11626,7 +11627,7 @@ pilot = "lean-pilot"
 [[unit]]
 id = "proxy.replay_configuration_state"
 class = "V0"
-description = "WHICH SHARED REPLAY STORE THIS DEPLOYMENT NAMES, AND AT WHICH DURABILITY TIER: every legal state form is classified and accepted, each state names every locator it cannot start without and the feature that could establish it, and a shared store with no declared tier, a sub-strict tier, a wait-quorum tier that waits for no acknowledgement and no declared tier at all each name NO state. The tier is DERIVED from the variant rather than stored beside it, the planned store is the validated locator, and the withdrawn alias names its replacement rather than being reinterpreted. Says nothing about whether the named store can be reached, which is materialization's."
+description = "WHICH SHARED REPLAY STORE THIS DEPLOYMENT NAMES, AND AT WHICH DURABILITY TIER: every legal state form is classified and accepted, each state names every locator it cannot start without and the feature that could establish it, and a shared store with no declared tier, a sub-strict tier, a wait-quorum tier that waits for no acknowledgement and no declared tier at all each name NO state. The tier is DERIVED from the variant rather than stored beside it, the planned store is the validated locator, a declared Redis pool size reaches the plan and changes neither the store nor the tier, and the withdrawn alias names its replacement rather than being reinterpreted. Says nothing about whether the named store can be reached, which is materialization's."
 paths = ["mcp-re-proxy/src/config_state/replay.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -11636,6 +11637,7 @@ evidence = [
   "mutation://proxy/replay_configuration_state/wait_quorum_guards",
 ]
 tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::replay::tests::a_declared_pool_size_reaches_the_plan_and_changes_nothing_else",
   "//mcp-re-proxy:proxy_unit_test#config_state::replay::tests::a_locator_belonging_to_the_other_state_is_refused",
   "//mcp-re-proxy:proxy_unit_test#config_state::replay::tests::a_plan_pairs_each_store_with_the_only_tier_that_store_serves",
   "//mcp-re-proxy:proxy_unit_test#config_state::replay::tests::a_required_locator_that_names_no_store_is_refused",
@@ -12145,7 +12147,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.startup_plan_provenance"
 class = "V0"
-description = "A STARTUP PLAN CARRIES THE DECISION IT WAS HANDED, NOT ONE IT RE-DERIVED: the trust plan and the signing plan come from ONE producer that reads the issuer kid and the trust epoch once, and the signing plan cannot be given an epoch the trust plan does not hold, the continuation plan carries its own endpoint verbatim, the channel plan carries the classified custody and the credential window, the epoch plan normalises the key ONCE, the issuer kid in the minted credential is the one that was planned — falling back to the server key id only where the resolution reads it — the audience scope defaults to the response audience and is overridable, both consumers of the epoch hold ONE decision, each CRL posture is projected as its own variant, and the paths accessor answers which FILES rather than which posture. Says nothing about what planning REFUSES, which is `proxy.startup_plan_legality`'s, and nothing about whether any named endpoint can be reached, which is materialization's."
+description = "A STARTUP PLAN CARRIES THE DECISION IT WAS HANDED, NOT ONE IT RE-DERIVED: the trust plan and the signing plan come from ONE producer that reads the issuer kid and the trust epoch once, and the signing plan cannot be given an epoch the trust plan does not hold, the continuation plan carries its own endpoint verbatim, the replay plan carries the declared Redis pool size, the channel plan carries the classified custody and the credential window, the epoch plan normalises the key ONCE, the issuer kid in the minted credential is the one that was planned — falling back to the server key id only where the resolution reads it — the audience scope defaults to the response audience and is overridable, both consumers of the epoch hold ONE decision, each CRL posture is projected as its own variant, and the paths accessor answers which FILES rather than which posture. Says nothing about what planning REFUSES, which is `proxy.startup_plan_legality`'s, and nothing about whether any named endpoint can be reached, which is materialization's."
 paths = ["mcp-re-proxy/src/startup_plan.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -12155,6 +12157,7 @@ evidence = [
   "mutation://proxy/startup_plan_provenance/issuer_kid_is_the_planned_one",
 ]
 tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::a_declared_replay_pool_size_reaches_the_plan",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::both_consumers_of_the_epoch_hold_one_decision",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::each_crl_posture_is_projected_as_its_own_variant",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_audience_scope_defaults_to_the_response_audience_and_is_overridable",
