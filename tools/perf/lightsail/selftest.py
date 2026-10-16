@@ -241,7 +241,6 @@ def telemetry_case() -> None:
     """On Linux, the /proc sampler must produce attributable samples around real work."""
     if not os.path.isdir("/proc/self"):
         return
-    import time
     from telemetry import Telemetry, parse_pid_stat, parse_sockstat
     assert parse_pid_stat("1 (a b) S 0 0 0 0 0 0 0 0 7 0 50 25 0 0 0 0 4 0 0 0 300 0")["ticks"] == 75
     assert parse_sockstat("TCP: inuse 5 orphan 0 tw 12 alloc 9 mem 1\n")["tw"] == 12
@@ -249,10 +248,13 @@ def telemetry_case() -> None:
     assert parse_netstat("TcpExt: A ListenOverflows ListenDrops\nTcpExt: 1 7 9\n") == {"ListenOverflows": 7, "ListenDrops": 9}
     with tempfile.TemporaryDirectory() as tmp:
         tel = Telemetry(Path(tmp), os.cpu_count() or 1, require=False)
+        # The work runs in a CHILD, as every measured instrument does: CPU burned on this
+        # interpreter's own thread starves the sampler of the GIL, and on a host with a busy
+        # /proc not one sample completes inside the window.
         with tel:
-            end = time.time() + 2.5
-            while time.time() < end:
-                sum(i * i for i in range(10000))
+            subprocess.run([sys.executable, "-c",
+                            "import time\nend = time.time() + 2.5\nwhile time.time() < end: sum(i * i for i in range(10000))"],
+                           check=True)
         summary = tel.result
         assert summary["available"] and summary["samples"] >= 1, summary
         assert summary["host_busy_avg"] > 0 and "other" in summary["categories"], summary
