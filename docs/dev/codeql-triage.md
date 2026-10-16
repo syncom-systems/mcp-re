@@ -1,9 +1,7 @@
 # CodeQL triage — the recurring alert shapes and their standing verdicts
 
-CodeQL runs from [`.github/workflows/codeql.yml`](../../.github/workflows/codeql.yml)
-against [`.github/codeql/codeql-config.yml`](../../.github/codeql/codeql-config.yml):
-`push: main`, `merge_group`, and a weekly sweep, over the Rust code and the workflow
-files. Two Rust rules produce essentially all of this repo's alerts, and neither has ever
+CodeQL runs as GitHub's default setup (repository settings, no workflow file), over the
+Rust, Python, JavaScript/TypeScript code and the workflow files. Two Rust rules produce essentially all of this repo's alerts, and neither has ever
 produced a true positive here; the Actions analysis has produced one, and it was fixed.
 This page is the standing verdict so each new batch is triaged in one pass instead of
 re-derived.
