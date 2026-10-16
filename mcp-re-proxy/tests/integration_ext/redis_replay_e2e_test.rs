@@ -569,3 +569,79 @@ fn wait_quorum_shortfall_and_recovery_against_a_replica() {
 
     // Cleanup: leave the topology attached for any subsequent test in the lane.
 }
+
+/// The Amendment-1 shortfall on a POOLED store, without touching the topology: a quorum
+/// one above the replicas the primary has attached cannot be met, so every fresh insert
+/// spread round-robin over 32 connections fails closed as `Unavailable`, none is
+/// `Fresh`, and a same-nonce retry is not `Fresh` either. The control half — a quorum
+/// equal to the attached replicas on an identical pool admits — shows the shortfall is
+/// the only difference. A larger `--replay-redis-pool-size` adds connections that run
+/// the same tier; it gives an unmet quorum no connection to succeed on.
+#[test]
+fn a_pooled_store_fails_closed_on_every_connection_when_the_quorum_cannot_be_met() {
+    let Some(url) = redis_url() else {
+        eprintln!(
+            "SKIP a_pooled_store_fails_closed_on_every_connection_when_the_quorum_cannot_be_met: \
+             MCP_RE_TEST_REDIS_URL unset (no Redis available in this environment)"
+        );
+        return;
+    };
+    let attached = u32::try_from(primary_connected_slaves(&mut raw_conn(&url)).max(0))
+        .expect("a replica count fits u32");
+    let signer = &format!("did:example:host#pooled-shortfall-{}", run_id());
+    let rt = runtime();
+    let pooled = |quorum: u32| {
+        std::sync::Arc::new(
+            rt.block_on(RedisAsyncAtomicReplayStore::connect_pooled(
+                &url,
+                mcp_re_proxy::async_redis_store::system_clock(),
+                Some((quorum, 300)),
+                32,
+            ))
+            .expect("connect a 32-connection pool to MCP_RE_TEST_REDIS_URL Redis"),
+        )
+    };
+    let retain_until = expires_soon();
+    let concurrently = |store: &std::sync::Arc<RedisAsyncAtomicReplayStore>, keys: Vec<String>| {
+        rt.block_on(async {
+            let mut set = tokio::task::JoinSet::new();
+            for key in keys {
+                let store = std::sync::Arc::clone(store);
+                set.spawn(async move {
+                    let insert = ReplayInsert::new(&key, TEST_ACTOR, retain_until, 0);
+                    store.atomic_insert_if_absent(insert).await
+                });
+            }
+            set.join_all().await
+        })
+    };
+    let keys = |n| -> Vec<String> {
+        (0..n)
+            .map(|_| composite_key(signer, AUD, &mcp_re_test_paths::unique_test_nonce()))
+            .collect()
+    };
+
+    if attached > 0 {
+        let met = concurrently(&pooled(attached), keys(64));
+        assert!(
+            met.iter().all(|r| *r == Ok(ReplayDecision::Fresh)),
+            "a quorum of the {attached} attached replicas admits: {met:?}"
+        );
+    }
+
+    let unmet = pooled(attached + 1);
+    let shortfall_keys = keys(64);
+    let shortfall = concurrently(&unmet, shortfall_keys.clone());
+    assert!(
+        shortfall
+            .iter()
+            .all(|r| matches!(r, Err(ReplayStoreError::Unavailable { .. }))),
+        "WAIT {} against {attached} replicas fails closed on every connection: {shortfall:?}",
+        attached + 1
+    );
+    let retry = concurrently(&unmet, shortfall_keys);
+    assert!(
+        retry.iter().all(|r| *r != Ok(ReplayDecision::Fresh)),
+        "a nonce burned by a shortfall is never Fresh on retry: {retry:?}"
+    );
+}

@@ -15176,3 +15176,11 @@ control = "tests/integration_ext/main.rs#redis_replay_e2e_test::a_maximal_pool_a
 decision = "new-proposition"
 proposition = "NP-150"
 recorded = "2026-10-16"
+
+[[disposition]]
+id = "CD-20496"
+project = "mcp-re-proxy"
+control = "tests/integration_ext/main.rs#redis_replay_e2e_test::a_pooled_store_fails_closed_on_every_connection_when_the_quorum_cannot_be_met"
+decision = "new-proposition"
+proposition = "NP-150"
+recorded = "2026-10-16"
