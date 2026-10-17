@@ -1,0 +1,65 @@
+{
+  "evidence": {
+    "commit": "b234587c3f000ae4573a4a457cd46b2653fa85bc",
+    "run_id": "39060691189",
+    "source": "verification-run"
+  },
+  "kind": "release-assurance",
+  "producer": {
+    "run_attempt": "1",
+    "run_id": "39069087786",
+    "source": "actions",
+    "workflow_ref": "syncom-systems/mcp-re/.github/workflows/release.yml@refs/heads/main"
+  },
+  "recorded_at": "2026-10-17T21:04:16Z",
+  "root_completeness": "PASS",
+  "schema_version": 2,
+  "steps": [
+    {
+      "command": "python3 tools/verification/verify --aggregate --gate",
+      "establishes": "the evidence records in the store compose to a repository verdict",
+      "exit_status": 0,
+      "step": "evidence_composition",
+      "tail": "Composed from records in /home/runner/work/mcp-re/mcp-re/.verification/evidence; every required lane has one, at this fingerprint.",
+      "verdict": "PASS"
+    },
+    {
+      "command": "python3 tools/verification/attest",
+      "establishes": "each composed record becomes an attestation, at the fingerprint it was measured at",
+      "exit_status": 0,
+      "step": "freshness_issuance",
+      "tail": "attested http_profile.body_representability           94fbe4f2bea443fb  {'mutation': 'pass', 'test': 'pass'}",
+      "verdict": "PASS"
+    },
+    {
+      "command": "python3 tools/verification/check-assumptions",
+      "establishes": "every escape hatch and trusted premise is registered to a site",
+      "exit_status": 0,
+      "step": "trusted_premises",
+      "tail": "VERDICT: PASS",
+      "verdict": "PASS"
+    },
+    {
+      "command": "python3 tools/verification/review --require-root-complete",
+      "establishes": "every declared system root is established \u2014 the binding closure mode",
+      "exit_status": 0,
+      "step": "root_completeness",
+      "tail": "4 further unit(s) own a root AND one leaf claim \u2014 a consequence of `owner` being one field, not an undifferentiated unit: ['client.response_binding_disposition', 'http_profile.scitt_service_pin', 'proxy.exchange_relation', 'proxy.response_signing']",
+      "verdict": "PASS"
+    },
+    {
+      "command": "python3 scripts/claim_surface_gate.py",
+      "establishes": "every published claim is a declared root reviewed at its current fingerprint",
+      "exit_status": 0,
+      "step": "published_claims",
+      "tail": "claim-surface gate: OK \u2014 12 declared root(s), 12 published claim(s), 0 open \u00a74 area(s), 6 settled, every claimed root reviewed at its current fingerprint.",
+      "verdict": "PASS"
+    }
+  ],
+  "target": {
+    "commit": "4e3ffbb630ab49109a30961275217734a705a212",
+    "repository": "https://github.com/syncom-systems/mcp-re",
+    "tree": "4de286b3ec0703bdc524061a440dfc07d1c6fbf9"
+  },
+  "verdict": "PASS"
+}

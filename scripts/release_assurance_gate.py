@@ -96,6 +96,7 @@ BACKING: dict[str, str] = {
     "v0.16.0-provenance.md": "pre-mechanism",
     "v0.17.0-provenance.md": "pre-mechanism",
     "v0.18.0-provenance.md": "mechanized",
+    "v0.18.1-provenance.md": "mechanized",
 }
 
 #: The block a `mechanized` document carries, rendered from the record and never typed.
