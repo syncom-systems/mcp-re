@@ -256,6 +256,7 @@ _PROXY_LIB_SRCS = [
     "src/cli/storage_flags.rs",
     "src/deployment_request/storage/continuation_storage.rs",
     "src/deployment_request/storage/mod.rs",
+    "src/deployment_request/storage/replay_redis_pool_size.rs",
     "src/deployment_request/storage/replay_storage.rs",
     "src/deployment_request/storage/shared_store.rs",
     "src/deployment_request/storage/trust_epoch_storage.rs",

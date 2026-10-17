@@ -14,8 +14,8 @@
 
 use crate::deployment_request::ContinuationStoreRequest;
 use crate::deployment_request::{
-    ReplayStorageRequest, ReplayStoreRequest, SharedStoreRequest, TrustEpochSource,
-    TrustEpochStoreRequest,
+    ReplayRedisPoolSize, ReplayStorageRequest, ReplayStoreRequest, SharedStoreRequest,
+    TrustEpochSource, TrustEpochStoreRequest,
 };
 use crate::replay_tier::ReplayDurabilityTier;
 
@@ -23,6 +23,7 @@ use crate::replay_tier::ReplayDurabilityTier;
 #[derive(Default)]
 pub(super) struct StorageFlags {
     replay_redis_url: Option<String>,
+    replay_redis_pool_size: Option<ReplayRedisPoolSize>,
     cpstore_etcd_endpoint: Option<String>,
     durability: Option<ReplayDurabilityTier>,
     replica_clock_divergence_secs: Option<i64>,
@@ -45,6 +46,7 @@ impl StorageFlags {
         matches!(
             flag,
             "--replay-redis-url"
+                | "--replay-redis-pool-size"
                 | "--cpstore-etcd-endpoint"
                 | "--replay-durability-tier"
                 | "--replay-clock-divergence-secs"
@@ -60,6 +62,9 @@ impl StorageFlags {
         let held = || Some(value.to_string());
         match flag {
             "--replay-redis-url" => self.replay_redis_url = held(),
+            "--replay-redis-pool-size" => {
+                self.replay_redis_pool_size = Some(ReplayRedisPoolSize::parse(value)?)
+            }
             // #69: the CP / etcd endpoint for the LINEARIZABLE durability tier.
             "--cpstore-etcd-endpoint" => self.cpstore_etcd_endpoint = held(),
             "--replay-durability-tier" => {
@@ -88,6 +93,7 @@ impl StorageFlags {
                 self.replay_redis_url,
                 self.cpstore_etcd_endpoint,
                 self.replica_clock_divergence_secs,
+                self.replay_redis_pool_size,
             )?,
             continuation: ContinuationStoreRequest {
                 shared: shared(self.continuation_url),
@@ -116,12 +122,13 @@ fn max_live_entries(value: &str) -> Result<u64, String> {
 ///
 /// The two are independent: a deployment states a tier and states a store, and whether the
 /// store can deliver the tier is the configuration boundary's relation. What cannot be
-/// stated at all is two stores.
+/// stated at all is two stores, or a Redis pool with no Redis store to hold open.
 fn replay(
     durability: Option<ReplayDurabilityTier>,
     redis_url: Option<String>,
     etcd_endpoint: Option<String>,
     replica_clock_divergence_secs: Option<i64>,
+    redis_pool_size: Option<ReplayRedisPoolSize>,
 ) -> Result<ReplayStorageRequest, String> {
     let store = match (redis_url, etcd_endpoint) {
         (Some(_), Some(_)) => {
@@ -135,7 +142,15 @@ fn replay(
                     .to_string(),
             )
         }
-        (Some(url), None) => Some(ReplayStoreRequest::redis(url)),
+        (Some(url), None) => Some(ReplayStoreRequest::redis_pooled(url, redis_pool_size)),
+        (None, _) if redis_pool_size.is_some() => {
+            return Err(
+                "--replay-redis-pool-size sizes the Redis replay store's connection \
+                 pool, but no --replay-redis-url names one; give it beside \
+                 --replay-redis-url, or remove it"
+                    .to_string(),
+            )
+        }
         (None, Some(endpoint)) => Some(ReplayStoreRequest::etcd(endpoint)),
         (None, None) => None,
     };
@@ -187,6 +202,7 @@ mod tests {
             Some("redis://h:6379".to_string()),
             Some("http://h:2379".to_string()),
             None,
+            None,
         )
         .expect_err("one deployment, one replay store");
         assert!(err.contains("both name the replay store"), "{err}");
@@ -198,20 +214,70 @@ mod tests {
     #[test]
     fn either_replay_store_alone_and_neither_are_coherent() {
         let redis =
-            replay(None, Some("redis://h:6379".to_string()), None, None).expect("one store");
-        assert!(matches!(redis.store, Some(ReplayStoreRequest::Redis(_))));
-        let etcd = replay(None, None, Some("http://h:2379".to_string()), None).expect("one store");
+            replay(None, Some("redis://h:6379".to_string()), None, None, None).expect("one store");
+        assert!(matches!(
+            redis.store,
+            Some(ReplayStoreRequest::Redis { .. })
+        ));
+        let etcd =
+            replay(None, None, Some("http://h:2379".to_string()), None, None).expect("one store");
         assert!(matches!(etcd.store, Some(ReplayStoreRequest::Etcd(_))));
-        assert_eq!(replay(None, None, None, None).expect("none").store, None);
+        assert_eq!(
+            replay(None, None, None, None, None).expect("none").store,
+            None
+        );
+    }
+
+    /// A declared pool size travels inside the Redis store it sizes, and silence stays
+    /// silence for the replay owner to resolve.
+    #[test]
+    fn a_declared_replay_pool_size_travels_inside_the_redis_store() {
+        let mut flags = StorageFlags::default();
+        flags
+            .take("--replay-redis-url", "redis://h:6379")
+            .expect("a url");
+        flags
+            .take("--replay-redis-pool-size", "32")
+            .expect("in range");
+        let said = flags.finish().expect("coherent").replay.store;
+        let expected = ReplayRedisPoolSize::new(32).expect("in range");
+        assert_eq!(
+            said,
+            Some(ReplayStoreRequest::redis_pooled(
+                "redis://h:6379",
+                Some(expected)
+            ))
+        );
+        let silent = replay(None, Some("redis://h:6379".to_string()), None, None, None)
+            .expect("one store")
+            .store;
+        assert_eq!(silent, Some(ReplayStoreRequest::redis("redis://h:6379")));
+    }
+
+    /// A pool with no Redis store to hold open is refused, whether nothing or etcd is the
+    /// store; an out-of-range size is refused as it is read.
+    #[test]
+    fn a_replay_pool_size_without_a_redis_store_is_refused() {
+        let pool = Some(ReplayRedisPoolSize::DEFAULT);
+        for etcd in [None, Some("http://h:2379".to_string())] {
+            let err = replay(None, None, etcd, None, pool).expect_err("no redis store");
+            assert!(err.contains("--replay-redis-pool-size"), "{err}");
+        }
+        for bad in ["0", "129", "many"] {
+            let err = StorageFlags::default()
+                .take("--replay-redis-pool-size", bad)
+                .expect_err("refused at parse");
+            assert!(err.contains("--replay-redis-pool-size must be"), "{err}");
+        }
     }
 
     /// The declared divergence travels in the request as stated, and saying nothing stays
     /// nothing: the default is the replay owner's to apply after provenance.
     #[test]
     fn a_declared_replica_clock_divergence_keeps_its_provenance() {
-        let said = replay(None, None, None, Some(9)).expect("coherent");
+        let said = replay(None, None, None, Some(9), None).expect("coherent");
         assert_eq!(said.replica_clock_divergence_secs, Some(9));
-        let silent = replay(None, None, None, None).expect("coherent");
+        let silent = replay(None, None, None, None, None).expect("coherent");
         assert_eq!(silent.replica_clock_divergence_secs, None);
     }
 

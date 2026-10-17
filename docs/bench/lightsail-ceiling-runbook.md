@@ -89,6 +89,38 @@ the other way: generators are capped at **12** (each step ≥ 8.3%) and the **co
 generator climb 256 → 512 → 1024 → 2048** (requests scaled to keep 156.25 per connection)
 until the rig says PROXY. A point still CLIENT at the top rung is a floor.
 
+**A rung is evidence only if every step of it was served.** The rig climbs M → M+1 inside one
+proxy process and keeps the better row; a probe step whose generators hit errors comes out
+slower, and the rig reads that collapse as saturation. The harness therefore records a rung as
+**INVALID** — never PROXY or CLIENT, never a median, best or curve point — when the rig log
+carries any `generator error:`, the row counts any failure, or the primary's `SET` count read
+immediately before and after the rung differs from what the rig's steps sent.
+
+**The per-signer retention bound.** Every rig generator signs as one actor, and one proxy
+process admits at most 800,000 fresh nonces from one actor while they are retained
+(`mcp-re-proxy/src/async_replay/bounds.rs`); the 800,001st is refused fail-closed with
+`mcp-re.replay_cache_unavailable`. That bound is a security control and is not relaxed for a
+measurement. The harness caps the requests per generator so that a rung climbing every step to
+`--gen-cap` stays under 95% of it, and records the cap per rung
+(`requests_capped_by_signer_budget`). Pick `--gen-cap` and `--requests-per-connection` so the
+cap does not bind: at `--gen-cap 5` a generator may send 54,285 requests (200 per connection at
+256 connections).
+
+**Isolating the replay path (`--isolate-replay-path`).** The proxy pins each serving shard's
+thread to the absolute CPU `core_index % online_cpus`, overriding any mask it was started
+under, and its control runtime (`mcp-re-control`, which drives the replay store's Redis
+connections) is a thread of the same process — so a launch-time `taskset` cannot isolate
+either. `isolation.py` reads the physical-core layout from sysfs (`thread_siblings_list`;
+logical numbers are not assumed to be independent cores), reserves the two highest-numbered
+physical cores — the Redis primary on one, the control thread on the other, each on one
+logical CPU with its SMT sibling idle — and confines the harness, the replicas, the
+instruments and every other proxy thread to the remaining CPUs. Each proxy launch runs
+`isolation.py enforce` beside the proxy, which moves the control thread and any shard pinned
+to a reserved CPU, and logs every move and a settled snapshot of every thread's mask
+(`<startup log>.affinity.jsonl`); `affinity.json` in the run's Redis directory records the tier's masks, and the
+telemetry records the CPU each watched thread last ran on and per-CPU busy. No product
+setting changes.
+
 Sweeps, in order:
 
 1. **scaling, cold** — N ∈ {1, 2, 4, 8, 16, 24, 32}, `WORKERS_PER_SHARD=1`. Authoritative.
@@ -108,6 +140,21 @@ sampler attributing CPU cores, RSS, major faults and threads to proxy / client /
 Redis (and the hottest single Redis process), with host busy, steal, iowait, context
 switches, run queue, load, TIME_WAIT. Summaries are computed over the measurement windows
 only. `perf` is used only in the diagnostic pass, after the authoritative numbers exist.
+
+For a replay-tier question the same 4 Hz pass also records, as raw timestamped samples a
+step can be cut out of:
+
+- **per-thread schedstat** (CPU time and run-queue delay) for the proxy's control runtime
+  (`mcp-re-control`, which drives the Redis connections), its serving threads, its other
+  threads, and each Redis process by role (primary, replica-1, replica-2) — `watch` in
+  `proc-samples.jsonl`;
+- **the store's connections from the primary**: connections in `SET`/`WAIT`, how many are
+  blocked in `WAIT`, their queued bytes, and from `INFO replication` each replica's
+  unacknowledged bytes and ack age — `redis-queue.jsonl`;
+- with `--stage-timers`, **the proxy's own stage timers** (`MCP_RE_STAGE_TIMERS`, one file per
+  rung, which the proxy creates): the pipelined `SET`+`WAIT` round trip as the proxy sees it,
+  scheduler latency and replay calls in flight — `stage-timers.jsonl`. They add a few atomic
+  operations per request, so a run states whether they were on.
 
 ## 7. Predeclared rules — how a curve is described and a plateau attributed
 
@@ -164,7 +211,7 @@ are then checked by a separate emulated x86_64 container through `bazel build --
 ## 10. The execution packet (each numbered step needs the owner's GO; none has run)
 
 Variables: `RUN_ID=lightsail-ceiling-<UTC stamp>`, `REGION=eu-north-1`, `AZ=eu-north-1a`,
-`NAME=mcp-re-ceiling-$RUN_ID`, `OP=<operator-ip>/32`, `W=work/lightsail/$RUN_ID`.
+`NAME=mcp-re-ceiling-$RUN_ID`, `OPS=<approved-ip>/32[,<approved-ip>/32...]`, `W=work/lightsail/$RUN_ID`.
 
 **0 — local, no cloud.**
 ```sh
@@ -174,8 +221,26 @@ read -r KTYPE KB64 _ < "$W/ssh/id_ed25519.pub"
 python3 tools/cloud/render_cloud_config.py --template tools/perf/lightsail/cloud/user-data.sh \
   --run-id "$RUN_ID" --set SSH_KEY_TYPE="$KTYPE" --set SSH_KEY_B64="$KB64" --set RUN_ID="$RUN_ID"
 python3 tools/cloud/render_cloud_config.py --template tools/perf/lightsail/cloud/firewall.json \
-  --run-id "$RUN_ID" --set OPERATOR_CIDR="$OP"
+  --run-id "$RUN_ID" --set OPERATOR_CIDRS="$OPS"
 ```
+
+**SSH is reachable only from approved source addresses — always.** `$OPS` lists every public
+IPv4 address the operator's traffic leaves from, each as a `/32`, comma-separated. One network
+can present more than one: the 2026-10-16 pool run's operator alternated between two. Find them
+before rendering, from several services and over a minute or two, and approve each one seen:
+
+```sh
+for i in $(seq 1 12); do for u in https://api.ipify.org https://checkip.amazonaws.com https://ifconfig.me; do
+  curl -4 -fsS --max-time 5 "$u"; echo; done; sleep 10; done | sort -u
+```
+
+The renderer refuses a range, a duplicate, or anything open to the world; the instance's ports
+are set ONLY from a rendered file (`--cli-input-json file://…`), never with inline
+`--port-infos`, and **never opened to `0.0.0.0/0` or `::/0`, not even briefly to diagnose**. If
+SSH stops connecting, re-run the address check: a new address is approved by rendering a new
+firewall file under a new run id (`$RUN_ID-fw2`, the old one is never overwritten) and applying
+it. Use ONE multiplexed SSH connection for the whole run (`-o ControlMaster=auto -o
+ControlPersist=yes -o ControlPath=<path under 104 bytes>`), so polling opens no new connections.
 
 **1 — read-only discovery (GO).** Confirms the account and resolves the exact bundle; the
 bundle is chosen by its facts, never by a guessed id.
@@ -201,7 +266,7 @@ aws lightsail put-instance-public-ports --region "$REGION" --instance-name "$NAM
 aws lightsail get-instance --region "$REGION" --instance-name "$NAME" \
   --query 'instance.[state.name,publicIpAddress,hardware.cpuCount,hardware.ramSizeInGb,networking.ports]'
 ```
-The firewall replaces Lightsail's default open ports with TCP 22 from `$OP` only. Lightsail
+The firewall replaces Lightsail's default open ports with TCP 22 from the approved `$OPS` only. Lightsail
 applies no rule at create time, so the default (22 and 80 open) exists for the seconds
 between `create-instances` and `put-instance-public-ports`; nothing listens on 80 and SSH
 accepts only the run's key.
@@ -228,6 +293,11 @@ mirror and the x86_64 toolchain downloads.
 $SSH "tmux new -d -s ceiling 'bash /srv/mcp-re/tooling/tools/perf/lightsail/run_campaign.sh $RUN_ID $BUNDLE'"
 $SSH "tail -n 5 /srv/mcp-re/runs/$RUN_ID/logs/campaign.log"        # progress, polled
 ```
+A replay-pool run states the pool in `CAMPAIGN_ARGS`, one pool per run directory:
+`tmux new -d -s ceiling 'CAMPAIGN_ARGS="--replay-redis-pool-size 32" bash /srv/mcp-re/tooling/tools/perf/lightsail/run_campaign.sh $RUN_ID $BUNDLE'`.
+Every proxy start then goes through `launchers/*.sh`, the smoke stops the run unless both
+proxies state that pool, and each point's `point.json` carries `redis_queue` (the store's
+connections, blocked in `WAIT`, queued bytes, from the primary).
 Diagnostic pass only after `summary.json` exists, on the configuration the summary flags:
 `python3 /srv/mcp-re/tooling/tools/perf/lightsail/ceiling.py diagnose /srv/mcp-re/runs/$RUN_ID --bin-dir /srv/mcp-re/bin --cores <N> --window 30`
 — `perf record -g -p <proxy>` attached for the window while the rig runs unmodified (the
@@ -264,3 +334,16 @@ aws lightsail get-container-services --region "$REGION" --query 'containerServic
 and teardown minutes) ≈ $8 at $1.21/h. Hard ceiling: 12 h of instance lifetime ≈ $15; past 10 h
 the campaign is stopped, partial results are downloaded and the instance is deleted. Transfer
 (a few hundred MB out) is inside the bundle's allowance. Expected maximum: **$20**.
+
+## 11. Security observations (test environment)
+
+**2026-10-16, pool run `lightsail-pool-20261016T153301Z`, instance 1.** While diagnosing an SSH
+timeout, port 22 of the first instance was opened to `0.0.0.0/0` for about 90 seconds
+(Lightsail operations at 15:45:34Z and 15:47:01Z) and port 80 to the operator's address for a
+few minutes; the cause turned out to be a second operator egress address the firewall did not
+list. The instance was a fresh Ubuntu 24.04 build host with no product data, SSH key
+authentication only, and was deleted at 16:09:04Z. Its authentication log was not captured
+before deletion, so access during the window can be neither confirmed nor excluded; nothing
+indicates a compromise, and none is assumed. The procedure in §10 (approved sources only,
+ports from rendered files only, never a global range) is the response.
+

@@ -10,7 +10,7 @@ replicaCount: 3
 image:
   repository: mcp-re-proxy
   # Pin to a digest in production; a tag is shown here for readability.
-  tag: "0.18.0"
+  tag: "0.18.1"
   pullPolicy: IfNotPresent
 
 # The port the proxy binds (mTLS/MCP-RE over TLS). The Service and the tcpSocket
@@ -73,6 +73,13 @@ replay:
   # being accepted. Unset leaves the proxy's own default (5s). The bound is a premise about
   # the fleet's clock discipline: set it no lower than that discipline delivers.
   clockDivergenceSecs: null
+  # How many connections each replica's replay store holds open to `redisUrl` (1..=128).
+  # Under a `redis-wait-quorum` tier Redis does not run a connection's next command while
+  # it is blocked in WAIT, so this bounds how many admissions per replica can wait for
+  # replica acknowledgements at once. A sizing value only: every connection runs the same
+  # SET NX PX and WAIT. Each is a client on the primary, so the primary serves up to
+  # replicaCount x poolSize replay clients. Unset leaves the proxy's own default (8).
+  poolSize: null
 
 # MRTR continuation correlation (ADR-MCPS-047). The shared store that lets a
 # multi-round-trip answer leg be honoured by a DIFFERENT replica than the one that

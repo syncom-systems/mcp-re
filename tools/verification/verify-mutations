@@ -185,10 +185,7 @@ def adjudicate(probe: dict, observed: dict[str, str]) -> tuple[list[str], list[s
 #: DELETED by the weakening read as red, so a probe could be satisfied by removing its own
 #: control. Absent is not red. This is that rule for the three test runners.
 _DID_NOT_BUILD = {
-    # Bazel reports a crate that failed to compile as an action failure, and a build that
-    # stopped before the test ran as one that did not complete. A test that FAILED reports
-    # neither: it compiled, ran and objected.
-    RUST: ("error[E", "Build did NOT complete successfully"),
+    # Rust is not read from text at all — see `_BAZEL_BUILT`.
     # pytest reports an import or collection failure before any test runs. Both spellings
     # appear: `ERROR collecting` for a module that raised on import, and `INTERNALERROR`
     # when the failure is in the plugin/conftest layer.
@@ -199,13 +196,41 @@ _DID_NOT_BUILD = {
 }
 
 
-_RUST_COMPILE_FAILED = re.compile(r"^ERROR: .* Compiling Rust .* failed", re.MULTILINE)
+#: The Bazel exit statuses of a `bazel test` whose build COMPLETED and ran the battery: 0
+#: (every test passed), 3 (a test failed — the red this lane exists to see) and 4 (built,
+#: but nothing was selected, which the adjudicator then reports as controls that never ran).
+#: Every other status is a battery that did not run: 1 is a failed build, and the rest — an
+#: interrupted command, a cache eviction Bazel's own retries did not get past, an internal
+#: error — are infrastructure. Neither measured the weakening.
+#:
+#: THE STATUS, NOT THE TEXT. One `bazel test` can contain several build attempts: with a
+#: remote cache, Bazel abandons an attempt whose cached inputs were evicted and restarts the
+#: build inside the same command (`--experimental_remote_cache_eviction_retries`). The
+#: abandoned attempt leaves `ERROR: ... Compiling Rust ... failed` and `Build did NOT
+#: complete successfully` in the output of a command that then built the weakened tree and
+#: ran its controls, so any line-matching rule reads a probe whose control went red as a
+#: tree that did not compile. The final status is the one statement about the whole command.
+_BAZEL_BUILT = (0, 3, 4)
+
+#: The lines worth keeping from a battery that did not run, so the record names the cause.
+_BUILD_FAILURE_LINE = re.compile(r"^(ERROR: |error\[E)", re.MULTILINE)
 
 
-def _did_not_build(eco, text: str) -> bool:
-    if eco is RUST and _RUST_COMPILE_FAILED.search(text):
-        return True
+def _did_not_build(eco, text: str, returncode: int) -> bool:
+    if eco is RUST:
+        return returncode not in _BAZEL_BUILT
     return any(marker in text for marker in _DID_NOT_BUILD.get(eco, ()))
+
+
+def _build_failure(text: str, returncode: int) -> str:
+    """The runner's exit status and its last few error lines: what a reader needs to tell a
+    weakening that broke the build from an environment that could not run one."""
+    lines = [
+        line.strip()[:300]
+        for line in text.splitlines()
+        if _BUILD_FAILURE_LINE.match(line)
+    ]
+    return "; ".join([f"exit {returncode}", *lines[-3:]])
 
 
 def probe_runtime(eco, toolchains: dict) -> tuple[str | None, str | None]:
@@ -391,7 +416,8 @@ def run_battery(
     """Every declared member's reported result, across the unit's targets.
 
     Returns (ran, results). `ran` is False when the weakened tree failed to BUILD -- see
-    `_DID_NOT_BUILD`, which is what keeps a broken tree from reading as a satisfied probe.
+    `_BAZEL_BUILT` and `_DID_NOT_BUILD`, which keep a broken tree from reading as a
+    satisfied probe -- and the runner's own account of why is printed for the record.
 
     THE COMMAND AND THE REPORT SYNTAX ARE THE ECOSYSTEM'S; the rule applied to the result
     is this lane's. `verify-tests` already resolves both through `_ecosystems`, so a probe
@@ -454,7 +480,8 @@ def run_battery(
             argv, cwd=cwd, capture_output=True, text=True, env=env
         )
         combined = proc.stdout + proc.stderr
-        if _did_not_build(eco, combined):
+        if _did_not_build(eco, combined, proc.returncode):
+            print(f"    {target}: {_build_failure(combined, proc.returncode)}", file=sys.stderr)
             return False, results
         if eco is TYPESCRIPT:
             # THE RESULTS ARE IN THE FILE THE RUNNER WAS TOLD TO WRITE, not in stdout.

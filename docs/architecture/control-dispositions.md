@@ -5003,3 +5003,15 @@ this one covers request signers too. No theorem depends on it.
 **Root relationship.** THM-0012 (the recorded terminal state implies every event of the path was applied, in order).
 **Severity:** `medium`.
 **Recorded:** 2026-10-13, MCPRE-195.
+
+
+## NP-281 — a Redis replay pool size is bounded and sizes only a Redis replay store
+
+**Controls:** `deployment_request::storage::replay_redis_pool_size::tests::{the_admitted_range_is_one_through_max, the_default_is_the_eight_connection_pool, parse_refuses_non_integers_and_out_of_range_values}`; `cli::storage_flags::tests::{a_declared_replay_pool_size_travels_inside_the_redis_store, a_replay_pool_size_without_a_redis_store_is_refused}`; `startup_plan::tests::a_replay_pool_size_beside_the_cp_store_is_refused`.
+**Carrier:** `mcp-re-proxy/src/deployment_request/storage/replay_redis_pool_size.rs` — `ReplayRedisPoolSize::{new, parse}`; `mcp-re-proxy/src/cli/storage_flags.rs` — `replay`.
+**Statement.** *`--replay-redis-pool-size` is admitted only as an integer in `1..=128`, defaults to 8 when unstated, travels inside the Redis replay-store request it sizes, and is refused when no `--replay-redis-url` names a Redis store — including beside the CP store.*
+**If false.** An out-of-range value would be clamped or wrap rather than refused, so a deployment would run a pool its operator did not state; or a pool stated beside the etcd store would be accepted and silently ignored, so the transcript would describe a sizing that does not exist. Neither changes a replay decision — every connection runs the same `SET NX PX` and `WAIT` — which is why the consequence is `medium`.
+**Likely owner:** none yet; the request vocabulary has no `tested` unit of its own.
+**Root relationship.** THM-0077 (no deployment serves a posture nobody selected).
+**Severity:** `medium`.
+**Recorded:** 2026-10-16, v0.18.1 replay pool configurability.

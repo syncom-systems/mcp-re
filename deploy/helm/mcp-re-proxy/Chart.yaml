@@ -8,9 +8,9 @@ description: >-
   docs/fleet-deployment-guide.md.
 type: application
 # Chart version is independent of the app; bump on chart changes.
-version: 0.1.5
+version: 0.1.6
 # The mcp-re-proxy release this reference targets.
-appVersion: "0.18.0"
+appVersion: "0.18.1"
 keywords:
   - mcp
   - mcp-s

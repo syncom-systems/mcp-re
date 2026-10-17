@@ -103,7 +103,7 @@ def main(argv: list[str]) -> int:
 
 GOOD = {
     "JOB": "slo-kindlocal-1c", "NODE_LABEL": "", "REDIS_IMG": "redis:7-alpine",
-    "BENCH_IMG": "mcp-re-slo-bench:0.18.0", "PULL_POLICY": "Never", "HW": "kind-local",
+    "BENCH_IMG": "mcp-re-slo-bench:0.18.1", "PULL_POLICY": "Never", "HW": "kind-local",
     "CORES": "1", "WORKERS_PER_SHARD": "1", "CONCURRENCY": "128", "REQUESTS": "8000",
     "CPU_REQUEST": "1", "MEM_REQUEST": "512Mi",
 }

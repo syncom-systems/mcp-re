@@ -171,12 +171,45 @@ not start — absence is a refusal, not a fall back to something weaker.
 | `--replay-durability-tier redis-wait-quorum:<quorum>:<timeout_ms>` | Redis `SET NX` + `WAIT`. Requires `--replay-redis-url`. `quorum` ≥ 1; `timeout_ms` in 1..=30000 — a larger value is refused, not clamped, since admission awaits the `WAIT`. |
 | `--replay-durability-tier linearizable` | A CP / linearizable store. Requires `--cpstore-etcd-endpoint`. |
 | `--replay-redis-url <url>` | Where admitted nonces live, for a Redis tier. Refused beside a linearizable tier. |
+| `--replay-redis-pool-size <n>` | How many connections the Redis replay store holds open, 1..=128 (default 8). Each connection runs the same `SET NX PX` and `WAIT`; the pool bounds how many admissions can be waiting on `WAIT` at once. Refused without `--replay-redis-url`. The effective size is printed at startup. |
 | `--cpstore-etcd-endpoint <url>` | The CP store's endpoint. Refused without a linearizable tier. |
 | `--replay-clock-divergence-secs <n>` | How far two replicas' clocks may disagree, 0..=300 seconds (default 5). Every replay record is kept this much longer than the verifier's window, because the store expires a record on the writing replica's clock. |
 
 The two weaker tiers (`redis-async`, `single-store-fail-closed`) parse but are refused as
 deployment states: they carry a replay window the strict production posture does not
 accept.
+
+#### Sizing the Redis replay pool
+
+Under `redis-wait-quorum`, a replay-store connection runs one pipelined `SET NX PX` + `WAIT`
+at a time and stays blocked until the quorum of replicas acknowledges; admissions on the same
+connection queue behind it. The pool size is therefore how many admissions can be waiting for
+acknowledgements at once. It changes nothing else: the same commands, the same durability tier,
+and the same fail-closed refusal (`mcp-re.replay_cache_unavailable`) when a `WAIT` returns fewer
+acknowledgements than the quorum or times out.
+
+- **Default: 8**, unchanged from earlier releases. Omitting the flag (or leaving the Helm value
+  `replay.poolSize` unset) keeps it.
+- **Range: 1..=128.** A value outside it, or a pool with no `--replay-redis-url`, is refused at
+  startup. The startup transcript states the effective size
+  (`replay redis pool = <n> connections`).
+- **Helm:** `replay.poolSize: <n>` renders `--replay-redis-pool-size <n>`.
+- **Redis clients:** every connection is a client on the primary, so a deployment opens
+  `replicas x pool` replay connections; check the primary's `maxclients` (default 10000).
+
+**When a larger pool helps.** Measured on one 32-vCPU host (proxy, load and Redis primary + 2
+replicas co-located; [`docs/bench/replay-pool-size-2026-10-16.md`](bench/replay-pool-size-2026-10-16.md)),
+the default 8 connections were all blocked in `WAIT` almost continuously at 16-32 serving cores.
+Pool 32 raised keep-alive throughput by 38-48% at 24 serving cores and 17-32% at 32; pool 64
+added a further 6% and 13%, with each connection's `SET`+`WAIT` cycle nearly doubling — diminishing
+returns. Pool size made no difference to cold-connection (fresh handshake per request) workloads,
+which are bound by the TLS handshake, nor at 16 cores where the proxy was CPU-bound.
+
+To decide for a deployment, read the primary's `CLIENT LIST` under load: if nearly all of the
+proxy's replay connections show the `b` (blocked) flag with bytes queued (`qbuf`), admissions are
+waiting for connections and a larger pool can help; if few are blocked, it will not. On a host
+that also runs Redis, CPU scheduling of the Redis primary can limit throughput regardless of pool
+size ([`docs/bench/replay-path-cpu-scheduling-2026-10-16.md`](bench/replay-path-cpu-scheduling-2026-10-16.md)).
 
 ### Evidence retention / transparency (ADR-MCPRE-054)
 

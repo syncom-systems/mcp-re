@@ -194,8 +194,10 @@ impl RedisAsyncAtomicReplayStore {
     /// Each request costs two Redis round trips, and one connection sustains roughly
     /// 29k ops/s, so a pool of this size puts the replay path an order of magnitude
     /// above the proxy's own measured per-request CPU cost — far enough that the next
-    /// ceiling is something else, which is the point.
-    pub const DEFAULT_POOL_SIZE: usize = 8;
+    /// ceiling is something else, which is the point. The value is the deployment
+    /// default for `--replay-redis-pool-size`, read from the one place it is stated.
+    pub const DEFAULT_POOL_SIZE: usize =
+        crate::deployment_request::ReplayRedisPoolSize::DEFAULT.get();
 
     /// Refuse to serve on a Redis that may drop a replay record before its TTL.
     ///

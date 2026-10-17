@@ -526,7 +526,9 @@ def test_every_ecosystem_can_say_the_tree_did_not_build():
     state would parse as zero results and then as controls that never ran -- which the
     adjudicator reports as a MEASUREMENT FAILURE, so it is not a false green, but it makes
     every probe over that ecosystem permanently unmeasurable."""
-    for eco in (lane.RUST, lane.PYTHON, lane.TYPESCRIPT):
+    assert lane._BAZEL_BUILT, "RUST names no exit status for a build that completed"
+    assert 1 not in lane._BAZEL_BUILT, "Bazel's failed-build status read as a completed build"
+    for eco in (lane.PYTHON, lane.TYPESCRIPT):
         assert lane._DID_NOT_BUILD.get(eco), f"{eco.name} names no did-not-build marker"
 
 
@@ -535,19 +537,20 @@ def test_a_tree_that_did_not_build_is_not_red_in_any_ecosystem():
     probe would be satisfied by BREAKING the tree rather than by weakening the property,
     and the redness would measure the compiler instead of the claim. Same rule, same
     reason, as a gate control that the weakening DELETED."""
-    for eco, marker in (
-        (lane.RUST, "error[E0432]: unresolved import"),
+    for eco, marker, status in (
+        (lane.RUST, "error[E0432]: unresolved import", 1),
         (
             lane.RUST,
             "ERROR: /t/mcp-re-core/BUILD.bazel:8:16: Compiling Rust rlib mcp_re_core (31 files) "
             "failed: (Exit 1): process_wrapper failed",
+            1,
         ),
-        (lane.RUST, "ERROR: Build did NOT complete successfully"),
-        (lane.PYTHON, "ERROR collecting tests/test_mtls.py"),
-        (lane.TYPESCRIPT, "Failed to load url ./transport"),
+        (lane.RUST, "ERROR: Build did NOT complete successfully", 1),
+        (lane.PYTHON, "ERROR collecting tests/test_mtls.py", 2),
+        (lane.TYPESCRIPT, "Failed to load url ./transport", 1),
     ):
-        assert lane._did_not_build(eco, marker), eco.name
-        assert not lane._did_not_build(eco, "everything is fine"), eco.name
+        assert lane._did_not_build(eco, marker, status), eco.name
+        assert not lane._did_not_build(eco, "everything is fine", 0), eco.name
 
 
 def test_an_unreadable_report_is_not_red():
@@ -568,7 +571,21 @@ def test_a_failed_test_is_not_a_tree_that_did_not_build():
         "//mcp-re-core:mcp_re_core_test                 FAILED in 0.1s\n"
         "Executed 1 out of 1 test: 1 fails locally.\n"
     )
-    assert not lane._did_not_build(lane.RUST, failed_test)
+    assert not lane._did_not_build(lane.RUST, failed_test, 3)
+
+
+def test_a_rust_build_is_judged_by_bazels_exit_status_not_by_its_text():
+    """One `bazel test` can hold an abandoned build attempt and the one that replaced it, so
+    no line of its output is a statement about the whole command. Only the status is."""
+    abandoned = (
+        "ERROR: /t/external/redis/BUILD.bazel:15:13: Compiling Rust rlib redis v1.7.1 "
+        "(115 files) failed: Lost inputs no longer available remotely: libarc_swap.rlib\n"
+        "ERROR: Build did NOT complete successfully\n"
+    )
+    for status in (0, 3, 4):
+        assert not lane._did_not_build(lane.RUST, abandoned, status), status
+    for status in (1, 2, 8, 36, 37, 39):
+        assert lane._did_not_build(lane.RUST, "", status), status
 
 
 def test_every_rust_target_kind_runs_through_the_one_seam():
@@ -758,7 +775,7 @@ _CONTROL = "http_profile_serve::retention::outcome::tests::a_failed_completion_i
 _LABEL = "//mcp-re-proxy:proxy_unit_test"
 
 
-def _run_rust_battery(monkeypatch_run, stdout="", stderr="", logfile=None):
+def _run_rust_battery(monkeypatch_run, stdout="", stderr="", logfile=None, returncode=0):
     """`run_battery` over one Rust target with `subprocess.run` replaced.
 
     `logfile` is what libtest's own record contains (None = the harness wrote none);
@@ -771,7 +788,7 @@ def _run_rust_battery(monkeypatch_run, stdout="", stderr="", logfile=None):
         assert path, "the Rust battery must ask libtest for its own record"
         if logfile is not None:
             Path(path[0].split("=", 2)[2]).write_text(logfile)
-        return subprocess.CompletedProcess(argv, 0, stdout, stderr)
+        return subprocess.CompletedProcess(argv, returncode, stdout, stderr)
 
     original = lane.subprocess.run
     lane.subprocess.run = fake_run
@@ -841,6 +858,50 @@ def test_an_ok_record_does_not_read_as_red():
 def test_no_libtest_record_leaves_the_control_unreported():
     ran, results = _run_rust_battery(None, stdout=f"test {_CONTROL} ... FAILED\n")
     assert ran and results == {}
+
+
+#: The output of a `bazel test` whose first build attempt lost cache-evicted inputs and
+#: whose automatic restart then built the weakened tree and ran the battery.
+_EVICTED_THEN_RETRIED = (
+    "ERROR: /t/external/rules_rust++crate+crates_mcp_re__redis-1.7.1/BUILD.bazel:15:13: "
+    "Compiling Rust rlib redis v1.7.1 (115 files) failed: Lost inputs no longer available "
+    "remotely: external/rules_rust++crate+crates_mcp_re__arc-swap-1.9.1/libarc_swap.rlib\n"
+    "ERROR: Build did NOT complete successfully\n"
+    "Found remote cache eviction error, retrying the build...\n"
+    "//mcp-re-proxy:proxy_unit_test                 FAILED in 0.9s\n"
+    "Executed 1 out of 1 test: 1 fails locally.\n"
+)
+
+
+def test_a_battery_bazel_rebuilt_after_a_cache_eviction_is_read_as_the_red_it_was():
+    """The abandoned attempt's compile-failure lines stay in the output; the command still
+    built the weakened tree, ran the control and ended in status 3 with it red."""
+    ran, results = _run_rust_battery(
+        None, stderr=_EVICTED_THEN_RETRIED, logfile=f"failed {_CONTROL}\n", returncode=3
+    )
+    assert ran and results == {f"{_LABEL}#{_CONTROL}": "FAILED"}
+
+
+def test_a_failed_build_is_not_red_even_beside_a_red_looking_record():
+    """Status 1 is a build that did not complete. Whatever a stale record says, nothing ran."""
+    ran, results = _run_rust_battery(
+        None,
+        stderr="error[E0425]: cannot find value `base` in this scope\n",
+        logfile=f"failed {_CONTROL}\n",
+        returncode=1,
+    )
+    assert not ran and results == {}
+
+
+def test_an_eviction_bazel_could_not_retry_past_measures_nothing():
+    """Retries exhausted is infrastructure: no build completed, so no control was measured,
+    and the record keeps Bazel's status and error line so the cause is visible."""
+    ran, results = _run_rust_battery(
+        None, stderr=_EVICTED_THEN_RETRIED, logfile=f"failed {_CONTROL}\n", returncode=39
+    )
+    assert not ran and results == {}
+    why = lane._build_failure(_EVICTED_THEN_RETRIED, 39)
+    assert why.startswith("exit 39") and "Lost inputs" in why, why
 
 
 def test_a_stderr_prefix_on_the_stream_line_cannot_hide_a_red_control():

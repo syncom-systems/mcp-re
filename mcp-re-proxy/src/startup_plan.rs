@@ -527,12 +527,38 @@ mod tests {
     fn a_redis_tier_carries_its_url_and_its_wait_parameters() {
         let plan = plan_for(SHARED_REDIS);
         match plan.store() {
-            PlannedStore::Redis { url } => {
+            PlannedStore::Redis { url, pool } => {
                 assert_eq!(url, "redis://127.0.0.1:6379");
+                assert_eq!(
+                    pool,
+                    crate::deployment_request::ReplayRedisPoolSize::DEFAULT
+                );
                 assert_eq!(plan.tier().wait_quorum_params(), Some((2, 2000)));
             }
             other => panic!("expected a redis plan, got {other:?}"),
         }
+    }
+
+    /// `--replay-redis-pool-size` survives parsing and validation into the plan
+    /// materialization connects from, and leaves the store and its WAIT tier as they were.
+    #[test]
+    fn a_declared_replay_pool_size_reaches_the_plan() {
+        let plan = plan_for(&[SHARED_REDIS, &["--replay-redis-pool-size", "32"]].concat());
+        let PlannedStore::Redis { url, pool } = plan.store() else {
+            panic!("expected a redis plan, got {:?}", plan.store());
+        };
+        assert_eq!(url, "redis://127.0.0.1:6379");
+        assert_eq!(pool.get(), 32);
+        assert_eq!(plan.tier(), plan_for(SHARED_REDIS).tier());
+    }
+
+    /// A pool beside the linearizable store has no Redis store to size, so the command
+    /// line is refused rather than the value silently ignored.
+    #[test]
+    fn a_replay_pool_size_beside_the_cp_store_is_refused() {
+        let err = parse(&[SHARED_LINEARIZABLE, &["--replay-redis-pool-size", "16"]].concat())
+            .expect_err("no redis store to size");
+        assert!(err.contains("--replay-redis-pool-size"), "{err}");
     }
 
     #[test]
@@ -698,7 +724,7 @@ mod tests {
             Some("redis://127.0.0.1:6380")
         );
         match validated.state().replay().materialization_plan().store() {
-            PlannedStore::Redis { url } => assert_eq!(url, "redis://127.0.0.1:6379"),
+            PlannedStore::Redis { url, .. } => assert_eq!(url, "redis://127.0.0.1:6379"),
             other => panic!("expected a redis replay plan, got {other:?}"),
         }
     }

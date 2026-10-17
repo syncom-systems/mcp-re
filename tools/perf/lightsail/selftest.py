@@ -7,8 +7,10 @@ the ceiling statement in all three outcomes, and the host identity check. The ca
 then runs the REAL `ceiling.py campaign` end to end against fake instruments (small Python
 programs standing in for the bench and the rig) and checks the run directory: the layout,
 a deliberately failing rep recorded as INCOMPLETE without stopping the campaign, the
-offered-load ladder climbing on a CLIENT verdict, a host that is not the declared context
-stopping before any measurement, and a summary that states its rule set.
+offered-load ladder climbing on a CLIENT verdict, a rung whose probe step hit errors recorded
+as INVALID and kept out of every number, a host that is not the declared context stopping
+before any measurement, and a summary that states its rule set. A tiny RESP server stands in
+for the replay tier's primary, so the store-side accounting a rung is checked against is real.
 """
 
 from __future__ import annotations
@@ -16,23 +18,53 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import socketserver
 import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
 from analysis import ceiling_statement, classify, describe_curve  # noqa: E402
 from hostfacts import check_expected  # noqa: E402
-from phases import rig_verdict, validate_bench_rep  # noqa: E402
+from phases import (RUNG_REQUEST_CEILING, rig_steps, rig_verdict, rung_requests, startup_facts,  # noqa: E402
+                    validate_bench_rep)
+from redis_queue import replication, store_clients, summarize as queue_summary  # noqa: E402
+from stage_sampler import parse as parse_stage_timers, window_means  # noqa: E402
+import isolation  # noqa: E402
+
+#: A proxy that states the pool it was given (or FAKE_PROXY_STATES_POOL, to model one that
+#: ignored the flag), serves, and then writes a per-request audit line.
+FAKE_PROXY = r'''#!/usr/bin/env python3
+import os, sys
+a = sys.argv[1:]
+pool = int(a[a.index("--replay-redis-pool-size") + 1]) if "--replay-redis-pool-size" in a else 8
+pool = int(os.environ.get("FAKE_PROXY_STATES_POOL", pool))
+for line in ("mcp-re-proxy: replay-store backend=redis tier=REDIS_WAIT_QUORUM guarantee=x",
+             f"mcp-re-proxy: replay redis pool = {pool} connections (--replay-redis-pool-size; default 8)",
+             "mcp-re-proxy: async fleet serving on 127.0.0.1:1 (1 cores)", "audit: per-request record"):
+    print(line, file=sys.stderr)
+'''
+
+#: How each fake instrument starts its proxy: through MCP_RE_PROXY_CLI, reading stderr the
+#: way the real ones do. The audit line after the serving line must still arrive.
+START_PROXY = r'''
+import subprocess
+def start_proxy():
+    p = subprocess.run([os.environ["MCP_RE_PROXY_CLI"], "--bind", "127.0.0.1:0"], capture_output=True, text=True, timeout=30)
+    assert "async fleet serving on" in p.stderr and "audit: per-request record" in p.stderr, p.stderr
+'''
 
 FAKE_BENCH = r'''#!/usr/bin/env python3
 import json, os, sys
+''' + START_PROXY + r'''
 cores = int(os.environ["MCP_RE_LOADGEN_CORES"]); req = int(os.environ["MCP_RE_LOADGEN_REQUESTS"])
 out = os.environ["MCP_RE_LOADGEN_OUT"]
 assert os.environ["MCP_RE_LOADGEN_MODE"] == "cold" and os.environ["MCP_RE_PROXY_CLI"].startswith("/")
+start_proxy()
 fail_marker = os.environ.get("FAKE_FAIL_REP_AT", "")
 rep = out.rsplit("rep", 1)[-1].split(".")[0]
 if fail_marker == f"c{cores}-rep{rep}":
@@ -52,10 +84,13 @@ print("test result: ok. 1 passed; 0 failed")
 '''
 
 FAKE_RIG = r'''#!/usr/bin/env python3
-import json, os, sys
+import json, os, sys, time
+''' + START_PROXY + r'''
 a = sys.argv[1:]
+start_proxy()
 if a == ["--smoke"]:
     print("smoke ok"); sys.exit(0)
+assert os.environ["MCP_RE_SAT_REQUIRE_ECHO"] == "1", "a measured success must carry the backend echo"
 def arg(k, d=None):
     return a[a.index(k) + 1] if k in a else d
 cores = int(arg("--cores")); conns = int(arg("--connections", "256"))
@@ -64,12 +99,73 @@ for k in ("MCP_RE_SAT_REDIS_URL", "MCP_RE_SAT_BACKEND", "MCP_RE_SAT_LOADGEN", "M
 # client-limited at the first rung for cores >= 4, saturated after: exercises the ladder
 saturated = not (cores >= 4 and conns == 256)
 rps = 5000.0 * min(cores if cores else 8, 8) * (1.0 if saturated else 0.7)
+requests = int(arg("--requests"))
+assert requests <= int(os.environ["FAKE_RUNG_CEILING"]) // sum(range(2, int(arg("--max-generators")) + 1)), \
+    "a rung that could climb past the signer retention budget"
 row = {"cores": cores, "generators": 3, "rps": rps, "last_gain_pct": 2.0 if saturated else 9.0,
        "saturated": saturated, "failure_pct": 0.0, "p50_us": 700, "failures": 0,
        "proxy_cpu_secs": 1.0, "backend_cpu_secs": 1.0, "generator_cpu_secs": 1.0}
+sent = requests * (2 + 3)                   # the steps at 2 and 3 generators were served
+if os.environ.get("FAKE_RIG_COLLAPSE") == f"c{cores}":
+    # The probe at 3 generators met refusals: each generator stops at its first error, the
+    # step comes out slower, and the real rig then keeps the 2-generator row and calls it PROXY.
+    for _ in range(3):
+        print('  generator error: read: non-2xx response: http/1.1 409 conflict body={"wire_code":"mcp-re.replay_cache_unavailable"}')
+    row.update(generators=2, last_gain_pct=-94.0, saturated=True)
+    sent = requests * 2 + requests // 4
+counter = os.environ["FAKE_SET_COUNTER"]
+with open(counter, "r+") as fh:
+    n = int(fh.read() or 0) + sent
+    fh.seek(0); fh.truncate(); fh.write(str(n))
+time.sleep(0.6)                              # the queue sampler sees the rung
 json.dump({"schema": "mcp-re-saturation-rig/v1", "points": [row]}, open(os.environ["MCP_RE_SAT_OUT"], "w"))
 print("wrote")
 '''
+
+
+class FakePrimary(socketserver.ThreadingTCPServer):
+    """Just enough RESP for the queue sampler: CLIENT ID / CLIENT LIST, INFO, CONFIG GET. The
+    SET count is whatever the fake rig wrote to `counter` — the store-side tally a rung's
+    steps are checked against."""
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, counter: Path):
+        self.counter = counter
+        super().__init__(("127.0.0.1", 0), FakePrimaryHandler)
+
+
+class FakePrimaryHandler(socketserver.StreamRequestHandler):
+    def handle(self) -> None:
+        while True:
+            head = self.rfile.readline()
+            if not head:
+                return
+            args = []
+            for _ in range(int(head[1:])):
+                size = int(self.rfile.readline()[1:])
+                args.append(self.rfile.read(size + 2)[:-2].decode())
+            self.wfile.write(self.answer([a.upper() for a in args[:2]]))
+
+    def answer(self, cmd: list[str]) -> bytes:
+        def bulk(text: str) -> bytes:
+            data = text.encode()
+            return b"$%d\r\n%s\r\n" % (len(data), data)
+        if cmd == ["CLIENT", "ID"]:
+            return b":1\r\n"
+        if cmd == ["CLIENT", "LIST"]:
+            return bulk("id=1 addr=x flags=N cmd=client|list qbuf=0\nid=7 addr=x flags=b cmd=wait qbuf=40\n")
+        if cmd[:1] == ["CONFIG"]:
+            return b"*0\r\n"
+        if cmd == ["INFO", "CLIENTS"]:
+            return bulk("# Clients\r\nblocked_clients:1\r\n")
+        if cmd == ["INFO", "COMMANDSTATS"]:
+            sets = int(self.server.counter.read_text() or 0)
+            return bulk(f"# Commandstats\r\ncmdstat_set:calls={sets},usec=1\r\ncmdstat_wait:calls={sets},usec=1\r\n")
+        if cmd == ["INFO", "REPLICATION"]:
+            return bulk("# Replication\r\nrole:master\r\nmaster_repl_offset:1000\r\n"
+                        "slave0:ip=127.0.0.1,port=8631,state=online,offset=940,lag=0\r\n")
+        return b"-ERR fake primary\r\n"
 
 
 def _telemetry(**over: object) -> dict:
@@ -125,9 +221,76 @@ def units() -> None:
         assert "7999 of 8000" in validate_bench_rep(0, "test result: ok. 1 passed", rpt, 8000)[1]
         assert "nothing was measured" in validate_bench_rep(0, "running 0 tests", rpt, 8000)[1]
         assert validate_bench_rep(101, "", rpt, 8000)[1] == "bench exited 101"
-    assert rig_verdict({"saturated": True, "failure_pct": 0.6}) == "INVALID"
-    assert rig_verdict({"saturated": True, "failure_pct": 0.0}) == "PROXY"
-    assert rig_verdict({"saturated": False, "failure_pct": 0.0}) == "CLIENT"
+    # A rung is evidence only if every step of it was served (the 2026-10-16 pool run: every
+    # probe at 3 generators hit the signer retention budget, the store counted 800,000 of the
+    # 1,600,000 SETs the steps sent, and the rig stamped the collapse PROXY).
+    collapsed = {"generators": 2, "last_gain_pct": -94.0, "saturated": True, "failures": 0, "failure_pct": 0.0}
+    assert rig_steps(collapsed, 12) == [2, 3]
+    assert rig_steps({"generators": 3, "last_gain_pct": 2.0}, 12) == [2, 3], "a probe that won is the row"
+    assert rig_steps({"generators": 5, "last_gain_pct": 9.0}, 5) == [2, 3, 4, 5], "CLIENT at the cap: no probe"
+    errors = '  generator error: ... {"wire_code":"mcp-re.replay_cache_unavailable"}\n' * 3
+    verdict, why = rig_verdict(collapsed, errors, 800_000, 1_600_000)
+    assert verdict == "INVALID" and "3 generator error(s)" in why[0] and "replay_cache_unavailable" in why[0], why
+    assert "800000 SETs" in why[1], why
+    assert rig_verdict(collapsed, "", 799_999, 800_000)[0] == "INVALID", "a short store tally alone refuses the row"
+    assert rig_verdict(collapsed, "", None, 800_000)[0] == "INVALID", "an unreadable tally is not a pass"
+    assert rig_verdict(dict(collapsed, failures=1), "", 800_000, 800_000)[0] == "INVALID", "any failure"
+    assert rig_verdict(collapsed, "", 800_000, 800_000) == ("PROXY", [])
+    assert rig_verdict(dict(collapsed, saturated=False), "", 5, 5) == ("CLIENT", [])
+    # The cap: a rung climbing to the generator cap never reaches the budget.
+    assert rung_requests(256, 200, 5) == (51_200, False)
+    capped, was = rung_requests(512, 200, 5)
+    assert was and capped * sum(range(2, 6)) <= RUNG_REQUEST_CEILING < 800_000, capped
+    assert rung_requests(256, 1250, 12)[1], "the 2026-10-16 main-matrix setting is capped"
+
+    # Isolation: physical cores come from sysfs siblings, never from logical numbering.
+    assert isolation.parse_cpulist("0-3,8,10-11\n") == [0, 1, 2, 3, 8, 10, 11]
+    with tempfile.TemporaryDirectory() as tmp:
+        sysfs = Path(tmp)
+        (sysfs / "online").write_text("0-31\n")
+        for cpu in range(32):                      # the AWS shape: SMT siblings are i and i+16
+            (sysfs / f"cpu{cpu}" / "topology").mkdir(parents=True)
+            (sysfs / f"cpu{cpu}" / "topology" / "thread_siblings_list").write_text(f"{cpu % 16},{cpu % 16 + 16}\n")
+        cores = isolation.topology(sysfs)
+        assert len(cores) == 16 and cores[0] == [0, 16] and cores[-1] == [15, 31], cores
+        p = isolation.plan(cores)
+        assert (p["redis_primary"], p["control"], p["idle_siblings"]) == ([14], [15], [30, 31]), p
+        assert p["reserved"] == [14, 15, 30, 31] and len(p["general"]) == 28 and 30 not in p["general"], p
+    assert isolation.target("mcp-re-control", list(range(32)), p) == [15]
+    assert isolation.target("mcp-re-serve-3", [3], p) == [3], "a shard pinned to a general CPU keeps its pin"
+    assert isolation.target("mcp-re-serve-14", [14], p) == p["general"], "a shard on a reserved CPU is moved off"
+    assert isolation.target("mcp-re-serve-30", [30], p) == p["general"], "an idle sibling stays idle"
+    assert isolation.target("mcp-re-audit", list(range(32)), p) == p["general"]
+    try:
+        isolation.plan([[0, 4], [1, 5], [2, 6]])
+    except ValueError as exc:
+        assert "too few" in str(exc)
+    else:
+        raise AssertionError("a plan on three physical cores")
+
+    # Where a thread ran counts only if it ran: an idle thread's `processor` is stale (the
+    # 2026-10-16 isolation run reported the pinned Redis primary "off its CPU" from bio threads
+    # that had slept since before the pin).
+    from telemetry import active_cpu
+    assert active_cpu(("redis:primary", 100, 0, 5), ("redis:primary", 100, 0, 5)) is None, "slept: stale"
+    assert active_cpu(("redis:primary", 100, 0, 5), ("redis:primary", 900, 0, 14)) == 14
+    assert active_cpu(None, ("redis:primary", 900, 0, 14)) is None, "first sight: no interval yet"
+    assert active_cpu(("proxy:serve", 100, 0, 3), ("proxy:control", 900, 0, 15)) is None, "a reused tid"
+
+    # The proxy's stage timers: cumulative snapshots, differenced to one window.
+    snap = ("stage,count,total_ms,mean_us\nreplay_wait,{n},{ms},0\nscheduler_latency,{s},{sms},0\n"
+            "replay_inflight,{n},64,{m}\n")
+    s0 = parse_stage_timers(snap.format(n=1000, ms=500.0, s=10, sms=1.0, m=20.0))
+    s1 = parse_stage_timers(snap.format(n=3000, ms=2100.0, s=30, sms=5.0, m=30.0))
+    assert s0 and s1 and parse_stage_timers("stage,count,total_ms,mean_us\nreplay_wait,1") is None
+    w = window_means([{"t": 1.0, "file": "r1", "stages": s0}, {"t": 2.0, "file": "r1", "stages": s1}], 0.0, 3.0)
+    assert (w["replay_wait"], w["replay_wait_count"], w["scheduler_latency"], w["replay_inflight_mean"]) == \
+        (800.0, 2000, 200.0, 35.0), w
+    assert not window_means([{"t": 1.0, "file": "r1", "stages": s0}, {"t": 2.0, "file": "r2", "stages": s1}],
+                            0.0, 3.0)["available"], "two proxies' counters are never differenced"
+    repl = replication({"master_repl_offset": "1000", "slave0": "ip=127.0.0.1,port=8631,state=online,offset=940,lag=0",
+                        "slave1": "ip=127.0.0.1,port=8632,state=online,offset=1000,lag=1"})
+    assert [r["gap_bytes"] for r in repl["replicas"]] == [60, 0] and repl["replicas"][1]["ack_age_s"] == 1, repl
 
     # The ceiling statement, all three outcomes.
     def rows(rps: list[float], label: str = "PROXY_CPU") -> dict:
@@ -141,6 +304,22 @@ def units() -> None:
     assert ceiling_statement(rows([1, 2, 4, 8, 16, 24, 32], "INDETERMINATE"))["statement"] == "CEILING ATTRIBUTION: INDETERMINATE"
     assert ceiling_statement(None)["statement"] == "CEILING ATTRIBUTION: INDETERMINATE"
 
+    # The replay store's connections as the primary lists them, and their queueing.
+    listing = ("id=1 addr=x flags=N cmd=client|list qbuf=0\nid=2 addr=x flags=b cmd=wait qbuf=900\n"
+               "id=3 addr=x flags=N cmd=set qbuf=100\nid=4 addr=x flags=S cmd=replconf qbuf=0\nid=5 flags=b cmd=wait qbuf=7")
+    assert store_clients(listing, {"5"}) == [{"flags": "b", "qbuf": 900}, {"flags": "N", "qbuf": 100}]
+    q = queue_summary([{"t": 0.0, "store_conns": 2, "store_blocked": 1, "qbuf": [900, 100], "set_calls": 0, "wait_calls": 0},
+                       {"t": 2.0, "store_conns": 2, "store_blocked": 2, "qbuf": [300, 100], "set_calls": 400, "wait_calls": 398}])
+    assert (q["store_conns_max"], q["blocked_in_wait_mean"], q["qbuf_per_conn_mean_bytes"], q["set_per_s"]) == (2, 1.5, 350, 200), q
+    assert not queue_summary([])["available"]
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Path(tmp) / "startup.log"
+        log.write_text("mcp-re-proxy: replay-store backend=redis tier=REDIS_WAIT_QUORUM guarantee=x\n"
+                       "mcp-re-proxy: replay redis pool = 32 connections (--replay-redis-pool-size; default 8)\n"
+                       "mcp-re-proxy: async fleet serving on 127.0.0.1:1 (1 cores)\n")
+        assert startup_facts(log) == {"launches": 1, "replay_pool": [32], "replay_tier": ["REDIS_WAIT_QUORUM"]}
+        assert startup_facts(Path(tmp) / "absent.log")["replay_pool"] == []
+
     # Identity: a 16-vCPU or arm64 host is not the declared context.
     facts = {"vcpus_usable": 16, "vcpus_online": 16, "architecture": "aarch64", "mem_total_kib": 64 * 1024 * 1024}
     problems = check_expected(facts, 32, "x86_64", 128)
@@ -152,8 +331,10 @@ def campaign_case() -> None:
         root = Path(tmp)
         bins = root / "bin"
         bins.mkdir()
-        for name in ("mcp-re-proxy-deploy", "mcp-re-proxy-ext", "saturation_backend", "saturation_loadgen"):
+        for name in ("saturation_backend", "saturation_loadgen"):
             (bins / name).write_text("#!/bin/sh\nexit 0\n")
+        for name in ("mcp-re-proxy-deploy", "mcp-re-proxy-ext"):
+            (bins / name).write_text(FAKE_PROXY)
         (bins / "tls_load_harness_bench").write_text(FAKE_BENCH)
         (bins / "saturation_rig").write_text(FAKE_RIG)
         for path in bins.iterdir():
@@ -167,10 +348,27 @@ def campaign_case() -> None:
         # The declared-context check compares online AND usable CPUs; a CI container whose
         # affinity mask is narrower than the machine cannot be "the declared host" at all.
         expect_ok = ["--expect-vcpus", str(usable)] if usable == online else []
+        counter = root / "set-calls"
+        counter.write_text("0")
+        primary = FakePrimary(counter)
+        threading.Thread(target=primary.serve_forever, daemon=True).start()
         base = [sys.executable, str(HERE / "ceiling.py"), "campaign", str(run_dir), "--bin-dir", str(bins),
-                "--identity", str(identity), "--redis-url", "redis://127.0.0.1:1", "--cores", "1,2,4",
-                "--reps", "2", "--b-modes", "cold", "--b-repeats", "2", "--partitioned", ""]
-        env = dict(os.environ, FAKE_FAIL_REP_AT="c2-rep2")
+                "--identity", str(identity), "--redis-url", f"redis://127.0.0.1:{primary.server_address[1]}",
+                "--cores", "1,2,4", "--reps", "2", "--b-modes", "cold", "--b-repeats", "2", "--partitioned", "",
+                "--stage-timers", "--replay-redis-pool-size", "16"]
+        env = dict(os.environ, FAKE_FAIL_REP_AT="c2-rep2", FAKE_SET_COUNTER=str(counter),
+                   FAKE_RUNG_CEILING=str(RUNG_REQUEST_CEILING), FAKE_RIG_COLLAPSE="c2")
+
+        # A pool the proxy does not admit is refused before anything is created.
+        bad = subprocess.run([*base[:-1], "129"], env=env, capture_output=True, text=True)
+        assert bad.returncode == 2 and "between 1 and 128" in bad.stderr and not run_dir.exists(), bad.stderr
+
+        # A proxy that states a pool other than the one asked for fails the smoke: no sweep.
+        ignored = root / "ignored"
+        ig = subprocess.run([*base[:3], str(ignored), *base[4:]], env=dict(env, FAKE_PROXY_STATES_POOL="8"),
+                            capture_output=True, text=True)
+        assert ig.returncode == 4 and not (ignored / "phase-b").exists(), ig.stdout + ig.stderr
+        assert json.loads((ignored / "manifest.json").read_text())["replay_pool"]["effective_at_smoke"]["rig"]["replay_pool"] == [8]
 
         # Binaries that are not the ones the bootstrap built are refused before anything runs.
         build = root / "build-identity.json"
@@ -197,6 +395,13 @@ def campaign_case() -> None:
         manifest = json.loads((run_dir / "manifest.json").read_text())
         assert manifest["binaries"]["bench"]["sha256"].startswith("sha256:") and manifest["finished"]
         assert (manifest["umask"], manifest["umask_inherited"]) == ("0022", "0002"), manifest
+        pool = manifest["replay_pool"]
+        assert (pool["requested"], pool["expected"]) == (16, 16), pool
+        assert {k: v["replay_pool"] for k, v in pool["effective_at_smoke"].items()} == {"phase_a": [16], "rig": [16]}, pool
+        assert not manifest["redis"]["managed"] and "primary" in manifest["redis"]["nodes"], manifest["redis"]
+        assert manifest["binaries"]["proxy_ext"]["path"].endswith("/mcp-re-proxy-ext"), "the BUILT binary is hashed"
+        startup = (run_dir / "phase-b" / "scaling" / "c4" / "attempt1" / "rung1.proxy-startup.log").read_text()
+        assert "replay redis pool = 16" in startup and "audit:" not in startup, "only the startup transcript is kept"
         assert not stale_sums(run_dir), f"SHA256SUMS stale after the campaign: {stale_sums(run_dir)}"
         # The launcher writes after the campaign; `pack` re-seals before archiving.
         with open(run_dir / "logs" / "launcher.txt", "a") as fh:
@@ -215,14 +420,32 @@ def campaign_case() -> None:
         assert c2["status"] == "INCOMPLETE" and not c2["reps"][1]["valid"], c2["reps"]
         b4 = json.loads((run_dir / "phase-b" / "scaling" / "c4" / "attempt1" / "point.json").read_text())
         assert [r["verdict"] for r in b4["rungs"]] == ["CLIENT", "PROXY"], b4["rungs"]
+        assert [r["proxy"]["replay_pool"] for r in b4["rungs"]] == [[16], [16]], b4["rungs"]
+        assert b4["redis_queue"]["available"] and b4["redis_queue"]["replica_gap_bytes"][0]["gap_max"] == 60, b4
+        assert all(r["store_sets"] == r["expected_sets"] and not r["invalid_reasons"] for r in b4["rungs"]), b4["rungs"]
+        assert b4["rungs"][0]["stage_timers"]["available"] is False, "the fake proxy writes no stage timers"
+        # The collapsed probe: INVALID with its reasons, never a PROXY row, never a number.
+        b2 = json.loads((run_dir / "phase-b" / "scaling" / "c2" / "attempt1" / "point.json").read_text())
+        rung = b2["rungs"][0]
+        assert rung["verdict"] == "INVALID" and b2["status"] == "INCOMPLETE", b2
+        assert any("generator error" in r for r in rung["invalid_reasons"]), rung["invalid_reasons"]
+        assert any("SETs" in r for r in rung["invalid_reasons"]), rung["invalid_reasons"]
+        assert len(b2["rungs"]) == 1, "an INVALID rung is not climbed past"
         assert (run_dir / "phase-b" / "scaling" / "c4" / "attempt2" / "point.json").is_file(), "no repeat at the high end"
         summary = json.loads((run_dir / "summary.json").read_text())
         assert summary["rules"]["rig_saturation_pct"] == 5.0
         assert "A/scaling/c2: INCOMPLETE" in summary["inconclusive"], summary["inconclusive"]
         assert set(summary["phase_a"]) == {"scaling", "shipped-auto"}
         assert summary["phase_b"]["scaling"]["rows"][0]["rps_proxy_median"] == 5000.0
+        assert summary["phase_b"]["scaling"]["rows"][0]["replay_pool_stated"] == [16]
+        c2_row = summary["phase_b"]["scaling"]["rows"][1]
+        assert c2_row["cores"] == 2 and set(c2_row["verdicts"]) == {"INVALID"}, c2_row
+        assert c2_row["rps_proxy_median"] is None and c2_row["rps_best"] == 0.0, c2_row
+        assert c2_row["attribution"]["label"] == "INVALID", c2_row["attribution"]
+        assert manifest["plan"]["phase_b"]["signer_retention_budget"] == 800_000, manifest["plan"]
         md = (run_dir / "summary.md").read_text()
         assert "Curve 1 — canonical" in md and "Curve 2 — proxy saturation" in md
+        assert "replay redis pool: --replay-redis-pool-size 16; expected 16" in md, md
 
 
 def stale_sums(run_dir: Path) -> list[str]:
@@ -265,5 +488,7 @@ def run_all() -> int:
     units()
     telemetry_case()
     campaign_case()
-    print("lightsail ceiling selftest: OK (rules, attribution, identity stop, ladder, failure recording, layout)")
+    print("lightsail ceiling selftest: OK (rules, attribution, identity stop, ladder, failure recording, layout, "
+          "replay pool launch and refusal, invalid rungs, signer budget cap, stage timers, replication gaps, "
+          "isolation plan)")
     return 0

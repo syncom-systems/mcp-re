@@ -23,6 +23,8 @@ from common import read_json
 RULES = {
     "knee": "first N in the sweep whose incremental efficiency (T(N)-T(prev)) / (T(prev) * (N/prev - 1)) < 0.5",
     "plateau": "T(N) <= 1.05 * T(prev) for the scaling sweep",
+    "invalid_rung": "INVALID, never PROXY or CLIENT, when the rig log has any generator error, the row counts any "
+                    "failure, or the replay store's SET count over the rung differs from what the rig's steps sent",
     "ceiling_reached": "two consecutive plateau points at the top of the sweep, each PROXY-verdict and stable",
     "stable": "(max - min) / median <= 0.10 across the attempts at one point",
     "still_scaling_at_top": "incremental efficiency between the last two sweep points >= 0.5",
@@ -82,6 +84,10 @@ def classify(telemetry: dict, *, cores: int, workers: int, vcpus: int, verdict: 
     `verdict` is the instrument's own (rig PROXY/CLIENT/INVALID; None for Phase A).
     The proxy's budget is its serving threads: N under the scaling topology (one worker per
     shard), the whole host under the shipped auto topology (cores=0)."""
+    if verdict == "INVALID":
+        return {"label": "INVALID", "confidence": "high",
+                "why": "the rung is not evidence: a step hit errors or failures, or the replay store did not see "
+                       "every request the rig's steps sent"}
     if not telemetry or not telemetry.get("available"):
         return {"label": "UNATTRIBUTED", "confidence": "none", "why": "no telemetry for this point"}
     cats = telemetry.get("categories", {})
@@ -112,8 +118,6 @@ def classify(telemetry: dict, *, cores: int, workers: int, vcpus: int, verdict: 
     def out(label: str, confidence: str, why: str) -> dict:
         return {"label": label, "confidence": confidence, "why": why, "evidence": evidence}
 
-    if verdict == "INVALID":
-        return out("INVALID", "high", "the instrument refused the row: >0.5% of requests failed")
     if steal >= RULES["steal_significant"]:
         return out("HOST_SCHEDULING", "medium", f"steal {steal:.1%} >= {RULES['steal_significant']:.0%}: the VM "
                    "was not given the CPU it was scheduled for; a Lightsail/host limitation until proven otherwise")
@@ -185,15 +189,19 @@ def phase_b_summary(points: list[dict], vcpus: int) -> dict:
             attempts = [p for p in points if p["sweep"] == sweep and p["cores"] == cores]
             finals = [a["final"] for a in attempts if a.get("final")]
             proxy_rps = [f["row"]["rps"] for f in finals if f["verdict"] == "PROXY"]
-            all_rps = [f["row"]["rps"] for f in finals]
+            # An INVALID rung measured nothing; its number is never a best, a median or a curve point.
+            all_rps = [f["row"]["rps"] for f in finals if f["verdict"] in {"PROXY", "CLIENT"}]
             med = median(proxy_rps)
             last = attempts[-1]
+            final_proxy = ((last.get("final") or {}).get("proxy") or {})
             rows.append({
                 "cores": cores, "attempts": len(attempts), "verdicts": [f["verdict"] for f in finals],
                 "rps_attempts": all_rps, "rps_proxy_median": med if proxy_rps else None,
                 "rps_best": max(all_rps, default=0.0),
                 "stable": bool(proxy_rps) and (max(proxy_rps) - min(proxy_rps)) / med <= 0.10 if med else False,
                 "top_rung_connections": (last.get("final") or {}).get("connections_per_generator"),
+                "replay_pool_stated": sorted(set(final_proxy.get("replay_pool", []))),
+                "redis_queue": last.get("redis_queue_final_rung") or {"available": False},
                 "attribution": classify(last.get("telemetry_final_rung") or last.get("telemetry", {}),
                                         cores=cores, workers=last["workers_per_shard"], vcpus=vcpus,
                                         verdict=(last.get("final") or {}).get("verdict"),
@@ -249,8 +257,10 @@ def summarize_run(run_dir: Path, vcpus: int) -> dict:
 def render_markdown(summary: dict, manifest: dict) -> str:
     lines = ["# MCP-RE Lightsail ceiling experiment — summary", ""]
     ident = manifest.get("identity", {})
+    pool = manifest.get("replay_pool", {})
     lines += [f"- product: `{ident.get('release_tag')}` @ `{ident.get('product_commit')}`",
               f"- tooling: `{ident.get('tooling_commit')}`", f"- hardware class: `{manifest.get('hardware_class')}`",
+              f"- replay redis pool: {pool.get('flag')}; expected {pool.get('expected')} connections",
               f"- **{summary['ceiling']['statement']}** — {summary['ceiling'].get('why', '')}", ""]
     lines += ["## Curve 1 — canonical security-path scaling (Phase A, cold mTLS, c=128, 8000 req)", ""]
     for topology, block in summary["phase_a"].items():
@@ -270,12 +280,18 @@ def render_markdown(summary: dict, manifest: dict) -> str:
     for sweep, block in summary["phase_b"].items():
         curve = block["curve"] or {}
         lines += [f"### sweep `{sweep}` — knee: {curve.get('knee')}, plateau from: {curve.get('plateau_from')}", "",
-                  "| cores | attempts | verdicts | PROXY median rps | best rps | stable | attribution | confidence |",
-                  "|---:|---:|---|---:|---:|---|---|---|"]
+                  "| cores | attempts | verdicts | PROXY median rps | best rps | stable | attribution | confidence "
+                  "| pool stated | Redis store conns | blocked in WAIT | qbuf/conn B |",
+                  "|---:|---:|---|---:|---:|---|---|---|---|---:|---:|---:|"]
         for r in block["rows"]:
             med = "" if r["rps_proxy_median"] is None else f"{r['rps_proxy_median']:.0f}"
+            q = r.get("redis_queue") or {}
+            queue = (f"{q['store_conns_max']} | {q['blocked_in_wait_mean']:.1f} | "
+                     f"{'' if q['qbuf_per_conn_mean_bytes'] is None else round(q['qbuf_per_conn_mean_bytes'])}"
+                     if q.get("available") else " |  | ")
             lines.append(f"| {r['cores']} | {r['attempts']} | {','.join(r['verdicts'])} | {med} | {r['rps_best']:.0f} | "
-                         f"{r['stable']} | {r['attribution']['label']} | {r['attribution']['confidence']} |")
+                         f"{r['stable']} | {r['attribution']['label']} | {r['attribution']['confidence']} | "
+                         f"{','.join(map(str, r.get('replay_pool_stated', [])))} | {queue} |")
         lines.append("")
     lines += ["## Highest demonstrated throughput", "",
               f"- canonical harness: {summary['highest_demonstrated']['phase_a_canonical_rps']:.0f} rps",

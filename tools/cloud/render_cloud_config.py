@@ -15,6 +15,11 @@ The rule this tool enforces for every cloud configuration that needs substitutio
     refused anywhere else;
   * an unresolved placeholder, an open-to-the-world network (`0.0.0.0/0`, `::/0`) and an
     invalid or prefix-0 `*_CIDR` value are refused;
+  * a `*_CIDRS` value is a list of APPROVED SOURCE ADDRESSES — comma-separated, each one a
+    single host (`/32` or `/128`), at most eight, no duplicates. Its placeholder sits inside
+    one quoted JSON list element (`["@@OPERATOR_CIDRS@@"]`) and renders as one element per
+    address. An operator whose traffic leaves from more than one public address lists every
+    one of them; a wider range is never the answer;
   * the rendered bytes are kept, never overwritten, with a manifest recording the template
     digest, the values and the rendered digest — `--verify` re-checks them before teardown,
     so teardown provably uses the file creation used.
@@ -40,6 +45,8 @@ RUNS = Path("work") / "cloud-runs"
 PLACEHOLDER = re.compile(r"@@([A-Z][A-Z0-9_]*)@@")
 VALUE = re.compile(r"[A-Za-z0-9:][A-Za-z0-9.:/_+=-]*")
 RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}")
+CIDRS_VALUE = re.compile(r"[0-9A-Fa-f.:]+/[0-9]{1,3}(,[0-9A-Fa-f.:]+/[0-9]{1,3})*")
+MAX_SOURCES = 8
 OPEN_WORLD = re.compile(r"(?<![\d.])0\.0\.0\.0/0\b|(?<![\w:])::/0\b")
 
 
@@ -61,7 +68,28 @@ def _without_comments(text: str) -> str:
     return "\n".join(out)
 
 
+def check_sources(name: str, value: str) -> list[str]:
+    """The addresses of a `*_CIDRS` value: each a strict single-host network."""
+    if not CIDRS_VALUE.fullmatch(value):
+        raise Refused(f"{name}={value!r}: a source list is comma-separated addresses in CIDR form")
+    sources = value.split(",")
+    if len(sources) > MAX_SOURCES or len(set(sources)) != len(sources):
+        raise Refused(f"{name}={value!r}: at most {MAX_SOURCES} distinct source addresses")
+    for source in sources:
+        try:
+            network = ipaddress.ip_network(source, strict=True)
+        except ValueError as exc:
+            raise Refused(f"{name}: {source!r} is not a network in CIDR form: {exc}") from exc
+        if network.prefixlen != network.max_prefixlen:
+            raise Refused(f"{name}: {source!r} is a range, not one approved source address "
+                          f"(/{network.max_prefixlen})")
+    return sources
+
+
 def check_value(name: str, value: str) -> None:
+    if name.endswith("_CIDRS"):
+        check_sources(name, value)
+        return
     if not VALUE.fullmatch(value):
         raise Refused(f"{name}={value!r}: values are restricted to {VALUE.pattern}")
     if name.endswith("_CIDR"):
@@ -80,7 +108,12 @@ def render(template: str, values: dict[str, str]) -> str:
     unused = sorted(set(values) - named)
     if unused:
         raise Refused(f"value(s) for placeholder(s) the template does not have: {', '.join(unused)}")
-    out = PLACEHOLDER.sub(lambda m: values.get(m.group(1), m.group(0)), template)
+    def substitute(match: re.Match) -> str:
+        name = match.group(1)
+        if name not in values:
+            return match.group(0)
+        return '", "'.join(values[name].split(",")) if name.endswith("_CIDRS") else values[name]
+    out = PLACEHOLDER.sub(substitute, template)
     left = sorted(set(PLACEHOLDER.findall(out)))
     if left:
         raise Refused(f"unresolved placeholder(s): {', '.join(left)}")
@@ -182,6 +215,27 @@ def selftest() -> int:
             assert needle in str(exc), (values, str(exc))
         else:
             raise AssertionError(f"rendered {values}")
+    sources = '{"cidrs": ["@@OPERATOR_CIDRS@@"]}'
+    assert json.loads(render(sources, {"OPERATOR_CIDRS": "192.0.2.7/32,198.51.100.4/32"}))["cidrs"] == \
+        ["192.0.2.7/32", "198.51.100.4/32"]
+    assert json.loads(render(sources, {"OPERATOR_CIDRS": "192.0.2.7/32"}))["cidrs"] == ["192.0.2.7/32"]
+    for value, needle in (
+        ("0.0.0.0/0", "range"),
+        ("192.0.2.7/32,0.0.0.0/0", "range"),
+        ("::/0", "range"),
+        ("192.0.2.0/24", "range"),
+        ("192.0.2.7", "comma-separated addresses in CIDR form"),  # the prefix is always written
+        ("192.0.2.7/32,192.0.2.7/32", "distinct"),
+        ("192.0.2.7/32;198.51.100.4/32", "comma-separated"),
+        ('192.0.2.7/32","0.0.0.0/0', "comma-separated"),
+        (",".join(f"192.0.2.{i}/32" for i in range(9)), "at most"),
+    ):
+        try:
+            render(sources, {"OPERATOR_CIDRS": value})
+        except Refused as exc:
+            assert needle in str(exc), (value, str(exc))
+        else:
+            raise AssertionError(f"rendered source list {value!r}")
     try:
         render("cidrs: [0.0.0.0/0, @@OPERATOR_CIDR@@]\n", {"OPERATOR_CIDR": "192.0.2.7/32"})
     except Refused as exc:

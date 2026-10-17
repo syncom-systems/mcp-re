@@ -195,6 +195,70 @@ fn single_node_fresh_then_replay() {
     );
 }
 
+/// The largest admitted replay pool admits a nonce exactly once. Concurrent inserts of
+/// ONE key spread round-robin over 128 connections must yield one `Fresh` and every other
+/// a `Replay`, and distinct keys must all be `Fresh`: which connection an insert takes
+/// never changes its decision, so `--replay-redis-pool-size` moves throughput and nothing
+/// the replay tier decides.
+#[test]
+fn a_maximal_pool_admits_each_nonce_exactly_once_under_concurrent_duplicates() {
+    let Some(url) = redis_url() else {
+        eprintln!(
+            "SKIP a_maximal_pool_admits_each_nonce_exactly_once_under_concurrent_duplicates: \
+             MCP_RE_TEST_REDIS_URL unset (no Redis available in this environment)"
+        );
+        return;
+    };
+    let signer = &format!("did:example:host#pooled-exactly-once-{}", run_id());
+    let rt = runtime();
+    let store = std::sync::Arc::new(
+        rt.block_on(RedisAsyncAtomicReplayStore::connect_pooled(
+            &url,
+            mcp_re_proxy::async_redis_store::system_clock(),
+            None,
+            128,
+        ))
+        .expect("connect a 128-connection pool to MCP_RE_TEST_REDIS_URL Redis"),
+    );
+    let retain_until = expires_soon();
+    let duplicate = composite_key(signer, AUD, &mcp_re_test_paths::unique_test_nonce());
+    let distinct =
+        (0..256).map(|_| composite_key(signer, AUD, &mcp_re_test_paths::unique_test_nonce()));
+    let concurrently = |keys: Vec<String>| {
+        rt.block_on(async {
+            let mut set = tokio::task::JoinSet::new();
+            for key in keys {
+                let store = std::sync::Arc::clone(&store);
+                set.spawn(async move {
+                    let insert = ReplayInsert::new(&key, TEST_ACTOR, retain_until, 0);
+                    store.atomic_insert_if_absent(insert).await
+                });
+            }
+            set.join_all().await
+        })
+    };
+    let dup = concurrently(vec![duplicate; 256]);
+    let fresh = concurrently(distinct.collect());
+    let count = |rs: &[Result<ReplayDecision, ReplayStoreError>], d: &ReplayDecision| {
+        rs.iter().filter(|r| r.as_ref().ok() == Some(d)).count()
+    };
+    assert_eq!(
+        count(&dup, &ReplayDecision::Fresh),
+        1,
+        "one key is admitted once"
+    );
+    assert_eq!(
+        count(&dup, &ReplayDecision::Replay),
+        255,
+        "every other sight is a replay"
+    );
+    assert_eq!(
+        count(&fresh, &ReplayDecision::Fresh),
+        256,
+        "distinct nonces are all fresh"
+    );
+}
+
 /// MCPS-090 / H-8 / H-9 — live PTTL confirmation that the inserted key gets a
 /// BOUNDED `retain_until - now` window TTL, NOT the `now = 0` absolute-epoch TTL
 /// (~1.78e9 s × 1000 ≈ 56 years) that let the keyspace grow without bound.
@@ -504,4 +568,80 @@ fn wait_quorum_shortfall_and_recovery_against_a_replica() {
     );
 
     // Cleanup: leave the topology attached for any subsequent test in the lane.
+}
+
+/// The Amendment-1 shortfall on a POOLED store, without touching the topology: a quorum
+/// one above the replicas the primary has attached cannot be met, so every fresh insert
+/// spread round-robin over 32 connections fails closed as `Unavailable`, none is
+/// `Fresh`, and a same-nonce retry is not `Fresh` either. The control half — a quorum
+/// equal to the attached replicas on an identical pool admits — shows the shortfall is
+/// the only difference. A larger `--replay-redis-pool-size` adds connections that run
+/// the same tier; it gives an unmet quorum no connection to succeed on.
+#[test]
+fn a_pooled_store_fails_closed_on_every_connection_when_the_quorum_cannot_be_met() {
+    let Some(url) = redis_url() else {
+        eprintln!(
+            "SKIP a_pooled_store_fails_closed_on_every_connection_when_the_quorum_cannot_be_met: \
+             MCP_RE_TEST_REDIS_URL unset (no Redis available in this environment)"
+        );
+        return;
+    };
+    let attached = u32::try_from(primary_connected_slaves(&mut raw_conn(&url)).max(0))
+        .expect("a replica count fits u32");
+    let signer = &format!("did:example:host#pooled-shortfall-{}", run_id());
+    let rt = runtime();
+    let pooled = |quorum: u32| {
+        std::sync::Arc::new(
+            rt.block_on(RedisAsyncAtomicReplayStore::connect_pooled(
+                &url,
+                mcp_re_proxy::async_redis_store::system_clock(),
+                Some((quorum, 300)),
+                32,
+            ))
+            .expect("connect a 32-connection pool to MCP_RE_TEST_REDIS_URL Redis"),
+        )
+    };
+    let retain_until = expires_soon();
+    let concurrently = |store: &std::sync::Arc<RedisAsyncAtomicReplayStore>, keys: Vec<String>| {
+        rt.block_on(async {
+            let mut set = tokio::task::JoinSet::new();
+            for key in keys {
+                let store = std::sync::Arc::clone(store);
+                set.spawn(async move {
+                    let insert = ReplayInsert::new(&key, TEST_ACTOR, retain_until, 0);
+                    store.atomic_insert_if_absent(insert).await
+                });
+            }
+            set.join_all().await
+        })
+    };
+    let keys = |n| -> Vec<String> {
+        (0..n)
+            .map(|_| composite_key(signer, AUD, &mcp_re_test_paths::unique_test_nonce()))
+            .collect()
+    };
+
+    if attached > 0 {
+        let met = concurrently(&pooled(attached), keys(64));
+        assert!(
+            met.iter().all(|r| *r == Ok(ReplayDecision::Fresh)),
+            "a quorum of the {attached} attached replicas admits: {met:?}"
+        );
+    }
+
+    let unmet = pooled(attached + 1);
+    let shortfall_keys = keys(64);
+    let shortfall = concurrently(&unmet, shortfall_keys.clone());
+    assert!(
+        shortfall
+            .iter()
+            .all(|r| matches!(r, Err(ReplayStoreError::Unavailable { .. }))),
+        "WAIT {} against {attached} replicas fails closed on every connection: {shortfall:?}",
+        attached + 1
+    );
+    let retry = concurrently(&unmet, shortfall_keys);
+    assert!(
+        retry.iter().all(|r| *r != Ok(ReplayDecision::Fresh)),
+        "a nonce burned by a shortfall is never Fresh on retry: {retry:?}"
+    );
 }

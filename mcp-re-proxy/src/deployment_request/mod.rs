@@ -49,17 +49,17 @@ pub use revocation::{
     RevocationListRequest,
 };
 pub use secret_string::SecretString;
-pub use storage::{
-    ContinuationStoreRequest, EtcdStoreRequest, RedisStoreRequest, ReplayStorageRequest,
-    ReplayStoreRequest, SharedStoreRequest, TrustEpochSource, TrustEpochStoreRequest,
-};
-
 pub use signing_source::{
     AwsKmsChannelKeyRequest, AwsKmsSigningSourceRequest, ChannelCredentialRequest,
     ChannelKeyRequest, DelegatedChannelKeyRequest, ExportedChannelKeyRequest,
     FileSigningSourceRequest, GcpKmsChannelKeyRequest, GcpKmsSigningSourceRequest,
     Pkcs11ChannelKeyRequest, Pkcs11SigningSourceRequest, ResponseSigningRequest,
     SigningSourceRequest,
+};
+pub use storage::{
+    ContinuationStoreRequest, EtcdStoreRequest, RedisStoreRequest, ReplayRedisPoolSize,
+    ReplayStorageRequest, ReplayStoreRequest, SharedStoreRequest, TrustEpochSource,
+    TrustEpochStoreRequest,
 };
 
 use std::time::Duration;

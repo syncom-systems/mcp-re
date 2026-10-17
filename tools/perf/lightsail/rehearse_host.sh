@@ -47,7 +47,7 @@ read -r KTYPE KB64 _ < "$W/ssh/id_ed25519.pub"
 python3 tools/cloud/render_cloud_config.py --template tools/perf/lightsail/cloud/user-data.sh \
   --run-id "$RUN_ID" --set SSH_KEY_TYPE="$KTYPE" --set SSH_KEY_B64="$KB64" --set RUN_ID="$RUN_ID"
 python3 tools/cloud/render_cloud_config.py --template tools/perf/lightsail/cloud/firewall.json \
-  --run-id "$RUN_ID" --set OPERATOR_CIDR="127.0.0.1/32"
+  --run-id "$RUN_ID" --set OPERATOR_CIDRS="127.0.0.1/32"
 USERDATA="$PWD/work/cloud-runs/$RUN_ID/user-data.sh"
 [[ -s "$USERDATA" ]] || die "no rendered user-data at $USERDATA"
 

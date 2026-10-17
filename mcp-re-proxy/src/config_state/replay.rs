@@ -32,6 +32,7 @@
 //! forbid it without destroying cross-replica MRTR. `ContinuationControl` owns that fact
 //! now, so the forbidden cell can finally be stated.
 
+use crate::deployment_request::ReplayRedisPoolSize;
 use crate::deployment_request::{DeploymentRequest, RedactedLocator, ReplayStoreRequest};
 use crate::replay_tier::ReplayDurabilityTier;
 
@@ -70,6 +71,8 @@ enum ReplayKind {
         quorum: u32,
         /// How long to wait for those acknowledgements before failing closed.
         timeout_ms: u64,
+        /// How many connections the store holds open, the default already resolved.
+        pool: ReplayRedisPoolSize,
     },
     /// A shared linearizable CP store (etcd).
     SharedLinearizable {
@@ -116,15 +119,13 @@ impl ReplayState {
     /// implement. Here the pairing is made once, by the party that owns it.
     pub fn materialization_plan(&self) -> ReplayPlan {
         let tier = self.durability_tier();
-        match &self.kind {
+        match self.kind.clone() {
             ReplayKind::SharedLinearizable { endpoint } => ReplayPlan {
-                backend: PlannedBackend::Etcd {
-                    endpoint: endpoint.clone(),
-                },
+                backend: PlannedBackend::Etcd { endpoint },
                 tier,
             },
-            ReplayKind::SharedRedis { url, .. } => ReplayPlan {
-                backend: PlannedBackend::Redis { url: url.clone() },
+            ReplayKind::SharedRedis { url, pool, .. } => ReplayPlan {
+                backend: PlannedBackend::Redis { url, pool },
                 tier,
             },
         }
@@ -156,8 +157,11 @@ pub struct ReplayPlan {
 enum PlannedBackend {
     /// CP / linearizable, over the etcd v3 gateway.
     Etcd { endpoint: String },
-    /// Horizontally scaled, over Redis.
-    Redis { url: String },
+    /// Horizontally scaled, over Redis, held open over `pool` connections.
+    Redis {
+        url: String,
+        pool: ReplayRedisPoolSize,
+    },
 }
 
 /// What materialization must connect to, as a borrowed view of a plan.
@@ -177,15 +181,17 @@ pub enum PlannedStore<'a> {
     Redis {
         /// Where admitted nonces live.
         url: &'a str,
+        /// How many connections to hold open to it.
+        pool: ReplayRedisPoolSize,
     },
 }
 
 impl ReplayPlan {
     /// The store to establish.
     pub fn store(&self) -> PlannedStore<'_> {
-        match &self.backend {
-            PlannedBackend::Etcd { endpoint } => PlannedStore::Etcd { endpoint },
-            PlannedBackend::Redis { url } => PlannedStore::Redis { url },
+        match self.backend {
+            PlannedBackend::Etcd { ref endpoint } => PlannedStore::Etcd { endpoint },
+            PlannedBackend::Redis { ref url, pool } => PlannedStore::Redis { url, pool },
         }
     }
 
@@ -318,7 +324,7 @@ fn locator_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<
         (&state, store),
         (
             RequestedState::SharedRedis { .. },
-            ReplayStoreRequest::Redis(_)
+            ReplayStoreRequest::Redis { .. }
         ) | (
             RequestedState::SharedLinearizable,
             ReplayStoreRequest::Etcd(_)
@@ -361,15 +367,17 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<ReplayState>
 fn build(requested: RequestedState, config: &DeploymentRequest) -> Option<ReplayState> {
     let store = config.replay.store.as_ref()?;
     Some(match (requested, store) {
-        (RequestedState::SharedRedis { quorum, timeout_ms }, ReplayStoreRequest::Redis(redis)) => {
-            ReplayState {
-                kind: ReplayKind::SharedRedis {
-                    url: redis.url.clone(),
-                    quorum,
-                    timeout_ms,
-                },
-            }
-        }
+        (
+            RequestedState::SharedRedis { quorum, timeout_ms },
+            ReplayStoreRequest::Redis { store, pool_size },
+        ) => ReplayState {
+            kind: ReplayKind::SharedRedis {
+                url: store.url.clone(),
+                quorum,
+                timeout_ms,
+                pool: pool_size.unwrap_or(ReplayRedisPoolSize::DEFAULT),
+            },
+        },
         (RequestedState::SharedLinearizable, ReplayStoreRequest::Etcd(etcd)) => ReplayState {
             kind: ReplayKind::SharedLinearizable {
                 endpoint: etcd.endpoint.clone(),
@@ -455,7 +463,8 @@ mod tests {
         assert_eq!(
             redis_plan.store(),
             PlannedStore::Redis {
-                url: "redis://127.0.0.1:6379"
+                url: "redis://127.0.0.1:6379",
+                pool: ReplayRedisPoolSize::DEFAULT,
             }
         );
 
@@ -467,6 +476,28 @@ mod tests {
                 endpoint: "http://127.0.0.1:2379"
             }
         );
+    }
+
+    /// A declared pool size is carried by the validated state into the plan unchanged,
+    /// and only the pool moves: the store and the tier are the ones silence produces.
+    #[test]
+    fn a_declared_pool_size_reaches_the_plan_and_changes_nothing_else() {
+        let silent = run(redis).0.expect("legal").materialization_plan();
+        let declared = run(|c| {
+            redis(c);
+            let pool = ReplayRedisPoolSize::new(32).ok();
+            c.replay.store = Some(ReplayStoreRequest::redis_pooled(
+                "redis://127.0.0.1:6379",
+                pool,
+            ));
+        })
+        .0
+        .expect("legal")
+        .materialization_plan();
+        let pool = ReplayRedisPoolSize::new(32).expect("in range");
+        let url = "redis://127.0.0.1:6379";
+        assert_eq!(declared.store(), PlannedStore::Redis { url, pool });
+        assert_eq!(declared.tier(), silent.tier());
     }
 
     /// G7. `Some("")` satisfied the presence check of the state it was supposed to inhabit.
@@ -545,6 +576,7 @@ mod tests {
                         url: "redis://127.0.0.1:6379".to_string(),
                         quorum: 1,
                         timeout_ms: 100,
+                        pool: ReplayRedisPoolSize::DEFAULT,
                     },
                 },
                 redis,

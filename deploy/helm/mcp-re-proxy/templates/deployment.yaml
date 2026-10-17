@@ -152,6 +152,10 @@ spec:
             - "--replay-clock-divergence-secs"
             - "{{ .Values.replay.clockDivergenceSecs }}"
             {{- end }}
+            {{- if not (kindIs "invalid" .Values.replay.poolSize) }}
+            - "--replay-redis-pool-size"
+            - "{{ .Values.replay.poolSize }}"
+            {{- end }}
             - "--revocation-tier"
             - {{ .Values.revocation.tier | quote }}
             {{- if .Values.revocation.trustReloadSeconds }}
