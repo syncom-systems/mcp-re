@@ -11,7 +11,7 @@
 #
 #   scripts/stage_image_binaries.sh --arch amd64      # or arm64 for the local kind fleet
 #   docker build -f deploy/docker/Dockerfile --target proxy \
-#     --build-arg DIST=deploy/docker/dist/amd64 -t mcp-re-proxy:0.18.0 .
+#     --build-arg DIST=deploy/docker/dist/amd64 -t mcp-re-proxy:0.18.1 .
 #
 # Local validation loads it into a kind cluster (`kind load docker-image …`); for GKE,
 # Cloud Build stages amd64 and pushes to Artifact Registry.

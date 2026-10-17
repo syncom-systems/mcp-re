@@ -12,6 +12,17 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+## [0.18.1] — 2026-10-17
+
+v0.18.1 makes the Redis replay store's connection pool configurable and takes the rustls fix
+for RUSTSEC-2026-0346/-0347/-0348/-0349. The default pool stays 8, so a deployment that sets
+nothing behaves as v0.18.0 did.
+
+### Security
+
+- rustls 0.23.45 -> 0.23.46, fixing RUSTSEC-2026-0346, -0347, -0348 and -0349 (#1193, #1194).
+  serde_json moves 1.0.151 -> 1.0.154 in the same dependency update.
+
 ### Added — `--replay-redis-pool-size`
 
 - The Redis replay store's connection pool is configurable: `--replay-redis-pool-size <n>`,
@@ -22,7 +33,7 @@ or wire-format compatibility while the design lines from
   transcript states the effective size. A pool with no `--replay-redis-url` is refused.
   `SET NX PX`, `WAIT`, the durability tier and fail-closed handling are unchanged.
 - Helm: `replay.poolSize` renders the flag; unset leaves the proxy's default.
-- Measured on one co-located 32-vCPU host: pool 32 raised keep-alive throughput 38-48% at 24
+- Measured on one co-located 32-vCPU host, with the build before the rustls update (`17d7e249`): pool 32 raised keep-alive throughput 38-48% at 24
   serving cores and 17-32% at 32 over the default 8; pool 64 added 6% / 13% more. It does not
   make throughput scale linearly, and it does not remove the 24 -> 32-core drop on a host that
   also runs Redis (`docs/bench/replay-pool-size-2026-10-16.md`,
@@ -67,6 +78,10 @@ or wire-format compatibility while the design lines from
 
 ### Fixed
 
+- The mutation lane judges a Rust battery's build by Bazel's exit status, not by error text:
+  a build Bazel retried after a remote-cache eviction and then completed is scored by its test
+  record, and a battery that did not build records Bazel's status and error lines
+  (`tools/verification/verify-mutations`).
 - Proof 4 no longer selects a terminating load-generator pod: a pod with a
   `deletionTimestamp` is excluded, and zero or several eligible pods are retried rather than
   tie-broken (`docs/security/fleet_pod_select.py`).
