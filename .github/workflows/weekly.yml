@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Weekly: the pre-merge jobs on main once a week, from a fresh checkout and a cold hosted runner, so a drift in the
+# toolchain, an action or an upstream registry shows up within a week instead of at the next change. It records
+# nothing; a red run is the signal. The scheduled lanes (verification, supply chain, test inventory, live-infra e2e,
+# cloud-kms live) keep their own names and cadences. Public repository, so every job runs on a GitHub-hosted runner.
+name: weekly
+
+on:
+  schedule:
+    # Saturday 22:00 UTC.
+    - cron: "0 22 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: gates
+    uses: ./.github/workflows/pre-merge.yml
