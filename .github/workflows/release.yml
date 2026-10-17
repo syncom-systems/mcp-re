@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Release assurance — the BINDING closure lane, deliberately off the merge path.
+# Release assurance — the BINDING closure lane, deliberately off the merge path. This is the
+# repository's `release` layer; the file was `release-assurance.yml` until 2026-10-17, and
+# the one committed record produced under that path is still accepted for it (see
+# scripts/release_assurance_gate.py, LEGACY_PRODUCER).
 #
 # ADR-MCPRE-059 §28.8 keeps two modes apart on purpose. Ordinary development CI runs
 # `review --root-completeness`, which is report-only: an honest unresolved GAP under a
@@ -26,7 +29,7 @@
 # by an owner-run local measurement (`scripts/local_slo_lane.sh`) when one is wanted; its absence or staleness is never a
 # release-assurance failure.
 
-name: release assurance
+name: release
 
 on:
   workflow_dispatch:

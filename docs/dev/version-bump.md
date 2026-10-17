@@ -139,7 +139,8 @@ dev1 when a measurement is wanted, never as a step of qualifying a release.
 report-only form deliberately (ADR-MCPRE-059 §28.8): an honest unresolved GAP under a
 declared root must not fail everyday work. This is the lane where it is binding.
 
-In Actions the lane is `.github/workflows/release-assurance.yml`, dispatched with the ref to
+In Actions the lane is `.github/workflows/release.yml` (named `release-assurance.yml` until
+2026-10-17), dispatched with the ref to
 qualify and the `verification` run whose evidence records it composes. It runs on a
 GitHub-hosted runner and refuses a target that is not reachable from `main`.
 
@@ -155,7 +156,7 @@ CURRENTLY_VERIFIED, with every root complete. Only a run whose job printed
 **Cutting the release then commits the record.** Copy the run's
 `release-assurance.json` to `docs/releases/<version>-release-assurance.json`, check its
 provenance with `python3 scripts/release_assurance_gate.py --verify-run <that file>` (GitHub
-must report the producing run as `release-assurance.yml` on `main`, a successful dispatch,
+must report the producing run as `release.yml` on `main`, a successful dispatch,
 whose uploaded record is byte-identical to the file), register the
 provenance document as `mechanized` in `scripts/release_assurance_gate.py`, and paste the
 block the gate renders into it. The gate then checks the document against the record on
