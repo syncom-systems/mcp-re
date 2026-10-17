@@ -91,7 +91,7 @@ The SLO lane:
 
 ### 4. Release Assurance Couples to SLO Store
 
-**Source:** `.github/workflows/release-assurance.yml`, `tools/verification/release-assurance`
+**Source:** `.github/workflows/release.yml` (then `release-assurance.yml`), `tools/verification/release-assurance`
 
 Release assurance:
 - Runs `tools/verification/release-assurance --decide`, which reads from `/opt/verification/slo`
