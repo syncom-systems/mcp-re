@@ -137,7 +137,7 @@ is itself secret-derived is a real finding, and the fix is to stop logging it.
 
 ## 3. `actions/cache-poisoning/poisonable-step` — fixed, not dismissed
 
-Reported once, on [`release-assurance.yml`](../../.github/workflows/release-assurance.yml)
+Reported once, on [`release.yml`](../../.github/workflows/release.yml) (then `release-assurance.yml`)
 (alert #297, 2026-09-15). Unlike the Rust rules above, this one named something real.
 
 The lane is `workflow_dispatch` with a `ref` input, and it **executes the target ref's own

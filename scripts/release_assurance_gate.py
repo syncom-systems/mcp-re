@@ -29,8 +29,9 @@ WHAT THIS PROVES, exactly, in two halves:
    dispatched from, so a writer can dispatch a branch whose copy of the workflow drops the
    reachability guard and uploads a plausible record. What GitHub itself records about a run
    -- its workflow path, its branch, its event -- cannot be edited from a branch. So a
-   mechanized record must name its producing run as `release-assurance.yml@refs/heads/main`
-   (checked offline, on every CI run), and `--verify-run RECORD` asks GitHub about that run
+   mechanized record must name its producing run as `release.yml@refs/heads/main` (the v0.18.0
+   record, produced before the rename, names `release-assurance.yml@refs/heads/main`; that one
+   path is accepted for the documents in LEGACY_PRODUCED only) (checked offline, on every CI run), and `--verify-run RECORD` asks GitHub about that run
    and compares the run's own uploaded record with the file before it is committed: the
    run must be this workflow, on `main`, a successful dispatch, and its artifact must be
    byte-identical to the record.
@@ -60,10 +61,19 @@ REPO = Path(__file__).resolve().parent.parent
 CANONICAL = "tools/verification/release-assurance"
 
 #: The workflow that must call it.
-WORKFLOW = Path(".github/workflows/release-assurance.yml")
+WORKFLOW = Path(".github/workflows/release.yml")
 
-#: The only workflow ref a committed record may have been produced by.
+#: The only workflow ref a NEW committed record may have been produced by.
 PRODUCER_REF_SUFFIX = f"/{WORKFLOW}@refs/heads/main"
+
+#: The workflow path before the 2026-10-17 rename to `release.yml`. A record committed before
+#: then names it, and GitHub attested that run under that path, so the record cannot be
+#: rewritten. It is accepted ONLY for the documents listed in `LEGACY_PRODUCED`: an enumerated
+#: exception, not a second producer. The file is gone from `main`, and `--verify-run` accepts
+#: only `WORKFLOW`, so no new run can be produced under it.
+LEGACY_WORKFLOW = Path(".github/workflows/release-assurance.yml")
+LEGACY_PRODUCER_REF_SUFFIX = f"/{LEGACY_WORKFLOW}@refs/heads/main"
+LEGACY_PRODUCED = frozenset({"v0.18.0-provenance.md"})
 
 #: Where release provenance documents live.
 RELEASES = Path("docs/releases")
@@ -193,7 +203,7 @@ def correspondence_problems(documents: dict[str, str], records: dict[str, dict])
                 "record is a refusal, never a pass."
             )
             continue
-        found = producer_problems(record)
+        found = producer_problems(record, legacy_ok=name in LEGACY_PRODUCED)
         if found:
             problems += [f"{RELEASES / record_name(name)}: {problem}" for problem in found]
             continue
@@ -207,17 +217,22 @@ def correspondence_problems(documents: dict[str, str], records: dict[str, dict])
     return problems
 
 
-def producer_problems(record: dict) -> list[str]:
-    """A committed record names a run of the release workflow on `main`."""
+def producer_problems(record: dict, legacy_ok: bool = False) -> list[str]:
+    """A committed record names a run of the release workflow on `main`.
+
+    `legacy_ok` is True only for a document in `LEGACY_PRODUCED`, whose record was produced
+    under the retired workflow path.
+    """
     made = record.get("producer")
     if not isinstance(made, dict) or made.get("source") != "actions":
         return ["it was not produced by a GitHub Actions run, so no run can vouch for it"]
     problems = []
-    if not str(made.get("workflow_ref") or "").endswith(PRODUCER_REF_SUFFIX):
+    accepted = (PRODUCER_REF_SUFFIX, LEGACY_PRODUCER_REF_SUFFIX) if legacy_ok else (PRODUCER_REF_SUFFIX,)
+    if not str(made.get("workflow_ref") or "").endswith(accepted):
         problems.append(
             f"it was produced by {made.get('workflow_ref')!r}, not by a workflow ref ending "
-            f"{PRODUCER_REF_SUFFIX!r}: a dispatch from another branch runs that branch's "
-            "copy of the workflow"
+            f"{' or '.join(repr(s) for s in accepted)}: a dispatch from another branch runs "
+            "that branch's copy of the workflow"
         )
     if not str(made.get("run_id") or "").isdigit():
         problems.append("it names no producing run id")
@@ -374,6 +389,18 @@ def selftest() -> int:
         assert correspondence_problems(
             {"v9.9.9-provenance.md": matching}, {"v9.9.9-release-assurance.json": local}
         ), "a record no Actions run produced must fail"
+        legacy = dict(record, producer=dict(record["producer"], workflow_ref=f"o/r{LEGACY_PRODUCER_REF_SUFFIX}"))
+        assert correspondence_problems(
+            {"v9.9.9-provenance.md": matching}, {"v9.9.9-release-assurance.json": legacy}
+        ), "the retired workflow path is not a producer for a document outside LEGACY_PRODUCED"
+        assert not producer_problems(legacy, legacy_ok=True), (
+            "the retired path must be accepted for a document in LEGACY_PRODUCED"
+        )
+        assert producer_problems(legacy), "the retired path is refused by default"
+        assert producer_problems(branch, legacy_ok=True), (
+            "legacy status accepts the retired path on main, not another branch's copy"
+        )
+        assert LEGACY_PRODUCED <= set(BACKING), "a legacy exception must name a registered document"
         malformed = dict(record, schema_version=99)
         assert load_record_obj(malformed) is None, (
             "an unknown schema version is refused rather than read optimistically"
