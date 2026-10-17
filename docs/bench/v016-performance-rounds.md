@@ -338,7 +338,7 @@ It prints **no throughput number** and is not a measurement. The full sweep stil
 a quiet box and stays out of CI.
 
 It is on the merge path: named as a release gate in
-[`../../.github/workflows/ci.yml`](../../.github/workflows/ci.yml) and invoked from stage 2
+[`../../.github/workflows/pre-merge.yml`](../../.github/workflows/pre-merge.yml) and invoked from stage 2
 of [`../../scripts/local_gate.sh`](../../scripts/local_gate.sh), with
 [`../../scripts/merge_path_gate.py`](../../scripts/merge_path_gate.py) confirming a
 workflow names it. Verified in both directions: PASS on the repaired rig, and on a

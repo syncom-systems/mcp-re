@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Post-merge: the pre-merge jobs on main after a merge, because the merged result is not the
+# commit the pull request was checked on. The step that publishes only from main keys on
+# `github.event_name == 'push'`, which a called workflow inherits from this one. Public
+# repository, so every job runs on a GitHub-hosted runner.
+name: post-merge
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: gates
+    uses: ./.github/workflows/pre-merge.yml

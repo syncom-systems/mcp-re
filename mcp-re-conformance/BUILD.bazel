@@ -282,7 +282,7 @@ nt_rust_test(
 # verification gate. Verifies a signature produced by an INDEPENDENT RFC 9421
 # implementation (python-cryptography, committed as external_kat.json) under the
 # Rust MCP-RE verifier. The ours -> external direction is the pinned Python gate
-# in tools/rfc9421_cross_verify.py (see .github/workflows/ci.yml).
+# in tools/rfc9421_cross_verify.py (see .github/workflows/pre-merge.yml).
 nt_rust_test(
     name = "rfc9421_cross_verification_test",
     srcs = ["tests/rfc9421_cross_verification_test.rs"],
@@ -413,7 +413,7 @@ nt_rust_test(
 # INDEPENDENT JOSE/EdDSA implementation (python-cryptography, committed as
 # external_delegation_kat.json) under the Rust verifier, and confirms our issuer
 # reproduces its bytes. The ours -> external direction is the pinned Python gate
-# in tools/jose_cross_verify.py (see .github/workflows/ci.yml).
+# in tools/jose_cross_verify.py (see .github/workflows/pre-merge.yml).
 nt_rust_test(
     name = "delegation_cross_verification_test",
     srcs = ["tests/delegation_cross_verification_test.rs"],
