@@ -9,7 +9,7 @@
     "theorem_id": "THM-0111",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G9.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read after the regenerated Rust target table (verification/generated/rust-targets.json) gained the test-only mcp-re-test-paths edges (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): generated table only; claim, premises, dependencies and entry text unchanged. Re-read after CI formatting (rustfmt over the nonce-cleanup test edits) and the clock-free unique_test_nonce (process id, process address, counter; work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): formatting and the test-only helper only; claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G9.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read after the regenerated Rust target table (verification/generated/rust-targets.json) gained the test-only mcp-re-test-paths edges (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): generated table only; claim, premises, dependencies and entry text unchanged. Re-read after CI formatting (rustfmt over the nonce-cleanup test edits) and the clock-free unique_test_nonce (process id, process address, counter; work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): formatting and the test-only helper only; claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded. Re-read for v0.18.1 against the semantic changes to its supporting units over 9dab7082..60a2257f, recorded in verification/reviews/packets/v0181-assurance-closure-2026-10-17.md, and ratified in the owner's ruling of 2026-10-17 (verification/reviews/rulings/v0181-assurance-closure-2026-10-17.md, ledger owner-signature:v0181-assurance-closure-2026-10-17). Claim, premises and dependencies unchanged; the review digest is re-recorded. Verdict CLEAN.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -86,7 +86,7 @@
         "mutation_probes": "sha256:e8774782f777b037c79c89d07e4256a875ecde86c7c0088a9f4ea15979720946",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:fc1cf72a51c66acf91262a047d61fde8c415ea7f317813c1d5f1950ad4697765",
+        "source_inputs": "sha256:5822454cc95ccd1c3f21c8a3c2bfd548f727fb02a0926d067cc5bfe20debe83f",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:ba1cbf9625aab9b2e78f0cbc9f66496b8024c967c08c6f6c3061a9363333a047",
         "test_selection": "sha256:140cdc4d6208386c3839990ccf2d9c8ca209aadd707bf6f5e0d05ef2024ffdfd",
@@ -106,7 +106,7 @@
         "mutation_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:f95d080a3d033c797e732f969009ecf0ecb06b584926d776c2fe9a19c8f09560",
+        "source_inputs": "sha256:29b5ebb03dd703d2111e8cc105ea0e0ac03a72872e96764c9a49e00219bd5ca0",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:7fff2e4e58cd29ce3d8dcd05245ff1531bdd85a71cbd98ad74bffc39a9a4caa3",
         "test_selection": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
@@ -181,7 +181,7 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:6b1bd6e03abd1e4282604f66c5866de8b06d75af81d8020131c3b6c2d7d355dd",
+  "review_digest": "sha256:8f384158d7537c518b46cb20b1a5eab209141ce00eae1e9c15f94bed034c6cef",
   "reviewed_fingerprint": "sha256:f3f5713603a624cc6836ed1928f42ebbb45a5401b1a111194ced0f6e6a1f7d3c",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0111"

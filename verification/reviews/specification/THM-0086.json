@@ -7,7 +7,7 @@
     "theorem_id": "THM-0086",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G3_G4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G3_G4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded. Re-read for v0.18.1 against the semantic changes to its supporting units over 9dab7082..60a2257f, recorded in verification/reviews/packets/v0181-assurance-closure-2026-10-17.md, and ratified in the owner's ruling of 2026-10-17 (verification/reviews/rulings/v0181-assurance-closure-2026-10-17.md, ledger owner-signature:v0181-assurance-closure-2026-10-17). Claim, premises and dependencies unchanged; the review digest is re-recorded. Verdict CLEAN.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -24,7 +24,7 @@
         "mutation_probes": "sha256:321ae85524d0bffc35023d9a41198599359f5d4929f36d30ff7f9ae6ce5d3332",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:cc40cbcec2ad9989724f3564faa784c3e90e8cf6b03f3d46f4e6f270a6d98b45",
+        "source_inputs": "sha256:e12ae59d59cd161c5198c9144376b677a5de3549a96c713b0c1561b8967f7946",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:6a9e1b9b5fe35fe8ac13dda3f12a2dd8ed513ebd4f5e1f8712ee66a0b1bf7801",
         "test_selection": "sha256:c50f682f99fd325fcda13fa8a0fe596c5c6cfddf9ad4c3112d7f61d5793b070d",
@@ -37,7 +37,7 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:e403ee42d3ea7450a63d2dfc38e1fd5b33dbee03f45926233569917e90dedf7f",
+  "review_digest": "sha256:8e805f4f1bb19691825dd7e908f5fb2a53dafaaaa0b8af388c403e24671f9349",
   "reviewed_fingerprint": "sha256:dbd5a9b589552f5154ea4a3ab32b01074a99c53ae158fb97f4521ba06ba50352",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0086"
