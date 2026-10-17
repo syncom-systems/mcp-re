@@ -30,9 +30,10 @@ on:
   pull_request:
   workflow_call:
 
-# Cancel superseded runs on the same ref.
+# Cancel superseded runs on the same ref. `github.workflow` is the CALLER's name in a called workflow, so
+# post-merge and weekly do not cancel each other.
 concurrency:
-  group: pre-merge-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
