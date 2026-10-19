@@ -2,15 +2,17 @@
 
 # ADR-MCPRE-070 — Audit commitment: observation is not commitment
 
-**Status:** **PROPOSED** 2026-10-19. Not accepted. No implementation may depend on it until the
-owner accepts it or records a blocking decision (§15).
-**Discussion:** none yet; to be opened on owner request.
+**Status:** **PROPOSED** 2026-10-19, with all twelve decisions ruled by the owner on 2026-10-19
+(§15). The rulings bind the implementation slices of epic #1201. The document itself is under
+review for ratification in its Discussion, and that review does not suspend the slices.
+**Discussion:** [#1212](https://github.com/matssun/mcp-re/discussions/1212).
 **Issue:** #1191 (Slice 0). **Epic:** #1201.
 **Constrains / relates:** ADR-MCPS-035 (audit vocabulary), ADR-MCPRE-066
 ([`audit-composition.md`](audit-composition.md)), THM-0071 (and THM-0070, THM-0085).
 
-This ADR defines **semantics only**. It changes no product behaviour, no frozen vocabulary
-token, and no persistence claim. It implements no transport. Every `path:line` reference is
+This ADR defines **semantics only**. It implements no transport and changes no persistence
+claim. The two vocabulary changes it authorizes (the `execution.intent` category, D1, and one
+`McpReError` variant, D12) land in the implementation slices, not in this document. Every `path:line` reference is
 pinned at `8262c5fa` and every fact is MEASURED from source unless marked INFERRED. Type and
 state names written in *italics* are illustrative, not decided.
 
@@ -134,7 +136,7 @@ flowchart TD
     AN --> G2N{{"G2 on the 202, before served()"}}
 ```
 
-The audit-commitment progress of one exchange is recommended as a **sibling machine** *A*.
+The audit-commitment progress of one exchange is a **sibling machine** *A* (D7).
 Today's tuple already has the siblings R, C, B, O and L (`mcp-re-proxy/src/exchange_state.rs:569-582`).
 Making it a sibling leaves the frozen request region (`:471`) untouched (D7).
 
@@ -163,8 +165,8 @@ stateDiagram-v2
 
 ## 5. Coverage matrix
 
-Fact-base row numbers come from #1191's investigation. "Required" means the recommended
-reading, pending §15.
+Fact-base row numbers come from #1191's investigation. "Required" columns follow the owner
+rulings in §15.
 
 | path | today's event (ref) | best-effort posture | required: committed? | required: outcome |
 |---|---|---|---|---|
@@ -234,7 +236,7 @@ reading, pending §15.
 | exhaustion | the allocator uses checked arithmetic. Exhaustion is an explicit failure, never a wrap (today `fetch_add` wraps and rendering saturates, F4). Under required posture it fails closed. |
 | transport position | a stream ID or offset is a **location, not identity**. A retried `XADD` gets a new stream ID for the same event. |
 | order | generation order is `seq` within a run. Arrival order is a transport fact (F5). There is no global order across runs. |
-| exchange coordinate | intent and outcome are distinct immutable events that carry one **stable exchange coordinate**. Recommended: the event ID of the exchange's `request.accepted`. That needs no new counter and no wire-derived content, and it respects ADR-MCPS-020 (D9). |
+| exchange coordinate | intent and outcome are distinct immutable events that carry one **stable exchange coordinate**. It is the event ID of the exchange's `request.accepted` (D9). That needs no new counter and no wire-derived content, and it respects ADR-MCPS-020 (D9). |
 | cross-replica | `run_id` is per process, so `(run_id, seq)` is unique across replicas with overwhelming probability, with no global counter. |
 
 ## 9. Witness and trust
@@ -273,7 +275,8 @@ reading, pending §15.
 | P10 eventual archive | provider + downstream assumption | L3 | never a test result |
 | P11 refusals are offered before they are answered | unchanged | **THM-0085, THM-0071 as stated** ("offered", in-process) | not weakened, not silently widened |
 
-ADR-MCPS-035 changes only if D1 is ruled to add tokens. ADR-MCPRE-066's algebra (two
+ADR-MCPS-035's vocabulary gains the `execution.intent` category through a documented, versioned
+extension (D1). Its success set is unchanged. ADR-MCPRE-066's algebra (two
 authorities, one record, facets as coordinates) is preserved. A new execution coordinate
 would be a coordinate beside the frozen tokens, on its Addendum-1 precedent
 ([`admission-facet.md`](admission-facet.md)).
@@ -338,76 +341,107 @@ are independent of the replay pool (#1206).
 9. THM-0071 is not weakened, and it is not widened to dispatch, success or durability.
 10. The reference authority is not a deployment backend.
 
-## 15. Decisions requiring owner ruling
+## 15. Owner rulings (D1–D12, 2026-10-19)
 
-Each item below is **UNRESOLVED — owner ruling required.**
+The owner ruled on all twelve decisions on 2026-10-19 (epic #1201, "Owner-directed architectural
+rulings"; mirrored on #1191). Each ruling is binding for the epic's implementation. It authorizes
+the *specific* contract change it names and nothing wider. The text below records each ruling,
+its stated conditions, and how this ADR reads it.
 
-**D1. Is the intent a new event type, and does this ADR authorize it?**
-- *Why the sources do not settle it:* `audit.rs:69-73` forbids a third success event "without an ADR". Category precedent: ADR-MCPRE-052 §7 added the key-lifecycle category without amending 035 (`audit.rs:57-62`).
-- *Options:* (a) widen `SUCCESS_EVENT_TYPES`; (b) a new *commitment* category (an intent token, with outcomes reusing `response.signed` / `response.rejected` plus an execution coordinate), authorized here, with the drift guard pinning its size; (c) no token, only an envelope coordinate. But no existing record sits at G1, and reusing `request.accepted` would rename admitted as executed.
-- *Recommended:* **(b)**. It leaves the success set at two and follows the 052 precedent. The best-effort stderr stream emits no intent line.
+**D1. Distinct `execution.intent` event: APPROVED.**
+- A distinct `execution.intent` audit fact and event category is introduced. `request.accepted`
+  keeps meaning admission.
+- The two existing success events keep their semantics and their compatibility:
+  `SUCCESS_EVENT_TYPES` stays at two, and `execution.intent` is not a success event.
+- The frozen-vocabulary guards are updated through an explicit, documented, versioned
+  extension, never silently. The precedent is ADR-MCPRE-052 §7's lifecycle category
+  (`mcp-re-core/src/audit.rs:57-62`).
+- Outcome reading: outcomes reuse `response.signed` / `response.rejected`, carrying the
+  exchange coordinate (D9). This adds no outcome token.
+- The best-effort stderr stream emits no intent line. Its v0.18.1 contract is unchanged.
 
-**D2. How far does the required posture cover unauthenticated and pre-exchange attempts?**
-- *Why the sources do not settle it:* THM-0071 and THM-0081 exclude the pre-exchange replies. Nothing rules on the unauthenticated case.
-- *Options:* (a) individual commitment of every attempt; (b) observer-only under the existing ceiling, plus a committed periodic aggregate count; (c) observer-only.
-- *Recommended:* **(b)**. Option (a) is unbounded under outage (§7.2).
+**D2. Unauthenticated and pre-exchange coverage: APPROVED WITH BOUND.**
+- Individual unauthenticated and pre-exchange attempts stay best-effort.
+- When the required posture permits, a bounded, attributable aggregate accounting record is
+  committed.
+- There is never a promise of exhaustive counts during a total provider outage or adversarial
+  saturation. Accounting that was lost or is unknown is reported as such.
 
-**D3. What receipt and durability-tier semantics must a provider meet?**
-- *Why the sources do not settle it:* no audit tier exists. Replay has `ReplayDurabilityTier`, a deployment assertion with four variants (`mcp-re-proxy/src/replay_tier.rs:28-65`).
-- *Options:* (a) one tier, "survives proxy-process loss"; (b) a small closed tier enum with an operator-declared minimum; (c) provider-defined.
-- *Recommended:* **(b)**, with a floor of (a). A tier is an assertion surfaced on the posture line, never inferred from a transport ack.
+**D3. Durability tiers: APPROVED WITH TRUST LIMIT.**
+- The tier vocabulary is closed and versioned.
+- The minimum eligible tier is "survives loss of the proxy process", under a declared failure
+  model.
+- Provider attestation and qualification, and real persistence, are external evidence
+  obligations. An `Ok`, or a Rust type, never proves them.
+- Required mode is refused without an established qualifying provider.
 
-**D4. What is the notification (202) outcome under the required posture?**
-- *Why the sources do not settle it:* the 202 claims acceptance only (#418), but it is a success terminal (`is_success_terminal`, `mcp-re-proxy/src/exchange_state.rs:434-441`) and is emitted after dispatch.
-- *Options:* (a) G2 applies, with outcome kind *acknowledged*; (b) intent only.
-- *Recommended:* **(a)**. Omitting `id` must not let a client select a weaker audit (the reasoning at `reply_assembly/notification.rs:9-13`).
+**D4. Notification 202: APPROVED.**
+- A notification 202 acknowledgement is a terminal success for G2. Under the required posture,
+  a committed matching outcome must exist before the 202 is visible.
+- The record distinguishes acknowledgement from evidence that the downstream side effect
+  completed. The 202 claims acceptance only (§14 item 7).
 
-**D5. What is the canonical encoding of the envelope?**
-- *Why the sources do not settle it:* ADR-MCPRE-066 R2-P2 introduces no serialization contract, and its open Q1 and Q2 (schema version, structured sink) are still open. JCS is excluded (`docs/AGENT_INSTRUCTIONS.md`).
-- *Options:* (a) a fixed-schema, versioned, length-prefixed binary layout owned by the envelope type and pinned by vectors; (b) deterministic CBOR (RFC 8949 §4.2); (c) the stderr line bytes.
-- *Recommended:* **(a)**. The schema is small and closed. Option (c) is a rendering, not a contract.
+**D5. Canonical encoding: APPROVED.**
+- A deterministic, versioned, fixed-schema, length-delimited binary encoding, with exact test
+  vectors and a compatibility and version-migration policy.
+- An identical retry keeps the exact event identity and bytes.
+- Ambiguity, duplicate field forms, and ID/body conflicts are rejected.
 
-**D6. Where does ADR-MCPS-035's normative §9 text live?**
-- *Why the sources do not settle it:* `docs/spec/security-boundary.md` has no §9 (its headings are §0–§7.1). The text survives only in the superseded `docs/archive/security/security-boundary-signed-2026-06-23.md`, which this ADR does not cite as current. Six places point to the missing section (§16).
-- *Options:* (a) restore a current §9 to the spec; (b) declare `mcp-re-core/src/audit.rs` plus Discussion #383 the authority and repoint the citations.
-- *Recommended:* **(a)**, before #1207 edits the spec.
+**D6. ADR-MCPS-035 §9: APPROVED.**
+- The normative §9 is restored in `docs/spec/security-boundary.md`, with explicit traceability
+  to the archived authority.
+- Wording is reconciled without silently altering its meaning. Any conflict found is
+  identified precisely in the spec's reconciliation note.
 
-**D7. Where does the intent sit against `RetentionCommitted`, and how is it modelled?**
-- *Why the sources do not settle it:* "after the last refusable step" and "before the threshold" conflict, because `RetentionCommitted` is refusable to reach and is already possibly-executed (F16). The R request region is marked frozen (`mcp-re-proxy/src/exchange_state.rs:471`).
-- *Options:* (a) G1 after the retention reserve, before the retention commit, recorded on a sibling machine A; (b) after `RetentionCommitted`, so an audit outage becomes a not-retry-safe refusal for a call that never ran; (c) fold G1 into the retention write, which couples ADR-MCPRE-054's owner to audit.
-- *Recommended:* **(a)**. A retention-commit failure after G1 then yields NothingExecuted to the caller and an intent-only (over-reported) audit reading, the safe direction (`transparency/dispatch_committed.rs:30-35`).
+**D7. Intent placement: APPROVED WITH STATE GUARANTEE.**
+- The execution intent is committed **after a successful retention reserve and before the
+  retention commit and the irreversible dispatch**.
+- The commitment is tracked by a separately modelled audit-commitment state machine (A, §4),
+  composed with the frozen request machine.
+- A failure before the irreversible threshold can never invoke the backend.
+- Cancellation or restart must neither bypass the intent nor reclassify possibly executed work
+  as never executed.
+- Every alternate path, and the cleanup of reserves and leases, is verified.
 
-**D8. Do refusal records and `request.accepted` have to commit under the required posture?**
-- *Why the sources do not settle it:* the epic names only intent and success. THM-0085 requires "offered".
-- *Options:* (a) a prerequisite of answering; (b) a bounded attempt, with the refusal served regardless.
-- *Recommended:* **(b)**. A refusal is already the safe action, and blocking it on audit availability turns a provider outage into unanswerable refusals.
+**D8. Refusals and `request.accepted`: APPROVED.**
+- Refusal records and `request.accepted` get bounded commitment attempts or observations, as
+  appropriate. They are not a hard execution prerequisite.
+- The mandatory gate applies only to *intent before dispatch* (G1) and *outcome before visible
+  completed success* (G2).
+- Finite-capacity truth and refusal liveness are preserved.
 
-**D9. What is the exchange coordinate, and may a record carry a request digest?**
-- *Why the sources do not settle it:* ADR-MCPS-020 excludes correlation state (`audit_sink/mod.rs:9-15`). Retention keys on the request digest.
-- *Options:* (a) the event ID of `request.accepted`; (b) the request digest; (c) both, with the digest present only where retention is on.
-- *Recommended:* **(a)**. Retention correlation is a separate ruling.
+**D9. Exchange coordinate: APPROVED WITH IDENTITY GUARD.**
+- Intent and outcome are linked through the immutable event identity of the exchange's
+  `request.accepted`.
+- No raw request digest appears in an audit record.
+- The coordinate's allocation is preserved across retry and restart.
+- Events without an accepted exchange carry a separate typed scope, never a fabricated
+  accepted ID.
 
-**D10. Is S1/S2 a new theorem or an extension of THM-0071?**
-- *Why the sources do not settle it:* THM-0071 is a statement about refusals, and its scope is in-process.
-- *Options:* (a) new theorem(s) that depend on THM-0070 and THM-0071; (b) a reviewed extension of THM-0071.
-- *Recommended:* **(a)**. It leaves THM-0071's fingerprint and claim unchanged.
+**D10. Theorems: APPROVED.**
+- G1 and G2 get separately reviewable theorem(s). THM-0071's existing proof claim is neither
+  revised nor expanded.
+- Provider assumptions and evidence boundaries are recorded explicitly.
 
-**D11. Are the delegated-key lifecycle events covered by the required posture?**
-- *Why the sources do not settle it:* they are ADR-MCPS-035 vocabulary, but they bypass the sink (`signing_plane/mint_successor.rs:90-98`).
-- *Options:* (a) in scope for v0.19; (b) excluded and stated as a non-claim, with a follow-up issue.
-- *Recommended:* **(b)**. They are outside the exchange machine.
+**D11. Delegated-key lifecycle: APPROVED WITH DISCLOSURE.**
+- The lifecycle audit lines stay outside this campaign's required-commitment guarantee, as an
+  explicit non-claim (§14 item 8). Follow-up: #1208.
+- Comprehensive audit persistence is never advertised for that path.
 
-**D12. Which wire code does "commitment unavailable" refuse with?**
-- *Why the sources do not settle it:* a reason must be an `McpReError::wire_code()` (`audit.rs:94-100`). Reusing `evidence_retention_unavailable` would flatten two authorities, against ADR-MCPRE-066's §1 ruling.
-- *Options:* (a) a new `McpReError` variant through the frozen-taxonomy process; (b) reuse an existing code.
-- *Recommended:* **(a)**, ruled before #1204.
+**D12. Commitment-unavailable error: APPROVED AS A CONTROLLED TAXONOMY EXTENSION.**
+- A distinct typed `McpReError` variant for commitment unavailability is added, following the
+  existing error ownership and projection rules.
+- It has an unambiguous wire code, with exhaustive conformance and refusal tests.
+- Existing codes and their frozen meanings are preserved.
+- This authorizes that one narrow variant. It does not permit flattening the Core and
+  authorization authorities (ADR-MCPRE-066 §1).
 
-## 16. Related findings outside this boundary (candidate follow-up issues; not fixed here)
+## 16. Related findings outside this boundary
 
-1. Delegated-key lifecycle events go out through bare `eprintln!`. They have no run or seq, ignore `--audit-sink`, and fall outside THM-0070 (`signing_plane/mint_successor.rs:90-98`).
-2. `request.accepted` has two meanings. The core doc says "passed verification" (`mcp-re-core/src/audit.rs:48`), while the emitter says ADMITTED (`receipt/audit_event.rs:37-45`).
-3. The `RefusedBeforeDispatch` and `FailedAfterDispatch` terminals are never entered in production. Every `ExchangeEvent::Refused` site is under `#[cfg(test)]` (`mcp-re-proxy/src/exchange_state.rs:922+`).
-4. ADR-MCPRE-066 contains stale lines. The status line says "Not yet implemented" (`audit-composition.md:5`), contradicting its own §10. `NoAuditSink` and `app.rs:1439,1450` no longer exist (`audit-composition.md:479-492`).
-5. Stderr lines may appear out of seq order across cores (F5), while THM-0070's order property is tested only on the collector (`audit_sink/mod.rs:223`).
-6. Stale pointers to the missing §9: `audit-composition.md:12`, `:463-470`; `audit_sink/mod.rs:18-19`; `http_profile_serve/mod.rs:222`; `delegated_client_server_e2e_test.rs:746` (D6).
-7. The notification arm enters a success terminal before its 202 is signed or retained, so a later failure is served from a terminal state (`reply_assembly/notification.rs:127` vs `:79-89`). INFERRED from source order; no test asserts the state at that refusal.
+1. Delegated-key lifecycle events go out through bare `eprintln!`. They have no run or seq, ignore `--audit-sink`, and fall outside THM-0070 (`signing_plane/mint_successor.rs:90-98`). **Follow-up #1208** (D11).
+2. `request.accepted` has two meanings. The core doc says "passed verification" (`mcp-re-core/src/audit.rs:48`), while the emitter says ADMITTED (`receipt/audit_event.rs:37-45`). **Fixed in #1204**, which edits `audit.rs` for D1.
+3. The `RefusedBeforeDispatch` and `FailedAfterDispatch` terminals are never entered in production. Every `ExchangeEvent::Refused` site is under `#[cfg(test)]` (`mcp-re-proxy/src/exchange_state.rs:922+`). **Follow-up #1209.**
+4. ADR-MCPRE-066 contains stale lines. The status line says "Not yet implemented" (`audit-composition.md:5`), contradicting its own §10. `NoAuditSink` and `app.rs:1439,1450` no longer exist (`audit-composition.md:479-492`). **Follow-up #1210.**
+5. Stderr lines may appear out of seq order across cores (F5), while THM-0070's order property is tested only on the collector (`audit_sink/mod.rs:223`). **Follow-up #1211**; #1202 states the generation-vs-arrival order contract.
+6. Stale pointers to the missing §9: `audit-composition.md:12`, `:463-470`; `audit_sink/mod.rs:18-19`; `http_profile_serve/mod.rs:222`; `delegated_client_server_e2e_test.rs:746` (D6). **Resolved in this ADR's PR:** §9 is restored under its original number, so these citations resolve.
+7. The notification arm enters a success terminal before its 202 is signed or retained, so a later failure is served from a terminal state (`reply_assembly/notification.rs:127` vs `:79-89`). INFERRED from source order; no test asserts the state at that refusal. **In scope for #1205**, which places G2 before `served(ack)` (D4).
