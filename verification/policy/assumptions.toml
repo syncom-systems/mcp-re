@@ -3362,11 +3362,15 @@ description = "The commitment provider's capacity is finite, and a required depl
 justification = """
 Capacity is finite on both sides and the safety claims assume nothing else. The proxy bounds
 its own demand: commitments hold a try-acquired budget that is separate from the observer's
-queue and from the retention reservations, each crossing makes one bounded attempt, and a
-spent budget or a saturated provider is refused before dispatch with a retry-safe 503
-(ADR-MCPRE-070 §7). Under saturation THM-0135 and THM-0136 still hold, because nothing is
-dispatched or served as success without a witness. What does not hold is progress: a provider
-whose capacity is below the offered rate turns admitted exchanges into refusals.
+queue and from the retention reservations, and each crossing makes one bounded attempt. One
+budget per established provider is shared by G1, G2 and the accounting cadence. At G1 a spent
+budget or a saturated provider is refused before dispatch with a retry-safe 503. At G2 the
+same saturation is a 500 `PossiblyExecuted` refusal AFTER dispatch: the backend call has run
+and its success is withheld (ADR-MCPRE-070 §7). At the accounting cadence it is a missed
+interval, and no request is refused. Under saturation THM-0135 and THM-0136 still hold,
+because nothing is dispatched or served as success without a witness. What does not hold is
+progress: a provider whose capacity is below the offered rate turns admitted exchanges into
+refusals, and some of those refusals follow an execution.
 
 Sizing the provider against the deployment's commitment rate is the operator's and the
 provider's, and nothing in the proxy can establish it. Individual unauthenticated and

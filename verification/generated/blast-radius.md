@@ -439,7 +439,7 @@ attestations this view cannot see.
 | THM-0098 | statement, consequence, scope or review requirement | specification review | THM-0074, THM-0099 |
 | THM-0099 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0100 | statement, consequence, scope or review requirement | specification review | THM-0074 |
-| THM-0101 | statement, consequence, scope or review requirement | specification review | THM-0074 |
+| THM-0101 | statement, consequence, scope or review requirement | specification review | THM-0074, THM-0136 |
 | THM-0102 | statement, consequence, scope or review requirement | specification review | THM-0077 |
 | THM-0103 | statement, consequence, scope or review requirement | specification review | THM-0048 |
 | THM-0104 | statement, consequence, scope or review requirement | specification review | _no dependent_ |

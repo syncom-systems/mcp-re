@@ -121,10 +121,10 @@ pub enum McpReError {
     /// crossing it observed.
     ExchangeInvariantViolation,
 
-    /// A required audit commitment could not be established (ADR-MCPRE-070 D12): the
-    /// deployment requires the execution intent to be durably committed before dispatch,
-    /// and the commitment authority refused, was unavailable, did not answer in its bound,
-    /// or acknowledged something other than this exchange's event.
+    /// A required audit commitment could not be established (ADR-MCPRE-070 D12): under the
+    /// required posture the execution intent is committed before dispatch and the outcome
+    /// before a success is served, and the commitment authority refused, was unavailable, did
+    /// not answer in its bound, or acknowledged something other than this exchange's event.
     ///
     /// The token states nothing about execution; the exchange machine's disposition does,
     /// as for [`McpReError::ExchangeInvariantViolation`]. Distinct from

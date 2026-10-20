@@ -5,13 +5,13 @@
 //! ```text
 //! may_publish(success)        decided by the caller, before anything publishes the claim
 //!   └─ G2: outcome committed  ── refused ──> 500 audit_commitment_unavailable; retention
-//!        │                                   discharged with that refusal (W5)
+//!        │                                   completion attempted with that refusal (W5)
 //!        └─ retention completes ── failed ──> 500 evidence_retention_indeterminate (W5b)
 //!             └─ the observer is offered the record, the terminal is published, served
 //! ```
 //!
-//! Both success terminals come through here, the bodied reply and the bodyless 202, so the
-//! order is one function rather than two copies of it. Every refusal on the way out is served
+//! Every success terminal comes through here — the bodied reply's two and the bodyless 202 —
+//! so the order is one function rather than two copies of it. Every refusal on the way out is served
 //! from a machine that has crossed the dispatch and never claimed success, so it states
 //! `PossiblyExecuted` — never `NothingExecuted`, and never the success bytes.
 //!

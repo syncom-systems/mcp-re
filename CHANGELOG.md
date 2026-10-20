@@ -12,19 +12,6 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
-### Added — required audit commitment before dispatch (ADR-MCPRE-070 G1)
-
-- New wire token `mcp-re.audit_commitment_unavailable` (D12): under the required audit
-  posture, an admitted exchange whose execution intent cannot be committed is refused BEFORE
-  the backend is reached — 503 where the commitment provider was unavailable or uncertain,
-  500 where it refused or no accepted event exists to name. The token states nothing about
-  execution; the signed rejection's disposition does (nothing executed). Existing tokens are
-  unchanged.
-- Audit vocabulary revision 2 adds the `mcp-re.execution.intent` category (D1). It is not a
-  success event (the success set stays at two) and the best-effort stderr stream never emits
-  it. The canonical event encoding moves to version 2 to carry it.
-- The required posture is selected with `--audit-commitment required` (below).
-
 ### Added — typed audit delivery posture and the commitment-provider seam (ADR-MCPRE-070 §2, §7, §11, D2, D3, Q3)
 
 - New flag `--audit-commitment best-effort|required` (Helm `auditCommitment`), default
@@ -37,21 +24,41 @@ or wire-format compatibility while the design lines from
   required posture is never served as best-effort, and a registered provider is never used
   under best-effort.
 - The `security audit record` startup line now states the delivery: `BEST-EFFORT`, or
-  `REQUIRED via provider <id>, tier <tier> … as DECLARED`, disclosing that the observer's seq
-  then has gaps that are not drops. The OFF line names its delivery too.
-- Commitments have their own non-blocking budget (1024 in flight); a spent budget refuses
-  before dispatch with the same 503 as an outage, and never touches the observer.
+  `REQUIRED via provider <id>, tier <tier> … as DECLARED`, stating each crossing's refusal
+  status and that the observer's seq then has gaps that are not drops: an execution intent,
+  an outcome that could not be committed or whose retention failed, and each
+  `mcp-re.audit.accounting` record take a seq and are never observed. The OFF line names its
+  delivery too.
+- Commitments have their own non-blocking budget (1024 in flight), shared by the intent, the
+  outcome and the accounting record, and a spent budget never touches the observer. At the
+  intent it refuses before dispatch with the same 503 as an outage; at the outcome the backend
+  has already run, so it refuses after dispatch with 500 and `possibly_executed`; for the
+  accounting record it is a missed interval.
+- Audit events carry a canonical, fixed-schema binary encoding (version 3) whose digest is the
+  event's content identity, and an identity allocated once, at production.
 - Audit vocabulary revision 3 adds `mcp-re.audit.accounting` (D2, Q3): one bounded record per
   60s interval of a required run, cumulative, run- and interval-attributed, with no actor and
-  no reason, never claiming exhaustive counts. The canonical event encoding moves to version 3
-  to carry it (a `Run` scope). A shutdown line reports the commitment counts.
+  no reason, never claiming exhaustive counts. A shutdown line reports the commitment counts.
+
+### Added — required audit commitment before dispatch (ADR-MCPRE-070 G1)
+
+- New wire token `mcp-re.audit_commitment_unavailable` (D12): under the required audit
+  posture, an admitted exchange whose execution intent cannot be committed is refused BEFORE
+  the backend is reached — 503 where the commitment provider was unavailable or uncertain or
+  the commitment budget was spent, 500 where it refused or no accepted event exists to name.
+  The token states nothing about execution; the signed rejection's disposition does. Existing
+  tokens are unchanged.
+- Audit vocabulary revision 2 adds the `mcp-re.execution.intent` category (D1). It is not a
+  success event (the success set stays at two) and the best-effort stderr stream never emits
+  it.
 
 ### Added — committed outcome before visible success (ADR-MCPRE-070 G2)
 
 - Under the required audit posture a success — a bodied reply or a notification's 202 (D4) —
   is served only after its `response.signed` event is committed AND retention has completed
-  (Q2). An outcome that cannot be committed is refused with `mcp-re.audit_commitment_unavailable`
-  at 500, never 503, stating `possibly_executed`, and retention holds that refusal; a retention
+  (Q2). An outcome that cannot be committed, for any reason including a spent budget, is
+  refused AFTER dispatch with `mcp-re.audit_commitment_unavailable` at 500, never 503, stating
+  `possibly_executed`, and retention completion is attempted with that refusal; a retention
   failure after the commit is the existing `evidence_retention_indeterminate` refusal. The
   observer's `response.signed` line is the committed event itself. Best-effort serving is
   unchanged.

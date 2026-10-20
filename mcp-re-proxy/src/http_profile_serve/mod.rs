@@ -56,9 +56,9 @@ pub mod continuation;
 /// What the backend's reply IS: read once, here, so no later authority re-reads it.
 mod reply;
 
-/// The backend seam, and what the exchange may claim about execution given what it
-/// managed to do.
-mod inner_plane;
+/// The backend seam, and what the exchange may claim about execution. Crate-visible for one
+/// item the exchange machine names: the 202's `NotificationDelivered`, which only it can mint.
+pub(crate) mod inner_plane;
 
 /// Durable responsibility for a served exchange: taken before the side effects run, and
 /// discharged with what was actually served.
@@ -416,8 +416,8 @@ impl HttpProfileProxy {
     /// nothing else; each region carries its own contract, so what is visible here is the
     /// pipeline itself — which step follows which, and where the execution threshold lies.
     ///
-    /// It does not advance the request machine except at its own three facts: the dispatch,
-    /// and the two terminals. A stage's success arrives as an
+    /// It does not advance the request machine except at its own fact, the dispatch; the
+    /// terminals are entered by the success exit. A stage's success arrives as an
     /// [`Established`](crate::exchange_state::Established), and `progress.establish` is the
     /// only way to open one — so the machine learns that a step ran by the value being
     /// CONSUMED, not by anyone remembering to say so afterwards.

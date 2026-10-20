@@ -4298,6 +4298,14 @@ tested_symbols = [
   # `verification/reviews/packets/adr069-np-168-thm-0101-inventory-drift-2026-09-20.md`. It is
   # pre-existing, already witnessed by the sibling above, and fixing it is a §28 event.
   "//mcp-re-proxy:integration_test#exchange_transition_ownership_test::no_terminal_the_owner_publishes_is_advanced_by_the_serving_path_again",
+  # The 202's terminal event travels in the carrier `observe_acknowledgement` mints on the arms
+  # that say the backend received the message, and the publication entering the terminal opens
+  # it. The source control measures that the event is a stage's; the two serving controls,
+  # registered from NP-151, measure the correspondence it carries: a notification transmitted
+  # with no answer earns a 504, never a 202, and one the backend received still earns its 202.
+  "//mcp-re-proxy:integration_test#exchange_transition_ownership_test::the_202_terminal_is_entered_through_its_stage_s_carrier",
+  "//mcp-re-proxy:integration_async_test#mrt_continuation_serving_test::a_notification_the_inner_plane_never_delivered_is_not_acknowledged",
+  "//mcp-re-proxy:integration_async_test#mrt_continuation_serving_test::a_delivered_notification_is_still_acknowledged_with_a_202",
 ]
 
 [[unit]]
@@ -9679,6 +9687,7 @@ tested_symbols = [
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::an_uncertain_intent_identity_is_never_reused_by_the_next_exchange",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::w3_retention_commit_failure_after_intent_leaves_no_pending_and_no_dispatch",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::g1_failure_rescinds_the_reservation",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::an_intent_refusal_leaves_no_pending_marker",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::the_window_must_survive_the_commitment_wait",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::the_installer_refuses_a_volatile_authority_and_an_illegal_bound",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_over_a_loopback_http_backend_dispatches_only_after_commit",
@@ -9765,7 +9774,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.audit_posture"
 class = "V0"
-description = "THE REQUESTED AUDIT DELIVERY AND THE ESTABLISHED ONE ARE ONE FACT (ADR-MCPRE-070 §2, §7, §11, D2, D3, Q3). `--audit-commitment required` is never served as best-effort and never declared OFF: it refuses startup — before any plane materializes — when the build registers no commitment provider, when the registered provider is the test-only reference authority without its acknowledgement, when the provider declares a tier below SURVIVES_PROXY_PROCESS_LOSS (audit-durability/v1), when its bounded startup probe fails, times out or panics, and (at the configuration boundary) when the observer is `--audit-sink none`. The refusal names only the provider id, a tier, a class and a bound — never provider text. A registered provider under best-effort is named and never asked. The REQUIRED posture line is assembled only over an established provider, states the tier as DECLARED, and discloses the observer's seq gaps. Commitments have their own try-acquired budget: a spent one refuses before dispatch with the outage's 503, asks no provider, and leaves the observer untouched. The run's mcp-re.audit.accounting record is committed once per interval, cumulative, run- and interval-attributed, with missed intervals stated and coverage always a lower bound. Says nothing about whether any provider persists anything: the tier is a declaration and an external evidence obligation (D3)."
+description = "THE REQUESTED AUDIT DELIVERY AND THE ESTABLISHED ONE ARE ONE FACT (ADR-MCPRE-070 §2, §7, §11, D2, D3, Q3). `--audit-commitment required` is never served as best-effort and never declared OFF: it refuses startup — before any plane materializes — when the build registers no commitment provider, when the registered provider is the test-only reference authority without its acknowledgement, when the provider declares a tier below SURVIVES_PROXY_PROCESS_LOSS (audit-durability/v1), when its bounded startup probe fails, times out or panics, and (at the configuration boundary) when the observer is `--audit-sink none`. The refusal names only the provider id, a tier, a class and a bound — never provider text. A registered provider under best-effort is named and never asked. The REQUIRED posture line is assembled only over an established provider, states the tier as DECLARED, states the status mapping of each crossing, and names every class of event that takes an observer seq without being observed: intents, outcomes that could not be committed or whose retention failed, and accounting records. Commitments have their own try-acquired budget, one per established provider and shared by G1, G2 and the accounting cadence: a spent one asks no provider and leaves the observer untouched; at G1 it refuses before dispatch with the outage's 503, at G2 it refuses after dispatch with 500 and PossiblyExecuted, and at the accounting cadence it is a missed interval. The run's mcp-re.audit.accounting record is committed once per interval, cumulative, run- and interval-attributed, with missed intervals stated and coverage always a lower bound. Says nothing about whether any provider persists anything: the tier is a declaration and an external evidence obligation (D3)."
 paths = [
   "mcp-re-proxy/src/audit_commitment/plan.rs",
   "mcp-re-proxy/src/audit_commitment/providers.rs",

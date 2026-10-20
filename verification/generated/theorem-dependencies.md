@@ -127,6 +127,7 @@ graph BT
     THM_0129["THM-0129<br/>Authoritative admission state is authenticated and bounded-current"]
     THM_0131["THM-0131<br/>The client-revocation posture states what this replica is enforcing now"]
     THM_0132["THM-0132<br/>A replica serves on last-known admission state for at most P after the authority last answered"]
+    THM_0136["THM-0136<br/>Under the required audit posture, no completed success is visible without the exchange's outcome committed and its witness redeemed"]
     THM_0007 --> THM_0008
     THM_0010 --> THM_0009
     THM_0001 --> THM_0014
@@ -289,6 +290,7 @@ graph BT
     THM_0132 --> THM_0129
     THM_0054 --> THM_0131
     THM_0005 --> THM_0132
+    THM_0101 --> THM_0136
     classDef root stroke-width:3px;
     class THM_0071,THM_0074,THM_0075,THM_0076,THM_0077,THM_0078,THM_0094,THM_0095 root;
 ```
@@ -473,11 +475,4 @@ graph BT
 ```mermaid
 graph BT
     THM_0135["THM-0135<br/>Under the required audit posture, no backend dispatch happens without the exchange's execution intent committed and its witness redeemed"]
-```
-
-## Component 26
-
-```mermaid
-graph BT
-    THM_0136["THM-0136<br/>Under the required audit posture, no completed success is visible without the exchange's outcome committed and its witness redeemed"]
 ```

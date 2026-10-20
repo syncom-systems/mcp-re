@@ -10655,14 +10655,6 @@ proposition = "NP-151"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-19174"
-project = "mcp-re-proxy"
-control = "tests/integration_async/main.rs#mrt_continuation_serving_test::a_delivered_notification_is_still_acknowledged_with_a_202"
-decision = "new-proposition"
-proposition = "NP-151"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-19175"
 project = "mcp-re-proxy"
 control = "tests/integration_async/main.rs#mrt_continuation_serving_test::a_leg_opened_by_an_answer_leg_is_itself_answerable"
@@ -10674,14 +10666,6 @@ recorded = "2026-09-19"
 id = "CD-19176"
 project = "mcp-re-proxy"
 control = "tests/integration_async/main.rs#mrt_continuation_serving_test::a_legal_envelope_is_still_served_and_a_json_rpc_error_is_one"
-decision = "new-proposition"
-proposition = "NP-151"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19177"
-project = "mcp-re-proxy"
-control = "tests/integration_async/main.rs#mrt_continuation_serving_test::a_notification_the_inner_plane_never_delivered_is_not_acknowledged"
 decision = "new-proposition"
 proposition = "NP-151"
 recorded = "2026-09-19"

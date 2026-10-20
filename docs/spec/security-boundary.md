@@ -462,9 +462,20 @@ the next:
    persistence is conditional: it survives loss of the proxy process **if** the registered
    provider's declared tier (`audit-durability/v1`, minimum `SURVIVES_PROXY_PROCESS_LOSS`) is
    honest (ASM-0089, D3). That is an external evidence obligation per provider, never a
-   property the proxy proves. A required posture with no established qualifying provider,
-   with the test-only reference authority, or with `--audit-sink none` refuses startup — it
-   never runs as best-effort (S4). The open-source binary registers no provider.
+   property the proxy proves. A required posture with no established qualifying provider, or
+   with `--audit-sink none`, refuses startup — it never runs as best-effort (S4). No
+   deployable build contains the test-only reference authority: it is compiled only into test
+   builds and the test-only `audit_commitment_reference` flavour, and its name is reserved.
+   The open-source binary registers no provider and refuses `--audit-commitment required` for
+   that reason; a test flavour that registers the reference authority without its test
+   acknowledgement is refused at startup. A commitment that fails at the intent refuses
+   before dispatch, with 503 where a retry can succeed and 500 where it cannot; one that
+   fails at the outcome refuses after dispatch with 500 and `possibly_executed`, a spent
+   commitment budget included. Under this posture the observer's stream has gaps that are not
+   drops: an execution intent, an outcome that could not be committed or whose retention then
+   failed, and each `mcp-re.audit.accounting` record consume a `seq` and are never observed;
+   the REQUIRED startup line names them. The delegated-key lifecycle lines (ADR-MCPRE-052 §7)
+   are outside the required posture (D11, #1208).
 3. **Downstream delivery is at-least-once.** A committed event may reach an archive more than
    once, under one identity and one digest; consumers deduplicate on that binding, never on a
    transport position. There is no exactly-once delivery and no global order across runs.
