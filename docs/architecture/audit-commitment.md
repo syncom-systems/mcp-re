@@ -11,8 +11,9 @@ review for ratification in its Discussion, and that review does not suspend the 
 ([`audit-composition.md`](audit-composition.md)), THM-0071 (and THM-0070, THM-0085).
 
 This ADR defines **semantics only**. It implements no transport and changes no persistence
-claim. The two vocabulary changes it authorizes (the `execution.intent` category, D1, and one
-`McpReError` variant, D12) land in the implementation slices, not in this document. Every `path:line` reference is
+claim. The three vocabulary changes it authorizes land in the implementation slices, not in
+this document: the `execution.intent` category (D1), one `McpReError` variant (D12), and the
+`mcp-re.audit.accounting` token (D2, Q3). Every `path:line` reference is
 pinned at `8262c5fa` and every fact is MEASURED from source unless marked INFERRED. Type and
 state names written in *italics* are illustrative, not decided.
 
@@ -128,10 +129,11 @@ flowchart TD
     IPA --> G1{{"G1: RequiredAudit ⇒ Committed(Intent), witness bound to THIS exchange"}}
     G1 --> RC[RetentionCommitted] --> D[Dispatched: execution threshold]
     D --> RO[ResponseObserved] --> RV[ResponseValidated] --> RCL[ResponseClassified]
-    RCL --> RS[ResponseSigned] --> CS[ContinuationSettled] --> RT[Retained]
-    RT --> G2{{"G2: RequiredAudit ⇒ Committed(Outcome)"}}
-    G2 --> CT[CompletedTerminal]
-    G2 --> CO[CompletedContinuationOpen]
+    RCL --> RS[ResponseSigned] --> CS[ContinuationSettled]
+    CS --> G2{{"G2: RequiredAudit ⇒ Committed(Outcome), before retention completes"}}
+    G2 --> RT[Retained]
+    RT --> CT[CompletedTerminal]
+    RT --> CO[CompletedContinuationOpen]
     D --> AN[AcknowledgedNotification]
     AN --> G2N{{"G2 on the 202, before served()"}}
 ```
@@ -154,7 +156,7 @@ stateDiagram-v2
 | crossing | placement | type-level form (illustrative) |
 |---|---|---|
 | **G1** intent | After every refusable step whose failure leaves no durable trace (forward, prepare, signing window, retention reserve). Before the retention commit and before `BackendDispatched`. The ordering against `RetentionCommitted` is D7. | `ReadyForDispatch::new` takes an *IntentDisposition* = `NotRequired` \| `Committed(witness)`, on the pattern of `RetentionDisposition` (`mcp-re-proxy/src/request_stages.rs:95-105`). `NotRequired` is not a fake witness. |
-| **G2** outcome | Bodied path: after `Retained`, before `progress.publish(success)` and `served()` (`reply_assembly/accepted.rs:82-90`). Notification: before `served(ack)` (`reply_assembly/notification.rs:76`), because its terminal state is already entered at `:127` (F11). | The success-serve step takes an *OutcomeDisposition* bound to the same exchange coordinate. |
+| **G2** outcome | Bodied path: after signing, **before retention completes** (Q2). Completed success becomes visible only after both the outcome is committed and retention has completed, so the retained representation stays what is actually served (ADR-MCPRE-054). Notification: before `served(ack)` (`reply_assembly/notification.rs:76`), because its terminal state is already entered at `:127` (F11). | The success-serve step takes an *OutcomeDisposition* bound to the same exchange coordinate. |
 
 - **Execution intent is a fact distinct from `request.accepted`.** Admitted ≠ executed. Five
   refusal points lie between the two (F7).
@@ -199,7 +201,8 @@ rulings in §15.
 | W2 intent commit in flight | unknown (`Uncertain`) | timeout → typed 503, NothingExecuted (nothing was dispatched); crash → reset | the proxy knows nothing ran. The store may hold an intent with no outcome, which a reconciler reads as **PossiblyExecuted** (an upper bound) | event ID + exchange coordinate; an identical retry is idempotent |
 | W3 after intent, before dispatch | intent, and possibly `.pending` | refusal NothingExecuted (retention commit failed), or a reset | the live process: NothingExecuted. After a crash: **PossiblyExecuted**. Where retention is configured, a missing `.pending` corroborates no dispatch (INFERRED from the G1-before-retention ordering) | exchange coordinate, `.pending` |
 | W4 after dispatch, before outcome | intent, and `.pending` where configured | a post-dispatch refusal (PossiblyExecuted), a timeout, or a reset | **PossiblyExecuted** | intent + `.pending` |
-| W5 outcome commit failed | intent | refusal PossiblyExecuted, **never** the success bytes | **PossiblyExecuted**: the proxy observed an outcome it could not commit | intent; the observed outcome is in the observer line and in retention, if present |
+| W5 outcome commit failed | intent | refusal PossiblyExecuted, **never** the success bytes; retention is discharged with that refusal | **PossiblyExecuted**: the proxy observed an outcome it could not commit | intent; the observed outcome is in the observer line |
+| W5b outcome committed, retention completion failed | intent + outcome | refusal PossiblyExecuted (retention-indeterminate), **never** success | the committed outcome records only what the proxy observed and committed. It is **not** a served response, and nothing reads it as NothingExecuted (Q2) | intent + outcome; the refusal's own record |
 | W6 after outcome commit, before the response write | intent + outcome | possibly nothing (the connection dropped) | the outcome was produced and committed. Delivery to the client is **not** claimed | outcome event; retention |
 | W7 drain timeout | whatever was committed | in-flight exchanges are cut | nothing beyond the held witnesses; the observer drain says `OutcomeUnknown` (F6) | per-exchange as W2–W6 |
 
@@ -324,8 +327,8 @@ are independent of the replay pool (#1206).
 | #1202 envelope and identity | §8 in full; D5, D9 |
 | #1203 observation vs commitment | §2, §3, §9; the receipt-vs-witness split; the reference authority's status |
 | #1204 intent before dispatch | §4 G1, §5 intent row, §6 W1–W3, §7.3; D1, D7, D12 |
-| #1205 outcome before success | §4 G2, §6 W4–W6; D4, D8 |
-| #1206 posture and lifecycle | §2 selection, §7, §6 W7, §11 downgrade; D3 |
+| #1205 outcome before success | §4 G2, §6 W4–W6 (incl. W5b); D4, D8, Q2 |
+| #1206 posture and lifecycle | §2 selection, §7, §6 W7, §11 downgrade; D2 + Q3 (`mcp-re.audit.accounting`), D3 |
 | #1207 assurance | §10 (P5 and P6 as new theorems), §11, §14; D10 |
 
 ## 14. Non-claims
@@ -435,6 +438,35 @@ its stated conditions, and how this ADR reads it.
 - Existing codes and their frozen meanings are preserved.
 - This authorizes that one narrow variant. It does not permit flattening the Core and
   authorization authorities (ADR-MCPRE-066 §1).
+
+### Owner rulings Q1–Q3 (2026-10-20)
+
+These rulings settle three questions raised during implementation (epic #1201, "Owner ruling —
+Q1–Q3"). They bind the slices on the same terms as D1–D12.
+
+**Q1. OS-entropy draw: CONFIRMED.**
+- The draw stays in `audit_sink/stream.rs`.
+- ASM-0068 and the scope and review currency of `boundary.os_entropy` are preserved.
+
+**Q2. G2 placement: CONFIRMED WITH SAFETY CONDITION.**
+- G2's matching outcome commitment precedes **retention completion**, not `Retained`. This
+  keeps accepted ADR-MCPRE-054: the retained representation matches what is actually served.
+- Under the required posture, completed success is exposed only after both:
+  - the bound outcome is committed; and
+  - retention has completed successfully.
+- If retention then fails (W5b):
+  - the committed outcome represents only its precise fact, never a served response;
+  - the caller receives a `PossiblyExecuted` refusal, never success, and nothing claims
+    `NothingExecuted`.
+- ADR-MCPRE-054 is not weakened.
+
+**Q3. D2 accounting token: APPROVED.**
+- `mcp-re.audit.accounting` is the bounded aggregate accounting record. It is attributed by run
+  and interval, with no fabricated actor and no rejection reason.
+- The vocabulary guard is extended through a documented, versioned change, as for D1.
+- Saturation, missing-interval, outage and non-exhaustiveness semantics are documented with the
+  record.
+- The meanings of the two existing success events are unchanged.
 
 ## 16. Related findings outside this boundary
 
