@@ -14345,3 +14345,39 @@ expect_red = [
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::the_refusal_carries_no_provider_text",
   "//mcp-re-proxy:integration_test#app_startup_characterization_test::injected_provider::a_fake_qualified_provider_that_fails_establishment_is_refused",
 ]
+
+[[probe]]
+id = "M625-proxy-an-uncertain-intent-is-never-reused-for-another-exchange"
+unit = "proxy.audit_intent_gate"
+theorem = "THM-0135"
+conjunct = "each exchange's intent is a new event of its own, so an intent left uncertain by a timed-out G1 is never resent, and never redeemed, for the next exchange (ADR-MCPRE-070 §3, §8)"
+# Pill-evidenced RED in #1207 (PP1): the second exchange was dispatched under the first
+# exchange's intent, and only the new control noticed.
+path = "mcp-re-proxy/src/audit_commitment/intent.rs"
+anchor = """
+        let event = intent.produce(coordinate).map_err(|_| cannot_commit())?;
+        let witness = self
+            .provider
+            .commit::<Intent>(&event, self.bound)
+            .await
+            .map_err(|failure| refusal_for(&failure))?;
+"""
+weakening = """
+        static UNCERTAIN: std::sync::Mutex<Option<crate::audit_record::CanonicalEvent>> =
+            std::sync::Mutex::new(None);
+        let retried = UNCERTAIN.lock().unwrap().take();
+        let event = match retried {
+            Some(event) => event,
+            None => intent.produce(coordinate).map_err(|_| cannot_commit())?,
+        };
+        *UNCERTAIN.lock().unwrap() = Some(event.clone());
+        let witness = self
+            .provider
+            .commit::<Intent>(&event, self.bound)
+            .await
+            .map_err(|failure| refusal_for(&failure))?;
+        UNCERTAIN.lock().unwrap().take();
+"""
+expect_red = [
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::an_uncertain_intent_identity_is_never_reused_by_the_next_exchange",
+]

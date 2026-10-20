@@ -413,6 +413,64 @@ mod required {
         );
     }
 
+    /// An observer whose queue is full: every record it is offered is dropped and counted,
+    /// as the stderr sink does past its ceiling.
+    #[derive(Default)]
+    struct FullObserver {
+        dropped: AtomicUsize,
+    }
+
+    impl mcp_re_proxy::AuditSink for FullObserver {
+        fn record(&self, _envelope: &mcp_re_proxy::audit_record::AuditEnvelope) {
+            self.dropped.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn unnumbered(&self, _failure: &mcp_re_proxy::audit_record::EventIdentityFailure) {
+            self.dropped.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// A full observer queue changes neither dispatch nor success, in either posture: the
+    /// records are dropped and counted, and under the required posture the intent and the
+    /// outcome are still committed before the success is served (ADR-MCPRE-070 §7.4, §11
+    /// "observer queue full").
+    #[test]
+    fn a_full_observer_queue_changes_neither_dispatch_nor_success() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let full = Arc::new(FullObserver::default());
+        let (server, _) = build_server_over(counting_inner(Arc::clone(&calls)), 300);
+        let d = deploy(server.with_audit_sink(full.clone()), calls, None);
+        assert_eq!(d.call(&plain_request()).kind, ResponseKind::Success);
+        assert_eq!((d.calls(), d.last_status()), (1, Some(200)));
+        assert_eq!(
+            full.dropped.load(Ordering::SeqCst),
+            2,
+            "best-effort: both dropped"
+        );
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let full = Arc::new(FullObserver::default());
+        let reference = ReferenceCommitment::surviving_process_loss([]);
+        let (server, _) = build_server_over(counting_inner(Arc::clone(&calls)), 300);
+        let server = server
+            .with_audit_sink(full.clone())
+            .with_required_audit_commitment(&reference, BOUND)
+            .expect("an eligible reference and a legal bound");
+        let d = deploy(server, calls, None);
+        assert_eq!(d.call(&plain_request()).kind, ResponseKind::Success);
+        assert_eq!((d.calls(), d.last_status()), (1, Some(200)));
+        assert_eq!(
+            reference.journaled().len(),
+            2,
+            "intent and outcome committed"
+        );
+        assert_eq!(
+            full.dropped.load(Ordering::SeqCst),
+            2,
+            "required: both dropped"
+        );
+    }
+
     /// A loopback HTTP backend that answers its first request only after `delay`, and every
     /// later one at once.
     fn slow_first_backend(delay: Duration) -> (std::net::SocketAddr, Arc<AtomicUsize>) {

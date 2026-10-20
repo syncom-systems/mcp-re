@@ -226,6 +226,23 @@ meaningful only in a downstream build that registers a qualified provider, and t
 line then names the provider and the tier it **declares** — persistence is the provider's
 claim and an external evidence obligation, not something the proxy proves.
 
+What each posture gives you, and what it does not:
+
+- **Best-effort (the stderr sink).** Observation only. A line can be dropped under load (the
+  drop is counted) and is lost with the process if it was not yet drained. Do not treat the
+  stderr stream, or a log collector's acknowledgement of it, as a durable audit trail.
+- **Required.** The proxy refuses to dispatch without a committed intent and refuses to show
+  a success without a committed outcome; a provider outage or a spent commitment budget turns
+  requests into refusals (503 before dispatch, 500 after it), never into unrecorded calls.
+  Whether a committed event survives a crash depends on the provider's declared tier being
+  true: qualify the provider yourself.
+- **Downstream of the provider.** Delivery to an archive is at-least-once. Deduplicate on the
+  event identity and digest, never on a stream ID or offset, and do not trim committed events
+  before the archive has them.
+- **Not promised.** Exactly-once delivery, permanent retention, that a required deployment
+  stays available through a provider outage, or that a client received a response whose
+  outcome was committed.
+
 ### Evidence retention / transparency (ADR-MCPRE-054)
 
 | Flag | Meaning |
