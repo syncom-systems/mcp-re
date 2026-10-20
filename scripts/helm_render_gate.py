@@ -269,11 +269,15 @@ def check_audit_commitment_enumeration(root: Path = REPO) -> list[str]:
     the parser lost would render and then fail at startup.
     """
     flags = (root / "mcp-re-proxy" / "src" / "cli" / "audit_flags.rs").read_text(encoding="utf-8")
-    arm = flags.split('"--audit-commitment" =>', 1)
-    if len(arm) != 2:
-        return ["mcp-re-proxy/src/cli/audit_flags.rs parses no `--audit-commitment`; the "
-                "chart's enumeration can no longer be checked against the parser"]
-    parsed = set(re.findall(r'"([a-z-]+)" =>', arm[1].split("other =>", 1)[0]))
+    if '"--audit-commitment" => self.delivery = Some(delivery_kind(value)?)' not in flags:
+        return ["mcp-re-proxy/src/cli/audit_flags.rs does not parse `--audit-commitment` "
+                "through `delivery_kind`; the chart's enumeration can no longer be checked "
+                "against the parser"]
+    body = flags.split("fn delivery_kind(", 1)
+    if len(body) != 2:
+        return ["mcp-re-proxy/src/cli/audit_flags.rs has no `delivery_kind`; the chart's "
+                "enumeration can no longer be checked against the parser"]
+    parsed = set(re.findall(r'"([a-z-]+)" =>', body[1].split("other =>", 1)[0]))
     helpers = (root / CHART.relative_to(REPO) / "templates" / "_helpers.tpl").read_text(encoding="utf-8")
     listed = re.search(r"has \.Values\.auditCommitment \(list ([^)]*)\)", helpers)
     charted = set(re.findall(r'"([^"]+)"', listed.group(1))) if listed else set()
@@ -1190,9 +1194,9 @@ def selftest() -> int:
         ),
         "the chart's audit deliveries are the parser's": (
             "mcp-re-proxy/src/cli/audit_flags.rs",
-            lambda text: text.replace('"required" => AuditDeliveryKind::Required,',
-                                      '"required" => AuditDeliveryKind::Required,\n'
-                                      '                    "eventual" => AuditDeliveryKind::Required,'),
+            lambda text: text.replace('"required" => Ok(AuditDeliveryKind::Required),',
+                                      '"required" => Ok(AuditDeliveryKind::Required),\n'
+                                      '        "eventual" => Ok(AuditDeliveryKind::Required),'),
         ),
     }
     failures = 0
