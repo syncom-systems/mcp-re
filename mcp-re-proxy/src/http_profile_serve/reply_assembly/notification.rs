@@ -18,6 +18,7 @@ use mcp_re_http_profile::HttpRequest;
 
 use crate::async_inner::DispatchedOutcome;
 use crate::async_serve::ServedHttpResponse;
+use crate::audit_record::ExchangeCoordinate;
 use crate::exchange_state::ExchangeProgress;
 use crate::refusal::RefusalCause;
 use crate::request_stages::RetentionDisposition;
@@ -35,6 +36,7 @@ impl HttpProfileProxy {
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn answer_notification(
         &self,
+        exchange: Option<ExchangeCoordinate>,
         http_req: &HttpRequest,
         window: &SigningWindow,
         now: i64,
@@ -51,6 +53,7 @@ impl HttpProfileProxy {
                 // the single act of omitting the JSON-RPC `id`.
                 if let Some(rejection) = self
                     .retain_accepted(
+                        exchange,
                         http_req,
                         &ack,
                         now,
@@ -69,6 +72,7 @@ impl HttpProfileProxy {
                 // client actually receives.
                 crate::audit_record::record_to(
                     &self.audit,
+                    exchange,
                     crate::audit_record::AuditSubject::response_signed(),
                     Some(actor_id),
                     202,
@@ -78,6 +82,7 @@ impl HttpProfileProxy {
             }
             Err(e) => self.responses.response_rejection(
                 &self.audit,
+                exchange,
                 http_req,
                 &RefusalCause::from(e),
                 500,
@@ -134,6 +139,7 @@ impl HttpProfileProxy {
                 .await;
         }
         self.answer_notification(
+            acc.exchange_coordinate(),
             acc.exchange().http_req,
             window,
             acc.exchange().now,

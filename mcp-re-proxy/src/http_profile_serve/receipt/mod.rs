@@ -144,6 +144,7 @@ impl ResponseSigning {
                 let ex = acc.exchange();
                 self.response_rejection(
                     audit,
+                    acc.exchange_coordinate(),
                     ex.http_req,
                     &refusal.cause,
                     refusal.status,

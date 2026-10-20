@@ -24,20 +24,30 @@ pub(crate) mod drain;
 
 use std::sync::Arc;
 
-use crate::audit_record::AuditRecord;
+use crate::audit_record::{AuditEnvelope, AuditRecord, EventIdentityFailure};
 
-/// A sink for [`AuditRecord`]s.
+/// A sink for produced audit events.
 ///
 /// `Send + Sync` because one `HttpProfileProxy` serves every connection on a core
 /// (MCPRE-111) and the per-core fleet shares it. Implementations MUST NOT block the
 /// request path for long: this is called on the hot path, so a sink that does
 /// synchronous network I/O would put that latency in front of every response.
+///
+/// A sink transports events; it never numbers them. Each envelope's identity and bytes were
+/// fixed when the event was produced, so a sink that retries a delivery delivers the same
+/// envelope again, and its consumers deduplicate on [`AuditEnvelope::binding`]: the same
+/// identity with the same digest is one event, and the same identity with another digest is
+/// an [`IntegrityConflict`](crate::audit_record::IntegrityConflict), never an overwrite.
 pub trait AuditSink: Send + Sync {
     /// Record one decision. Failures are the sink's own problem: a sink that cannot
     /// write MUST NOT fail the request, because refusing to serve a verified request
     /// over a logging fault would convert an observability outage into a
     /// availability outage.
-    fn record(&self, record: &AuditRecord);
+    fn record(&self, envelope: &AuditEnvelope);
+
+    /// A decision was taken and could not be produced as an event, for `failure`. The
+    /// decision is missing from every stream; this is the sink's chance to say so.
+    fn unnumbered(&self, failure: &EventIdentityFailure);
 }
 
 /// The default sink: one line per decision on stderr.
@@ -45,8 +55,12 @@ mod stderr;
 
 pub use stderr::StderrAuditSink;
 
-/// This process's run and the position of each record within it.
+/// The presentation of this process's stream: its start line and its run suffix.
 mod stream;
+
+// Crate-wide because the run identity's OWNER is `audit_record`, which draws through this
+// function; the acquisition itself stays at its registered `boundary.os_entropy` site.
+pub(crate) use stream::draw_run_entropy;
 
 /// What the writer thread does with a line, and what it can truthfully say afterwards.
 mod writer;
@@ -122,12 +136,13 @@ fn offer(
     }
 }
 
-/// A harness sink, not a deployment one: it retains every record in memory, unbounded and
+/// A harness sink, not a deployment one: it retains every event in memory, unbounded and
 /// sized by request rate (including rejections an unauthenticated peer drives), with each
 /// resolved `actor_id` unredacted for the sink's life. Nothing is evicted.
 #[derive(Debug, Default)]
 pub struct CollectingAuditSink {
-    records: std::sync::Mutex<Vec<AuditRecord>>,
+    envelopes: std::sync::Mutex<Vec<AuditEnvelope>>,
+    unnumbered: std::sync::Mutex<Vec<EventIdentityFailure>>,
 }
 
 impl CollectingAuditSink {
@@ -136,20 +151,37 @@ impl CollectingAuditSink {
         CollectingAuditSink::default()
     }
 
-    fn guard(&self) -> std::sync::MutexGuard<'_, Vec<AuditRecord>> {
-        let locked = self.records.lock();
-        locked.unwrap_or_else(std::sync::PoisonError::into_inner)
+    fn guard<T>(lock: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+        lock.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Every record observed so far, in emission order.
+    /// Every event observed so far, in arrival order.
+    pub fn envelopes(&self) -> Vec<AuditEnvelope> {
+        Self::guard(&self.envelopes).clone()
+    }
+
+    /// The record of every event observed so far, in arrival order.
     pub fn records(&self) -> Vec<AuditRecord> {
-        self.guard().clone()
+        Self::guard(&self.envelopes)
+            .iter()
+            .map(|e| e.record().clone())
+            .collect()
+    }
+
+    /// Every decision that reached this sink with no event, in arrival order.
+    pub fn unnumbered_failures(&self) -> Vec<EventIdentityFailure> {
+        Self::guard(&self.unnumbered).clone()
     }
 }
 
 impl AuditSink for CollectingAuditSink {
-    fn record(&self, record: &AuditRecord) {
-        self.guard().push(record.clone());
+    fn record(&self, envelope: &AuditEnvelope) {
+        Self::guard(&self.envelopes).push(envelope.clone());
+    }
+
+    fn unnumbered(&self, failure: &EventIdentityFailure) {
+        Self::guard(&self.unnumbered).push(*failure);
     }
 }
 
@@ -193,54 +225,48 @@ mod tests {
         assert_eq!(line.matches("status=").count(), 1, "{line}");
     }
 
+    fn accepted() -> AuditSubject {
+        AuditSubject::request_accepted(
+            &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
+            AdmissionFacet::NotConfigured,
+        )
+    }
+
     #[test]
     fn a_poisoned_collector_still_records_and_reports_what_it_holds() {
-        let sink = CollectingAuditSink::new();
-        let record = AuditRecord {
-            subject: AuditSubject::request_accepted(
-                &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
-                AdmissionFacet::NotConfigured,
-            ),
-            actor_id: None,
-            status: 200,
-            at_unix: 1,
-        };
-        sink.record(&record);
+        let sink = Arc::new(CollectingAuditSink::new());
+        let audit: MaybeAuditSink = Some(sink.clone());
+        crate::audit_record::record_to(&audit, None, accepted(), None, 200, 1);
         let joined = std::thread::scope(|s| {
             s.spawn(|| {
-                let _guard = sink.records.lock();
+                let _guard = sink.envelopes.lock();
                 panic!("poison the collector");
             })
             .join()
         });
         assert!(joined.is_err());
-        assert!(sink.records.is_poisoned());
-        sink.record(&record);
+        assert!(sink.envelopes.is_poisoned());
+        crate::audit_record::record_to(&audit, None, accepted(), None, 200, 1);
         assert_eq!(sink.records().len(), 2);
     }
 
     #[test]
     fn the_collector_preserves_emission_order() {
-        let sink = CollectingAuditSink::new();
-        sink.record(&AuditRecord {
-            subject: AuditSubject::request_accepted(
-                &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
-                AdmissionFacet::NotConfigured,
-            ),
-            actor_id: Some("actor-a".into()),
-            status: 200,
-            at_unix: 10,
-        });
-        sink.record(&AuditRecord {
-            subject: AuditSubject::request_rejected(
+        let sink = Arc::new(CollectingAuditSink::new());
+        let audit: MaybeAuditSink = Some(sink.clone());
+        crate::audit_record::record_to(&audit, None, accepted(), Some("actor-a".into()), 200, 10);
+        crate::audit_record::record_to(
+            &audit,
+            None,
+            AuditSubject::request_rejected(
                 Some(&mcp_re_core::McpReError::ReplayDetected),
                 AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
                 AdmissionFacet::NotConfigured,
             ),
-            actor_id: None,
-            status: 403,
-            at_unix: 11,
-        });
+            None,
+            403,
+            11,
+        );
         let records = sink.records();
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].event().event_type(), "mcp-re.request.accepted");

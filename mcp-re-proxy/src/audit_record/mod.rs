@@ -48,6 +48,10 @@
 //! custody layer as bare [`AuditEvent`]s on its own path. Adding an arm nothing constructs
 //! would model a producer that does not exist.
 
+/// Turning a decision into an event and offering it to the observer: the one funnel.
+mod emission;
+/// The produced event: identity, scope, canonical bytes and digest (ADR-MCPRE-070 §8).
+mod envelope;
 pub(crate) mod scalar;
 pub(crate) mod subject;
 pub(crate) mod text;
@@ -57,6 +61,19 @@ use mcp_re_core::audit::Decision;
 
 use crate::audit_record::text::AuditField;
 
+// `pub` because `AuditSink`, which is `pub`, receives an `AuditEnvelope`, and because
+// deduplicating on `EventBinding` and refusing an `IntegrityConflict` is a contract every
+// sink and consumer applies (ADR-MCPRE-070 §8, §12). No constructor among them is public.
+pub use envelope::{
+    AuditEnvelope, ContentDigest, EventBinding, EventId, EventIdentityFailure, EventScope,
+    ExchangeCoordinate, IntegrityConflict, Recurrence, RunId, CANONICAL_VERSION,
+};
+// Crate-wide because the stderr stream, in `audit_sink`, opens this process's run at startup
+// so the start line names it before any record is produced.
+pub(crate) use emission::record_to;
+pub(crate) use envelope::open_process_run;
+#[cfg(test)]
+pub(crate) use envelope::EventAllocator;
 pub use subject::AuditSubject;
 
 /// One audit record: what happened, to whom, and when.
@@ -139,36 +156,6 @@ impl AuditRecord {
         ];
         fields.extend(self.subject.audit_fields());
         fields
-    }
-}
-
-/// Deliver one record, if a sink is installed.
-///
-/// The one place that turns "a sink may or may not be installed" into an emission, so no
-/// emitter carries its own copy of that conditional. `subject` decides which authorities
-/// the record carries; the caller that knows which half of the exchange it is reporting
-/// makes that choice, and the type refuses the other combination.
-pub(crate) fn record_to(
-    audit: &crate::audit_sink::MaybeAuditSink,
-    subject: AuditSubject,
-    actor_id: Option<String>,
-    status: u16,
-    now: i64,
-) {
-    if let Some(sink) = audit {
-        let record = AuditRecord {
-            subject,
-            actor_id,
-            status,
-            at_unix: now,
-        };
-        // `AuditSink` is a seam an embedder implements, and its contract is that a sink
-        // fault MUST NOT fail the request. This is the one funnel every emitter passes
-        // through, so a panicking sink costs one record (the panic hook has already
-        // reported it on stderr) rather than unwinding into the connection task.
-        // AssertUnwindSafe holds: the closure only borrows the sink and the record, and no
-        // proxy state is read after an unwind.
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sink.record(&record)));
     }
 }
 
@@ -276,21 +263,6 @@ mod tests {
             names.dedup();
             assert_eq!(names.len(), total, "duplicate field name in {names:?}");
         }
-    }
-
-    struct PanickingSink;
-
-    impl crate::audit_sink::AuditSink for PanickingSink {
-        fn record(&self, _record: &AuditRecord) {
-            panic!("sink fault");
-        }
-    }
-
-    #[test]
-    fn a_panicking_sink_loses_the_record_and_does_not_unwind_into_the_request() {
-        let audit: crate::audit_sink::MaybeAuditSink = Some(std::sync::Arc::new(PanickingSink));
-        record_to(&audit, AuditSubject::response_signed(), None, 200, 1);
-        record_to(&audit, AuditSubject::response_signed(), None, 200, 1);
     }
 
     #[test]

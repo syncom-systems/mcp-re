@@ -873,6 +873,123 @@ fn a_replay_emits_exactly_one_rejection_carrying_the_frozen_wire_code() {
     );
 }
 
+/// ADR-MCPRE-070 D9: a response event names the exchange it belongs to by the identity of
+/// that exchange's `request.accepted` event — one run, generated before it.
+#[test]
+fn an_accepted_exchange_links_its_signed_response_to_the_accepted_event() {
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let proxy = client_proxy(build_server().with_audit_sink(sink.clone()));
+    proxy
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
+        .expect("round trip succeeds");
+
+    let envelopes = sink.envelopes();
+    assert_eq!(
+        envelopes.len(),
+        2,
+        "accept-then-sign, both produced as events"
+    );
+    let (accepted, signed) = (&envelopes[0], &envelopes[1]);
+    assert_eq!(
+        accepted.scope(),
+        mcp_re_proxy::audit_record::EventScope::Origin
+    );
+    let coordinate = accepted
+        .exchange_coordinate()
+        .expect("an accepted request opens an exchange");
+    assert_eq!(coordinate.accepted_event(), accepted.id());
+    assert_eq!(
+        signed.scope(),
+        mcp_re_proxy::audit_record::EventScope::Exchange(coordinate),
+        "the signed response names the accepted event of its own exchange"
+    );
+    let run = accepted.id().run();
+    assert_eq!(signed.id().run(), run, "one exchange, one run");
+    assert!(
+        signed.id().seq_within(&run) > accepted.id().seq_within(&run),
+        "the response was generated after the acceptance"
+    );
+    assert!(sink.unnumbered_failures().is_empty());
+}
+
+/// D9: a request refused before acceptance has no accepted identity to name, and is given
+/// none.
+#[test]
+fn a_refusal_before_acceptance_carries_the_pre_acceptance_scope() {
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let proxy = client_proxy(build_server().with_audit_sink(sink.clone()));
+    let p = params(&mcp_re_test_paths::unique_test_nonce());
+    proxy.handle("r1", &plain_request(), &p).expect("first ok");
+    let before = sink.envelopes().len();
+    proxy
+        .handle("r1", &plain_request(), &p)
+        .expect("the rejection receipt verifies");
+
+    let replay: Vec<_> = sink.envelopes().into_iter().skip(before).collect();
+    assert_eq!(replay.len(), 1, "the replayed request records ONE event");
+    assert_eq!(
+        replay[0].record().event().event_type(),
+        "mcp-re.request.rejected"
+    );
+    assert_eq!(
+        replay[0].scope(),
+        mcp_re_proxy::audit_record::EventScope::PreAcceptance
+    );
+    assert_eq!(replay[0].exchange_coordinate(), None);
+}
+
+/// The envelope carries the record the serving path produced: the verifier-resolved actor
+/// and each authority's own facet, and its canonical bytes encode exactly those.
+#[test]
+fn the_envelope_keeps_the_verifier_resolved_actor_and_both_facets() {
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let proxy = client_proxy(build_server().with_audit_sink(sink.clone()));
+    proxy
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
+        .expect("round trip succeeds");
+
+    let envelopes = sink.envelopes();
+    let accepted = &envelopes[0];
+    assert_eq!(
+        accepted.record().subject,
+        mcp_re_proxy::AuditSubject::request_accepted(
+            &mcp_re_proxy::authorization::AuthorizationPosture::NoPolicyConfigured,
+            mcp_re_proxy::admission_enforcer::AdmissionFacet::NotConfigured
+        )
+    );
+    let actor = accepted
+        .record()
+        .actor_id
+        .clone()
+        .expect("an admitted request carries the resolved actor");
+    for envelope in &envelopes {
+        assert_eq!(envelope.record().actor_id.as_deref(), Some(actor.as_str()));
+        assert!(
+            envelope
+                .canonical_bytes()
+                .windows(actor.len())
+                .any(|w| w == actor.as_bytes()),
+            "the canonical bytes carry the resolved actor"
+        );
+    }
+    assert!(
+        envelopes[1].record().subject.authorization().is_none(),
+        "a response event carries no authorization coordinate"
+    );
+    assert_eq!(
+        sink.records(),
+        [accepted.record().clone(), envelopes[1].record().clone()]
+    );
+}
+
 /// No sink installed is the explicit no-emission posture and must not disturb serving.
 #[test]
 fn serving_without_an_audit_sink_still_round_trips() {

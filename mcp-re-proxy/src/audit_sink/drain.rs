@@ -17,10 +17,10 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::time::{Duration, Instant};
 
-use super::stream::AuditIncarnation;
 use super::writer::{writes_have_failed, STDERR_AUDIT_DROPPED};
 use super::AuditMessage;
 use super::STDERR_AUDIT_WRITER;
+use crate::audit_record::RunId;
 
 /// How long shutdown waits for the audit writer to write out what it was already handed.
 const AUDIT_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
@@ -147,11 +147,7 @@ fn enqueue_flush(
 ///
 /// Separated from the wait so the one property that matters — that the two outcomes never
 /// read as the same fact — is assertable without stalling a log collector.
-fn drain_line(
-    outcome: AuditDrain,
-    stream: Option<AuditIncarnation>,
-    unreported_drops: u64,
-) -> Option<String> {
+fn drain_line(outcome: AuditDrain, stream: Option<RunId>, unreported_drops: u64) -> Option<String> {
     let run = stream?;
     Some(match outcome {
         // BEFORE this drain, and the qualification is load-bearing: `Drained` means every
@@ -199,7 +195,7 @@ mod tests {
     use super::*;
 
     /// A stream this process opened.
-    const OPENED: Option<AuditIncarnation> = Some(AuditIncarnation::fixed([0xab; 16]));
+    const OPENED: Option<RunId> = Some(RunId::fixed([0xab; 16]));
 
     /// R8-C123, second half: a drain that TIMED OUT must never read as a drain that
     /// completed.

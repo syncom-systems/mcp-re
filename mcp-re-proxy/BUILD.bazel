@@ -373,6 +373,17 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPS-035: the serving path's audit emission seam (admitted actor, rejection
     # wire code, response signing key). Pure std, no feature gate — always compiled.
     "src/audit_record/mod.rs",
+    "src/audit_record/emission.rs",
+    # ADR-MCPRE-070 §8: the produced event — identity, scope, canonical bytes, digest.
+    "src/audit_record/envelope/mod.rs",
+    "src/audit_record/envelope/allocator.rs",
+    "src/audit_record/envelope/binding.rs",
+    "src/audit_record/envelope/canonical.rs",
+    "src/audit_record/envelope/digest.rs",
+    "src/audit_record/envelope/event_id.rs",
+    "src/audit_record/envelope/identity_failure.rs",
+    "src/audit_record/envelope/run_id.rs",
+    "src/audit_record/envelope/scope.rs",
     "src/audit_record/scalar.rs",
     "src/audit_record/subject.rs",
     "src/audit_record/text.rs",
