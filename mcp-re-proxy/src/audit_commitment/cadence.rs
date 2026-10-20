@@ -11,9 +11,10 @@
 //! — and the shutdown report states that interval's counts instead.
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use crate::audit_record::AccountingRecord;
+use crate::clock::now_unix;
 
 use super::{Accounting, CommitmentBound, EstablishedProvider};
 
@@ -78,13 +79,6 @@ async fn commit_record(
         return false;
     };
     witness.redeem(&event, provider).is_ok()
-}
-
-/// The wall clock in Unix seconds; a clock before the epoch reads as zero.
-fn now_unix() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
 /// Commit one record per `every`, for as long as the runtime it is spawned on lives. The
