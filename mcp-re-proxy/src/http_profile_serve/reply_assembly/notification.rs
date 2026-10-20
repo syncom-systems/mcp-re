@@ -21,6 +21,7 @@ use crate::exchange_state::ServedSuccess;
 use crate::refusal::RefusalCause;
 use crate::request_stages::{IntentDisposition, RetentionDisposition};
 
+use super::super::inner_plane::NotificationDelivered;
 use super::super::receipt::Accepted;
 use super::super::signing_window::SigningWindow;
 use super::super::HttpProfileProxy;
@@ -36,7 +37,7 @@ impl HttpProfileProxy {
         &self,
         acc: &Accepted<'_>,
         progress: &mut ExchangeProgress,
-        acknowledged: ServedSuccess,
+        acknowledged: ServedSuccess<NotificationDelivered>,
         window: &SigningWindow,
         retention: &RetentionDisposition,
         intent: IntentDisposition,
