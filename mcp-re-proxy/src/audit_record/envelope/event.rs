@@ -61,12 +61,13 @@ impl CanonicalEvent {
 
     /// The coordinate of the exchange this event belongs to: its own identity for an
     /// accepted request, the accepted event's for every later event of the exchange, and
-    /// `None` for a request refused before any exchange was accepted.
+    /// `None` for a request refused before any exchange was accepted and for an event about
+    /// the run as a whole.
     pub fn exchange_coordinate(&self) -> Option<ExchangeCoordinate> {
         match self.scope {
             EventScope::Origin => Some(ExchangeCoordinate::of_accepted(self.id)),
             EventScope::Exchange(coordinate) => Some(coordinate),
-            EventScope::PreAcceptance => None,
+            EventScope::PreAcceptance | EventScope::Run => None,
         }
     }
 

@@ -316,6 +316,14 @@ pub use delegated_wiring::ProdDelegatedRotor;
 pub use delegated_tls::DelegatedCertResolver;
 pub use delegated_tls::RawEd25519TlsSigner;
 // ADR-MCPS-028 §C: the GCP Cloud KMS Ed25519 backend (feature-gated).
+/// The commitment-provider seam an independently compiled provider implements and a build
+/// registers through `app::run_with` (ADR-MCPRE-070 §2, #1206). A provider produces receipts,
+/// failures, a name and an establishment class — never a witness.
+pub use audit_commitment::{
+    AuditProviders, CommitFuture, CommitRequest, CommitmentAuthority, CommitmentReceipt,
+    CrossingKind, DurabilityTier, EstablishFailure, EstablishFuture, ProviderFailure, ProviderId,
+    RejectReason,
+};
 /// The scripted reference commitment authority the serving integration tests install as the
 /// required posture's provider. Test builds and the test-only `audit_commitment_reference`
 /// feature only, so no deployable library exports it (ADR-MCPRE-070 §14 item 10).

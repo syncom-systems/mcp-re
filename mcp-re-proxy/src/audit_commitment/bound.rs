@@ -23,10 +23,6 @@ pub(crate) struct CommitmentBound(Duration);
 
 impl CommitmentBound {
     /// `wait`, or `None` when it is zero or above [`MAX_COMMITMENT_BOUND`].
-    #[cfg_attr(
-        not(any(test, feature = "audit_commitment_reference")),
-        allow(dead_code)
-    )] // chosen only by the test-only installer until #1206 configures the bound
     pub(crate) fn new(wait: Duration) -> Option<Self> {
         (!wait.is_zero() && wait <= MAX_COMMITMENT_BOUND).then_some(CommitmentBound(wait))
     }

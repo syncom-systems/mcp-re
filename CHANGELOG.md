@@ -23,8 +23,28 @@ or wire-format compatibility while the design lines from
 - Audit vocabulary revision 2 adds the `mcp-re.execution.intent` category (D1). It is not a
   success event (the success set stays at two) and the best-effort stderr stream never emits
   it. The canonical event encoding moves to version 2 to carry it.
-- The required posture is reachable only through a test-only feature until the operator
-  selector lands; every deployable build serves the best-effort posture unchanged.
+- The required posture is selected with `--audit-commitment required` (below).
+
+### Added — typed audit delivery posture and the commitment-provider seam (ADR-MCPRE-070 §2, §7, §11, D2, D3, Q3)
+
+- New flag `--audit-commitment best-effort|required` (Helm `auditCommitment`), default
+  `best-effort`: the v0.18.1 behavior, unchanged. `--audit-sink none|stderr` is unchanged.
+- `required` needs a commitment provider the BUILD registers through `app::run_with` and the
+  new public seam (`CommitmentAuthority`, `AuditProviders`, `ProviderId`, …). The open-source
+  binary registers none and refuses to start with `required`; so does any build whose provider
+  declares a tier below `SURVIVES_PROXY_PROCESS_LOSS` (`audit-durability/v1`) or fails its
+  bounded startup probe. `required` with `--audit-sink none` is refused as configuration. A
+  required posture is never served as best-effort, and a registered provider is never used
+  under best-effort.
+- The `security audit record` startup line now states the delivery: `BEST-EFFORT`, or
+  `REQUIRED via provider <id>, tier <tier> … as DECLARED`, disclosing that the observer's seq
+  then has gaps that are not drops. The OFF line names its delivery too.
+- Commitments have their own non-blocking budget (1024 in flight); a spent budget refuses
+  before dispatch with the same 503 as an outage, and never touches the observer.
+- Audit vocabulary revision 3 adds `mcp-re.audit.accounting` (D2, Q3): one bounded record per
+  60s interval of a required run, cumulative, run- and interval-attributed, with no actor and
+  no reason, never claiming exhaustive counts. The canonical event encoding moves to version 3
+  to carry it (a `Run` scope). A shutdown line reports the commitment counts.
 
 ### Added — committed outcome before visible success (ADR-MCPRE-070 G2)
 

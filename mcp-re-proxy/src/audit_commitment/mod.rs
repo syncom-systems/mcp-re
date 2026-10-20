@@ -38,6 +38,17 @@
 //! type establishes (D3). The reference authority in `reference` exists only in test builds
 //! and the test-only `audit_commitment_reference` flavor.
 //!
+//! # The embedder seam (#1206)
+//!
+//! An independently compiled provider implements [`CommitmentAuthority`] and a build
+//! registers it in [`AuditProviders`], which `app::run_with` takes. [`AuditPlan`] resolves
+//! the operator's `--audit-commitment` against what was registered, purely and before any
+//! effect; establishment reads the declared tier once, refuses one below the minimum, and
+//! bounds the provider's own probe. Any failure refuses startup — a required posture is never
+//! served as best-effort (S4). The provider-facing types are `pub`, and that is the whole
+//! external contract: a provider can produce a receipt, a failure, a name and an
+//! establishment class, and never a witness.
+//!
 //! # The crossing and the posture
 //!
 //! [`AuditPosture`] is what the serving path holds: the observer, and whether G1 is a
@@ -46,27 +57,46 @@
 //! witness, and the ready state cannot be built without the result. Under the best-effort
 //! posture it hands out [`NoCommitmentRequired`] instead, and commits nothing.
 
+/// The commitment path's own counters and budget, and the shutdown report.
+mod accounting;
 /// The provider seam.
 mod authority;
 /// The bounded wait.
 mod bound;
+/// The commitment budget (§7.4).
+mod budget;
+/// The accounting record's cadence (D2, Q3).
+mod cadence;
 /// The crossing kinds, as values and as types.
 mod crossing;
+/// What a provider answers when it cannot be established.
+mod establish_failure;
 /// The established provider, the commit procedure, and the witness.
 mod established;
+/// The commitment half of the posture, once established.
+mod established_audit;
 /// The owner's typed failure.
 mod failure;
 /// G1: the intent crossing's procedure.
 mod intent;
 /// The best-effort posture's statement that nothing is owed.
 mod not_required;
+/// G2: the outcome crossing's procedure.
 mod outcome;
+/// The requested policy resolved against the registered providers.
+mod plan;
 /// The deployment's audit posture: observer and commitment.
 mod posture;
 /// The provider's typed failure.
 mod provider_failure;
+/// A provider's printable name.
+mod provider_id;
+/// What a build registers: the injection seam.
+mod providers;
 /// What a provider says it committed.
 mod receipt;
+/// Why the required posture refuses startup.
+mod refusal;
 /// What a provider is asked to commit.
 mod request;
 /// The declared durability tier.
@@ -75,6 +105,9 @@ mod tier;
 /// Envelopes the commitment tests commit. Test-only.
 #[cfg(test)]
 pub(crate) mod fixtures;
+/// The reference authority's forged receipts. Test-only flavors.
+#[cfg(any(test, feature = "audit_commitment_reference"))]
+mod forgery;
 /// The reference authority as the serving integration tests drive it. Test-only flavors.
 #[cfg(any(test, feature = "audit_commitment_reference"))]
 mod harness;
@@ -84,26 +117,47 @@ mod machine;
 /// The deterministic, scripted reference authority. Test-only flavors.
 #[cfg(any(test, feature = "audit_commitment_reference"))]
 pub(crate) mod reference;
+/// The reference authority's startup probe. Test-only flavors.
+#[cfg(any(test, feature = "audit_commitment_reference"))]
+mod reference_probe;
+/// The reference authority's script. Test-only flavors.
+#[cfg(any(test, feature = "audit_commitment_reference"))]
+mod reference_step;
 
-pub(crate) use authority::{CommitFuture, CommitmentAuthority};
+// The embedder contract (#1206): what an independently compiled provider implements,
+// reads, answers with and is registered through. `pub`, and re-exported at the crate root.
+pub use authority::{CommitFuture, CommitmentAuthority, EstablishFuture};
+pub use crossing::CrossingKind;
+pub use establish_failure::EstablishFailure;
+pub use provider_failure::{ProviderFailure, RejectReason};
+pub use provider_id::ProviderId;
+pub use providers::AuditProviders;
+pub use receipt::CommitmentReceipt;
+pub use request::CommitRequest;
+pub use tier::DurabilityTier;
+pub(crate) use tier::TIER_VOCABULARY;
+
 pub(crate) use bound::CommitmentBound;
-pub(crate) use crossing::{Crossing, CrossingKind, Intent, Outcome};
+pub(crate) use budget::BUDGET_CEILING;
+pub(crate) use cadence::{run as run_accounting_cadence, ACCOUNTING_INTERVAL};
+pub(crate) use crossing::{Accounting, Crossing, Intent, Outcome};
 pub(crate) use established::EstablishedProvider;
 pub(crate) use established::Redeemed;
+pub(crate) use established_audit::EstablishedAudit;
 // What a crossing spends and why it may refuse: no code outside `established` names these
 // yet, in any build.
 #[allow(unused_imports)]
 pub(crate) use established::{CommitmentWitness, WitnessRefusal};
 pub(crate) use failure::{BindingField, CommitmentFailure, UncertainCause};
 #[cfg(any(test, feature = "audit_commitment_reference"))]
+pub(crate) use harness::establish_reference;
+#[cfg(any(test, feature = "audit_commitment_reference"))]
 pub use harness::{ReferenceCommitment, ScriptedAnswer};
 pub(crate) use not_required::NoCommitmentRequired;
 pub(crate) use outcome::CommittedOutcome;
+pub(crate) use plan::AuditPlan;
 pub(crate) use posture::AuditPosture;
-pub(crate) use provider_failure::{ProviderFailure, RejectReason};
-pub(crate) use receipt::CommitmentReceipt;
-pub(crate) use request::CommitRequest;
-pub(crate) use tier::DurabilityTier;
+pub(crate) use refusal::AuditPostureRefusal;
 
 #[cfg(test)]
 mod tests {
@@ -130,7 +184,7 @@ mod tests {
     }
 
     fn provider(step: Step) -> Arc<EstablishedProvider> {
-        EstablishedProvider::establish(Arc::new(
+        EstablishedProvider::eligible_for_test(Arc::new(
             ReferenceAuthority::new(DurabilityTier::SurvivesProxyProcessLoss).scripted([step]),
         ))
     }

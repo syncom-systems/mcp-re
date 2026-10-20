@@ -6,8 +6,6 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use super::super::{CommitFuture, CommitmentReceipt, ProviderFailure};
-
 /// The provider's future panicked while it was polled.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct Panicked;
@@ -18,24 +16,27 @@ pub(super) struct Panicked;
 /// task and never a swallow: the observer's `record_to` discards its sink's panic because an
 /// observer cannot affect the request, and an authority's panic is exactly the opposite
 /// kind of fact.
-pub(super) struct Caught<'a> {
-    inner: CommitFuture<'a>,
+///
+/// Generic over the provider's future, so the commitment and the establishment probe are
+/// caught by the one mechanism.
+pub(super) struct Caught<F> {
+    inner: F,
 }
 
-impl<'a> Caught<'a> {
+impl<F> Caught<F> {
     /// Poll `inner` under `catch_unwind`.
-    pub(super) fn new(inner: CommitFuture<'a>) -> Self {
+    pub(super) fn new(inner: F) -> Self {
         Caught { inner }
     }
 }
 
-impl Future for Caught<'_> {
-    type Output = Result<Result<CommitmentReceipt, ProviderFailure>, Panicked>;
+impl<F: Future + Unpin> Future for Caught<F> {
+    type Output = Result<F::Output, Panicked>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // AssertUnwindSafe holds: after a panic this returns Ready, the caller drops the
         // future without polling it again, and no owner state is read from it.
-        match catch_unwind(AssertUnwindSafe(|| self.inner.as_mut().poll(cx))) {
+        match catch_unwind(AssertUnwindSafe(|| Pin::new(&mut self.inner).poll(cx))) {
             Ok(Poll::Pending) => Poll::Pending,
             Ok(Poll::Ready(answer)) => Poll::Ready(Ok(answer)),
             Err(_) => Poll::Ready(Err(Panicked)),
@@ -45,6 +46,7 @@ impl Future for Caught<'_> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::{CommitFuture, ProviderFailure};
     use super::*;
 
     #[tokio::test]

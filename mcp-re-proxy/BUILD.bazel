@@ -161,6 +161,7 @@ _PROXY_LIB_SRCS = [
     "src/config_state/custody.rs",
     "src/config_state/delegated_signing.rs",
     "src/config_state/evidence.rs",
+    "src/config_state/audit_policy.rs",
     "src/config_state/freshness.rs",
     "src/config_state/in_flight_limit.rs",
     "src/config_state/kms_endpoint.rs",
@@ -386,6 +387,7 @@ _PROXY_LIB_SRCS = [
     "src/audit_record/envelope/run_id.rs",
     "src/audit_record/envelope/scope.rs",
     "src/audit_record/intent.rs",
+    "src/audit_record/accounting.rs",
     "src/audit_record/scalar.rs",
     "src/audit_record/subject.rs",
     "src/audit_record/text.rs",
@@ -395,26 +397,40 @@ _PROXY_LIB_SRCS = [
     "src/audit_sink/writer.rs",
     "src/audit_sink/stream.rs",
     "src/audit_sink/stderr.rs",
+    "src/audit_sink/observer_accounting.rs",
     # ADR-MCPRE-070 §2, §9: the commitment authority, separate from the observer above.
-    # `reference.rs` and `fixtures.rs` are compiled only into the crate's unit tests.
+    # `reference*.rs`, `forgery.rs` and `harness.rs` compile only into test builds and the
+    # test-only `audit_commitment_reference` flavors; `fixtures.rs` only into unit tests.
     "src/audit_commitment/mod.rs",
+    "src/audit_commitment/accounting.rs",
     "src/audit_commitment/authority.rs",
     "src/audit_commitment/bound.rs",
+    "src/audit_commitment/budget.rs",
+    "src/audit_commitment/cadence.rs",
     "src/audit_commitment/crossing.rs",
     "src/audit_commitment/established/mod.rs",
     "src/audit_commitment/established/caught.rs",
     "src/audit_commitment/established/witness.rs",
+    "src/audit_commitment/established_audit.rs",
+    "src/audit_commitment/establish_failure.rs",
     "src/audit_commitment/failure.rs",
     "src/audit_commitment/fixtures.rs",
+    "src/audit_commitment/forgery.rs",
     "src/audit_commitment/harness.rs",
     "src/audit_commitment/intent.rs",
     "src/audit_commitment/machine.rs",
     "src/audit_commitment/not_required.rs",
     "src/audit_commitment/outcome.rs",
+    "src/audit_commitment/plan.rs",
     "src/audit_commitment/posture.rs",
     "src/audit_commitment/provider_failure.rs",
+    "src/audit_commitment/provider_id.rs",
+    "src/audit_commitment/providers.rs",
     "src/audit_commitment/receipt.rs",
     "src/audit_commitment/reference.rs",
+    "src/audit_commitment/reference_probe.rs",
+    "src/audit_commitment/reference_step.rs",
+    "src/audit_commitment/refusal.rs",
     "src/audit_commitment/request.rs",
     "src/audit_commitment/tier.rs",
     # Issue #4034: PKCS#11/HSM-backed KeySource (behind #[cfg(feature =
@@ -499,6 +515,7 @@ _PROXY_LIB_SRCS = [
     "src/http_profile_serve/receipt/audit_event.rs",
     "src/http_profile_serve/receipt/artifact.rs",
     "src/app.rs",
+    "src/app/entry.rs",
     # ADR-MCPRE-057 §9 / ADR-MCPRE-058 §14: the owner of a partly-built runtime —
     # lifecycle state cannot advance beyond the ownership it describes. Crate-internal.
     "src/materializing_runtime/mod.rs",
@@ -525,6 +542,7 @@ _PROXY_LIB_SRCS = [
     "src/serving_capabilities.rs",
     # ADR-MCPS-047 / #744 D1b′: the continuation capability's own seam. Its own module
     # because its OFF branch is a fact about an operator's SELECTION, not about the build.
+    "src/serving_capabilities/audit_posture.rs",
     "src/serving_capabilities/continuation.rs",
     # ADR-MCPRE-056 §5.2: what startup INTENDS to build, decided from validated
     # configuration alone — no I/O, no environment, no clock. Crate-internal.

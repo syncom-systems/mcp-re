@@ -1,29 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `Audit`, `Retention` and `VerifiedContext` machines — unit
-//! `proxy.evidence_retention_state`.
+//! The `Retention` and `VerifiedContext` machines — unit `proxy.evidence_retention_state`.
 //!
-//! Three two-state machines over what a deployment records and what it asserts. They share
-//! a file because each is a single selector with no guards; giving each its own file would
-//! imply a structure that is not there. `Audit` and `VerifiedContext` are selectors whose
-//! field IS the state; `Retention` additionally carries the directory whose presence
-//! selects it.
+//! Two two-state machines over what a deployment retains and what it asserts. They share a
+//! file because each is a single selector with no guards; giving each its own file would
+//! imply a structure that is not there. `VerifiedContext` is a selector whose field IS the
+//! state; `Retention` additionally carries the directory whose presence selects it. (The
+//! `Audit` machine left this file when it gained a refusal: `audit_policy`.)
 //!
-//! None of them can be misconfigured — every state form is legal and none has a required,
+//! Neither can be misconfigured — every state form is legal and none has a required,
 //! forbidden or numeric column. **That is the finding, not an omission.** Classifying them
 //! anyway is what makes `DeploymentConfigState` a complete statement about the deployment
 //! rather than a record of the parts that happened to need checking, and it is why a later
 //! stage can read the posture off the classification instead of re-reading the field.
 
-use crate::deployment_request::{AuditSinkKind, DeploymentRequest, VerifiedContextKind};
-
-/// Where the per-request security record goes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuditState {
-    /// No per-request attribution is written.
-    None,
-    /// One structured record per decision, on the diagnostic channel.
-    Stderr,
-}
+use crate::deployment_request::{DeploymentRequest, VerifiedContextKind};
 
 /// Whether full request and response messages are retained for later SCITT statements.
 ///
@@ -81,12 +71,8 @@ impl VerifiedContextState {
     }
 }
 
-/// Classify the evidence machines. Each is total, and none has columns to check.
-pub fn classify(config: &DeploymentRequest) -> (AuditState, RetentionState, VerifiedContextState) {
-    let audit = match config.audit_sink {
-        AuditSinkKind::None => AuditState::None,
-        AuditSinkKind::Stderr => AuditState::Stderr,
-    };
+/// Classify the evidence machines. Each is total, and neither has columns to check.
+pub fn classify(config: &DeploymentRequest) -> (RetentionState, VerifiedContextState) {
     let retention = match &config.retained_evidence_dir {
         Some(directory) => RetentionState {
             directory: Some(directory.clone()),
@@ -97,7 +83,7 @@ pub fn classify(config: &DeploymentRequest) -> (AuditState, RetentionState, Veri
         VerifiedContextKind::Disabled => VerifiedContextState::Disabled,
         VerifiedContextKind::Trusted => VerifiedContextState::Trusted,
     };
-    (audit, retention, verified_context)
+    (retention, verified_context)
 }
 
 #[cfg(test)]
@@ -107,7 +93,7 @@ mod tests {
 
     fn states(
         mutate: impl FnOnce(&mut DeploymentRequest),
-    ) -> (AuditState, RetentionState, VerifiedContextState) {
+    ) -> (RetentionState, VerifiedContextState) {
         let mut config = legal_config();
         mutate(&mut config);
         classify(&config)
@@ -117,24 +103,17 @@ mod tests {
     fn every_legal_state_form_is_classified() {
         assert_eq!(
             states(|c| {
-                c.audit_sink = AuditSinkKind::None;
                 c.retained_evidence_dir = None;
                 c.verified_context = VerifiedContextKind::Disabled;
             }),
-            (
-                AuditState::None,
-                RetentionState::off(),
-                VerifiedContextState::Disabled
-            )
+            (RetentionState::off(), VerifiedContextState::Disabled)
         );
         assert_eq!(
             states(|c| {
-                c.audit_sink = AuditSinkKind::Stderr;
                 c.retained_evidence_dir = Some("/evidence".to_string());
                 c.verified_context = VerifiedContextKind::Trusted;
             }),
             (
-                AuditState::Stderr,
                 RetentionState {
                     directory: Some("/evidence".to_string())
                 },
@@ -148,12 +127,12 @@ mod tests {
     #[test]
     fn retention_is_selected_by_its_own_locator() {
         assert_eq!(
-            states(|c| c.retained_evidence_dir = None).1,
+            states(|c| c.retained_evidence_dir = None).0,
             RetentionState::off()
         );
         assert_eq!(
             states(|c| c.retained_evidence_dir = Some("/evidence".to_string()))
-                .1
+                .0
                 .directory(),
             Some("/evidence")
         );
@@ -163,7 +142,7 @@ mod tests {
     /// second question to ask. Asserted with a path the default fixture does not name.
     #[test]
     fn the_on_state_carries_the_directory_that_selected_it() {
-        let state = states(|c| c.retained_evidence_dir = Some("/srv/evidence-7".to_string())).1;
+        let state = states(|c| c.retained_evidence_dir = Some("/srv/evidence-7".to_string())).0;
         let directory = state
             .directory()
             .expect("a named directory selects the retaining state");

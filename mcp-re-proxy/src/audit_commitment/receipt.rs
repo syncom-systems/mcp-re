@@ -16,21 +16,17 @@ use super::{CrossingKind, DurabilityTier};
 /// It carries no provider identity. The owner binds the provider instance it actually
 /// called; an identity the provider reported about itself would be a claim, not a binding.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct CommitmentReceipt {
+pub struct CommitmentReceipt {
     binding: EventBinding,
     crossing: CrossingKind,
     tier: DurabilityTier,
 }
 
 impl CommitmentReceipt {
-    /// A provider's receipt. Crate-wide because `CommitmentAuthority` is, and a receipt is
-    /// the only thing a provider may answer with besides a failure: constructing one grants
-    /// nothing until the owner has checked it.
-    #[cfg_attr(
-        not(any(test, feature = "audit_commitment_reference")),
-        allow(dead_code)
-    )] // built by providers; none is compiled into a deployable build
-    pub(crate) fn new(binding: EventBinding, crossing: CrossingKind, tier: DurabilityTier) -> Self {
+    /// A provider's receipt. `pub` because `CommitmentAuthority` is the embedder contract,
+    /// and a receipt is the only thing a provider may answer with besides a failure:
+    /// constructing one grants nothing until the owner has checked it.
+    pub fn new(binding: EventBinding, crossing: CrossingKind, tier: DurabilityTier) -> Self {
         CommitmentReceipt {
             binding,
             crossing,

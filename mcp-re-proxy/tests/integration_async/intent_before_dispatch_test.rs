@@ -276,6 +276,51 @@ pub(crate) mod required {
     /// Absent, failed, delayed and mismatched commitment: each one is a signed refusal the
     /// client verifies, with the new token, the status that says whether a retry here can
     /// succeed, no execution hazard stated, and ZERO backend invocations.
+    /// ADR-MCPRE-070 §7.3, §11 (#1206): a spent commitment budget refuses before dispatch
+    /// with the same retry-safe 503 as an outage, at once, asking the provider nothing — and
+    /// the observer keeps recording, because it has a budget of its own (§7.4).
+    #[test]
+    fn a_spent_commitment_budget_refuses_before_dispatch_and_the_observer_is_unaffected() {
+        let reference = ReferenceCommitment::surviving_process_loss([ScriptedAnswer::Hang])
+            .with_commitment_budget(1);
+        let (d, sink) = required(&reference, Duration::from_millis(1500));
+        std::thread::scope(|s| {
+            let holder = s.spawn(|| d.call(&plain_request()).kind);
+            let asked = std::time::Instant::now();
+            while reference.requests() == 0 && asked.elapsed() < Duration::from_secs(5) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert_eq!(
+                reference.requests(),
+                1,
+                "the holder's commitment is in flight"
+            );
+            let started = std::time::Instant::now();
+            assert_eq!(d.call(&plain_request()).kind, refused_unavailable());
+            assert_eq!(d.last_status(), Some(503));
+            assert!(
+                started.elapsed() < Duration::from_millis(1000),
+                "a spent budget answers at once; it never waits for a permit"
+            );
+            assert_eq!(holder.join().expect("holder"), refused_unavailable());
+        });
+        assert_eq!(
+            d.calls(),
+            0,
+            "no backend invocation without a committed intent"
+        );
+        assert_eq!(
+            reference.requests(),
+            1,
+            "the refused commitment asked nobody"
+        );
+        assert_eq!(
+            sink.records().len(),
+            4,
+            "both exchanges observed, accepted and refused"
+        );
+    }
+
     #[test]
     fn required_failures_reach_no_backend() {
         let cases = [

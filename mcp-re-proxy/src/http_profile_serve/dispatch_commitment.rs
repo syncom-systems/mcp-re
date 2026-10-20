@@ -164,21 +164,31 @@ impl HttpProfileProxy {
         Ok(ReadyForDispatch::new(prepared, window, retention, intent))
     }
 
+    /// Serve under `audit`, the posture the composition root established. Crate-wide: only
+    /// the root holds one; an embedder installs an observer with `with_audit_sink`.
+    pub(crate) fn with_audit_posture(
+        mut self,
+        audit: crate::audit_commitment::AuditPosture,
+    ) -> Self {
+        self.audit = audit;
+        self
+    }
+
     /// Require a committed execution intent before every dispatch, committed to the scripted
-    /// `reference` authority within `bound` (ADR-MCPRE-070 G1).
+    /// `reference` authority within `bound` (ADR-MCPRE-070 G1), keeping the observer.
     ///
-    /// The only route into the required audit posture until #1206 adds the operator's
-    /// selector, and it exists only in test builds and under the test-only
-    /// `audit_commitment_reference` feature: `pub` because the serving integration suites are
-    /// another crate, and no deployable library compiles it. It refuses a reference declaring
-    /// a volatile tier (D3) and a bound that is zero or above the request deadline.
+    /// Established exactly as startup establishes a provider (`establish_reference`). Test
+    /// builds and the test-only `audit_commitment_reference` feature only: `pub` because the
+    /// serving integration suites are another crate, and no deployable library compiles it.
     #[cfg(any(test, feature = "audit_commitment_reference"))]
     pub fn with_required_audit_commitment(
         mut self,
         reference: &crate::audit_commitment::ReferenceCommitment,
         bound: std::time::Duration,
-    ) -> Result<Self, &'static str> {
-        self.audit.require(reference.authority(), bound)?;
+    ) -> Result<Self, String> {
+        let (provider, bound) = crate::audit_commitment::establish_reference(reference, bound)?;
+        let observer = self.audit.observer().clone();
+        self.audit = crate::audit_commitment::AuditPosture::required(observer, provider, bound);
         Ok(self)
     }
 }

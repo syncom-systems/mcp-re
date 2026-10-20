@@ -43,10 +43,14 @@ main.rs ────────────────────────
                                        run_validated ──▶ build_key_source(...)
 
 embedder ──▶ app::run_request(DeploymentRequest) ──▶ ValidatedDeployment::try_from ──▶ run
+embedder ──▶ app::run_with(ValidatedDeployment, AuditProviders) ──▶ AuditPlan::resolve ──▶ run_validated
 ```
 
 The argv path validates once and hands the proof to `app::run` unopened. A request built in
-code met no parser, so `app::run_request` validates it. See §4 Q7.
+code met no parser, so `app::run_request` validates it. See §4 Q7. Both reach `run_validated`
+through `app::run_with` with no commitment provider; a build that compiles one registers it
+there, and the requested audit delivery is resolved against it before any effect
+(ADR-MCPRE-070 §2, §11).
 
 ## 4. The twelve questions (ADR-061 §8)
 

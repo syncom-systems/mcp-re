@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! What a commitment authority may answer instead of a receipt.
 
-/// A provider's typed refusal to produce a receipt.
+/// A provider's typed refusal to produce a receipt. `pub`: the embedder contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(any(test, feature = "audit_commitment_reference")),
-    allow(dead_code)
-)] // constructed by providers; none is compiled into a deployable build
-pub(crate) enum ProviderFailure {
+pub enum ProviderFailure {
     /// The provider refused the event: definitely not committed.
     Rejected(RejectReason),
     /// The provider is unreachable, full or over quota: definitely not committed.
@@ -19,11 +15,7 @@ pub(crate) enum ProviderFailure {
 
 /// Why a provider refused an event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(any(test, feature = "audit_commitment_reference")),
-    allow(dead_code)
-)] // constructed by providers; none is compiled into a deployable build
-pub(crate) enum RejectReason {
+pub enum RejectReason {
     /// The identity is already committed with another digest: an integrity conflict
     /// (ADR-MCPRE-070 §8), never an overwrite.
     IdentityConflict,

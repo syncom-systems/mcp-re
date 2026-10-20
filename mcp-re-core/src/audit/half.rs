@@ -4,8 +4,9 @@
 //! A PROJECTION of the frozen vocabulary, and not a new audit token. Core already owns the
 //! fact — it is spread across [`SUCCESS_EVENT_TYPES`](super::SUCCESS_EVENT_TYPES),
 //! [`REJECTION_EVENT_TYPES`](super::REJECTION_EVENT_TYPES),
-//! [`EXECUTION_EVENT_TYPES`](super::EXECUTION_EVENT_TYPES) and
-//! [`KEY_LIFECYCLE_EVENT_TYPES`](super::KEY_LIFECYCLE_EVENT_TYPES) — and answering the
+//! [`EXECUTION_EVENT_TYPES`](super::EXECUTION_EVENT_TYPES),
+//! [`KEY_LIFECYCLE_EVENT_TYPES`](super::KEY_LIFECYCLE_EVENT_TYPES) and
+//! [`ACCOUNTING_EVENT_TYPES`](super::ACCOUNTING_EVENT_TYPES) — and answering the
 //! question here is what stops a consumer re-deriving it from a second list of its own.
 //!
 //! The consumer this exists for is `mcp-re-proxy`'s audit record, whose `Request` arm
@@ -31,9 +32,10 @@ pub enum AuditHalf {
     ///
     /// The delegated-key lifecycle events are emitted by the custody layer at issuance,
     /// rotation and retirement rather than by a verification outcome, so they describe
-    /// neither half. The variant exists because that category exists; if ADR-MCPRE-052 §7
-    /// ever withdraws it, this goes with it rather than staying as a resting place for
-    /// whatever is unmapped.
+    /// neither half, and the accounting record (ADR-MCPRE-070 D2, Q3) counts a run's
+    /// interval rather than any one exchange. The variant exists because those categories
+    /// exist; if both are withdrawn, this goes with them rather than staying as a resting
+    /// place for whatever is unmapped.
     NonExchange,
 }
 
@@ -47,7 +49,7 @@ impl AuditEvent {
     /// `&'static str`, so the compiler cannot check this match for exhaustiveness and a
     /// newly minted event would fall silently into `NonExchange`. That is the failure mode
     /// this is designed against, not one it accepts:
-    /// `every_pinned_event_type_is_given_a_half` walks all four allowlists and fails the
+    /// `every_pinned_event_type_is_given_a_half` walks all five allowlists and fails the
     /// battery if any member lands in the catch-all.
     #[must_use]
     pub fn half(&self) -> AuditHalf {
@@ -75,8 +77,8 @@ mod tests {
     }
 
     /// **The control the catch-all rests on.** Every event type the drift guard pins is
-    /// given a half deliberately, and the key-lifecycle set is the ONLY one that may reach
-    /// `NonExchange`.
+    /// given a half deliberately, and the key-lifecycle and accounting sets are the ONLY ones
+    /// that may reach `NonExchange`.
     ///
     /// Without this, adding a fifth exchange event to an allowlist and forgetting this file
     /// would make it `NonExchange` — silently, and in the direction that reads as "this is
@@ -107,6 +109,13 @@ mod tests {
                 of(t).half(),
                 AuditHalf::NonExchange,
                 "{t} is emitted by the custody layer and describes neither half"
+            );
+        }
+        for t in super::super::ACCOUNTING_EVENT_TYPES {
+            assert_eq!(
+                of(t).half(),
+                AuditHalf::NonExchange,
+                "{t} counts a run's interval and describes no exchange"
             );
         }
     }

@@ -11,71 +11,24 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use crate::audit_record::{ContentDigest, EventBinding, EventId, ExchangeCoordinate};
 
+use super::forgery::forged;
+pub(crate) use super::forgery::Forgery;
+pub(crate) use super::reference_probe::EstablishStep;
+pub(crate) use super::reference_step::{Hook, Step};
 use super::{
     CommitFuture, CommitRequest, CommitmentAuthority, CommitmentReceipt, CrossingKind,
-    DurabilityTier, ProviderFailure, RejectReason,
+    DurabilityTier, EstablishFuture, ProviderFailure, ProviderId, RejectReason,
 };
-
-/// One scripted answer. An exhausted script answers [`Step::Commit`].
-#[derive(Debug, Clone)]
-pub(crate) enum Step {
-    /// Journal the event and acknowledge it. An identical retry is acknowledged again; the
-    /// same identity with other content is `Rejected(IdentityConflict)`.
-    Commit,
-    /// Refuse with this reason.
-    Reject(RejectReason),
-    /// Report the provider unavailable.
-    Unavailable,
-    /// Never answer.
-    Hang,
-    /// Drop the acknowledgement after the send.
-    DropCompletion,
-    /// Panic while the answer is polled.
-    PanicInPoll,
-    /// Panic before any answer exists.
-    PanicBeforeFuture,
-    /// Acknowledge with a receipt that disagrees with the request.
-    Forge(Forgery),
-    /// Acknowledge with the receipt of the previous commit.
-    ReplayPrevious,
-    /// Journal the event, then never acknowledge: the store holds an intent the proxy never
-    /// learns about (W2).
-    CommitThenPark,
-    /// Journal the event, run the hook, then acknowledge: something happens to the world
-    /// between the commit and the crossing it gates (W3).
-    CommitThen(Hook),
-}
-
-/// A side effect a [`Step::CommitThen`] runs after it journals.
-#[derive(Clone)]
-pub(crate) struct Hook(pub(crate) Arc<dyn Fn() + Send + Sync>);
-
-impl std::fmt::Debug for Hook {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Hook")
-    }
-}
-
-/// How a forged receipt disagrees with its request.
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum Forgery {
-    /// Another binding. Unit tests only: a serving suite cannot name another event's binding.
-    #[cfg(test)]
-    Binding(EventBinding),
-    /// The other crossing.
-    Crossing,
-    /// The other tier.
-    Tier,
-}
 
 /// A scripted, in-memory authority.
 #[derive(Debug)]
 pub(crate) struct ReferenceAuthority {
     tier: DurabilityTier,
+    establishing: EstablishStep,
     script: Mutex<VecDeque<Step>>,
     journal: Mutex<HashMap<EventId, ContentDigest>>,
     /// Every event journaled, in order, with the exchange it names.
@@ -90,6 +43,7 @@ impl ReferenceAuthority {
     pub(crate) fn new(tier: DurabilityTier) -> Self {
         ReferenceAuthority {
             tier,
+            establishing: EstablishStep::Succeed,
             script: Mutex::new(VecDeque::new()),
             journal: Mutex::new(HashMap::new()),
             journaled: Mutex::new(Vec::new()),
@@ -103,6 +57,17 @@ impl ReferenceAuthority {
     pub(crate) fn scripted(self, steps: impl IntoIterator<Item = Step>) -> Self {
         self.script.lock().expect("script").extend(steps);
         self
+    }
+
+    /// This authority, answering its startup probe with `step`. Unit tests only: the
+    /// serving suites drive establishment failures with a provider of their own, through the
+    /// public seam.
+    #[cfg(test)]
+    pub(crate) fn establishing(self, step: EstablishStep) -> Self {
+        ReferenceAuthority {
+            establishing: step,
+            ..self
+        }
     }
 
     /// How many times the tier was asked for.
@@ -179,29 +144,15 @@ impl ReferenceAuthority {
     }
 }
 
-fn forged(forgery: Forgery, request: &CommitRequest<'_>) -> CommitmentReceipt {
-    let (binding, crossing, tier) = (request.binding(), request.crossing(), request.tier());
-    match forgery {
-        #[cfg(test)]
-        Forgery::Binding(other) => CommitmentReceipt::new(other, crossing, tier),
-        Forgery::Crossing => {
-            let other = match crossing {
-                CrossingKind::Intent => CrossingKind::Outcome,
-                CrossingKind::Outcome => CrossingKind::Intent,
-            };
-            CommitmentReceipt::new(binding, other, tier)
-        }
-        Forgery::Tier => {
-            let other = match tier {
-                DurabilityTier::ProcessVolatile => DurabilityTier::SurvivesProxyProcessLoss,
-                DurabilityTier::SurvivesProxyProcessLoss => DurabilityTier::ProcessVolatile,
-            };
-            CommitmentReceipt::new(binding, crossing, other)
-        }
-    }
-}
-
 impl CommitmentAuthority for ReferenceAuthority {
+    fn provider_id(&self) -> ProviderId {
+        ProviderId::reference()
+    }
+
+    fn establish(&self) -> EstablishFuture<'_> {
+        self.establishing.clone().answer()
+    }
+
     fn declared_tier(&self) -> DurabilityTier {
         self.tier_reads.fetch_add(1, Ordering::SeqCst);
         self.tier
@@ -247,7 +198,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_same_id_with_other_bytes_is_an_identity_conflict() {
-        let provider = EstablishedProvider::establish(Arc::new(ReferenceAuthority::new(
+        let provider = EstablishedProvider::eligible_for_test(Arc::new(ReferenceAuthority::new(
             DurabilityTier::SurvivesProxyProcessLoss,
         )));
         let (first, conflicting) = fixtures::same_id_other_content();
@@ -272,7 +223,7 @@ mod tests {
             Step::ReplayPrevious,
         ];
         let run = || async {
-            let provider = EstablishedProvider::establish(Arc::new(
+            let provider = EstablishedProvider::eligible_for_test(Arc::new(
                 ReferenceAuthority::new(DurabilityTier::SurvivesProxyProcessLoss)
                     .scripted(script.clone()),
             ));

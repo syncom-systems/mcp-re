@@ -76,8 +76,9 @@ pub enum StartupEvent {
     McpTransportContract { enforced: bool },
     /// The RFC 9421 freshness gate's configured skew, in seconds.
     FreshnessGate { skew_secs: u64 },
-    /// Where the per-request security record goes.
-    AuditSink { mode: String },
+    /// Where the per-request security record goes — `stderr` or `off` — and how it is
+    /// delivered: `best-effort`, or `required:<declared tier>`.
+    AuditSink { mode: String, delivery: String },
     /// Whether accepted exchanges are retained.
     EvidenceRetention { enabled: bool },
     /// Whether the PEP writes its own verified context into the forwarded body.
@@ -345,16 +346,7 @@ fn normalize(line: &str) -> Option<StartupEvent> {
         });
     }
     if l.contains("security audit record = ") {
-        let mode = if l.contains("record = NONE") {
-            "none"
-        } else if l.contains("record = STDERR") {
-            "stderr"
-        } else {
-            unknown_state("security audit record", &l);
-        };
-        return Some(StartupEvent::AuditSink {
-            mode: mode.to_string(),
-        });
+        return Some(audit_posture(&l));
     }
     if l.contains("evidence retention = ") {
         return Some(StartupEvent::EvidenceRetention {
@@ -438,6 +430,33 @@ fn unknown_state(seam: &str, line: &str) -> ! {
          Add the new state to `normalize` — do NOT let it fall through to an existing \
          one, and do not drop it silently."
     );
+}
+
+/// The security-audit line: the observer and the delivery, each read from its own words.
+/// Anything else is a posture this harness does not know, and it says so.
+fn audit_posture(l: &str) -> StartupEvent {
+    let mode = if l.contains("record = STDERR, ") {
+        "stderr"
+    } else if l.contains("record = OFF (--audit-sink none), ") {
+        "off"
+    } else {
+        unknown_state("security audit record", l);
+    };
+    let delivery = if l.contains("delivery = BEST-EFFORT") {
+        "best-effort".to_string()
+    } else if let Some(rest) = after(l, "delivery = REQUIRED via provider ") {
+        let tier = after(rest, ", tier ").and_then(|t| t.split(' ').next());
+        match tier {
+            Some(tier) if mode == "stderr" => format!("required:{tier}"),
+            _ => unknown_state("security audit record", l),
+        }
+    } else {
+        unknown_state("security audit record", l);
+    };
+    StartupEvent::AuditSink {
+        mode: mode.to_string(),
+        delivery,
+    }
 }
 
 /// Tests for the normalizer itself, which need no subprocess.
@@ -546,5 +565,39 @@ mod normalize_tests {
     #[should_panic(expected = "states a posture this harness does not recognize")]
     fn an_unrecognized_audit_sink_state_fails_rather_than_guessing() {
         ev("security audit record = SYSLOG (ADR-MCPS-035)");
+    }
+
+    /// A delivery this harness does not know fails rather than reading as best-effort.
+    #[test]
+    #[should_panic(expected = "states a posture this harness does not recognize")]
+    fn an_unrecognized_audit_delivery_fails_rather_than_guessing() {
+        ev("security audit record = STDERR, delivery = EVENTUAL (ADR-MCPRE-070)");
+    }
+
+    /// Every audit posture production states is read, the OFF line included — it used to
+    /// panic the harness, because the matcher looked for a `NONE` production never wrote.
+    #[test]
+    fn every_audit_posture_production_states_is_read() {
+        let event = |mode: &str, delivery: &str| {
+            Some(StartupEvent::AuditSink {
+                mode: mode.into(),
+                delivery: delivery.into(),
+            })
+        };
+        assert_eq!(
+            ev("security audit record = STDERR, delivery = BEST-EFFORT (ADR-MCPS-035): ..."),
+            event("stderr", "best-effort")
+        );
+        assert_eq!(
+            ev("security audit record = OFF (--audit-sink none), delivery = BEST-EFFORT: ..."),
+            event("off", "best-effort")
+        );
+        assert_eq!(
+            ev(
+                "security audit record = STDERR, delivery = REQUIRED via provider journal, \
+                tier SURVIVES_PROXY_PROCESS_LOSS (audit-durability/v1) as DECLARED ..."
+            ),
+            event("stderr", "required:SURVIVES_PROXY_PROCESS_LOSS")
+        );
     }
 }

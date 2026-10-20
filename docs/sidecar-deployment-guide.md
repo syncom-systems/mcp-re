@@ -211,6 +211,21 @@ waiting for connections and a larger pool can help; if few are blocked, it will 
 that also runs Redis, CPU scheduling of the Redis primary can limit throughput regardless of pool
 size ([`docs/bench/replay-path-cpu-scheduling-2026-10-16.md`](bench/replay-path-cpu-scheduling-2026-10-16.md)).
 
+### Audit record and delivery (ADR-MCPS-035, ADR-MCPRE-070)
+
+| Flag | Meaning |
+| --- | --- |
+| `--audit-sink stderr` *(default)* | One numbered line per accepted / rejected / signed decision on stderr. |
+| `--audit-sink none` | No per-request record: the deployment keeps no attribution surface. |
+| `--audit-commitment best-effort` *(default)* | The record never affects a request: a full queue drops lines and counts them. |
+| `--audit-commitment required` | An execution intent is committed before dispatch and the outcome before success, through a commitment provider the build registers. Needs `--audit-sink stderr`. |
+
+The open-source binary registers **no** commitment provider, so it refuses to start with
+`--audit-commitment required`: a required posture is never served as best-effort. It is
+meaningful only in a downstream build that registers a qualified provider, and the startup
+line then names the provider and the tier it **declares** — persistence is the provider's
+claim and an external evidence obligation, not something the proxy proves.
+
 ### Evidence retention / transparency (ADR-MCPRE-054)
 
 | Flag | Meaning |

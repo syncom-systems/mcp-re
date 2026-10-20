@@ -202,6 +202,15 @@ mcpProtocolVersions:
 # reconstructed afterwards.
 auditSink: stderr
 
+# ADR-MCPRE-070 §2 audit delivery: `best-effort` | `required`. `best-effort` is the
+# behavior above: a record never affects a request. `required` makes a committed
+# execution intent a prerequisite of dispatch and a committed outcome a prerequisite of
+# success, through a commitment provider the BUILD registers. The open-source image
+# registers none, so it REFUSES to start with `required` — it is meaningful only in a
+# downstream build that registers a qualified provider. `required` needs
+# `auditSink: stderr`; the chart refuses `required` with `none`.
+auditCommitment: best-effort
+
 # #415 rev 2 §10 verified-context carrier: `disabled` | `trusted`. Caller-seeded
 # context is stripped either way. `trusted` additionally writes the PEP's OWN resolved
 # context into the forwarded body, and asserts that NOTHING but this proxy can reach
@@ -518,6 +527,9 @@ tls:
 # obligation the process owns, and the render gate holds the chart's copy equal to the
 # Rust constant. Leaving it out of the arithmetic describes a shutdown two seconds
 # shorter than the one that happens.
+# The required audit posture (`auditCommitment: required`) adds no post-serve wait: a
+# commitment cut by the drain is counted uncertain and no provider I/O follows serving, so
+# the 2 stays exact. A provider whose teardown did external I/O would change this sum.
 # The render gate enforces it. Getting it wrong SIGKILLs requests mid-flight: the
 # client gets a truncated connection with neither a signed response nor a signed
 # rejection, which is exactly what the §6 zero-abandoned gate claims cannot happen.

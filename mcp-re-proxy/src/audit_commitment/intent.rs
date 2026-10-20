@@ -43,14 +43,16 @@ pub(super) struct IntentCommitment {
 }
 
 impl IntentCommitment {
-    /// Intents committed to `provider` within `bound`, or `None` when the provider's declared
-    /// tier cannot serve the required posture (D3): not even a test runs the required
-    /// posture over a volatile tier.
-    #[cfg(any(test, feature = "audit_commitment_reference"))]
-    pub(super) fn over(provider: Arc<EstablishedProvider>, bound: CommitmentBound) -> Option<Self> {
-        provider
-            .meets_required_minimum()
-            .then_some(IntentCommitment { provider, bound })
+    /// Intents committed to `provider` within `bound`. The provider's tier already meets the
+    /// required minimum: an [`EstablishedProvider`] is established only if it does (D3).
+    pub(super) fn new(provider: Arc<EstablishedProvider>, bound: CommitmentBound) -> Self {
+        IntentCommitment { provider, bound }
+    }
+
+    /// The established provider these crossings commit to. Tests read it.
+    #[cfg(test)]
+    pub(super) fn provider(&self) -> &Arc<EstablishedProvider> {
+        &self.provider
     }
 
     /// The longest this crossing can hold the request before dispatch.
@@ -130,8 +132,7 @@ mod tests {
 
     fn crossing(authority: &Arc<ReferenceAuthority>, ms: u64) -> IntentCommitment {
         let authority: Arc<dyn super::super::CommitmentAuthority> = authority.clone();
-        IntentCommitment::over(EstablishedProvider::establish(authority), bound(ms))
-            .expect("an eligible tier")
+        IntentCommitment::new(EstablishedProvider::eligible_for_test(authority), bound(ms))
     }
 
     /// A real accepted event, so the coordinate is one the process allocator produced.
@@ -301,13 +302,26 @@ mod tests {
         }
     }
 
-    /// D3 holds for the crossing too: a volatile provider cannot serve it.
-    #[test]
-    fn a_volatile_provider_cannot_serve_the_crossing() {
-        let volatile: Arc<dyn super::super::CommitmentAuthority> =
-            Arc::new(ReferenceAuthority::new(DurabilityTier::ProcessVolatile));
-        assert!(
-            IntentCommitment::over(EstablishedProvider::establish(volatile), bound(10)).is_none()
-        );
+    /// §7.3: a spent commitment budget refuses G1 before dispatch with the retry-safe 503,
+    /// and the provider is not asked — the same shape as an outage.
+    #[tokio::test]
+    async fn a_spent_budget_refuses_before_dispatch_and_asks_nobody() {
+        let authority = reference([]);
+        let crossing = crossing(&authority, 200);
+        let held: Vec<_> =
+            std::iter::from_fn(|| crossing.provider().accounting().budget().try_acquire())
+                .collect();
+        assert_eq!(held.len(), super::super::budget::BUDGET_CEILING);
+        let refused = crossing
+            .commit(Some(coordinate()), ExecutionIntent::new("actor-a", 1))
+            .await
+            .map(|_| ());
+        assert_eq!(refused, Err(unavailable(503)));
+        assert_eq!(authority.requests(), 0, "the provider was not asked");
+        drop(held);
+        assert!(crossing
+            .commit(Some(coordinate()), ExecutionIntent::new("actor-a", 1))
+            .await
+            .is_ok());
     }
 }
