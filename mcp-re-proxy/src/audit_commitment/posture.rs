@@ -16,10 +16,10 @@
 
 use std::time::Duration;
 
-use crate::audit_record::{ExchangeCoordinate, ExecutionIntent};
+use crate::audit_record::{AuditRecord, ExchangeCoordinate, ExecutionIntent};
 use crate::audit_sink::MaybeAuditSink;
 use crate::refusal::Refusal;
-use crate::request_stages::IntentDisposition;
+use crate::request_stages::{IntentDisposition, OutcomeDisposition};
 
 use super::intent::IntentCommitment;
 use super::NoCommitmentRequired;
@@ -95,6 +95,32 @@ impl AuditPosture {
         }
     }
 
+    /// G2: what this exchange's success may be published with (§4, D4, Q2).
+    ///
+    /// Requiredness is the state G1 carried across the dispatch, never the posture read
+    /// again. An exchange dispatched with nothing owed owes nothing now: its statement is
+    /// passed through, and nothing is produced, committed or numbered. An exchange whose
+    /// intent was committed owes its outcome, and gets it committed or a refusal.
+    pub(crate) async fn outcome(
+        &self,
+        intent: IntentDisposition,
+        coordinate: Option<ExchangeCoordinate>,
+        observed: AuditRecord,
+    ) -> Result<OutcomeDisposition, Refusal> {
+        match (intent, &self.commitment) {
+            (IntentDisposition::NotRequired(none), _) => Ok(OutcomeDisposition::NotRequired(none)),
+            (IntentDisposition::Committed(_), Commitment::Required(crossing)) => crossing
+                .outcome(coordinate, observed)
+                .await
+                .map(|committed| OutcomeDisposition::Committed(Box::new(committed))),
+            // Unreachable: a committed intent comes only from the required posture, which a
+            // proxy never leaves. Refused rather than published if that stops holding.
+            (IntentDisposition::Committed(_), Commitment::BestEffort) => {
+                Err(super::outcome::cannot_commit())
+            }
+        }
+    }
+
     /// Require a committed intent before every dispatch, committed to `authority` within
     /// `bound`. Test builds and the test-only `audit_commitment_reference` feature only.
     ///
@@ -122,8 +148,9 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::audit_commitment::reference::{ReferenceAuthority, Step};
-    use crate::audit_commitment::DurabilityTier;
+    use crate::audit_commitment::reference::{Forgery, ReferenceAuthority, Step};
+    use crate::audit_commitment::{DurabilityTier, RejectReason};
+    use mcp_re_core::McpReError;
 
     fn eligible(steps: impl IntoIterator<Item = Step>) -> Arc<ReferenceAuthority> {
         Arc::new(ReferenceAuthority::new(DurabilityTier::SurvivesProxyProcessLoss).scripted(steps))
@@ -215,5 +242,76 @@ mod tests {
         posture.observe_with(Some(sink));
         assert!(posture.observer().is_some());
         assert_eq!(posture.pre_dispatch_wait(), Duration::from_millis(5));
+    }
+
+    fn accepted() -> Option<ExchangeCoordinate> {
+        crate::audit_record::record_to(
+            &None,
+            None,
+            crate::audit_record::AuditSubject::request_accepted(
+                &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
+                crate::admission_enforcer::AdmissionFacet::NotConfigured,
+            ),
+            None,
+            200,
+            1,
+        )
+    }
+
+    fn observed() -> AuditRecord {
+        AuditRecord {
+            subject: crate::audit_record::AuditSubject::response_signed(),
+            actor_id: Some("actor-a".into()),
+            status: 200,
+            at_unix: 1,
+        }
+    }
+
+    /// G2's requiredness is the state G1 carried, not the posture read again: an exchange
+    /// dispatched with nothing owed passes through, and the authority is asked nothing even
+    /// where the posture is now required.
+    #[tokio::test]
+    async fn not_required_passes_through_and_asks_nothing() {
+        let authority = eligible([]);
+        let posture = required(&authority, Duration::from_millis(200));
+        let carried = IntentDisposition::NotRequired(NoCommitmentRequired::for_a_test());
+        let outcome = posture
+            .outcome(carried, accepted(), observed())
+            .await
+            .expect("nothing was owed");
+        assert!(matches!(outcome, OutcomeDisposition::NotRequired(_)));
+        assert_eq!(authority.requests(), 0);
+    }
+
+    /// One token for both crossings (D12), and one status table that differs only where G1's
+    /// refusal is free of execution: G1 answers 503 where a retry here can succeed, G2 never
+    /// does, because the backend may already have acted.
+    #[tokio::test]
+    async fn the_g1_and_g2_status_tables_differ_only_in_the_retry_safe_rows() {
+        for (step, g1) in [
+            (Step::Reject(RejectReason::Refused), 500),
+            (Step::Unavailable, 503),
+            (Step::DropCompletion, 503),
+            (Step::Forge(Forgery::Tier), 503),
+        ] {
+            let coordinate = accepted();
+            let intent_only = required(&eligible([step.clone()]), Duration::from_millis(50));
+            let refused = intent_only
+                .intent(coordinate, ExecutionIntent::new("actor-a", 1))
+                .await
+                .map(|_| ());
+            let then_outcome = required(&eligible([Step::Commit, step]), Duration::from_millis(50));
+            let committed = then_outcome
+                .intent(coordinate, ExecutionIntent::new("actor-a", 1))
+                .await
+                .expect("the intent commits");
+            let outcome = then_outcome
+                .outcome(committed, coordinate, observed())
+                .await
+                .map(|_| ());
+            let token = McpReError::AuditCommitmentUnavailable;
+            assert_eq!(refused, Err(Refusal::new(token.clone(), g1)));
+            assert_eq!(outcome, Err(Refusal::new(token, 500)));
+        }
     }
 }

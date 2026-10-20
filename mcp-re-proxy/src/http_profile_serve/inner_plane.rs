@@ -131,7 +131,8 @@ impl InnerPlane {
     /// NOTIFICATION-OBSERVED — may a 202 be minted for what the inner plane managed to do?
     ///
     /// ```text
-    /// ensures   Ok  => the backend RECEIVED the message
+    /// ensures   Ok  => the backend RECEIVED the message; no transition — the 202
+    ///                  terminal is entered only when the 202 is served
     ///           Err => 504 — transmitted, no answer
     /// refusal   NOT free — the exchange has crossed the threshold either way
     /// ```
@@ -157,14 +158,11 @@ impl InnerPlane {
         &self,
         progress: &mut ExchangeProgress,
         outcome: &DispatchedOutcome,
-    ) -> Result<Established<()>, Refusal> {
+    ) -> Result<(), Refusal> {
         match outcome {
             DispatchedOutcome::Replied(_) | DispatchedOutcome::InvalidUpstream(_) => {
                 progress.observe_origin(ResponseOrigin::BackendReplied);
-                Ok(Established::new(
-                    (),
-                    ExchangeEvent::NotificationAcknowledged,
-                ))
+                Ok(())
             }
             DispatchedOutcome::Indeterminate(_) => {
                 progress.observe_origin(ResponseOrigin::DispatchIndeterminate);

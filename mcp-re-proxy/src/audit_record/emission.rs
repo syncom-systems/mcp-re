@@ -50,12 +50,25 @@ pub(crate) fn record_to(
 
 /// Produce `record` as this process's next event: allocate its identity, derive its scope,
 /// and fix its canonical bytes and digest. Nothing is offered to anyone.
-fn produce(
+///
+/// Crate-visible because the outcome crossing (ADR-MCPRE-070 G2) commits a response event
+/// BEFORE it is offered, so production and offer happen in two owners at two instants.
+/// [`offer_produced`] is the other half; an event produced and never offered is a `seq` hole.
+pub(crate) fn produce(
     exchange: Option<ExchangeCoordinate>,
     record: AuditRecord,
 ) -> Result<AuditEnvelope, EventIdentityFailure> {
     envelope::process_allocator()
         .and_then(|allocator| AuditEnvelope::produce(allocator, exchange, record))
+}
+
+/// Offer an event [`produce`] already numbered to the observer, if one is installed, with
+/// the same fault containment as [`record_to`]: the committed outcome reaches the observer
+/// as the SAME bytes the commitment authority holds.
+pub(crate) fn offer_produced(audit: &crate::audit_sink::MaybeAuditSink, envelope: &AuditEnvelope) {
+    if let Some(sink) = audit.as_deref() {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sink.record(envelope)));
+    }
 }
 
 /// Offer a produced event, or the reason there is none, to `sink`.

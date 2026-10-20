@@ -13,18 +13,15 @@
 //! hop for a call that reached the same backend and ran the same side effects.
 
 use mcp_re_http_profile::sign_delegated_accepted_202;
-use mcp_re_http_profile::ExecutionDisposition;
-use mcp_re_http_profile::HttpRequest;
 
 use crate::async_inner::DispatchedOutcome;
 use crate::async_serve::ServedHttpResponse;
-use crate::audit_record::ExchangeCoordinate;
 use crate::exchange_state::ExchangeProgress;
+use crate::exchange_state::ServedSuccess;
 use crate::refusal::RefusalCause;
-use crate::request_stages::RetentionDisposition;
+use crate::request_stages::{IntentDisposition, RetentionDisposition};
 
 use super::super::receipt::Accepted;
-use super::super::served;
 use super::super::signing_window::SigningWindow;
 use super::super::HttpProfileProxy;
 
@@ -32,64 +29,42 @@ impl HttpProfileProxy {
     /// The NOTIFICATION arm: a signed bodyless 202 for a message with no JSON-RPC `id`.
     ///
     /// This runs AFTER the backend has acted. The 202 states that the enforcement boundary
-    /// authenticated and accepted the message — never that any action completed (#418).
-    #[allow(clippy::too_many_arguments)]
-    pub(super) async fn answer_notification(
+    /// authenticated and accepted the message — never that any action completed (#418). It
+    /// leaves through the same success exit as a bodied reply, so under the required posture
+    /// it is visible only once its outcome is committed and retained (ADR-MCPRE-070 D4).
+    async fn answer_notification(
         &self,
-        exchange: Option<ExchangeCoordinate>,
-        http_req: &HttpRequest,
+        acc: &Accepted<'_>,
+        progress: &mut ExchangeProgress,
         window: &SigningWindow,
-        now: i64,
-        verified: &mcp_re_http_profile::VerifiedMcpRequest,
-        actor_id: String,
         retention: &RetentionDisposition,
-        execution: ExecutionDisposition,
+        intent: IntentDisposition,
     ) -> ServedHttpResponse {
-        match sign_delegated_accepted_202(http_req, window) {
+        let ex = acc.exchange();
+        match sign_delegated_accepted_202(ex.http_req, window) {
             Ok(ack) => {
-                // Retention covers this exit on the SAME terms as the bodied reply.
-                // The backend has already run by here, so leaving it out let a
-                // client decide whether a call it had executed was accountable, by
-                // the single act of omitting the JSON-RPC `id`.
-                if let Some(rejection) = self
-                    .retain_accepted(
-                        exchange,
-                        http_req,
-                        &ack,
-                        now,
-                        Some(verified.evidence()),
-                        actor_id.clone(),
-                        retention,
-                        execution,
-                        Some(window.shared()),
-                    )
-                    .await
-                {
-                    return rejection;
-                }
-                // The signed bodyless 202 IS the signed response for a notification,
-                // and it is returned on this line — so the record describes bytes the
-                // client actually receives.
-                crate::audit_record::record_to(
-                    self.audit.observer(),
-                    exchange,
-                    crate::audit_record::AuditSubject::response_signed(),
-                    Some(actor_id),
-                    202,
-                    now,
-                );
-                served(ack)
+                self.publish_success(
+                    acc,
+                    progress,
+                    ServedSuccess::Acknowledged,
+                    ack,
+                    retention,
+                    intent,
+                )
+                .await
             }
+            // SIGNING failed, so there is no signed terminal to retain. The marker stays, and
+            // it is the true statement: this exchange crossed and nothing discharges it.
             Err(e) => self.responses.response_rejection(
                 self.audit.observer(),
-                exchange,
-                http_req,
+                acc.exchange_coordinate(),
+                ex.http_req,
                 &RefusalCause::from(e),
                 500,
-                now,
-                Some(verified.evidence()),
-                Some(actor_id),
-                execution,
+                ex.now,
+                Some(ex.verified.evidence()),
+                Some(ex.actor_id.to_owned()),
+                Self::disposition(progress, None),
                 Some(window.shared()),
             ),
         }
@@ -104,6 +79,10 @@ impl HttpProfileProxy {
     /// client could select by omitting `id`. The stronger case — a message that was never
     /// transmitted — cannot reach this terminal, because it is refused before the exchange
     /// commits to a dispatch at all.
+    ///
+    /// The 202 terminal is DECIDED here and ENTERED only when the 202 is served, so a refusal
+    /// after this point — signing, the outcome commitment, retention — is served from a
+    /// machine that never claimed success (ADR-MCPRE-070 §16 item 7).
     pub(in crate::http_profile_serve) async fn answer_notification_terminal(
         &self,
         acc: &Accepted<'_>,
@@ -111,25 +90,22 @@ impl HttpProfileProxy {
         outcome: &DispatchedOutcome,
         window: &SigningWindow,
         retention: &RetentionDisposition,
+        intent: IntentDisposition,
     ) -> ServedHttpResponse {
-        let acknowledged = match self.inner_async.observe_acknowledgement(progress, outcome) {
-            Ok(acknowledged) => acknowledged,
-            // The message may not have arrived, and this refusal is the signed statement
-            // saying so. It IS a terminal the proxy constructed, so it discharges the
-            // crossing: an operator reading the archive then finds *the backend may have
-            // executed and the client was told this*, instead of a bare surviving marker
-            // that says only *unaccounted for*. The stronger case — never transmitted —
-            // cannot reach here; it is refused before the exchange commits.
-            Err(refusal) => {
-                return self
-                    .refuse_retained(acc, refusal, progress, retention)
-                    .await
-            }
-        };
+        // The message may not have arrived, and this refusal is the signed statement saying
+        // so. It IS a terminal the proxy constructed, so it discharges the crossing: an
+        // operator reading the archive then finds *the backend may have executed and the
+        // client was told this*, instead of a bare surviving marker that says only
+        // *unaccounted for*.
+        if let Err(refusal) = self.inner_async.observe_acknowledgement(progress, outcome) {
+            return self
+                .refuse_retained(acc, refusal, progress, retention)
+                .await;
+        }
         // The 202 is a signed success claim, so an exchange that no longer satisfies its
         // model may not mint one — and the decision is taken before the acknowledgement is
-        // committed, while the exchange can still reach a post-dispatch refusal instead.
-        if progress.establish_terminal(acknowledged).is_err() {
+        // signed, while the exchange can still reach a post-dispatch refusal instead.
+        if progress.may_publish(ServedSuccess::Acknowledged).is_err() {
             let refusal = crate::refusal::Refusal::new(
                 mcp_re_core::McpReError::ExchangeInvariantViolation,
                 500,
@@ -138,17 +114,8 @@ impl HttpProfileProxy {
                 .refuse_retained(acc, refusal, progress, retention)
                 .await;
         }
-        self.answer_notification(
-            acc.exchange_coordinate(),
-            acc.exchange().http_req,
-            window,
-            acc.exchange().now,
-            acc.exchange().verified,
-            acc.exchange().actor_id.to_owned(),
-            retention,
-            Self::disposition(progress, None),
-        )
-        .await
+        self.answer_notification(acc, progress, window, retention, intent)
+            .await
     }
 }
 
@@ -156,8 +123,8 @@ impl HttpProfileProxy {
 mod tests {
     /// The 202 is not minted until the exchange is allowed to claim the terminal.
     ///
-    /// `answer_notification` signs the acknowledgement, retains it and records
-    /// `response.signed` — three publications of one success claim. The same order rule as
+    /// `answer_notification` signs the acknowledgement, then the success exit commits its
+    /// outcome, retains it and records `response.signed` — publications of one success claim. The same order rule as
     /// the bodied path, asserted the same way and for the same reason: the tuple this
     /// refuses is unconstructible through the serving path, so the order is the only thing
     /// a test can reach.
@@ -168,12 +135,12 @@ mod tests {
             .split_once("async fn answer_notification_terminal(")
             .expect("the terminal is in this file")
             .1;
-        // BRANCHED ON, not merely called. `let _ = progress.establish_terminal(..)` takes
-        // the decision, latches the anomaly, and mints the 202 anyway — the pre-enforcement
+        // BRANCHED ON, not merely called. `let _ = progress.may_publish(..)` takes the
+        // decision, latches the anomaly, and mints the 202 anyway — the pre-enforcement
         // behaviour with the enforcement still present and simply not acted on. An order
         // check alone reads that as clean, so the refusing form is what is asserted.
         let decision = body
-            .find("progress.establish_terminal(acknowledged).is_err()")
+            .find("progress.may_publish(ServedSuccess::Acknowledged).is_err()")
             .expect("the terminal decision is branched on");
         let mint = body
             .find("self.answer_notification(")

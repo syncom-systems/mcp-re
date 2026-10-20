@@ -2601,15 +2601,15 @@ conjunct = "the notification terminal is decided before the 202 is signed, and t
 # The notification half of the same proposition M92 covers for the bodied path, and the one
 # the unit could not state until `notification.rs` entered its `paths`.
 #
-# The weakening is deliberately NOT a deletion. It keeps the call, so `establish_terminal`
-# has a consumer and nothing goes dead; it keeps the latch, so the machine still records the
-# disagreement; and it DISCARDS THE ANSWER. That is the pre-enforcement behaviour restored
-# exactly — the 202 is signed, retained and recorded for an exchange the machine has just
-# said it cannot vouch for — and it is the mutation an order-only control reads as clean,
-# which is why the control asserts the refusing form and the exit rather than the order.
+# The weakening is deliberately NOT a deletion. It keeps the call, so `may_publish` still
+# runs; it keeps the latch, so the machine still records the disagreement; and it DISCARDS
+# THE ANSWER. That is the pre-enforcement behaviour restored exactly — the 202 is signed,
+# committed, retained and recorded for an exchange the machine has just said it cannot vouch
+# for — and it is the mutation an order-only control reads as clean, which is why the control
+# asserts the refusing form and the exit rather than the order.
 path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs"
 anchor = """
-        if progress.establish_terminal(acknowledged).is_err() {
+        if progress.may_publish(ServedSuccess::Acknowledged).is_err() {
             let refusal = crate::refusal::Refusal::new(
                 mcp_re_core::McpReError::ExchangeInvariantViolation,
                 500,
@@ -2620,7 +2620,7 @@ anchor = """
         }
 """
 weakening = """
-        let _ = progress.establish_terminal(acknowledged);
+        let _ = progress.may_publish(ServedSuccess::Acknowledged);
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::notification::tests::the_terminal_is_decided_before_the_202_is_minted",
@@ -14104,4 +14104,150 @@ weakening = """
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::an_absent_coordinate_is_500_and_asks_nothing",
+]
+
+[[probe]]
+id = "M615-proxy-a-failed-outcome-commit-does-not-proceed"
+unit = "proxy.audit_outcome_gate"
+conjunct = "a failed outcome commitment refuses; it never proceeds as though no commitment were owed"
+# The G2 guard (S2). Pill-evidenced RED in #1205 (PP1).
+path = "mcp-re-proxy/src/audit_commitment/posture.rs"
+anchor = """
+                .map(|committed| OutcomeDisposition::Committed(Box::new(committed))),
+"""
+weakening = """
+                .map(|committed| OutcomeDisposition::Committed(Box::new(committed)))
+                .or_else(|_| {
+                    Ok(OutcomeDisposition::NotRequired(
+                        NoCommitmentRequired::minted_by_posture(),
+                    ))
+                }),
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_g1_and_g2_status_tables_differ_only_in_the_retry_safe_rows",
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_outcome_failure_never_serves_success",
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_notification_gets_no_202_without_a_committed_outcome",
+]
+
+[[probe]]
+id = "M616-proxy-success-needs-completed-retention"
+unit = "proxy.audit_outcome_gate"
+conjunct = "a success is served only after retention has completed, as well as the outcome committed"
+# Q2: committed outcome AND completed retention. Pill-evidenced RED in #1205 (PP2).
+path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs"
+anchor = """
+        if let Some(rejection) = self
+            .retain_accepted(acc, &response, retention, progress)
+            .await
+        {
+            return rejection;
+        }
+"""
+weakening = """
+        let _ = self
+            .retain_accepted(acc, &response, retention, progress)
+            .await;
+"""
+expect_red = [
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::retention_failure_after_outcome_commit_never_serves_success",
+]
+
+[[probe]]
+id = "M617-proxy-the-202-leaves-through-the-success-exit"
+unit = "proxy.audit_outcome_gate"
+conjunct = "a notification 202 is visible only through the success exit, after its outcome is committed (D4)"
+# D4. Pill-evidenced RED in #1205 (PP4).
+path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs"
+anchor = """
+                self.publish_success(
+                    acc,
+                    progress,
+                    ServedSuccess::Acknowledged,
+                    ack,
+                    retention,
+                    intent,
+                )
+                .await
+"""
+weakening = """
+                let _ = (retention, intent);
+                progress.publish(ServedSuccess::Acknowledged);
+                super::super::served(ack)
+"""
+expect_red = [
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_notification_gets_no_202_without_a_committed_outcome",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::success_exit::tests::success_exit_is_the_only_success_served_call",
+]
+
+[[probe]]
+id = "M618-proxy-the-outcome-is-committed-before-retention-completes"
+unit = "proxy.audit_outcome_gate"
+conjunct = "G2 precedes retention completion, so a G2 refusal is what retention holds (Q2, ADR-MCPRE-054)"
+# The placement probe: the ADR-literal order retains success bytes the client never got.
+# Pill-evidenced RED in #1205 (PP6: the store held [200]).
+path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs"
+anchor = """
+        // G2 BEFORE retention completes (Q2): a refusal here is what retention then holds, so
+        // the retained representation stays the one actually served.
+        let outcome = match self
+            .audit
+            .outcome(intent, acc.exchange_coordinate(), observed.clone())
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(refusal) => {
+                return self
+                    .refuse_retained(acc, refusal, progress, retention)
+                    .await
+            }
+        };
+        if let Some(rejection) = self
+            .retain_accepted(acc, &response, retention, progress)
+            .await
+        {
+            return rejection;
+        }
+"""
+weakening = """
+        if let Some(rejection) = self
+            .retain_accepted(acc, &response, retention, progress)
+            .await
+        {
+            return rejection;
+        }
+        // G2 BEFORE retention completes (Q2): a refusal here is what retention then holds, so
+        // the retained representation stays the one actually served.
+        let outcome = match self
+            .audit
+            .outcome(intent, acc.exchange_coordinate(), observed.clone())
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(refusal) => {
+                return self
+                    .refuse_retained(acc, refusal, progress, retention)
+                    .await
+            }
+        };
+"""
+expect_red = [
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_outcome_failure_discharges_retention_with_the_refusal_served",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::success_exit::tests::the_outcome_is_committed_before_retention_and_both_before_success_is_served",
+]
+
+[[probe]]
+id = "M619-proxy-an-outcome-refusal-is-never-503"
+unit = "proxy.audit_outcome_gate"
+conjunct = "every G2 refusal is 500: the backend may have acted and 503 is the status clients retry"
+path = "mcp-re-proxy/src/audit_commitment/outcome.rs"
+anchor = """
+    Refusal::new(McpReError::AuditCommitmentUnavailable, 500)
+"""
+weakening = """
+    Refusal::new(McpReError::AuditCommitmentUnavailable, 503)
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::outcome::tests::every_outcome_failure_is_500",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_g1_and_g2_status_tables_differ_only_in_the_retry_safe_rows",
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_outcome_failure_never_serves_success",
 ]

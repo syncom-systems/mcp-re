@@ -492,25 +492,18 @@ impl HttpProfileProxy {
         // a state entered only on the way out would leave a cancelled or panicking dispatch
         // claiming nothing happened.
         progress.advance(ExchangeEvent::BackendDispatched);
-        let (outcome, window, owed, _intent) = ready.dispatch().await.into_parts();
-
-        // NOTIFICATION — a one-way message with no JSON-RPC `id` is its own terminal: it
-        // says the boundary accepted the message, never that anything completed. Decided
-        // from the REQUEST, which is where the fact lives.
-        if admitted.envelope.outstanding().is_notification() {
-            return self
-                .answer_notification_terminal(&acc, &mut progress, &outcome, &window, &owed)
-                .await;
-        }
+        let (outcome, window, owed, intent) = ready.dispatch().await.into_parts();
         let outstanding = admitted.envelope.outstanding();
-        let reply = match self
-            .assemble_reply(&acc, &mut progress, outcome, outstanding, &window, &owed)
-            .await
-        {
-            Ok(reply) => reply,
-            Err(rejection) => return rejection,
-        };
-        self.serve_retained(&acc, &mut progress, reply, &owed).await
+        self.answer_dispatched(
+            &acc,
+            &mut progress,
+            outstanding,
+            outcome,
+            &window,
+            &owed,
+            intent,
+        )
+        .await
     }
 }
 

@@ -23,8 +23,9 @@ pub(crate) enum IntentDisposition {
     /// commitment was owed — never a fake witness.
     NotRequired(NoCommitmentRequired),
     /// A committed execution intent, redeemed for this exchange's event against the
-    /// provider the posture holds. Held across the dispatch, not read: the outcome crossing
-    /// (G2, #1205) is its consumer.
+    /// provider the posture holds. Held across the dispatch, where the outcome crossing (G2)
+    /// reads which arm it is — that the outcome is owed — and not the witness: the intent
+    /// and the outcome are linked by the exchange coordinate (D9), not by each other.
     Committed(#[allow(dead_code)] Redeemed<Intent>),
 }
 

@@ -28,13 +28,14 @@ use std::time::Duration;
 
 use mcp_re_core::McpReError;
 
-use crate::audit_record::{ExchangeCoordinate, ExecutionIntent};
+use crate::audit_record::{AuditRecord, ExchangeCoordinate, ExecutionIntent};
 use crate::refusal::Refusal;
 
+use super::outcome::CommittedOutcome;
 use super::{CommitmentBound, CommitmentFailure, EstablishedProvider, Intent, Redeemed};
 
-/// The required posture's intent crossing: an established provider that may serve it, and
-/// how long the request path waits for it.
+/// The required posture's crossings: an established provider that may serve them, and how
+/// long the request path waits for each. G1 is here; G2 is [`super::outcome`].
 #[derive(Debug)]
 pub(super) struct IntentCommitment {
     provider: Arc<EstablishedProvider>,
@@ -77,6 +78,17 @@ impl IntentCommitment {
         witness
             .redeem(&event, &self.provider)
             .map_err(|_| cannot_commit())
+    }
+}
+
+impl IntentCommitment {
+    /// G2 for this exchange, over the provider and bound G1 used.
+    pub(super) async fn outcome(
+        &self,
+        coordinate: Option<ExchangeCoordinate>,
+        observed: AuditRecord,
+    ) -> Result<CommittedOutcome, Refusal> {
+        super::outcome::commit(&self.provider, self.bound, coordinate, observed).await
     }
 }
 

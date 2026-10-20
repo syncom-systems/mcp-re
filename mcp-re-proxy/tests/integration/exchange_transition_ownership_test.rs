@@ -42,7 +42,7 @@ use std::collections::BTreeSet;
 /// functions — the code that COMPOSES stages rather than performing one.
 ///
 /// A transition leaves this list when a stage or an owner takes it; see
-/// [`RELOCATED_TO_THE_OWNER`] for the three that did.
+/// [`RELOCATED_TO_THE_OWNER`] for the ones that did.
 const ASSEMBLY_OWNED: &[(&str, &str)] = &[
     (
         "ContinuationRetired",
@@ -77,10 +77,15 @@ const ASSEMBLY_OWNED: &[(&str, &str)] = &[
 ///
 /// They left this inventory for the reason the `stale` assertion exists: the list measures
 /// what the serving path advances, and the serving path no longer advances them.
+///
+/// The 202's `NotificationAcknowledged` joined them (ADR-MCPRE-070 §16 item 7): it was a
+/// stage's `Established` fact consumed before the 202 was signed, and is now published by
+/// the same tail, when the 202 is served.
 const RELOCATED_TO_THE_OWNER: &[&str] = &[
     "EvidenceRetained",
     "TerminalResponseServed",
     "OpenLegResponseServed",
+    "NotificationAcknowledged",
 ];
 
 /// Every `ExchangeEvent::` variant named inside the balanced argument list of each `call`.
@@ -224,7 +229,7 @@ fn the_serving_path_states_only_the_assembly_s_own_transitions() {
 
 /// The relocated terminals stay relocated.
 ///
-/// The three events below are the ones a success claim is published by, and the enforcement
+/// The events below are the ones a success claim is published by, and the enforcement
 /// that refuses an incoherent one works by driving them from a single tail inside the owner.
 /// An `advance` for any of them reappearing in the serving path would be a second way to
 /// reach a success terminal — one the publication decision does not guard — so the absence

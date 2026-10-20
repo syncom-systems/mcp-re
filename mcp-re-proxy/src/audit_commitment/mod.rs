@@ -60,6 +60,7 @@ mod failure;
 mod intent;
 /// The best-effort posture's statement that nothing is owed.
 mod not_required;
+mod outcome;
 /// The deployment's audit posture: observer and commitment.
 mod posture;
 /// The provider's typed failure.
@@ -86,10 +87,7 @@ pub(crate) mod reference;
 
 pub(crate) use authority::{CommitFuture, CommitmentAuthority};
 pub(crate) use bound::CommitmentBound;
-pub(crate) use crossing::{Crossing, CrossingKind, Intent};
-// The outcome crossing's marker; its crossing is #1205's.
-#[cfg_attr(not(test), allow(unused_imports))]
-pub(crate) use crossing::Outcome;
+pub(crate) use crossing::{Crossing, CrossingKind, Intent, Outcome};
 pub(crate) use established::EstablishedProvider;
 pub(crate) use established::Redeemed;
 // What a crossing spends and why it may refuse: no code outside `established` names these
@@ -100,6 +98,7 @@ pub(crate) use failure::{BindingField, CommitmentFailure, UncertainCause};
 #[cfg(any(test, feature = "audit_commitment_reference"))]
 pub use harness::{ReferenceCommitment, ScriptedAnswer};
 pub(crate) use not_required::NoCommitmentRequired;
+pub(crate) use outcome::CommittedOutcome;
 pub(crate) use posture::AuditPosture;
 pub(crate) use provider_failure::{ProviderFailure, RejectReason};
 pub(crate) use receipt::CommitmentReceipt;
