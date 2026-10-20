@@ -303,6 +303,7 @@ on:
       # Stage 7: what a record may say, and whether the stream is honest about what reached it.
       - "mcp-re-proxy/src/audit_record/**"
       - "mcp-re-proxy/src/audit_sink/**"
+      - "mcp-re-proxy/src/audit_commitment/**"
       - "mcp-re-proxy/src/authorization/audit.rs"
       - "mcp-re-proxy/src/authorization/audit/**"
       # Stage 8: the replay five-tuple, found by the missing-edge pass.
@@ -729,6 +730,7 @@ on:
       # Stage 7: what a record may say, and whether the stream is honest about what reached it.
       - "mcp-re-proxy/src/audit_record/**"
       - "mcp-re-proxy/src/audit_sink/**"
+      - "mcp-re-proxy/src/audit_commitment/**"
       - "mcp-re-proxy/src/authorization/audit.rs"
       - "mcp-re-proxy/src/authorization/audit/**"
       # Stage 8: the replay five-tuple, found by the missing-edge pass.

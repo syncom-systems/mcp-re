@@ -393,6 +393,22 @@ _PROXY_LIB_SRCS = [
     "src/audit_sink/writer.rs",
     "src/audit_sink/stream.rs",
     "src/audit_sink/stderr.rs",
+    # ADR-MCPRE-070 §2, §9: the commitment authority, separate from the observer above.
+    # `reference.rs` and `fixtures.rs` are compiled only into the crate's unit tests.
+    "src/audit_commitment/mod.rs",
+    "src/audit_commitment/authority.rs",
+    "src/audit_commitment/bound.rs",
+    "src/audit_commitment/crossing.rs",
+    "src/audit_commitment/established/mod.rs",
+    "src/audit_commitment/established/caught.rs",
+    "src/audit_commitment/established/witness.rs",
+    "src/audit_commitment/failure.rs",
+    "src/audit_commitment/fixtures.rs",
+    "src/audit_commitment/provider_failure.rs",
+    "src/audit_commitment/receipt.rs",
+    "src/audit_commitment/reference.rs",
+    "src/audit_commitment/request.rs",
+    "src/audit_commitment/tier.rs",
     # Issue #4034: PKCS#11/HSM-backed KeySource (behind #[cfg(feature =
     # "pkcs11_keysource")]; cfg'd out of the default build).
     "src/pkcs11_keysource/mod.rs",

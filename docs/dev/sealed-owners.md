@@ -77,6 +77,8 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `CredentialKeyCorrespondenceFacts` | `communication_assurance/credential_key_correspondence.rs` | `corresponding_key()` |
 | `DelegatedCertResolver` | `delegated_tls/resolver.rs` | `budget()`, `materialize()` (the only constructor) |
 | `MaterializedLifecycle` | `materializing_runtime/materialized_lifecycle.rs` | `into_lifecycle()` — spent by `MaterializedRuntime::new`, the only consumer; `reached()` is `pub(super)`, called by `finish` alone |
+| `CommitmentWitness<K>` | `audit_commitment/established/witness.rs` | `redeem(&AuditEnvelope, &Arc<EstablishedProvider>)` — by move, once; minted only by `mint` (`pub(super)`, called by `EstablishedProvider::commit` after the receipt check). Structural: S61–S67, S69 (`proxy.audit_commitment_sole_producer`) |
+| `Redeemed<K>` | `audit_commitment/established/witness.rs` | `binding()`, `tier()` — produced only by `CommitmentWitness::redeem`. Structural: S65, S68 |
 | `MaterializedRuntime` | `materialized_runtime.rs` | `serve()`, `shutdown()` — the lifecycle it records against is its own, never a parameter |
 | `ValidatedClientConfig` | client `config/validated.rs` | `local()`, `bind_scope()`, `identity()`, `remote()`, `trust()`, `reload_interval()`, `delegation()`, `routes()` — `new` runs every document check; `build` and the listener take it and check nothing (S57, S58) |
 | `P256Point` | http-profile `scitt.rs` | `verifying_key()` — the representation IS the decoded key |

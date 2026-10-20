@@ -13761,3 +13761,194 @@ weakening = """
 expect_red = [
   "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_device_that_fails_is_a_device_failure_carrying_the_host_error",
 ]
+
+# --- proxy.audit_commitment_witness (ADR-MCPRE-070 §3, §9, P4; #1203) -------------------
+
+[[probe]]
+id = "M596-proxy-a-receipt-for-another-binding-mints-no-witness"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a receipt naming another event identity or other content than the envelope sent mints no witness"
+path = "mcp-re-proxy/src/audit_commitment/established/witness.rs"
+anchor = """
+    if receipt.binding() != binding {
+"""
+weakening = """
+    if receipt.binding() != binding && false {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_for_another_event_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_for_other_bytes_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_stale_receipt_from_the_previous_event_is_refused",
+]
+
+[[probe]]
+id = "M597-proxy-a-receipt-for-the-other-crossing-mints-no-witness"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a receipt echoing the other crossing kind mints no witness for this one"
+path = "mcp-re-proxy/src/audit_commitment/established/witness.rs"
+anchor = """
+    if receipt.crossing() != K::KIND {
+"""
+weakening = """
+    if receipt.crossing() != K::KIND && false {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_for_the_other_crossing_is_refused",
+]
+
+[[probe]]
+id = "M598-proxy-a-receipt-at-another-tier-mints-no-witness"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a receipt claiming another tier than the provider declared at establishment mints no witness"
+path = "mcp-re-proxy/src/audit_commitment/established/witness.rs"
+anchor = """
+    if receipt.tier() != provider.tier {
+"""
+weakening = """
+    if receipt.tier() != provider.tier && false {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_at_another_tier_is_refused",
+]
+
+[[probe]]
+id = "M599-proxy-a-witness-redeems-only-for-its-own-event"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a witness is redeemed only for the event it binds: another event, another run's same position, or other content is refused"
+path = "mcp-re-proxy/src/audit_commitment/established/witness.rs"
+anchor = """
+        if self.binding != binding {
+"""
+weakening = """
+        if self.binding != binding && false {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::redeem_refuses_a_witness_for_another_event",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::redeem_refuses_a_witness_from_another_run",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::redeem_refuses_a_witness_for_other_bytes",
+]
+
+[[probe]]
+id = "M600-proxy-a-witness-redeems-only-at-its-own-provider-instance"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a witness minted by one established provider instance is refused at a crossing holding another"
+path = "mcp-re-proxy/src/audit_commitment/established/witness.rs"
+anchor = """
+        if !Arc::ptr_eq(&self.provider, current) {
+"""
+weakening = """
+        if false {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::redeem_refuses_a_witness_from_another_established_instance",
+]
+
+[[probe]]
+id = "M601-proxy-the-commitment-wait-is-the-chosen-bound"
+unit = "proxy.audit_commitment_witness"
+conjunct = "the provider is awaited for the chosen bound and no longer; a provider that never answers is Uncertain(TimedOut) within it"
+path = "mcp-re-proxy/src/audit_commitment/established/mod.rs"
+anchor = """
+        let answer = tokio::time::timeout(bound.get(), Caught::new(pending))
+"""
+weakening = """
+        let answer = tokio::time::timeout(super::bound::MAX_COMMITMENT_BOUND, Caught::new(pending))
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_provider_that_never_answers_is_uncertain_timed_out_within_the_bound",
+]
+
+[[probe]]
+id = "M602-proxy-a-provider-panic-while-polled-is-typed"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a provider that panics while polled yields Uncertain(ProviderPanicked) and does not unwind into the request"
+path = "mcp-re-proxy/src/audit_commitment/established/caught.rs"
+anchor = """
+        match catch_unwind(AssertUnwindSafe(|| self.inner.as_mut().poll(cx))) {
+"""
+weakening = """
+        match Ok::<_, ()>(self.inner.as_mut().poll(cx)) {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_provider_panic_while_polled_is_uncertain_and_does_not_unwind",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::tests::a_panicking_authority_is_typed_not_swallowed",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::caught::tests::a_panic_while_polled_is_an_answer",
+]
+
+[[probe]]
+id = "M603-proxy-a-provider-panic-before-its-future-is-typed"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a provider that panics before returning its future yields Uncertain(ProviderPanicked) and does not unwind"
+path = "mcp-re-proxy/src/audit_commitment/established/mod.rs"
+anchor = """
+        let pending = catch_unwind(AssertUnwindSafe(|| self.authority.commit(request)))
+            .map_err(|_| CommitmentFailure::Uncertain(UncertainCause::ProviderPanicked))?;
+"""
+weakening = """
+        let pending = self.authority.commit(request);
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_provider_panic_before_its_future_exists_is_uncertain_and_does_not_unwind",
+]
+
+[[probe]]
+id = "M604-proxy-a-dropped-provider-completion-is-uncertain"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a provider's dropped acknowledgement is Uncertain(Cancelled), never the definite Unavailable"
+path = "mcp-re-proxy/src/audit_commitment/failure.rs"
+anchor = """
+            ProviderFailure::Cancelled => CommitmentFailure::Uncertain(UncertainCause::Cancelled),
+"""
+weakening = """
+            ProviderFailure::Cancelled => CommitmentFailure::Unavailable,
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_dropped_provider_completion_is_uncertain_cancelled",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::failure::tests::a_provider_cancellation_is_uncertain_not_unavailable",
+]
+
+[[probe]]
+id = "M605-proxy-a-definite-refusal-is-not-possibly-committed"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a rejection or unavailability is definitely not committed; only Uncertain is possibly committed"
+path = "mcp-re-proxy/src/audit_commitment/failure.rs"
+anchor = """
+        matches!(self, CommitmentFailure::Uncertain(_))
+"""
+weakening = """
+        !matches!(self, CommitmentFailure::Unavailable)
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::failure::tests::rejected_and_unavailable_are_definitely_not_committed",
+]
+
+[[probe]]
+id = "M606-proxy-a-zero-commitment-bound-is-refused"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a zero commitment bound is refused rather than firing before the provider is asked"
+path = "mcp-re-proxy/src/audit_commitment/bound.rs"
+anchor = """
+        (!wait.is_zero() && wait <= MAX_COMMITMENT_BOUND).then_some(CommitmentBound(wait))
+"""
+weakening = """
+        (wait <= MAX_COMMITMENT_BOUND).then_some(CommitmentBound(wait))
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::bound::tests::a_zero_bound_is_refused",
+]
+
+[[probe]]
+id = "M607-proxy-only-the-d3-minimum-tier-is-eligible"
+unit = "proxy.audit_commitment_witness"
+conjunct = "only a provider declaring survival of proxy-process loss meets the required minimum (D3)"
+path = "mcp-re-proxy/src/audit_commitment/tier.rs"
+anchor = """
+        matches!(self, DurabilityTier::SurvivesProxyProcessLoss)
+"""
+weakening = """
+        true
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::tier::tests::only_survives_proxy_process_loss_meets_the_required_minimum",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::an_ineligible_tier_is_reported_by_meets_required_minimum",
+]

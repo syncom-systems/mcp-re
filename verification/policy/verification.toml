@@ -9461,6 +9461,122 @@ tested_symbols = [
 # asking of each root what it requires rather than by reading the registry upward.
 # ---------------------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+#
+# ADR-MCPRE-070 §2, §3, §9 (P4) — required durable commitment, owned apart from the observer.
+# What the shared owner does with a provider's answer, not whether the provider persisted
+# anything: that is the provider's assumption (P9), and no unit here claims it.
+
+[[unit]]
+id = "proxy.audit_commitment_witness"
+class = "V0"
+description = "A commitment witness is minted only from a provider receipt that matches the envelope the shared owner SENT — event identity, content digest, crossing kind, and the tier the provider declared when it was established — and is spent once, by move, only for that event (its run included) against that same established provider instance. Every provider answer that is not a matching receipt — rejection, unavailability, a wait past the nonzero bound, a dropped completion, a panic before or during polling — is a typed CommitmentFailure that is never absorbed and never reads as committed. States nothing about whether any provider persisted anything (ADR-MCPRE-070 §9, P9, D3)."
+paths = [
+  # `reference.rs` and `fixtures.rs` are compiled only into the unit tests; they are listed
+  # because most of this unit's controls drive the owner through them.
+  "mcp-re-proxy/src/audit_commitment/mod.rs",
+  "mcp-re-proxy/src/audit_commitment/authority.rs",
+  "mcp-re-proxy/src/audit_commitment/bound.rs",
+  "mcp-re-proxy/src/audit_commitment/crossing.rs",
+  "mcp-re-proxy/src/audit_commitment/established/mod.rs",
+  "mcp-re-proxy/src/audit_commitment/established/caught.rs",
+  "mcp-re-proxy/src/audit_commitment/established/witness.rs",
+  "mcp-re-proxy/src/audit_commitment/failure.rs",
+  "mcp-re-proxy/src/audit_commitment/fixtures.rs",
+  "mcp-re-proxy/src/audit_commitment/provider_failure.rs",
+  "mcp-re-proxy/src/audit_commitment/receipt.rs",
+  "mcp-re-proxy/src/audit_commitment/reference.rs",
+  "mcp-re-proxy/src/audit_commitment/request.rs",
+  "mcp-re-proxy/src/audit_commitment/tier.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/audit/commitment_witness",
+  "mutation://proxy/audit/commitment_witness",
+]
+tested_symbols = [
+  # Receipt-to-witness binding at mint: a provider's Ok is checked against what was SENT —
+  # identity, digest, crossing and the tier declared at establishment — and a stale receipt
+  # is another event's.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_matching_the_sent_envelope_mints_a_witness",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_for_another_event_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_for_other_bytes_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_at_another_tier_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_for_the_other_crossing_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_stale_receipt_from_the_previous_event_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::receipt::tests::a_receipt_projects_exactly_what_it_was_built_from",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::request::tests::a_request_projects_exactly_one_envelope",
+  # Single redemption: against THIS event (its run included) and THIS provider instance.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::redeem_refuses_a_witness_for_another_event",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::redeem_refuses_a_witness_from_another_run",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::redeem_refuses_a_witness_for_other_bytes",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::redeem_refuses_a_witness_from_another_established_instance",
+  # Every answer that is not a matching receipt is typed and visible, never absorbed: the
+  # bounded wait, the provider's panic before and during polling, its cancellation.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_committed_event_yields_a_witness",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_provider_rejection_is_typed_rejected",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::an_unavailable_provider_is_typed_unavailable",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_provider_that_never_answers_is_uncertain_timed_out_within_the_bound",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_dropped_provider_completion_is_uncertain_cancelled",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_provider_panic_while_polled_is_uncertain_and_does_not_unwind",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_provider_panic_before_its_future_exists_is_uncertain_and_does_not_unwind",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::the_commit_future_is_send",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::caught::tests::a_panic_while_polled_is_an_answer",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::caught::tests::an_answer_passes_through_unchanged",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::failure::tests::rejected_and_unavailable_are_definitely_not_committed",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::failure::tests::every_uncertain_cause_is_possibly_committed",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::failure::tests::a_provider_cancellation_is_uncertain_not_unavailable",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::provider_failure::tests::a_rejection_names_its_reason",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::authority::tests::the_seam_is_object_safe_send_and_sync",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::bound::tests::a_zero_bound_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::bound::tests::a_bound_above_the_request_deadline_ceiling_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::bound::tests::a_bound_at_the_ceiling_is_the_last_legal_value",
+  # The contrast the issue names: an observer's panic is absorbed and authorizes nothing; an
+  # authority's panic is a typed failure.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::tests::a_panicking_observer_neither_fails_nor_authorizes_a_commitment",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::tests::a_panicking_authority_is_typed_not_swallowed",
+  # The closed, versioned tier vocabulary and its one policy threshold (D3), read once.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::tier::tests::the_vocabulary_is_closed_at_two_in_v1",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::tier::tests::only_survives_proxy_process_loss_meets_the_required_minimum",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::tier::tests::no_guarantee_claims_unconditional_durability",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::the_tier_is_read_once_at_establishment",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::an_ineligible_tier_is_reported_by_meets_required_minimum",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::crossing::tests::intent_and_outcome_have_distinct_kinds",
+  # The instrument's own controls: the test-only reference authority deduplicates an
+  # identical retry, refuses a reused identity, and is deterministic. Without them a green
+  # above could be the reference's leniency rather than the owner's check.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::reference::tests::an_identical_retry_is_deduplicated_to_an_equal_receipt",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::reference::tests::the_same_id_with_other_bytes_is_an_identity_conflict",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::reference::tests::the_same_script_yields_the_same_outcomes",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::fixtures::tests::the_conflicting_pair_shares_an_identity_and_not_its_content",
+]
+
+# The sole-producer half, and why it is a separate unit: every control above stays green
+# if `mint` is made crate-visible or the witness gains a public field, because none of them
+# attempts the construction the change admits (docs/dev/sealed-owners.md, "Property 1 needs
+# a witness"). Only a hostile construction the compiler refuses can say that P3 holds.
+
+[[unit]]
+id = "proxy.audit_commitment_sole_producer"
+class = "V0"
+description = "No code outside `audit_commitment::established` can produce a CommitmentWitness or a Redeemed, and nothing the observer path produces — `AuditSink::record`'s unit, `Accepted`, a provider's CommitmentReceipt — is accepted where one is required; a witness is not clonable, an outcome witness is not an intent witness, and the reference authority does not exist in the library outside its unit tests. So holding a Redeemed means the shared owner checked a receipt and the crossing spent the witness (ADR-MCPRE-070 P3)."
+paths = [
+  "mcp-re-proxy/src/audit_commitment/mod.rs",
+  "mcp-re-proxy/src/audit_commitment/crossing.rs",
+  "mcp-re-proxy/src/audit_commitment/receipt.rs",
+  "mcp-re-proxy/src/audit_commitment/established/mod.rs",
+  "mcp-re-proxy/src/audit_commitment/established/witness.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "high"
+evidence = [
+  "structural://proxy/audit/commitment_witness_sole_producer",
+]
+
+
 [[unit]]
 id = "http_profile.bodyless_acknowledgement"
 class = "V0"
