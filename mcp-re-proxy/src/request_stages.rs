@@ -29,7 +29,9 @@
 //! side effects run" stops being a comment and becomes: *transmitting requires a
 //! `ReadyForDispatch`, and a `ReadyForDispatch` proves a [`RetentionDisposition`]* — and,
 //! since ADR-MCPRE-065, that an authorization decision was taken, because the capability it
-//! carries is obtained only from a released body.
+//! carries is obtained only from a released body. Since ADR-MCPRE-070 it also proves an
+//! [`IntentDisposition`]: under the required audit posture, a committed intent for THIS
+//! exchange.
 //!
 //! Since #741 the capability is real. The ready state holds a
 //! [`PreparedInnerDispatch`] — the taken permit, the claimed backend, the built transport
@@ -41,68 +43,17 @@
 //! the boundary and everything else stays ordinary control flow, because only this one
 //! boundary has an invariant the compiler can hold.
 
+/// The intent crossing's product (ADR-MCPRE-070 G1).
+mod intent_disposition;
+/// The retention owner's two lifecycle products.
+mod retention_disposition;
+
+pub(crate) use intent_disposition::IntentDisposition;
+pub(crate) use retention_disposition::{PreDispatchRetention, RetentionDisposition};
+
 use crate::async_inner::DispatchedOutcome;
 use crate::async_inner::PreparedInnerDispatch;
 use crate::http_profile_serve::signing_window::SigningWindow;
-use crate::transparency::DispatchCommitted;
-use std::sync::Arc;
-
-use crate::transparency::EvidenceRetention;
-use crate::transparency::ReservedBeforeDispatch;
-
-/// What this exchange owes the evidence store BEFORE it commits to a dispatch.
-///
-/// Distinct from [`RetentionDisposition`] because they are distinct facts, and the whole
-/// #741 repair is that they used to be one. `Reserved` says an obligation was ACCEPTED and
-/// says nothing about execution; the disposition below says the execution threshold was
-/// crossed and that the crossing is durable. One value meaning both left a refused call
-/// indistinguishable from one whose backend may have acted — on disk, in the exchange
-/// machine, and in what the client was told.
-pub(crate) enum PreDispatchRetention {
-    /// This deployment retains nothing; the witness is the retention owner's statement of it.
-    NotConfigured(crate::http_profile_serve::retention::NothingRetained),
-    /// The obligation is durably accepted, and nothing has run. Dropping this rescinds it.
-    ///
-    /// The STORE travels with the reservation, so holding a `Reserved` IS holding the store
-    /// that made it. Re-fetching it at each later step needed an arm for an absent one, and
-    /// the only answer available there was `NotConfigured` — *this deployment retains
-    /// nothing*, said about a deployment that retains and has lost its store.
-    Reserved {
-        store: Arc<EvidenceRetention>,
-        reservation: ReservedBeforeDispatch,
-    },
-}
-
-/// What this exchange owes the evidence store, as a closed set.
-///
-/// # Why this is not `Option<DispatchCommitted>`
-///
-/// Retention is optional — a deployment may run without it — so the obvious typed form is
-/// an `Option`, and it is wrong. `None` would mean BOTH "this deployment retains nothing"
-/// and "this deployment retains, and the record is missing", and the second is a bypassed
-/// step. Keeping them in one shape is what forced the runtime guard on the completion
-/// path:
-///
-/// ```text
-/// if retention.is_some() && reservation.is_none() { internal error }
-/// ```
-///
-/// which is a check compensating for something the type could not say (ADR-MCPRE-058
-/// §9.5, §9.6). As a sum type there is no third case: the ready state PROVES
-/// *retention is not configured XOR the crossing is durably recorded*, and the obligation
-/// is discharged after dispatch by an exhaustive match rather than by asking whether an
-/// earlier step was performed.
-pub(crate) enum RetentionDisposition {
-    /// This deployment retains nothing; the owner's witness keeps a configured one out of here.
-    NotConfigured(crate::http_profile_serve::retention::NothingRetained),
-    /// The execution threshold is durably recorded, and this exchange must complete the
-    /// record before it is served. Carries the store that recorded it, for the same reason
-    /// [`PreDispatchRetention::Reserved`] does.
-    Committed {
-        store: Arc<EvidenceRetention>,
-        crossing: DispatchCommitted,
-    },
-}
 
 /// Every pre-dispatch prerequisite, in hand.
 ///
@@ -138,6 +89,8 @@ pub(crate) struct ReadyForDispatch<'a> {
     window: SigningWindow,
     /// The retention obligation this exchange carries across the dispatch.
     retention: RetentionDisposition,
+    /// The intent crossing's product: committed for this exchange, or not owed.
+    intent: IntentDisposition,
 }
 
 impl<'a> ReadyForDispatch<'a> {
@@ -146,11 +99,13 @@ impl<'a> ReadyForDispatch<'a> {
         prepared: PreparedInnerDispatch<'a>,
         window: SigningWindow,
         retention: RetentionDisposition,
+        intent: IntentDisposition,
     ) -> Self {
         ReadyForDispatch {
             prepared,
             window,
             retention,
+            intent,
         }
     }
 
@@ -171,11 +126,13 @@ impl<'a> ReadyForDispatch<'a> {
             prepared,
             window,
             retention,
+            intent,
         } = self;
         DispatchedExchange {
             outcome: prepared.dispatch().await,
             window,
             retention,
+            intent,
         }
     }
 }
@@ -189,12 +146,20 @@ pub(crate) struct DispatchedExchange {
     outcome: DispatchedOutcome,
     window: SigningWindow,
     retention: RetentionDisposition,
+    intent: IntentDisposition,
 }
 
 impl DispatchedExchange {
     /// What the inner plane managed to do, taken out with the obligations that outlive it.
-    pub(crate) fn into_parts(self) -> (DispatchedOutcome, SigningWindow, RetentionDisposition) {
-        (self.outcome, self.window, self.retention)
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        DispatchedOutcome,
+        SigningWindow,
+        RetentionDisposition,
+        IntentDisposition,
+    ) {
+        (self.outcome, self.window, self.retention, self.intent)
     }
 }
 
@@ -202,34 +167,6 @@ impl DispatchedExchange {
 mod tests {
     use super::*;
     use std::sync::Arc;
-
-    /// The §9.6 acceptance test for the state model, stated as an assertion about the
-    /// type rather than about a run.
-    ///
-    /// `RetentionDisposition` has exactly two cases, and the completion path matches on
-    /// them exhaustively. There is no third — no `Reserved(None)`, no "configured but
-    /// missing" — so the runtime guard that used to sit on the completion path has
-    /// nothing left to detect.
-    ///
-    /// The broken implementation this catches is the one the ADR names: reaching for
-    /// `Option<RetentionReservation>` inside the ready state, which reintroduces the third
-    /// case and brings the guard straight back. That would not compile against this match,
-    /// because `None` would have to mean one of these two arms and the compiler cannot
-    /// choose.
-    #[test]
-    fn the_retention_obligation_has_exactly_two_cases() {
-        let disposition = RetentionDisposition::NotConfigured(
-            crate::http_profile_serve::retention::NothingRetained::for_a_test(),
-        );
-        let owed = match disposition {
-            RetentionDisposition::NotConfigured(_) => false,
-            RetentionDisposition::Committed { .. } => true,
-        };
-        assert!(
-            !owed,
-            "a deployment without retention owes the store nothing"
-        );
-    }
 
     /// Crossing the boundary is one-way: the ready state is consumed, and transmitting is
     /// what consumes it.
@@ -262,11 +199,14 @@ mod tests {
             RetentionDisposition::NotConfigured(
                 crate::http_profile_serve::retention::NothingRetained::for_a_test(),
             ),
+            IntentDisposition::NotRequired(
+                crate::audit_commitment::NoCommitmentRequired::for_a_test(),
+            ),
         );
 
         let exchange = ready.dispatch().await;
         // `ready` is gone here — the compiler enforces it, which is the assertion.
-        let (outcome, window, retention) = exchange.into_parts();
+        let (outcome, window, retention, intent) = exchange.into_parts();
         assert_eq!(
             outcome,
             DispatchedOutcome::Replied(b"{\"result\":{}}".to_vec())
@@ -275,5 +215,7 @@ mod tests {
         // credential the exchange snapshotted before the backend ran.
         assert_eq!(window.expires(), 1_699_999_060);
         assert!(matches!(retention, RetentionDisposition::NotConfigured(_)));
+        // The intent obligation crosses with it, for the outcome crossing to discharge.
+        assert!(matches!(intent, IntentDisposition::NotRequired(_)));
     }
 }

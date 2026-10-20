@@ -121,6 +121,17 @@ pub enum McpReError {
     /// crossing it observed.
     ExchangeInvariantViolation,
 
+    /// A required audit commitment could not be established (ADR-MCPRE-070 D12): the
+    /// deployment requires the execution intent to be durably committed before dispatch,
+    /// and the commitment authority refused, was unavailable, did not answer in its bound,
+    /// or acknowledged something other than this exchange's event.
+    ///
+    /// The token states nothing about execution; the exchange machine's disposition does,
+    /// as for [`McpReError::ExchangeInvariantViolation`]. Distinct from
+    /// `evidence_retention_unavailable`: a different obligation, a different operator
+    /// action, and an operator reading that token would look at the retention store.
+    AuditCommitmentUnavailable,
+
     // ----- Draft-02 (v0.6) fail-closed codes (ADR-MCPS-040 / decision F.1) -----
     // Granular for protocol/profile-confusion failures; low-level JSON
     // value-domain failures stay coarse under `SerializationFailed`. All nine
@@ -314,6 +325,7 @@ impl McpReError {
             McpReError::EvidenceRetentionUnavailable => "mcp-re.evidence_retention_unavailable",
             McpReError::EvidenceRetentionIndeterminate => "mcp-re.evidence_retention_indeterminate",
             McpReError::ExchangeInvariantViolation => "mcp-re.exchange_invariant_violation",
+            McpReError::AuditCommitmentUnavailable => "mcp-re.audit_commitment_unavailable",
             // Draft-02 (v0.6) — ADR-MCPS-040 / decision F.1.
             McpReError::AuthorizationBindingMissing => "mcp-re.authorization_binding_missing",
             McpReError::AuthorizationBindingTypeUnsupported => {
@@ -395,6 +407,7 @@ pub const ALL_ERRORS: &[McpReError] = &[
     McpReError::EvidenceRetentionUnavailable,
     McpReError::EvidenceRetentionIndeterminate,
     McpReError::ExchangeInvariantViolation,
+    McpReError::AuditCommitmentUnavailable,
     McpReError::AuthorizationBindingMissing,
     McpReError::AuthorizationBindingTypeUnsupported,
     McpReError::AuthorizationBindingMalformed,
@@ -470,6 +483,10 @@ mod tests {
         check(
             McpReError::EvidenceRetentionIndeterminate,
             "mcp-re.evidence_retention_indeterminate",
+        );
+        check(
+            McpReError::AuditCommitmentUnavailable,
+            "mcp-re.audit_commitment_unavailable",
         );
         // KEPT verbatim despite field rename actor -> signer (ADR-007).
         check(

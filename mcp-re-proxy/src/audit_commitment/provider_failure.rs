@@ -3,7 +3,10 @@
 
 /// A provider's typed refusal to produce a receipt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))] // constructed by providers; none is compiled outside tests
+#[cfg_attr(
+    not(any(test, feature = "audit_commitment_reference")),
+    allow(dead_code)
+)] // constructed by providers; none is compiled into a deployable build
 pub(crate) enum ProviderFailure {
     /// The provider refused the event: definitely not committed.
     Rejected(RejectReason),
@@ -16,7 +19,10 @@ pub(crate) enum ProviderFailure {
 
 /// Why a provider refused an event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))] // constructed by providers; none is compiled outside tests
+#[cfg_attr(
+    not(any(test, feature = "audit_commitment_reference")),
+    allow(dead_code)
+)] // constructed by providers; none is compiled into a deployable build
 pub(crate) enum RejectReason {
     /// The identity is already committed with another digest: an integrity conflict
     /// (ADR-MCPRE-070 §8), never an overwrite.

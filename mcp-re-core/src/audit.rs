@@ -7,7 +7,9 @@
 //! net-new surface is the pair of success events the error enum cannot express
 //! (`mcp-re.request.accepted`, `mcp-re.response.signed`) plus the three
 //! delegated-key lifecycle events authorized by ADR-MCPRE-052 §7
-//! (`mcp-re.delegated_key.{issued,rotated,retired}`).
+//! (`mcp-re.delegated_key.{issued,rotated,retired}`). Vocabulary revision 2 adds a fourth
+//! category, the execution intent (`mcp-re.execution.intent`, ADR-MCPRE-070 D1): neither a
+//! success event nor a verdict.
 //!
 //! This keeps the audit layer inside the same bind-not-interpret boundary as the
 //! rest of Core: there is no `authorization_hash_mismatch` audit reason, because
@@ -45,7 +47,8 @@ use crate::error::McpReError;
 /// these; the two success events are the only net-new tokens (the error enum
 /// cannot express a success/lifecycle outcome).
 pub mod event_type {
-    /// A request envelope passed verification (net-new success/lifecycle event).
+    /// A request was ADMITTED: verified, replay-admitted, answerable, continuation-retired.
+    /// Not executed (ADR-MCPRE-070 §16 item 2). A net-new success event.
     pub const REQUEST_ACCEPTED: &str = "mcp-re.request.accepted";
     /// A response was signed after the request verified (net-new success event).
     pub const RESPONSE_SIGNED: &str = "mcp-re.response.signed";
@@ -64,6 +67,10 @@ pub mod event_type {
     pub const DELEGATED_KEY_ROTATED: &str = "mcp-re.delegated_key.rotated";
     /// A delegated key reached `exp` (or was revoked) and was retired.
     pub const DELEGATED_KEY_RETIRED: &str = "mcp-re.delegated_key.retired";
+
+    /// The dispatch of an admitted exchange was committed to (ADR-MCPRE-070 D1). Not a
+    /// success event and not a verdict; never on the best-effort stream.
+    pub const EXECUTION_INTENT: &str = "mcp-re.execution.intent";
 }
 
 /// The exact, exhaustive success/lifecycle allowlist (ADR-MCPS-035 §3). These
@@ -88,6 +95,12 @@ pub const KEY_LIFECYCLE_EVENT_TYPES: &[&str] = &[
     event_type::DELEGATED_KEY_ROTATED,
     event_type::DELEGATED_KEY_RETIRED,
 ];
+
+/// The execution `event_type` allowlist — the fourth audit category, a documented and
+/// versioned extension (vocabulary revision 2) authorized by ADR-MCPRE-070 D1. Committed
+/// before an admitted exchange is dispatched; it carries no `reason` and no `Decision`. The
+/// drift guard pins this set to exactly this one.
+pub const EXECUTION_EVENT_TYPES: &[&str] = &[event_type::EXECUTION_INTENT];
 
 /// The frozen rejection reason for an `McpReError` — its EXACT `wire_code()`.
 ///

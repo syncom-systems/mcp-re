@@ -4293,9 +4293,13 @@ tested_symbols = [
 [[unit]]
 id = "proxy.dispatch_commitment"
 class = "V0"
-description = "The one pre-dispatch boundary the compiler holds: the backend is reached only by consuming a ReadyForDispatch, which cannot be assembled without the inner plane's real dispatch capability — itself obtainable only from an authorization-released body — a signing window snapshotted before the backend runs and shown to survive that plane's own declared completion bound, and a discharged retention disposition. Crossing it is one-way, and the transmission happens inside the crossing."
+description = "The one pre-dispatch boundary the compiler holds: the backend is reached only by consuming a ReadyForDispatch, which cannot be assembled without the inner plane's real dispatch capability — itself obtainable only from an authorization-released body — a signing window snapshotted before the backend runs and shown to survive that plane's own declared completion bound extended by the audit posture's pre-dispatch wait, a discharged retention disposition, and an intent disposition (ADR-MCPRE-070 G1). Crossing it is one-way, and the transmission happens inside the crossing."
 paths = [
   "mcp-re-proxy/src/request_stages.rs",
+  # The retention owner's two lifecycle products, and the intent crossing's, are the
+  # dispositions the ready state carries; they left `request_stages.rs` for a file each.
+  "mcp-re-proxy/src/request_stages/retention_disposition.rs",
+  "mcp-re-proxy/src/request_stages/intent_disposition.rs",
   "mcp-re-proxy/src/async_inner/mod.rs",
   # The seam became a directory when the boundary gained a second question. `PreparedInnerDispatch`
   # owns the CAPABILITY, `completion_bound.rs` owns what the plane says about COMPLETION, and
@@ -4348,7 +4352,7 @@ gate_controls = [
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::dispatch_commitment::tests::the_crossing_is_recorded_after_everything_that_can_refuse_and_before_the_dispatch",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::dispatch_commitment::tests::the_last_state_that_can_refuse_freely_is_the_one_before_the_crossing",
-  "//mcp-re-proxy:proxy_unit_test#request_stages::tests::the_retention_obligation_has_exactly_two_cases",
+  "//mcp-re-proxy:proxy_unit_test#request_stages::retention_disposition::tests::the_retention_obligation_has_exactly_two_cases",
   "//mcp-re-proxy:proxy_unit_test#request_stages::tests::the_dispatch_boundary_consumes_the_ready_state",
   "//mcp-re-proxy:proxy_unit_test#async_inner::tests::preparing_transmits_nothing",
   "//mcp-re-proxy:proxy_unit_test#async_inner::tests::dropping_a_prepared_dispatch_transmits_nothing_and_releases_what_it_held",
@@ -9348,6 +9352,7 @@ paths = [
   "mcp-re-proxy/src/audit_record/envelope/binding.rs",
   "mcp-re-proxy/src/audit_record/envelope/canonical.rs",
   "mcp-re-proxy/src/audit_record/envelope/digest.rs",
+  "mcp-re-proxy/src/audit_record/envelope/event.rs",
   "mcp-re-proxy/src/audit_record/envelope/event_id.rs",
   "mcp-re-proxy/src/audit_record/envelope/identity_failure.rs",
   "mcp-re-proxy/src/audit_record/envelope/run_id.rs",
@@ -9472,8 +9477,9 @@ id = "proxy.audit_commitment_witness"
 class = "V0"
 description = "A commitment witness is minted only from a provider receipt that matches the envelope the shared owner SENT — event identity, content digest, crossing kind, and the tier the provider declared when it was established — and is spent once, by move, only for that event (its run included) against that same established provider instance. Every provider answer that is not a matching receipt — rejection, unavailability, a wait past the nonzero bound, a dropped completion, a panic before or during polling — is a typed CommitmentFailure that is never absorbed and never reads as committed. States nothing about whether any provider persisted anything (ADR-MCPRE-070 §9, P9, D3)."
 paths = [
-  # `reference.rs` and `fixtures.rs` are compiled only into the unit tests; they are listed
-  # because most of this unit's controls drive the owner through them.
+  # `fixtures.rs` is compiled only into the unit tests and `reference.rs` only into test
+  # builds and the test-only `audit_commitment_reference` flavor; they are listed because
+  # most of this unit's controls drive the owner through them.
   "mcp-re-proxy/src/audit_commitment/mod.rs",
   "mcp-re-proxy/src/audit_commitment/authority.rs",
   "mcp-re-proxy/src/audit_commitment/bound.rs",
@@ -9561,7 +9567,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.audit_commitment_sole_producer"
 class = "V0"
-description = "No code outside `audit_commitment::established` can produce a CommitmentWitness or a Redeemed, and nothing the observer path produces — `AuditSink::record`'s unit, `Accepted`, a provider's CommitmentReceipt — is accepted where one is required; a witness is not clonable, an outcome witness is not an intent witness, and the reference authority does not exist in the library outside its unit tests. So holding a Redeemed means the shared owner checked a receipt and the crossing spent the witness (ADR-MCPRE-070 P3)."
+description = "No code outside `audit_commitment::established` can produce a CommitmentWitness or a Redeemed, and nothing the observer path produces — `AuditSink::record`'s unit, `Accepted`, a provider's CommitmentReceipt — is accepted where one is required; a witness is not clonable, an outcome witness is not an intent witness, and the reference authority does not exist in the library outside test builds and the test-only `audit_commitment_reference` flavor. So holding a Redeemed means the shared owner checked a receipt and the crossing spent the witness (ADR-MCPRE-070 P3)."
 paths = [
   "mcp-re-proxy/src/audit_commitment/mod.rs",
   "mcp-re-proxy/src/audit_commitment/crossing.rs",
@@ -9574,6 +9580,112 @@ evidence_class = "structural"
 direct_consequence_severity = "high"
 evidence = [
   "structural://proxy/audit/commitment_witness_sole_producer",
+]
+
+# ---------------------------------------------------------------------------
+#
+# ADR-MCPRE-070 G1 (§4, §6 W1-W3, D7, D9, D12) — no dispatch without the bound intent.
+# What the serving path does with a commitment, not whether a provider persisted it: that
+# stays the provider's assumption (P9), and the required posture is reachable only through
+# the test-only installer until #1206.
+
+[[unit]]
+id = "proxy.audit_intent_gate"
+class = "V0"
+description = "Under the required audit posture no backend dispatch exists without the exchange's execution intent committed and its witness redeemed for THIS exchange's event — the intent names the coordinate of the exchange's request.accepted (D9) — against the provider the posture holds. G1 runs after the retention reserve and before the retention commit and dispatch (D7), on notifications and bodied calls alike, with one bounded attempt; every failure (absent coordinate, rejection, unavailability, timeout, dropped completion, panic, forged or stale receipt) is a signed mcp-re.audit_commitment_unavailable refusal before the backend is reached (503 where a retry can succeed, 500 where it cannot), carrying the machine's NothingExecuted disposition, rescinding the reservation and returning the plane's capacity. The signing window must survive the intent's wait as well as the dispatch's. Cancellation during or after G1 dispatches nothing. Under the best-effort posture the posture owner states NotRequired and nothing is produced, committed or observed (D1)."
+paths = [
+  "mcp-re-proxy/src/request_stages/intent_disposition.rs",
+  "mcp-re-proxy/src/audit_commitment/posture.rs",
+  "mcp-re-proxy/src/audit_commitment/intent.rs",
+  "mcp-re-proxy/src/audit_commitment/not_required.rs",
+  # The model of A, checked against R and the G1 types; test-only.
+  "mcp-re-proxy/src/audit_commitment/machine.rs",
+  # The instrument the serving suites drive; test builds and the test-only flavor only.
+  "mcp-re-proxy/src/audit_commitment/harness.rs",
+  "mcp-re-proxy/src/request_stages.rs",
+  "mcp-re-proxy/src/audit_record/intent.rs",
+  # Shared with `proxy.dispatch_commitment`: G1 is placed, and the window extended, there.
+  "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs",
+  "mcp-re-proxy/src/async_inner/completion_bound.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/audit/intent_gate",
+  "mutation://proxy/audit/intent_gate",
+]
+tested_symbols = [
+  # The crossing's procedure and its one refusal decision.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::commit_gives_a_redeemed_intent_for_this_exchange",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_rejected_intent_is_500",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::an_unavailable_provider_is_503",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_provider_that_never_answers_times_out_within_the_bound_as_503",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_dropped_completion_is_503",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_panicking_provider_is_503_and_does_not_unwind",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_forged_or_stale_receipt_is_503",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::an_absent_coordinate_is_500_and_asks_nothing",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_coordinate_from_another_run_is_500_and_asks_nothing",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::each_failure_class_earns_its_own_status",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_volatile_provider_cannot_serve_the_crossing",
+  # The posture: best-effort mints the owner's statement and asks nothing; required never does.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::only_best_effort_mints_not_required",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_required_posture_never_yields_not_required",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_required_posture_is_refused_over_a_volatile_authority_or_an_illegal_bound",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::installing_an_observer_keeps_the_commitment_posture",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::not_required::tests::the_statement_is_a_value_the_owner_hands_out",
+  "//mcp-re-proxy:proxy_unit_test#request_stages::intent_disposition::tests::the_intent_obligation_has_exactly_two_cases",
+  # Machine A, composed with R (D7).
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::machine::tests::machine_a_admits_dispatch_only_from_intent_committed_or_not_required",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::machine::tests::machine_a_composes_with_r_only_between_inner_plane_accepted_and_retention_committed",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::machine::tests::the_g1_types_carry_exactly_the_states_the_model_names",
+  # The intent fact: three fields, an exchange it names, an identity of its own.
+  "//mcp-re-proxy:proxy_unit_test#audit_record::intent::tests::an_intent_encodes_exactly_its_three_fields",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::intent::tests::an_intent_needs_an_exchange_link",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::intent::tests::each_production_is_a_new_event_of_the_run",
+  "//mcp-re-proxy:proxy_unit_test#async_inner::completion_bound::tests::completion_bound_after_is_checked",
+  # The instrument's own controls.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::harness::tests::a_fresh_reference_has_been_asked_nothing",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::harness::tests::each_answer_maps_to_its_own_step",
+  # `PreparedInnerDispatch::dispatch` is `pub`; the call graph, measured, holds that only the
+  # ready state transmits — so nothing reaches the backend around the intent disposition.
+  "//mcp-re-proxy:integration_test#prepared_dispatch_source_test::prepared_dispatch_is_transmitted_only_by_the_ready_state",
+  "//mcp-re-proxy:integration_test#prepared_dispatch_source_test::the_scanner_sees_a_bypass_and_ignores_comments_and_tests",
+  # Through the production HttpProfileProxy: zero backend invocations on every negative path.
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::best_effort_dispatch_and_refusals_are_unchanged",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_commit_dispatches_once_after_the_intent_is_journaled",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_failures_reach_no_backend",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::a_stale_receipt_reaches_no_backend",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_notification_without_commitment_gets_no_202",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::cancelled_during_intent_commit_reaches_no_backend",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::crash_window_w2_store_may_hold_intent_but_nothing_ran",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::w3_retention_commit_failure_after_intent_leaves_no_pending_and_no_dispatch",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::g1_failure_rescinds_the_reservation",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::the_window_must_survive_the_commitment_wait",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::the_installer_refuses_a_volatile_authority_and_an_illegal_bound",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_over_a_loopback_http_backend_dispatches_only_after_commit",
+]
+
+# The structural half, for the reason `proxy.audit_commitment_sole_producer` is separate: the
+# battery above stays green if `NoCommitmentRequired` gains a public field or the ready state
+# loses its intent parameter, because no control attempts the construction that admits.
+
+[[unit]]
+id = "proxy.audit_intent_gate_sole_producer"
+class = "V0"
+description = "The ready state cannot be assembled without an intent disposition; outside `audit_commitment` no code can state NotRequired (the posture owner's statement) or place an unredeemed witness, or an outcome's, where a redeemed intent is required; an execution intent cannot be offered to the observer; and the default library has no route into the required posture."
+paths = [
+  "mcp-re-proxy/src/request_stages.rs",
+  "mcp-re-proxy/src/request_stages/intent_disposition.rs",
+  "mcp-re-proxy/src/audit_commitment/not_required.rs",
+  "mcp-re-proxy/src/audit_commitment/posture.rs",
+  "mcp-re-proxy/src/audit_record/intent.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://proxy/audit/intent_gate_sole_producer",
 ]
 
 
@@ -12712,6 +12824,8 @@ evidence = [
 tested_symbols = [
   "//mcp-re-conformance:audit_vocabulary_guard_test#event_types_do_not_collide_with_frozen_wire_codes",
   "//mcp-re-conformance:audit_vocabulary_guard_test#every_audit_token_is_a_wire_code_or_a_fixed_event_type",
+  # ADR-MCPRE-070 D1: the execution category, a versioned extension pinned at exactly one.
+  "//mcp-re-conformance:audit_vocabulary_guard_test#execution_event_set_is_exactly_the_one_item_allowlist",
   "//mcp-re-conformance:audit_vocabulary_guard_test#guard_inputs_are_non_empty",
   "//mcp-re-conformance:audit_vocabulary_guard_test#key_lifecycle_event_set_is_exactly_the_three_item_allowlist",
   "//mcp-re-conformance:audit_vocabulary_guard_test#no_authorization_hash_mismatch_audit_reason",

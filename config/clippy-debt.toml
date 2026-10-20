@@ -214,10 +214,12 @@ count = 19
 # 0 -> 3: the same measurement correction as `arithmetic_side_effects` above.
 # 3 -> 2: MCPRE-196 — the admission owner projects its enforcer, so the capability no longer
 # re-maps posture and availability field by field.
+# 2 -> 1: #1204 (ADR-MCPRE-070 G1) — the pre-dispatch sequence in `http_profile_serve`
+# was restructured around the intent gate; count measured by this gate.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "too_many_lines"
-count = 2
+count = 1
 
 # 3 -> 0: the runfiles-only resolver replaced the source-tree fallbacks.
 [[debt]]

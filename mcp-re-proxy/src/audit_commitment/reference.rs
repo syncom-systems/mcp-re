@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The deterministic reference commitment authority. Test-only: this module is declared
-//! `#[cfg(test)]`, so no build of the library outside its own unit tests contains it, and
-//! no deployment can select it (ADR-MCPRE-070 §9, §14 item 10).
+//! `#[cfg(any(test, feature = "audit_commitment_reference"))]`, and that feature is
+//! registered test-only (`scripts/fixture_feature_gate.py`), so no deployable build contains
+//! it and no deployment can select it (ADR-MCPRE-070 §9, §14 item 10).
 //!
 //! It exercises the shared owner's machine. It persists nothing, keeps no clock, draws no
 //! randomness and spawns nothing: each answer is the next scripted [`Step`]. Like any
@@ -10,9 +11,9 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-use crate::audit_record::{ContentDigest, EventBinding, EventId};
+use crate::audit_record::{ContentDigest, EventBinding, EventId, ExchangeCoordinate};
 
 use super::{
     CommitFuture, CommitRequest, CommitmentAuthority, CommitmentReceipt, CrossingKind,
@@ -20,7 +21,7 @@ use super::{
 };
 
 /// One scripted answer. An exhausted script answers [`Step::Commit`].
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) enum Step {
     /// Journal the event and acknowledge it. An identical retry is acknowledged again; the
     /// same identity with other content is `Rejected(IdentityConflict)`.
@@ -41,12 +42,29 @@ pub(crate) enum Step {
     Forge(Forgery),
     /// Acknowledge with the receipt of the previous commit.
     ReplayPrevious,
+    /// Journal the event, then never acknowledge: the store holds an intent the proxy never
+    /// learns about (W2).
+    CommitThenPark,
+    /// Journal the event, run the hook, then acknowledge: something happens to the world
+    /// between the commit and the crossing it gates (W3).
+    CommitThen(Hook),
+}
+
+/// A side effect a [`Step::CommitThen`] runs after it journals.
+#[derive(Clone)]
+pub(crate) struct Hook(pub(crate) Arc<dyn Fn() + Send + Sync>);
+
+impl std::fmt::Debug for Hook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Hook")
+    }
 }
 
 /// How a forged receipt disagrees with its request.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Forgery {
-    /// Another binding.
+    /// Another binding. Unit tests only: a serving suite cannot name another event's binding.
+    #[cfg(test)]
     Binding(EventBinding),
     /// The other crossing.
     Crossing,
@@ -60,8 +78,11 @@ pub(crate) struct ReferenceAuthority {
     tier: DurabilityTier,
     script: Mutex<VecDeque<Step>>,
     journal: Mutex<HashMap<EventId, ContentDigest>>,
+    /// Every event journaled, in order, with the exchange it names.
+    journaled: Mutex<Vec<(EventId, Option<ExchangeCoordinate>)>>,
     previous: Mutex<Option<(EventBinding, CrossingKind)>>,
     tier_reads: AtomicUsize,
+    requests: AtomicUsize,
 }
 
 impl ReferenceAuthority {
@@ -71,8 +92,10 @@ impl ReferenceAuthority {
             tier,
             script: Mutex::new(VecDeque::new()),
             journal: Mutex::new(HashMap::new()),
+            journaled: Mutex::new(Vec::new()),
             previous: Mutex::new(None),
             tier_reads: AtomicUsize::new(0),
+            requests: AtomicUsize::new(0),
         }
     }
 
@@ -83,8 +106,19 @@ impl ReferenceAuthority {
     }
 
     /// How many times the tier was asked for.
+    #[cfg(test)]
     pub(crate) fn tier_reads(&self) -> usize {
         self.tier_reads.load(Ordering::SeqCst)
+    }
+
+    /// How many commits this authority was asked for, whatever it answered.
+    pub(crate) fn requests(&self) -> usize {
+        self.requests.load(Ordering::SeqCst)
+    }
+
+    /// Every event journaled, in order: its identity, and the exchange it names.
+    pub(crate) fn journaled(&self) -> Vec<(EventId, Option<ExchangeCoordinate>)> {
+        self.journaled.lock().expect("journaled").clone()
     }
 
     fn journal(&self, request: &CommitRequest<'_>) -> Result<CommitmentReceipt, ProviderFailure> {
@@ -94,6 +128,10 @@ impl ReferenceAuthority {
         if recorded != binding.digest() {
             return Err(ProviderFailure::Rejected(RejectReason::IdentityConflict));
         }
+        self.journaled
+            .lock()
+            .expect("journaled")
+            .push((binding.id(), request.exchange_coordinate()));
         *self.previous.lock().expect("previous") = Some((binding, request.crossing()));
         Ok(CommitmentReceipt::new(
             binding,
@@ -119,6 +157,15 @@ impl ReferenceAuthority {
             Step::PanicInPoll => return Box::pin(async { panic!("reference provider fault") }),
             Step::PanicBeforeFuture => panic!("reference provider fault before its future"),
             Step::Forge(forgery) => Ok(forged(forgery, request)),
+            Step::CommitThenPark => {
+                let _ = self.journal(request);
+                return Box::pin(std::future::pending());
+            }
+            Step::CommitThen(Hook(hook)) => {
+                let receipt = self.journal(request);
+                hook();
+                receipt
+            }
             Step::ReplayPrevious => {
                 let (binding, crossing) = self
                     .previous
@@ -133,24 +180,25 @@ impl ReferenceAuthority {
 }
 
 fn forged(forgery: Forgery, request: &CommitRequest<'_>) -> CommitmentReceipt {
-    let (mut binding, mut crossing, mut tier) =
-        (request.binding(), request.crossing(), request.tier());
+    let (binding, crossing, tier) = (request.binding(), request.crossing(), request.tier());
     match forgery {
-        Forgery::Binding(other) => binding = other,
+        #[cfg(test)]
+        Forgery::Binding(other) => CommitmentReceipt::new(other, crossing, tier),
         Forgery::Crossing => {
-            crossing = match crossing {
+            let other = match crossing {
                 CrossingKind::Intent => CrossingKind::Outcome,
                 CrossingKind::Outcome => CrossingKind::Intent,
-            }
+            };
+            CommitmentReceipt::new(binding, other, tier)
         }
         Forgery::Tier => {
-            tier = match tier {
+            let other = match tier {
                 DurabilityTier::ProcessVolatile => DurabilityTier::SurvivesProxyProcessLoss,
                 DurabilityTier::SurvivesProxyProcessLoss => DurabilityTier::ProcessVolatile,
-            }
+            };
+            CommitmentReceipt::new(binding, crossing, other)
         }
     }
-    CommitmentReceipt::new(binding, crossing, tier)
 }
 
 impl CommitmentAuthority for ReferenceAuthority {
@@ -160,6 +208,7 @@ impl CommitmentAuthority for ReferenceAuthority {
     }
 
     fn commit<'a>(&'a self, request: CommitRequest<'a>) -> CommitFuture<'a> {
+        self.requests.fetch_add(1, Ordering::SeqCst);
         let step = self
             .script
             .lock()
@@ -224,7 +273,8 @@ mod tests {
         ];
         let run = || async {
             let provider = EstablishedProvider::establish(Arc::new(
-                ReferenceAuthority::new(DurabilityTier::SurvivesProxyProcessLoss).scripted(script),
+                ReferenceAuthority::new(DurabilityTier::SurvivesProxyProcessLoss)
+                    .scripted(script.clone()),
             ));
             let mut outcomes = Vec::new();
             for seq in 0..6 {

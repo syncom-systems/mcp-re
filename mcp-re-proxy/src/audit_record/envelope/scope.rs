@@ -69,6 +69,26 @@ impl EventScope {
     }
 }
 
+impl EventScope {
+    /// The scope of an execution intent numbered `id`: the exchange `coordinate` names
+    /// (ADR-MCPRE-070 D9).
+    ///
+    /// An intent always belongs to an accepted exchange, so there is no intent without a
+    /// coordinate, and a coordinate from another run or from a later event is refused for
+    /// the reason [`EventScope::derive`] refuses it. Visible to the intent's producer in
+    /// `audit_record`, which is the one caller.
+    pub(in crate::audit_record) fn of_intent(
+        id: &EventId,
+        coordinate: ExchangeCoordinate,
+    ) -> Result<EventScope, EventIdentityFailure> {
+        if precedes_in_run(&coordinate.0, id) {
+            Ok(EventScope::Exchange(coordinate))
+        } else {
+            Err(EventIdentityFailure::ScopeRefused)
+        }
+    }
+}
+
 /// Whether `earlier` was generated before `later` in the same run.
 fn precedes_in_run(earlier: &EventId, later: &EventId) -> bool {
     let ((run_a, seq_a), (run_b, seq_b)) = (earlier.parts(), later.parts());
@@ -162,6 +182,23 @@ mod tests {
         assert_eq!(EventScope::derive(&signed, &id, link(other, 3)), refused);
         assert_eq!(EventScope::derive(&signed, &id, link(RUN, 5)), refused);
         assert_eq!(EventScope::derive(&signed, &id, link(RUN, 6)), refused);
+    }
+
+    /// An intent belongs to the accepted exchange it names, and to nothing else: it has no
+    /// scope without a coordinate of this run generated before it.
+    #[test]
+    fn an_intent_belongs_only_to_an_earlier_accepted_exchange_of_its_run() {
+        let id = EventId::new(RUN, 5);
+        let coordinate = |run, seq| ExchangeCoordinate::of_accepted(EventId::new(run, seq));
+        assert_eq!(
+            EventScope::of_intent(&id, coordinate(RUN, 3)),
+            Ok(EventScope::Exchange(coordinate(RUN, 3)))
+        );
+        let refused = Err(EventIdentityFailure::ScopeRefused);
+        let other = RunId::fixed([0x22; 16]);
+        assert_eq!(EventScope::of_intent(&id, coordinate(other, 3)), refused);
+        assert_eq!(EventScope::of_intent(&id, coordinate(RUN, 5)), refused);
+        assert_eq!(EventScope::of_intent(&id, coordinate(RUN, 6)), refused);
     }
 
     #[test]

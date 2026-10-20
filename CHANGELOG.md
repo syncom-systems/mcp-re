@@ -12,6 +12,20 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Added — required audit commitment before dispatch (ADR-MCPRE-070 G1)
+
+- New wire token `mcp-re.audit_commitment_unavailable` (D12): under the required audit
+  posture, an admitted exchange whose execution intent cannot be committed is refused BEFORE
+  the backend is reached — 503 where the commitment provider was unavailable or uncertain,
+  500 where it refused or no accepted event exists to name. The token states nothing about
+  execution; the signed rejection's disposition does (nothing executed). Existing tokens are
+  unchanged.
+- Audit vocabulary revision 2 adds the `mcp-re.execution.intent` category (D1). It is not a
+  success event (the success set stays at two) and the best-effort stderr stream never emits
+  it. The canonical event encoding moves to version 2 to carry it.
+- The required posture is reachable only through a test-only feature until the operator
+  selector lands; every deployable build serves the best-effort posture unchanged.
+
 ## [0.18.1] — 2026-10-17
 
 v0.18.1 makes the Redis replay store's connection pool configurable and takes the rustls fix

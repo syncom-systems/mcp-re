@@ -316,6 +316,11 @@ pub use delegated_wiring::ProdDelegatedRotor;
 pub use delegated_tls::DelegatedCertResolver;
 pub use delegated_tls::RawEd25519TlsSigner;
 // ADR-MCPS-028 §C: the GCP Cloud KMS Ed25519 backend (feature-gated).
+/// The scripted reference commitment authority the serving integration tests install as the
+/// required posture's provider. Test builds and the test-only `audit_commitment_reference`
+/// feature only, so no deployable library exports it (ADR-MCPRE-070 §14 item 10).
+#[cfg(any(test, feature = "audit_commitment_reference"))]
+pub use audit_commitment::{ReferenceCommitment, ScriptedAnswer};
 pub use audit_record::AuditRecord;
 pub use audit_record::AuditSubject;
 pub use audit_sink::AuditSink;

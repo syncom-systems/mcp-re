@@ -19,7 +19,10 @@ pub(crate) const TIER_VOCABULARY: &str = "audit-durability/v1";
 /// minimum (surviving loss of a provider node, say) arrives with a vocabulary version and
 /// the first provider that declares it, never ahead of one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))] // declared by providers; none is compiled outside tests
+#[cfg_attr(
+    not(any(test, feature = "audit_commitment_reference")),
+    allow(dead_code)
+)] // declared by providers; none is compiled into a deployable build
 pub(crate) enum DurabilityTier {
     /// Lost with the proxy process. Never eligible for the required posture.
     ProcessVolatile,
