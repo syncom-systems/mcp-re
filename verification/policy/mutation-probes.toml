@@ -14352,7 +14352,9 @@ unit = "proxy.audit_intent_gate"
 theorem = "THM-0135"
 conjunct = "each exchange's intent is a new event of its own, so an intent left uncertain by a timed-out G1 is never resent, and never redeemed, for the next exchange (ADR-MCPRE-070 §3, §8)"
 # Pill-evidenced RED in #1207 (PP1): the second exchange was dispatched under the first
-# exchange's intent, and only the new control noticed.
+# exchange's intent, and only the new control noticed. The held intent is keyed by the
+# established provider instance the crossing commits to, so a parallel test in the same
+# binary, which commits to its own provider, can neither take nor clear the killer's entry.
 path = "mcp-re-proxy/src/audit_commitment/intent.rs"
 anchor = """
         let event = intent.produce(coordinate).map_err(|_| cannot_commit())?;
@@ -14363,20 +14365,25 @@ anchor = """
             .map_err(|failure| refusal_for(&failure))?;
 """
 weakening = """
-        static UNCERTAIN: std::sync::Mutex<Option<crate::audit_record::CanonicalEvent>> =
-            std::sync::Mutex::new(None);
-        let retried = UNCERTAIN.lock().unwrap().take();
+        static UNCERTAIN: std::sync::Mutex<Vec<(usize, crate::audit_record::CanonicalEvent)>> =
+            std::sync::Mutex::new(Vec::new());
+        let key = Arc::as_ptr(&self.provider) as usize;
+        let retried = {
+            let mut held = UNCERTAIN.lock().unwrap();
+            let at = held.iter().position(|(k, _)| *k == key);
+            at.map(|i| held.swap_remove(i).1)
+        };
         let event = match retried {
             Some(event) => event,
             None => intent.produce(coordinate).map_err(|_| cannot_commit())?,
         };
-        *UNCERTAIN.lock().unwrap() = Some(event.clone());
+        UNCERTAIN.lock().unwrap().push((key, event.clone()));
         let witness = self
             .provider
             .commit::<Intent>(&event, self.bound)
             .await
             .map_err(|failure| refusal_for(&failure))?;
-        UNCERTAIN.lock().unwrap().take();
+        UNCERTAIN.lock().unwrap().retain(|(k, _)| *k != key);
 """
 expect_red = [
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::an_uncertain_intent_identity_is_never_reused_by_the_next_exchange",
