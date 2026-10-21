@@ -458,6 +458,7 @@ _PROXY_LIB_SRCS = [
     # the features that link an HTTP client, so both are cfg'd out of the base flavor.
     "src/outbound_fetch/binding.rs",
     "src/outbound_fetch/credential_egress.rs",
+    "src/outbound_fetch/public_roots.rs",
     "src/outbound_fetch/resolver.rs",
     "src/outbound_fetch/url.rs",
     # ADR-MCPRE-051 §4: the ASYNC etcd authoritative replay backend (hyper over the
@@ -810,6 +811,7 @@ _PROXY_EXT_CRATES = [
     "@crates_mcp_re//:tower-service",
     "@crates_mcp_re//:rustls-native-certs",
     "@crates_mcp_re//:ureq",
+    "@crates_mcp_re//:webpki-roots",
     # ADR-MCPS-028 §B: SigV4 HMAC-SHA256 for the AWS KMS Ed25519 signer (feature
     # aws_kms_keysource). NOTE: base64 moved to _PROXY_LIB_DEPS — the registration
     # leaf below the auditor now uses it unconditionally, so ext inherits it via LIB
@@ -955,7 +957,10 @@ nt_rust_library(
     crate_features = ["scitt_registration"],
     crate_name = "mcp_re_proxy",
     edition = "2021",
-    deps = _PROXY_LIB_DEPS + ["@crates_mcp_re//:ureq"],
+    deps = _PROXY_LIB_DEPS + [
+        "@crates_mcp_re//:ureq",
+        "@crates_mcp_re//:webpki-roots",
+    ],
 )
 
 # ADR-MCPRE-054 / #841 G-2: the AUDITOR executable. A separate binary rather than a mode
@@ -996,6 +1001,7 @@ nt_rust_test(
         "@crates_mcp_re//:serde",
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:ureq",
+        "@crates_mcp_re//:webpki-roots",
         "@crates_mcp_re//:zeroize",
     ],
 )
@@ -1606,6 +1612,7 @@ nt_rust_test(
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:spki",
         "@crates_mcp_re//:ureq",
+        "@crates_mcp_re//:webpki-roots",
         "@crates_mcp_re//:zeroize",
     ],
 )
@@ -1687,6 +1694,7 @@ nt_rust_test(
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
         "@crates_mcp_re//:ureq",
+        "@crates_mcp_re//:webpki-roots",
     ],
 )
 
@@ -1938,6 +1946,7 @@ nt_rust_binary(
         "//mcp-re-http-profile:mcp_re_http_profile",
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:ureq",
+        "@crates_mcp_re//:webpki-roots",
     ],
 )
 

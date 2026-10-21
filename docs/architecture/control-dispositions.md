@@ -5026,3 +5026,14 @@ this one covers request signers too. No theorem depends on it.
 **Root relationship.** ADR-MCPRE-070 §8, D5, D9 — the identity and content every later commitment slice binds a witness to.
 **Severity:** `high`.
 **Recorded:** 2026-10-20, #1202 (Slice 1 of epic #1201).
+
+## NP-290 — an outbound agent's TLS authenticates a server against the public Web PKI roots and refuses one outside them
+
+**Controls:** `mcp-re-proxy` `lib#outbound_fetch::public_roots::tests` (4) — `a_server_under_a_trusted_root_completes_the_handshake_and_carries_bytes`, `the_public_connector_refuses_a_server_outside_the_public_roots`, `the_public_connector_is_built_over_the_shipped_root_set`, `a_name_that_is_not_a_server_name_is_refused`.
+**Carrier:** `mcp-re-proxy/src/outbound_fetch/public_roots.rs` (`RootedConnector`, installed by `VettedDestination::agent`).
+**Statement.** *Every agent from `VettedDestination::agent` speaks TLS through a rustls client over the whole `webpki-roots` 1.x root set, on the ring provider, presenting no client certificate: a server whose chain reaches none of those roots is refused as an unknown issuer before any request byte, and a server under a trusted root completes the handshake and carries bytes.*
+**If false.** A credential-bearing request (a KMS signature, an STS exchange, a bearer token) is sent to a server nobody authenticated, or to one authenticated under a root set the proxy never named, such as a distrusted one.
+**Likely owner:** none. proxy.outbound_destination holds the carrier in its paths but states admissibility of a destination, which a server-authentication test does not falsify.
+**Severity:** `critical`.
+**Root relationship.** Server authentication for every credential-bearing outbound request; recorded when ureq's own `tls` feature and its webpki-roots 0.26 shim left the graph (RUSTSEC-2026-0381, -0382).
+**Recorded:** 2026-10-21, RUSTSEC-2026-0381/-0382 dependency remediation.
