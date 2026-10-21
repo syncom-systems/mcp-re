@@ -79,6 +79,14 @@ mod credential_egress;
     feature = "scitt_registration",
     feature = "cpstore_etcd"
 ))]
+mod public_roots;
+#[cfg(any(
+    feature = "online_ocsp",
+    feature = "aws_kms_keysource",
+    feature = "gcp_kms_keysource",
+    feature = "scitt_registration",
+    feature = "cpstore_etcd"
+))]
 mod resolver;
 
 #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]

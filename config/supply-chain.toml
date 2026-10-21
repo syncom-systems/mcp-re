@@ -41,7 +41,7 @@ allow = [
     "ISC",          # rustls, rustls-webpki, untrusted, and part of ring
     "Unicode-3.0",  # unicode-ident
     "Unlicense",    # memchr (offered as "Unlicense OR MIT")
-    # webpki-roots (0.26 shim + 1.0), reached via ureq's `tls` feature. CDLA-
+    # webpki-roots 1.x, the root set the proxy's outbound TLS connector trusts. CDLA-
     # Permissive-2.0 is a DATA license: the crate ships the Mozilla CA root set,
     # and the CDLA governs that data, not code linked into MCP-RE. It is
     # permissive with no reciprocal/share-alike obligation on downstream output.
@@ -72,9 +72,8 @@ allow = [
 [bans]
 # Duplicates are REPORTED in general: a transitive bump that pulls a second major of
 # e.g. getrandom or thiserror should be visible, not block the gate on a non-security
-# issue. The graph carries several such duplicates — webpki-roots 0.26.11 (a thin
-# re-export shim) alongside 1.0.7 from ureq; asn1-rs 0.6/0.7 from the two x509-parser
-# generations; thiserror 1/2.
+# issue. The graph carries several such duplicates — getrandom 0.2/0.4, libloading 0.8/0.9
+# and base64 0.22/0.23.
 #
 # ...but NOT for the crates that decide how MCP-RE hashes. `sha2` is the implementation
 # the canonical preimage runs through and `block-buffer` is its internal buffer. Two
