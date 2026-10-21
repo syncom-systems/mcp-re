@@ -20,6 +20,7 @@ use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RequestRoleEvidence;
 
 use crate::async_serve::ServedHttpResponse;
+use crate::audit_record::ExchangeCoordinate;
 use crate::exchange_state::ExchangeProgress;
 use crate::exchange_state::ServedSuccess;
 use crate::request_stages::RetentionDisposition;
@@ -66,6 +67,7 @@ impl HttpProfileProxy {
         }
         if let Some(rejection) = self
             .retain_accepted(
+                acc.exchange_coordinate(),
                 acc.exchange().http_req,
                 &reply.response,
                 acc.exchange().now,
@@ -81,6 +83,7 @@ impl HttpProfileProxy {
         }
         crate::audit_record::record_to(
             &self.audit,
+            acc.exchange_coordinate(),
             crate::audit_record::AuditSubject::response_signed(),
             Some(acc.exchange().actor_id.to_owned()),
             reply.response.status,
@@ -156,6 +159,7 @@ impl HttpProfileProxy {
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn retain_accepted(
         &self,
+        exchange: Option<ExchangeCoordinate>,
         request: &HttpRequest,
         response: &HttpResponse,
         now: i64,
@@ -181,6 +185,7 @@ impl HttpProfileProxy {
         );
         Some(self.responses.response_rejection(
             &self.audit,
+            exchange,
             request,
             &refusal.cause,
             refusal.status,

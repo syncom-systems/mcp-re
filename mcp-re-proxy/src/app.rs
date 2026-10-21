@@ -674,8 +674,6 @@ mod tests {
     /// checks by looking for the LAST sequence number rather than any of them.
     #[test]
     fn a_record_enqueued_immediately_before_teardown_still_reaches_stderr() {
-        use crate::audit_sink::AuditSink;
-
         const BATCH: u64 = 2000;
         const CHILD_MARKER: &str = "MCP_RE_AUDIT_FLUSH_TEARDOWN_CHILD";
         const TEST_NAME: &str = "app::tests::\
@@ -691,16 +689,19 @@ mod tests {
             // an absent seq means "lost at exit" rather than "refused by the queue".
             let sink = crate::audit_sink::StderrAuditSink::open()
                 .expect("the OS CSPRNG yields an incarnation");
+            let audit: crate::audit_sink::MaybeAuditSink = Some(std::sync::Arc::new(sink));
             for i in 0..BATCH {
-                sink.record(&crate::audit_record::AuditRecord {
-                    subject: crate::audit_record::AuditSubject::request_accepted(
+                crate::audit_record::record_to(
+                    &audit,
+                    None,
+                    crate::audit_record::AuditSubject::request_accepted(
                         &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
                         crate::admission_enforcer::AdmissionFacet::NotConfigured,
                     ),
-                    actor_id: Some("teardown-actor".to_string()),
-                    status: 200,
-                    at_unix: i as i64,
-                });
+                    Some("teardown-actor".to_string()),
+                    200,
+                    i as i64,
+                );
             }
             let _ = super::run_request(
                 config,

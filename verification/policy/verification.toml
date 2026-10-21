@@ -7806,6 +7806,9 @@ paths = [
   # claim is about.
   "mcp-re-proxy/src/outbound_fetch/binding.rs",
   "mcp-re-proxy/src/outbound_fetch/credential_egress.rs",
+  # The TLS the bound agent speaks. Same reason: it rides the same features, and which
+  # roots an HTTPS destination is authenticated against is part of what the agent carries.
+  "mcp-re-proxy/src/outbound_fetch/public_roots.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -9337,6 +9340,21 @@ paths = [
   # The sink and the run it numbers within: `seq` is ordered only inside one incarnation.
   "mcp-re-proxy/src/audit_sink/stderr.rs",
   "mcp-re-proxy/src/audit_sink/stream.rs",
+  # Where `(run, seq)` is allocated, once per produced event (ADR-MCPRE-070 §8). Six of this
+  # unit's `tested_symbols` are `lib#audit_record::envelope::{allocator,run_id}::tests::*`.
+  # The rest of the envelope subtree and the emission funnel are fingerprinted here because
+  # every line this unit's stream writes is numbered by the event they produce and offer;
+  # the envelope's own proposition (NP-282) is not yet a unit.
+  "mcp-re-proxy/src/audit_record/emission.rs",
+  "mcp-re-proxy/src/audit_record/envelope/mod.rs",
+  "mcp-re-proxy/src/audit_record/envelope/allocator.rs",
+  "mcp-re-proxy/src/audit_record/envelope/binding.rs",
+  "mcp-re-proxy/src/audit_record/envelope/canonical.rs",
+  "mcp-re-proxy/src/audit_record/envelope/digest.rs",
+  "mcp-re-proxy/src/audit_record/envelope/event_id.rs",
+  "mcp-re-proxy/src/audit_record/envelope/identity_failure.rs",
+  "mcp-re-proxy/src/audit_record/envelope/run_id.rs",
+  "mcp-re-proxy/src/audit_record/envelope/scope.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -9357,12 +9375,18 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::every_line_names_its_run_and_its_number_in_that_run",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::a_stream_states_its_start_once_naming_its_run",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::recorded_lines_are_drainable_at_shutdown",
-  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::each_record_of_a_run_takes_the_next_number",
-  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::two_runs_with_the_same_numbers_stay_distinguishable",
-  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::a_position_has_no_number_in_another_run",
-  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::a_run_renders_as_32_hex_digits",
-  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::the_process_stream_is_drawn_once",
-  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::a_failed_draw_opens_nothing",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::envelope::allocator::tests::each_record_of_a_run_takes_the_next_number",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::envelope::allocator::tests::two_runs_with_the_same_numbers_stay_distinguishable",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::envelope::allocator::tests::a_position_has_no_number_in_another_run",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::envelope::run_id::tests::a_run_renders_as_32_hex_digits",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::envelope::allocator::tests::the_process_stream_is_drawn_once",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::envelope::allocator::tests::a_failed_draw_opens_nothing",
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::the_stream_lines_name_the_opened_run",
+  # The record line is byte-identical to v0.18.1 now that its `(run, seq)` is the produced
+  # event's identity rather than the sink's own position.
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::a_record_line_is_byte_identical_to_v0_18_1",
+  # A run that stops numbering says so on the stream rather than going quiet.
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::an_exhausted_run_says_so_once",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::tests::the_ceiling_a_record_is_admitted_at_is_chosen_by_its_attribution",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::writer::tests::a_burst_that_stops_still_reports_what_it_cost",
   # "One record in, one line out" is a DELIVERY claim: whatever the record says, the stream

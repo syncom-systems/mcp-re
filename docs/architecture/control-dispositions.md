@@ -4620,8 +4620,8 @@ clause and its two `durable_file.rs` controls stay here.
 
 ## NP-245 — a panicking audit sink loses its record and does not unwind into the request
 
-**Controls:** `mcp-re-proxy` `lib#audit_record::tests::a_panicking_sink_loses_the_record_and_does_not_unwind_into_the_request`.
-**Carrier:** `mcp-re-proxy/src/audit_record/mod.rs` (record_to).
+**Controls:** `mcp-re-proxy` `lib#audit_record::emission::tests::a_panicking_sink_loses_the_record_and_does_not_unwind_into_the_request`.
+**Carrier:** `mcp-re-proxy/src/audit_record/emission.rs` (record_to).
 **Statement.** *record_to delivers each record to the installed AuditSink, and a panic raised by that sink is contained in record_to: the record is lost and the caller returns normally.*
 **If false.** An embedder's sink fault, reachable from the unauthenticated preflight rejection path, kills the connection task.
 **Likely owner:** none. proxy.audit_delivery states bounded, non-blocking delivery for the stderr sink but its paths exclude the funnel; proxy.audit_authority_coordinates is the record's content.
@@ -5015,3 +5015,25 @@ this one covers request signers too. No theorem depends on it.
 **Root relationship.** THM-0077 (no deployment serves a posture nobody selected).
 **Severity:** `medium`.
 **Recorded:** 2026-10-16, v0.18.1 replay pool configurability.
+
+## NP-282 — an audit event's identity is allocated once at production, its canonical v1 bytes and digest are deterministic, and a reused identity with other content is an integrity conflict
+
+**Controls:** `audit_record::envelope::allocator::tests::{exhaustion_is_permanent_and_never_wraps, concurrent_allocation_hands_out_each_seq_once, the_last_seqs_are_contended_without_reuse}`; `audit_record::envelope::event_id::tests::an_identity_names_its_run_and_its_number_in_it`; `audit_record::envelope::identity_failure::tests::each_failure_states_its_own_cause`; `audit_record::envelope::scope::tests::{each_half_and_decision_takes_its_own_scope, no_accepted_identity_is_fabricated_or_borrowed, a_coordinate_from_another_run_or_a_later_event_is_refused, a_coordinate_names_the_accepted_event}`; `audit_record::envelope::canonical::tests::{the_v1_golden_vectors_are_byte_exact, the_v1_golden_digests_are_pinned, encoding_is_deterministic, each_field_change_changes_the_bytes, a_token_and_text_of_one_spelling_encode_differently, absent_and_empty_text_encode_differently, the_reference_reader_round_trips_every_vector, the_reference_reader_refuses_non_canonical_forms, every_enumerable_record_matches_the_v1_schema_table}`; `audit_record::envelope::digest::tests::the_digest_is_labelled`; `audit_record::envelope::binding::tests::a_binding_is_classified_against_an_earlier_sighting`; `audit_record::envelope::tests::{an_identical_retry_keeps_id_bytes_and_digest, same_id_with_other_content_is_an_integrity_conflict, distinct_ids_are_distinct_events, arrival_order_does_not_enter_identity, an_origin_envelope_is_its_own_exchange_coordinate, the_record_rides_unchanged}`; `audit_record::emission::tests::{a_retrying_sink_sees_one_identity_for_all_attempts, exhaustion_reaches_the_sink_as_unnumbered_and_emits_nothing, the_exchange_coordinate_does_not_depend_on_an_observer}`; `audit_sink::stream::tests::a_draw_yields_sixteen_bytes_and_two_draws_differ`; and, in `//mcp-re-proxy:integration_async_test`, `delegated_client_server_e2e_test::{an_accepted_exchange_links_its_signed_response_to_the_accepted_event, a_refusal_before_acceptance_carries_the_pre_acceptance_scope, the_envelope_keeps_the_verifier_resolved_actor_and_both_facets}`.
+**Carrier:** `mcp-re-proxy/src/audit_record/envelope/` — `AuditEnvelope::produce`, `EventAllocator::next`, `EventScope::derive`, `canonical::encode`, `ContentDigest::of`, `EventBinding::recurrence_of`; `mcp-re-proxy/src/audit_record/emission.rs` — `record_to`, `produce`, `offer`.
+**Statement.** *Every decision `record_to` is given is produced as one event whether or not a sink is installed: its `(run, seq)` is allocated once by a checked compare-and-swap that never wraps and fails permanently at exhaustion; its scope is derived — `Origin` for an accepted request, `PreAcceptance` for a refused one, `Exchange` naming an earlier accepted event of the same run for a response, and refused otherwise; its canonical v1 bytes are the fixed-schema encoding of exactly its record and its digest is `SHA-256("mcp-re-audit-v1/envelope" || 0x00 || bytes)`. A sink receives that envelope and cannot renumber it, and one identity seen with two digests is an `IntegrityConflict`.*
+**If false.** A retrying transport would mint a new identity per attempt, so a provider could not deduplicate a retry and would record one decision twice; a wrapped sequence would reuse identities; a response could be attached to an exchange it does not belong to, or given a fabricated accepted identity (D9); two encodings of one event could differ, so its digest would not be its content identity (D5).
+**Likely owner:** none yet; #1207 ratifies it into a unit and theorem. `proxy.audit_delivery` owns what the stderr stream shows of the identity.
+**Root relationship.** ADR-MCPRE-070 §8, D5, D9 — the identity and content every later commitment slice binds a witness to.
+**Severity:** `high`.
+**Recorded:** 2026-10-20, #1202 (Slice 1 of epic #1201).
+
+## NP-290 — an outbound agent's TLS authenticates a server against the public Web PKI roots and refuses one outside them
+
+**Controls:** `mcp-re-proxy` `lib#outbound_fetch::public_roots::tests` (4) — `a_server_under_a_trusted_root_completes_the_handshake_and_carries_bytes`, `the_public_connector_refuses_a_server_outside_the_public_roots`, `the_public_connector_is_built_over_the_shipped_root_set`, `a_name_that_is_not_a_server_name_is_refused`.
+**Carrier:** `mcp-re-proxy/src/outbound_fetch/public_roots.rs` (`RootedConnector`, installed by `VettedDestination::agent`).
+**Statement.** *Every agent from `VettedDestination::agent` speaks TLS through a rustls client over the whole `webpki-roots` 1.x root set, on the ring provider, presenting no client certificate: a server whose chain reaches none of those roots is refused as an unknown issuer before any request byte, and a server under a trusted root completes the handshake and carries bytes.*
+**If false.** A credential-bearing request (a KMS signature, an STS exchange, a bearer token) is sent to a server nobody authenticated, or to one authenticated under a root set the proxy never named, such as a distrusted one.
+**Likely owner:** none. proxy.outbound_destination holds the carrier in its paths but states admissibility of a destination, which a server-authentication test does not falsify.
+**Severity:** `critical`.
+**Root relationship.** Server authentication for every credential-bearing outbound request; recorded when ureq's own `tls` feature and its webpki-roots 0.26 shim left the graph (RUSTSEC-2026-0381, -0382).
+**Recorded:** 2026-10-21, RUSTSEC-2026-0381/-0382 dependency remediation.

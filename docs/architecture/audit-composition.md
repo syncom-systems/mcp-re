@@ -455,10 +455,11 @@ mcp-re-proxy: audit dropped=… run=… (…)
 mcp-re-proxy: audit stream drained at shutdown run=…: …
 ```
 
-A record's position is `(run, seq)`. `run` is 128 random bits drawn once per process, and
-`seq` counts from 0 within that run, so two runs' records stay distinguishable in one
-collector and `seq` orders records only within a run. A run with a start line and no shutdown
-line ended with an unknown tail.
+A record's position is `(run, seq)`: the identity its event was given when it was produced
+(ADR-MCPRE-070 §8), allocated once by `audit_record::envelope` and never by the sink. `run` is
+128 random bits drawn once per process, and `seq` counts from 0 within that run, so two runs'
+records stay distinguishable in one collector and `seq` orders records only within a run. A
+run with a start line and no shutdown line ended with an unknown tail.
 
 There is **no JSON audit record anywhere in the product**. `security-boundary.md` §9 shows
 `{ "event_type": …, "reason": … }`, but that example illustrates the *vocabulary*, not a wire
@@ -473,6 +474,12 @@ vocabulary. It would stop being tolerable if ADR-066 were read as adding a *seri
 contract, so this record states explicitly: **ADR-066 introduces no audit serialization
 contract.** It decides which facts exist and who owns them. How a sink renders them stays the
 sink's, and any future serialization contract needs its own record.
+
+That record now exists for the event, not for the line. ADR-MCPRE-070 D5 gives every produced
+audit event one canonical, versioned, length-delimited binary encoding — the `AuditEnvelope`'s
+bytes, whose field sequence is exactly the owners' `audit_fields()`, so the facets are carried
+as their owners project them. The stderr line above is a rendering of the same record and
+remains un-contracted.
 
 ### R2-P3 — what does the change cost existing consumers? **Measurably little**
 

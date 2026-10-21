@@ -523,7 +523,7 @@ record = "docs/architecture/control-dispositions.md#np-244"
 [[proposition]]
 id = "NP-245"
 title = "A panicking audit sink loses its record and does not unwind into the request"
-carrier = "mcp-re-proxy/src/audit_record/mod.rs (record_to)"
+carrier = "mcp-re-proxy/src/audit_record/emission.rs (record_to)"
 likely_owner = "none. proxy.audit_delivery states bounded, non-blocking delivery for the stderr sink but its paths exclude the funnel; proxy.audit_authority_coordinates is the record's content."
 consequence = "medium"
 root_relationship = "Beside proxy.audit_delivery: delivery is stated there for the shipped sink, this covers the funnel's containment of any installed sink."
@@ -13763,7 +13763,7 @@ recorded = "2026-10-04"
 [[disposition]]
 id = "CD-20230"
 project = "mcp-re-proxy"
-control = "src/lib.rs#audit_record::tests::a_panicking_sink_loses_the_record_and_does_not_unwind_into_the_request"
+control = "src/lib.rs#audit_record::emission::tests::a_panicking_sink_loses_the_record_and_does_not_unwind_into_the_request"
 decision = "new-proposition"
 proposition = "NP-245"
 recorded = "2026-10-04"
@@ -15121,6 +15121,15 @@ consequence = "medium"
 root_relationship = "under THM-0077 — no deployment serves a posture nobody selected: a pool size is a value an operator states, and one stated beside no Redis store, or outside the admitted range, is refused rather than ignored or clamped"
 record = "docs/architecture/control-dispositions.md#np-281"
 
+[[proposition]]
+id = "NP-290"
+title = "An outbound agent's TLS authenticates a server against the public Web PKI roots and refuses one outside them"
+carrier = "mcp-re-proxy/src/outbound_fetch/public_roots.rs (RootedConnector, installed by VettedDestination::agent)"
+likely_owner = "none. proxy.outbound_destination holds the carrier in its paths but states admissibility of a destination, which a server-authentication test does not falsify."
+consequence = "critical"
+root_relationship = "Server authentication for every credential-bearing outbound request (KMS, STS, metadata, SCITT registration): the roots that request is authenticated against, after ureq's own `tls` feature and its webpki-roots 0.26 shim left the graph (RUSTSEC-2026-0381)."
+record = "docs/architecture/control-dispositions.md#np-290"
+
 [[disposition]]
 id = "CD-20489"
 project = "mcp-re-proxy"
@@ -15184,3 +15193,308 @@ control = "tests/integration_ext/main.rs#redis_replay_e2e_test::a_pooled_store_f
 decision = "new-proposition"
 proposition = "NP-150"
 recorded = "2026-10-16"
+
+[[proposition]]
+id = "NP-282"
+title = "An audit event's identity is allocated once at production, its canonical v1 bytes and digest are deterministic, and a reused identity with other content is an integrity conflict"
+carrier = "mcp-re-proxy/src/audit_record/envelope/ and mcp-re-proxy/src/audit_record/emission.rs (record_to)"
+likely_owner = "none yet; #1207 ratifies it into a unit and theorem. proxy.audit_delivery owns the stream's numbering honesty, not the envelope's identity, scope and encoding."
+consequence = "high"
+root_relationship = "ADR-MCPRE-070 §8, D5, D9: the identity and content every later commitment slice (#1203-#1206) binds a witness to. Beside proxy.audit_delivery, which states what the stderr stream shows of that identity."
+record = "docs/architecture/control-dispositions.md#np-282"
+
+[[disposition]]
+id = "CD-20497"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::event_id::tests::an_identity_names_its_run_and_its_number_in_it"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20498"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::identity_failure::tests::each_failure_states_its_own_cause"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20499"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::allocator::tests::exhaustion_is_permanent_and_never_wraps"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20500"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::allocator::tests::concurrent_allocation_hands_out_each_seq_once"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20501"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::allocator::tests::the_last_seqs_are_contended_without_reuse"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20502"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::scope::tests::each_half_and_decision_takes_its_own_scope"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20503"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::scope::tests::no_accepted_identity_is_fabricated_or_borrowed"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20504"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::scope::tests::a_coordinate_from_another_run_or_a_later_event_is_refused"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20505"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::scope::tests::a_coordinate_names_the_accepted_event"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20506"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::canonical::tests::the_v1_golden_vectors_are_byte_exact"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20507"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::canonical::tests::the_v1_golden_digests_are_pinned"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20508"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::canonical::tests::encoding_is_deterministic"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20509"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::canonical::tests::each_field_change_changes_the_bytes"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20510"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::canonical::tests::a_token_and_text_of_one_spelling_encode_differently"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20511"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::canonical::tests::absent_and_empty_text_encode_differently"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20512"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::canonical::tests::the_reference_reader_round_trips_every_vector"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20513"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::canonical::tests::the_reference_reader_refuses_non_canonical_forms"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20514"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::canonical::tests::every_enumerable_record_matches_the_v1_schema_table"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20515"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::digest::tests::the_digest_is_labelled"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20516"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::binding::tests::a_binding_is_classified_against_an_earlier_sighting"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20517"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::tests::an_identical_retry_keeps_id_bytes_and_digest"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20518"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::tests::same_id_with_other_content_is_an_integrity_conflict"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20519"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::tests::distinct_ids_are_distinct_events"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20520"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::tests::arrival_order_does_not_enter_identity"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20521"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::tests::an_origin_envelope_is_its_own_exchange_coordinate"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20522"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::tests::the_record_rides_unchanged"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20523"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::emission::tests::a_retrying_sink_sees_one_identity_for_all_attempts"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20524"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::emission::tests::exhaustion_reaches_the_sink_as_unnumbered_and_emits_nothing"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20525"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::emission::tests::the_exchange_coordinate_does_not_depend_on_an_observer"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20526"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_sink::stream::tests::a_draw_yields_sixteen_bytes_and_two_draws_differ"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20527"
+project = "mcp-re-proxy"
+control = "tests/integration_async/main.rs#delegated_client_server_e2e_test::an_accepted_exchange_links_its_signed_response_to_the_accepted_event"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20528"
+project = "mcp-re-proxy"
+control = "tests/integration_async/main.rs#delegated_client_server_e2e_test::a_refusal_before_acceptance_carries_the_pre_acceptance_scope"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20529"
+project = "mcp-re-proxy"
+control = "tests/integration_async/main.rs#delegated_client_server_e2e_test::the_envelope_keeps_the_verifier_resolved_actor_and_both_facets"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20600"
+project = "mcp-re-proxy"
+control = "src/lib.rs#outbound_fetch::public_roots::tests::a_server_under_a_trusted_root_completes_the_handshake_and_carries_bytes"
+decision = "new-proposition"
+proposition = "NP-290"
+recorded = "2026-10-21"
+
+[[disposition]]
+id = "CD-20601"
+project = "mcp-re-proxy"
+control = "src/lib.rs#outbound_fetch::public_roots::tests::the_public_connector_refuses_a_server_outside_the_public_roots"
+decision = "new-proposition"
+proposition = "NP-290"
+recorded = "2026-10-21"
+
+[[disposition]]
+id = "CD-20602"
+project = "mcp-re-proxy"
+control = "src/lib.rs#outbound_fetch::public_roots::tests::the_public_connector_is_built_over_the_shipped_root_set"
+decision = "new-proposition"
+proposition = "NP-290"
+recorded = "2026-10-21"
+
+[[disposition]]
+id = "CD-20603"
+project = "mcp-re-proxy"
+control = "src/lib.rs#outbound_fetch::public_roots::tests::a_name_that_is_not_a_server_name_is_refused"
+decision = "new-proposition"
+proposition = "NP-290"
+recorded = "2026-10-21"

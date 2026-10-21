@@ -12192,7 +12192,7 @@ expect_red = [
 id = "M494-proxy-a-seq-has-no-meaning-in-another-run"
 unit = "proxy.audit_delivery"
 conjunct = "a position's seq is handed out only for its own run, so two runs' numbers cannot be compared as one order"
-path = "mcp-re-proxy/src/audit_sink/stream.rs"
+path = "mcp-re-proxy/src/audit_record/envelope/event_id.rs"
 anchor = """
         (self.run == *run).then_some(self.seq)
 """
@@ -12201,7 +12201,7 @@ weakening = """
         Some(self.seq)
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::a_position_has_no_number_in_another_run",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::envelope::allocator::tests::a_position_has_no_number_in_another_run",
 ]
 
 [[probe]]

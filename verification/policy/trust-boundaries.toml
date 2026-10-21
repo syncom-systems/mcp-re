@@ -283,6 +283,9 @@ paths = [
   # `WebPkiServerVerifier` here, and every server-authentication verdict it reports is
   # rustls'. ASM-0070 is the premise a unit crossing it rests on.
   "mcp-re-transport/src/tls_config.rs",
+  # The proxy's outbound HTTPS: the connector every outbound agent installs builds rustls'
+  # client over the public Web PKI roots, and whether a server is authenticated is rustls'.
+  "mcp-re-proxy/src/outbound_fetch/public_roots.rs",
 ]
 beyond = "Whether a handshake that reports success proved what the protocol says it proves, whether the reported chain is the peer's in the order claimed, and whether a resumed session continues an earlier authenticated one."
 max_class_without_assumption = "V0"
