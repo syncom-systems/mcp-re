@@ -9679,6 +9679,7 @@ tested_symbols = [
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_notification_without_commitment_gets_no_202",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::cancelled_during_intent_commit_reaches_no_backend",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::crash_window_w2_store_may_hold_intent_but_nothing_ran",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::an_uncertain_intent_identity_is_never_reused_by_the_next_exchange",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::w3_retention_commit_failure_after_intent_leaves_no_pending_and_no_dispatch",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::g1_failure_rescinds_the_reservation",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::the_window_must_survive_the_commitment_wait",
@@ -9760,6 +9761,7 @@ tested_symbols = [
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::signed_refusals_under_required_are_unchanged_and_commit_no_outcome",
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::w4_cancel_after_dispatch_never_claims_nothing_executed",
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::w6_outcome_committed_then_lost_before_the_write",
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::a_full_observer_queue_changes_neither_dispatch_nor_success",
 ]
 
 

@@ -270,12 +270,12 @@ rulings in §15.
 | P2 a deterministic canonical digest | shared (#1202) | new; D5 | encoding only, not meaning |
 | P3 an observer cannot mint authority | shared, structural (#1203) | ADR-MCPRE-066 composition untouched | compile-refusal evidence |
 | P4 witness binding and single use | shared (#1203) | new | says nothing about provider honesty |
-| P5 S1, no dispatch without an intent witness | shared machine (#1204) | **new theorem** (#1207). THM-0071 is a claim about refusals and is not widened | conditional on the posture being Required |
-| P6 S2, no visible success without an outcome witness | shared machine (#1205) | **new theorem**, same as P5 | — |
+| P5 S1, no dispatch without an intent witness | shared machine (#1204) | **new theorem THM-0135** (#1207). THM-0071 is a claim about refusals and is not widened | conditional on the posture being Required |
+| P6 S2, no visible success without an outcome witness | shared machine (#1205) | **new theorem THM-0136**, same as P5 | — |
 | P7 S5, never NothingExecuted after the threshold | shared machine | existing `backend_may_have_executed` / `RetrySemantics` (F16), unchanged | — |
 | P8 S4, no silent downgrade | startup (#1206) | `Established<T>` pattern | — |
-| P9 a committed event survives proxy loss | **provider assumption** | the replacement for F18's non-claim is conditional | mechanism evidence, per provider |
-| P10 eventual archive | provider + downstream assumption | L3 | never a test result |
+| P9 a committed event survives proxy loss | **provider assumption** (ASM-0089) | the replacement for F18's non-claim is conditional | mechanism evidence, per provider |
+| P10 eventual archive | provider + downstream assumption (ASM-0090; capacity, ASM-0091) | L3 | never a test result |
 | P11 refusals are offered before they are answered | unchanged | **THM-0085, THM-0071 as stated** ("offered", in-process) | not weakened, not silently widened |
 
 ADR-MCPS-035's vocabulary gains the `execution.intent` category through a documented, versioned

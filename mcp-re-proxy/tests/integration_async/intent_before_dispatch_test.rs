@@ -445,6 +445,38 @@ pub(crate) mod required {
         assert_eq!(reference.journaled().len(), 1, "the intent is in the store");
     }
 
+    /// G1 timed out after the provider journaled the intent. The exchange is refused before
+    /// dispatch, and that intent's identity stays possibly committed: the next exchange
+    /// commits an intent of its own under a new identity, which the store accepts without an
+    /// identity conflict (ADR-MCPRE-070 §3, §8; §11 "G1 timeout or cancel").
+    #[test]
+    fn an_uncertain_intent_identity_is_never_reused_by_the_next_exchange() {
+        let reference = ReferenceCommitment::surviving_process_loss([
+            ScriptedAnswer::CommitThenPark,
+            ScriptedAnswer::Commit,
+            ScriptedAnswer::Commit,
+        ]);
+        let (d, _) = required(&reference, BOUND);
+        assert_eq!(d.call(&plain_request()).kind, refused_unavailable());
+        assert_eq!((d.calls(), d.last_status()), (0, Some(503)));
+        let uncertain = reference.journaled();
+        assert_eq!(uncertain.len(), 1, "the store holds the unanswered intent");
+
+        assert_eq!(d.call(&plain_request()).kind, ResponseKind::Success);
+        assert_eq!(d.calls(), 1, "only the second exchange ran");
+        let journaled = reference.journaled();
+        assert_eq!(
+            journaled.len(),
+            3,
+            "the unanswered intent, then an intent and an outcome"
+        );
+        assert_ne!(
+            journaled[1].0, uncertain[0].0,
+            "a new identity, never the uncertain one"
+        );
+        assert_ne!(journaled[1].1, uncertain[0].1, "for a new exchange");
+    }
+
     pub(crate) fn files_under(dir: &std::path::Path, suffix: &str) -> Vec<std::path::PathBuf> {
         let mut found = Vec::new();
         let mut stack = vec![dir.to_path_buf()];

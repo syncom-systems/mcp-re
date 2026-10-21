@@ -445,16 +445,35 @@ rejection vocabulary**.
   "Invalid signature") may accompany an event for readability. It is display-only
   and **must never be parsed**; the stable machine token is always `reason`.
 
-**Delivery posture (ADR-MCPRE-070 §2).** These tokens are delivered best-effort by default
-(`--audit-commitment best-effort`): the observer never affects a request and makes no
-persistence claim. Under `--audit-commitment required` an execution intent
-(`mcp-re.execution.intent`) is committed before dispatch and the outcome before visible
-success, through a commitment provider the build registers; persistence is then conditional
-on the tier that provider DECLARES (`audit-durability/v1`, minimum
-`SURVIVES_PROXY_PROCESS_LOSS`), an external evidence obligation rather than a property the
-proxy proves (D3). A required posture with no established qualifying provider, with the
-test-only reference authority, or with `--audit-sink none` refuses startup — it never runs as
-best-effort (S4). The open-source binary registers no provider.
+**Delivery posture (ADR-MCPRE-070 §2).** Four different statements, and none of them implies
+the next:
+
+1. **Best-effort observation** — the default (`--audit-commitment best-effort`). The observer
+   never affects a request: a record it cannot deliver is dropped and counted. It makes no
+   persistence claim, and §3's non-claim stands for it unchanged: if the process disappears,
+   records emitted and not yet drained go with it. Accepting a record into a queue, writing it
+   to a pipe, or a collector acknowledging it is not commitment.
+2. **Required, provider-bound commitment** — `--audit-commitment required`. An execution intent
+   (`mcp-re.execution.intent`) is committed before the backend is dispatched, and the outcome
+   before a success (a bodied reply or a 202) is visible, each through a witness the proxy
+   checks against what it sent and spends once. That much is the proxy's: THM-0135 and
+   THM-0136 state it as SAFETY, and it holds whatever the provider does — a commitment that
+   fails is a refusal, never a dispatch or a success. What a committed event then means for
+   persistence is conditional: it survives loss of the proxy process **if** the registered
+   provider's declared tier (`audit-durability/v1`, minimum `SURVIVES_PROXY_PROCESS_LOSS`) is
+   honest (ASM-0089, D3). That is an external evidence obligation per provider, never a
+   property the proxy proves. A required posture with no established qualifying provider,
+   with the test-only reference authority, or with `--audit-sink none` refuses startup — it
+   never runs as best-effort (S4). The open-source binary registers no provider.
+3. **Downstream delivery is at-least-once.** A committed event may reach an archive more than
+   once, under one identity and one digest; consumers deduplicate on that binding, never on a
+   transport position. There is no exactly-once delivery and no global order across runs.
+4. **Persistence and liveness are not proved.** Nothing here establishes that a provider
+   persisted anything, that a required exchange eventually succeeds (it needs the provider to
+   answer within its bound and recover, ASM-0090, and to have capacity for the offered rate,
+   ASM-0091), or that a committed event is ever archived (ASM-0090). No unconditional
+   permanence is claimed, a committed outcome is not evidence the client received the
+   response, and THM-0071 remains a claim about the modeled in-process path only.
 
 **Adding a rejection outcome** therefore requires adding an `McpReError` variant
 first (the frozen-taxonomy process), which the audit layer inherits
