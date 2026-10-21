@@ -21,6 +21,7 @@ use super::machine_violations::MachineViolations;
 /// relation is asked of the states this pass produces.
 pub(super) struct Refusals {
     admission: Vec<String>,
+    audit: Vec<String>,
     authorization: Vec<String>,
     channel_binding: Vec<String>,
     continuation_control: Vec<String>,
@@ -43,6 +44,7 @@ impl Refusals {
     pub(super) fn with_cross(self, cross: CrossMachineViolations) -> MachineViolations {
         MachineViolations {
             admission: self.admission,
+            audit: self.audit,
             authorization: self.authorization,
             channel_binding: self.channel_binding,
             continuation_control: self.continuation_control,
@@ -68,6 +70,7 @@ impl Refusals {
 /// `None` is a refusal already made, never an absence.
 pub(super) struct RefusableStates {
     pub(super) admission: Option<crate::config_state::AdmissionState>,
+    pub(super) audit: Option<crate::config_state::AuditState>,
     pub(super) authorization: Option<crate::config_state::AuthorizationState>,
     pub(super) channel_binding: Option<crate::config_state::ChannelBindingState>,
     pub(super) client_credential_window: Option<crate::config_state::ClientCredentialWindow>,
@@ -98,6 +101,7 @@ pub(super) fn classify_refusable(config: &DeploymentRequest) -> (RefusableStates
     let channel_credential_custody = m::channel_credential_custody::classify_and_validate(config);
     let trust_revocation = m::trust_revocation::classify_and_validate(config);
     let admission = m::admission::classify_and_validate(config);
+    let audit = m::audit_policy::classify_and_validate(config);
     let authorization = m::authorization::classify_and_validate(config);
     let channel_binding = m::transport::classify_and_validate_binding(config);
     let crl_revocation = m::crl_revocation::classify_and_validate_crl(config);
@@ -114,6 +118,7 @@ pub(super) fn classify_refusable(config: &DeploymentRequest) -> (RefusableStates
     (
         RefusableStates {
             admission: admission.0,
+            audit: audit.0,
             authorization: authorization.0,
             channel_binding: channel_binding.0,
             client_credential_window: client_credential_window.0,
@@ -132,6 +137,7 @@ pub(super) fn classify_refusable(config: &DeploymentRequest) -> (RefusableStates
         },
         Refusals {
             admission: admission.1,
+            audit: audit.1,
             authorization: authorization.1,
             channel_binding: channel_binding.1,
             continuation_control: continuation_control.1,

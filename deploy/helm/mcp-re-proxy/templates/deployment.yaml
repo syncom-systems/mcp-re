@@ -221,6 +221,9 @@ spec:
             # ADR-MCPS-035: the per-request security record.
             - "--audit-sink"
             - {{ .Values.auditSink | quote }}
+            # ADR-MCPRE-070 §2: how the record is delivered. Always stated, like the sink.
+            - "--audit-commitment"
+            - {{ .Values.auditCommitment | quote }}
             {{- if eq .Values.verifiedContextCarrier "trusted" }}
             # #415 §10: asserts nothing but this proxy can reach the inner server.
             - "--verified-context-carrier"

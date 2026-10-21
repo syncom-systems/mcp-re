@@ -14,6 +14,7 @@ use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::RequestRoleEvidence;
 
 use crate::admission_enforcer::AdmissionFacet;
+use crate::audit_record::ExchangeCoordinate;
 use crate::audit_sink::MaybeAuditSink;
 use crate::refusal::RefusalCause;
 use mcp_re_http_profile::ExecutionDisposition;
@@ -27,10 +28,12 @@ use super::ResponseSigning;
 /// An exchange whose `mcp-re.request.accepted` record has been emitted; every refusal
 /// served through one is `mcp-re.response.rejected` by type.
 ///
-/// The field is private to this module, so [`Accepted::record`] — which emits the record —
-/// is the only way to hold one.
+/// The fields are private to this module, so [`Accepted::record`] — which emits the record —
+/// is the only way to hold one. `exchange` is the coordinate that record's event established
+/// (ADR-MCPRE-070 D9), `None` only when no event could be produced for it.
 pub(in crate::http_profile_serve) struct Accepted<'a> {
     ans: Answerable<'a>,
+    exchange: Option<ExchangeCoordinate>,
 }
 
 impl<'a> Accepted<'a> {
@@ -49,8 +52,9 @@ impl<'a> Accepted<'a> {
         admitted: &AdmittedRequest<'_>,
         ans: Answerable<'a>,
     ) -> Self {
-        crate::audit_record::record_to(
+        let exchange = crate::audit_record::record_to(
             audit,
+            None,
             // The live product, asked for its own projection. Nothing here reconstructs an
             // authorization fact, and an unconfigured deployment says so rather than reading
             // as an allow (ADR-MCPRE-066 §1.1, invariant 5).
@@ -68,7 +72,12 @@ impl<'a> Accepted<'a> {
             200,
             ans.ex.now,
         );
-        Accepted { ans }
+        Accepted { ans, exchange }
+    }
+
+    /// The coordinate every response record of this exchange carries.
+    pub(in crate::http_profile_serve) fn exchange_coordinate(&self) -> Option<ExchangeCoordinate> {
+        self.exchange
     }
 
     /// The exchange, lent shared only.
@@ -129,7 +138,7 @@ impl ResponseSigning {
                 admission,
             ),
         };
-        crate::audit_record::record_to(audit, subject, actor_id, status, now);
+        crate::audit_record::record_to(audit, None, subject, actor_id, status, now);
         self.signed_rejection(
             request,
             cause.wire_code(),
@@ -148,11 +157,12 @@ impl ResponseSigning {
     /// answerable. Emitting `request.rejected` here would contradict the `accepted`
     /// record for the same request and attribute a backend fault to the caller;
     /// `mcp-re.response.rejected` is the frozen token the §9 taxonomy splits out for
-    /// exactly this.
+    /// exactly this. `exchange` is the coordinate of the accepted exchange it belongs to.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn response_rejection(
         &self,
         audit: &MaybeAuditSink,
+        exchange: Option<ExchangeCoordinate>,
         request: &HttpRequest,
         cause: &RefusalCause,
         status: u16,
@@ -164,6 +174,7 @@ impl ResponseSigning {
     ) -> ServedHttpResponse {
         crate::audit_record::record_to(
             audit,
+            exchange,
             crate::audit_record::AuditSubject::response_rejected(cause.core_verdict().as_ref()),
             actor_id,
             status,

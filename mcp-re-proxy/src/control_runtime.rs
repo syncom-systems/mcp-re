@@ -64,7 +64,6 @@ impl ControlRuntimeProvision {
     ///
     /// Every later request receives a handle to the same runtime. The only refusal is the
     /// runtime failing to build, which is a fact about the host.
-    #[cfg_attr(not(feature = "redis_replay"), allow(dead_code))]
     pub fn handle(&self) -> Result<tokio::runtime::Handle, String> {
         // A poisoned lock means another request panicked; the slot is still `None` or a
         // fully built runtime, because the build completes before it is stored.

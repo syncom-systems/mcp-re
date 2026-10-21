@@ -32,7 +32,7 @@ pub use admission::{AdmissionAvailabilityRequest, AdmissionGateRequest, Admissio
 pub use authorization::AuthorizationRequest;
 pub use delegated_signing::DelegatedSigningRequest;
 pub use inner_backend_display::InnerBackendUrls;
-pub use kinds::{AuditSinkKind, AuthzKind, VerifiedContextKind};
+pub use kinds::{AuditDeliveryKind, AuditRequest, AuditSinkKind, AuthzKind, VerifiedContextKind};
 pub use peer_identity::{
     AttestedIngressRequest, ChannelCredentialIdentityRequest, IngressAssertionRequest,
     PeerIdentityEvidenceRequest, PinnedChannelAcknowledgement,
@@ -180,14 +180,14 @@ pub struct DeploymentRequest {
     /// enforcing forms, so there is no `off` to hang them from and the five dangling
     /// clauses have no configuration left to examine (ADR-MCPRE-067 §7).
     pub admission: AdmissionRequest,
-    /// ADR-MCPS-035: where the per-request security record goes. The field has no
-    /// default (a request built in code names it); the CLI surface defaults an absent
-    /// `--audit-sink` to `Stderr`, because the absent case has to be the safe one: a
-    /// run outside the Helm chart would otherwise serve production traffic with no
-    /// per-request attribution, and a compromise cannot be scoped from records never
-    /// written. Turning it off is explicit (`--audit-sink none`), and the startup line
-    /// states which posture is in force either way.
-    pub audit_sink: AuditSinkKind,
+    /// ADR-MCPS-035 / ADR-MCPRE-070 §2: where the per-request security record goes and
+    /// whether its commitment is required. No default (a request built in code names it);
+    /// the CLI defaults an absent `--audit-sink` to `Stderr` and `--audit-commitment` to
+    /// best-effort, because the absent case has to be the safe one: production traffic
+    /// with no per-request attribution cannot be scoped after a compromise. Turning the
+    /// record off is explicit (`--audit-sink none`); requiring commitment is explicit too,
+    /// and the startup line states which posture is in force either way.
+    pub audit: AuditRequest,
     /// ADR-MCPRE-054: where retained evidence goes. `None` by default — nothing is
     /// retained and the request path is unchanged.
     ///

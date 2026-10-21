@@ -121,18 +121,9 @@ impl TryFrom<DeploymentRequest> for ValidatedDeployment {
 /// so this is applied unconditionally. This is the pure, black-box-testable core:
 /// each returned string names the offending flag and how to fix it. It covers ONLY
 /// the conditions knowable from the parsed [`DeploymentRequest`] — the group/world-readable
-/// key-file check is filesystem-dependent and lives in `main.rs` (which reads the
-/// file mode and reuses the same fail-closed posture).
-///
-/// ADR-MCPS-023 §A1 (v0.9, MCPS-57): a `--max-client-cert-lifetime` GREATER than
-/// [`crate::config_state::client_credential_window::MAX_CLIENT_CERT_LIFETIME`] is rejected. Mode-A's entire certificate-revocation
-/// posture is short-lived certificates (on GCP the online-OCSP path is a no-op and
-/// CAS is CRL-only), so a long-lived cert cannot honestly be audited as
-/// `short_lived_cert`. DISABLED enforcement (`none`/`0`, i.e.
-/// `max_client_cert_lifetime == None`) is likewise rejected.
-///
-/// The postures rejected here are the pure-config, platform-independent fail-open
-/// ones: a non-durable/weak replay tier (#90/ADR-MCPS-020) and lb-assertion binding.
+/// key-file check is filesystem-dependent and is applied at materialization, by the
+/// key-file custody owner (`capability_materialization::admit_key_files`). Which postures
+/// are refused is each machine's own column, not a list kept here.
 ///
 /// The violations alone. [`validate_configuration`] is the boundary proper — it runs the
 /// same single pass and additionally returns what that pass RECOGNISED, which is what the
@@ -188,6 +179,7 @@ fn legality_violations(
     config: &DeploymentRequest,
     MachineViolations {
         admission,
+        audit,
         authorization,
         channel_binding,
         continuation_control,
@@ -357,6 +349,9 @@ fn legality_violations(
     // `TrustRevocation` machine, and carried in the classification; nothing is re-derived
     // here (CF-09).
     violations.extend(x9_trust_epoch_posture);
+    // The `Audit` machine (ADR-MCPRE-070 §11). A NEW position, last: its one clause has no
+    // predecessor and is read after everything the posture depends on.
+    violations.extend(audit);
     violations
 }
 

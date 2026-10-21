@@ -5,6 +5,7 @@
 /// where it has always been read.
 pub(super) struct MachineViolations {
     pub(super) admission: Vec<String>,
+    pub(super) audit: Vec<String>,
     pub(super) authorization: Vec<String>,
     pub(super) channel_binding: Vec<String>,
     pub(super) continuation_control: Vec<String>,
@@ -35,6 +36,7 @@ mod tests {
     fn a_machine_with_no_clauses_contributes_nothing_to_the_list() {
         let decided = MachineViolations {
             admission: Vec::new(),
+            audit: Vec::new(),
             authorization: Vec::new(),
             channel_binding: Vec::new(),
             continuation_control: Vec::new(),

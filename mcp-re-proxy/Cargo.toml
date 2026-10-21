@@ -60,12 +60,12 @@ redis = { workspace = true, features = [
   # tokio-rustls over the same rustls 0.23/ring already linked here.
   "tokio-rustls-comp",
 ] }
-# ureq is the blocking HTTP client for both the OCSP path (plain HTTP) and the AWS
-# KMS signer (HTTPS). The `tls` feature (rustls + webpki-roots) is what gives the
-# KMS adapter HTTPS; rustls/ring is already in the closure, so this reuses it and
-# pulls NO async runtime. Declared with the feature here (not in the workspace
-# default) so the OCSP-only closure is unchanged when `aws_kms_keysource` is off.
-ureq = { workspace = true, features = ["tls"] }
+# ureq is the blocking HTTP client for both the OCSP path (plain HTTP) and the KMS
+# signers (HTTPS). It links no TLS of its own: `outbound_fetch::public_roots` installs a
+# connector over the rustls/ring already in the closure and the `webpki-roots` 1.x root
+# set, so this pulls NO async runtime and no second root-set crate.
+ureq = { workspace = true }
+webpki-roots = { workspace = true }
 # ADR-MCPS-028: HMAC-SHA256 for the AWS SigV4 signer. NON-optional (crate_universe
 # visibility); the SigV4/KMS code is behind `#[cfg(feature = "aws_kms_keysource")]`.
 hmac = { workspace = true }
@@ -168,6 +168,13 @@ online_ocsp = []
 # cannot carry a revocation across replicas and so is no part of the library a deployment
 # links.
 async_serve = []
+# ADR-MCPRE-070 G1, TEST-ONLY (registered in `scripts/fixture_feature_gate.py`): compiles the
+# scripted reference commitment authority and `HttpProfileProxy::with_required_audit_commitment`,
+# the only route into the required audit posture until the operator selector (#1206). Set only
+# by the `testonly` flavors `:mcp_re_proxy_async_pre052` and `:mcp_re_proxy_ext_pre052` and the
+# async integration suites; no deployed flavor sets it, so no deployment can select the
+# reference authority.
+audit_commitment_reference = []
 
 [dev-dependencies]
 # ADR-MCPRE-052: the pre-052 direct-root emitters compile only for negative tests. A

@@ -283,6 +283,9 @@ paths = [
   # `WebPkiServerVerifier` here, and every server-authentication verdict it reports is
   # rustls'. ASM-0070 is the premise a unit crossing it rests on.
   "mcp-re-transport/src/tls_config.rs",
+  # The proxy's outbound HTTPS: the connector every outbound agent installs builds rustls'
+  # client over the public Web PKI roots, and whether a server is authenticated is rustls'.
+  "mcp-re-proxy/src/outbound_fetch/public_roots.rs",
 ]
 beyond = "Whether a handshake that reports success proved what the protocol says it proves, whether the reported chain is the peer's in the order claimed, and whether a resumed session continues an earlier authenticated one."
 max_class_without_assumption = "V0"
@@ -470,4 +473,18 @@ description = "Delivery of Python arguments to, and of the returned value from, 
 kind = "foreign-dependency"
 paths = ["sdk/python/src/lib.rs"]
 beyond = "Whether the `bytes`, `str`, `int` and `list` a Python caller passed reach the function as passed, and whether the `#[pyclass]` value the function returned, with a `None` member kept `None`, and an exception it raised reach the caller as produced."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.audit_commitment_provider"
+description = "A required audit-commitment provider: an embedder's implementation of `CommitmentAuthority`, registered for `--audit-commitment required`, and what its receipt for an event established about that event's persistence."
+kind = "external-service"
+# The seam itself, because no provider implementation is in this repository: the open-source
+# binary registers none, and the test-only reference authority beside the seam is refused by
+# every build a deployment runs. The trait file is where MCP-RE stops checking and starts
+# trusting an answer.
+paths = [
+  "mcp-re-proxy/src/audit_commitment/authority.rs",
+]
+beyond = "Whether an event the provider answered with a receipt was committed at the tier it declared, whether that tier survives the fault model it names, whether the provider answers within the bound and recovers after an outage, and whether committed events reach any archive. The shared owner checks that a receipt names the event, bytes, crossing and declared tier it SENT, and spends the witness once; nothing in the process can observe persistence. ASM-0089 states the persistence premise, ASM-0090 the recovery and downstream-delivery premise, ASM-0091 the capacity premise."
 max_class_without_assumption = "V0"

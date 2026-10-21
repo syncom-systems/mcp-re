@@ -11,7 +11,6 @@ use crate::deployment_request::DeploymentRequest;
 /// What the total machines classified. No `Option`: every combination they can be handed is
 /// a legal deployment.
 pub(super) struct TotalStates {
-    pub(super) audit: crate::config_state::AuditState,
     pub(super) in_flight_limit: crate::config_state::InFlightLimitBasis,
     pub(super) key_file_access: crate::config_state::KeyFileAccessPolicy,
     pub(super) retention: crate::config_state::RetentionState,
@@ -24,12 +23,11 @@ pub(super) struct TotalStates {
 /// deployment, so each answers with a value and says nothing.
 pub(super) fn classify_total(config: &DeploymentRequest) -> TotalStates {
     use crate::config_state as m;
-    let (audit, retention, verified_context) = m::evidence::classify(config);
+    let (retention, verified_context) = m::evidence::classify(config);
     // Two facts at two altitudes, deliberately not one owner: the topology is knowable from
     // the request, the shard COUNT is not — `0` means ask the host.
     let (topology, shard_topology) = m::topology::classify(config);
     TotalStates {
-        audit,
         retention,
         verified_context,
         topology,

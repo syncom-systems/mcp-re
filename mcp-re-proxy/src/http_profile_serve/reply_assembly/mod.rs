@@ -8,7 +8,7 @@
 //! the two success terminals.
 //!
 //! Both success exits — the bodied reply and the bodyless 202 a notification gets — go
-//! through the same retention call. Retention wired onto only one of them is not a weaker
+//! through the same success exit, and so the same outcome commitment and retention call. Retention wired onto only one of them is not a weaker
 //! guarantee, it is a client-selectable one: the notification form reaches the same backend
 //! and runs the same side effects, so a hostile-but-enrolled caller could choose to leave no
 //! reconstructible hop by dropping the JSON-RPC `id`.
@@ -36,6 +36,12 @@ mod notification;
 
 /// Discharging the retention responsibility, and the two success terminals.
 mod accepted;
+
+/// The one success exit: outcome committed, retention completed, then served (G2).
+mod success_exit;
+
+/// The stage after the irreversible dispatch.
+mod dispatched;
 
 /// A signed reply, and the class the classifier read it as.
 ///

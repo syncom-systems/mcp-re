@@ -388,3 +388,150 @@ evidence stops holding leaves §2; it is not rewritten until it fits what remain
 showed the row described behaviour the tree does not have. It is recorded as an amendment
 rather than an edit because the ratified text is a fixed object: a document that quietly
 absorbed corrections would make "ratified at 23a727ac" mean less each time it was right.
+
+## 9. Audit-evidence vocabulary (ADR-MCPS-035)
+
+The section number is kept for citation stability: the archived document's §8 (the v0.3
+multi-node profile) is not restored here.
+
+**Traceability.** The normative text of this section is ADR-MCPS-035
+([Discussion #383](https://github.com/matssun/mcp-re/discussions/383)) as signed in
+[`docs/archive/security/security-boundary-signed-2026-06-23.md`](../archive/security/security-boundary-signed-2026-06-23.md)
+§9 and §9.1. It is restored here with wording reconciled to the current tree; where the tree
+differs from the archived statement the archived statement is kept and the difference is
+recorded in "Reconciliation notes" below. The executable authority is
+`mcp-re-core/src/audit.rs`; the composition of the two authorities that write one record is
+[`docs/architecture/audit-composition.md`](../architecture/audit-composition.md)
+(ADR-MCPRE-066).
+
+> **Non-goal:** this is **not** a SIEM schema and does not replace deployment
+> audit policy. It fixes only the stable machine tokens MCP-RE Core emits as
+> evidence for its own verdicts; everything else (storage, correlation, retention,
+> human dashboards) is the deploying operator's concern.
+
+MCP-RE can emit audit evidence for the verdicts it reaches. To keep that evidence
+honest, its **rejection reasons are derived from the frozen
+`McpReError::wire_code()` taxonomy** — `mcp-re-core/src/error.rs` is the **sole
+authority** (ADR-MCPS-002/007/009, ADR-MCPS-035). The vocabulary lives in one
+place, `mcp-re-core/src/audit.rs`, keyed off `wire_code()`; there is **no parallel
+rejection vocabulary**.
+
+- **Rejection events** use a small fixed `event_type` — `mcp-re.request.rejected`
+  or `mcp-re.response.rejected` — with `reason` set to the **exact**
+  `McpReError::wire_code()` token. Example:
+  `{ "event_type": "mcp-re.request.rejected", "reason": "mcp-re.invalid_signature" }`.
+  No minted sub-names (no `…rejected.bad_signature`, `…expired`, `…replay`,
+  `…untrusted_signer`). This is a property of the TYPE: no audit constructor
+  takes a string, so a token from another authority's taxonomy cannot be written
+  into `reason` (ADR-MCPRE-066 Slice 2).
+- **A rejection Core did not decide carries no `reason`.** Where the authority
+  that terminated the exchange is not Core — today, an authorization policy's
+  denial — Core has no verdict and states none rather than borrowing another
+  authority's token. `reason` is absent and `decision` is `Rejected`, which is a
+  combination no success event can produce; §9.1's authorization coordinate names
+  who did refuse. The client still receives the refusing authority's own code in
+  the signed rejection: this changed the record, not the wire.
+- **Success events** are the only net-new surface, because the error enum cannot
+  express a success/lifecycle outcome. The set is **exactly two**:
+  `mcp-re.request.accepted` and `mcp-re.response.signed`. No third success event may
+  be minted without an ADR.
+- **No `authorization_hash_mismatch`.** Core **binds** `authorization_hash` and
+  never **interprets** the authorization artifact (ADR-MCPS-013); "mismatch" would
+  imply a semantic comparison Core does not perform, so no such audit reason
+  exists. (The `mcp-re.authorization_hash_mismatch` token is a *policy-layer*
+  `PolicyError` produced by the configured AuthorizationProfile — outside Core, and
+  not an audit reason.)
+- **Optional `reason_label`.** A non-normative, human-readable label (e.g.
+  "Invalid signature") may accompany an event for readability. It is display-only
+  and **must never be parsed**; the stable machine token is always `reason`.
+
+**Delivery posture (ADR-MCPRE-070 §2).** Four different statements, and none of them implies
+the next:
+
+1. **Best-effort observation** — the default (`--audit-commitment best-effort`). The observer
+   never affects a request: a record it cannot deliver is dropped and counted. It makes no
+   persistence claim, and §3's non-claim stands for it unchanged: if the process disappears,
+   records emitted and not yet drained go with it. Accepting a record into a queue, writing it
+   to a pipe, or a collector acknowledging it is not commitment.
+2. **Required, provider-bound commitment** — `--audit-commitment required`. An execution intent
+   (`mcp-re.execution.intent`) is committed before the backend is dispatched, and the outcome
+   before a success (a bodied reply or a 202) is visible, each through a witness the proxy
+   checks against what it sent and spends once. That much is the proxy's: THM-0135 and
+   THM-0136 state it as SAFETY, and it holds whatever the provider does — a commitment that
+   fails is a refusal, never a dispatch or a success. What a committed event then means for
+   persistence is conditional: it survives loss of the proxy process **if** the registered
+   provider's declared tier (`audit-durability/v1`, minimum `SURVIVES_PROXY_PROCESS_LOSS`) is
+   honest (ASM-0089, D3). That is an external evidence obligation per provider, never a
+   property the proxy proves. A required posture with no established qualifying provider,
+   with the test-only reference authority, or with `--audit-sink none` refuses startup — it
+   never runs as best-effort (S4). The open-source binary registers no provider.
+3. **Downstream delivery is at-least-once.** A committed event may reach an archive more than
+   once, under one identity and one digest; consumers deduplicate on that binding, never on a
+   transport position. There is no exactly-once delivery and no global order across runs.
+4. **Persistence and liveness are not proved.** Nothing here establishes that a provider
+   persisted anything, that a required exchange eventually succeeds (it needs the provider to
+   answer within its bound and recover, ASM-0090, and to have capacity for the offered rate,
+   ASM-0091), or that a committed event is ever archived (ASM-0090). No unconditional
+   permanence is claimed, a committed outcome is not evidence the client received the
+   response, and THM-0071 remains a claim about the modeled in-process path only.
+
+**Adding a rejection outcome** therefore requires adding an `McpReError` variant
+first (the frozen-taxonomy process), which the audit layer inherits
+automatically — the vocabulary cannot drift from the verdicts the pipeline
+actually makes. Carriers that legitimately represent Core outcomes
+(`HttpProfileError`, `DispatchError`, `ProxyDispatchError`) declare an exhaustive
+projection onto `McpReError` and **derive** their wire token from it; none keeps a
+token table of its own.
+
+### 9.1 The authorization coordinate (ADR-MCPRE-066)
+
+A **request** record additionally carries an authorization outcome, in the
+authorization authority's own vocabulary and **never** in `reason`:
+
+```text
+NotConfigured   no policy is deployed; this boundary claims nothing
+Authorized      authority · version · action · request-evidence handle
+Refused         BeforePolicy  no policy verdict was reached
+                ByPolicy      a policy decided and denied (a PolicyError token)
+```
+
+This **widens nothing above.** `event_type`, `reason` and the two-item success
+allowlist are unchanged and remain Core-owned; the drift guard's claim is
+untouched. The point is the opposite of a widening: `PolicyError` is a *second*
+authority's taxonomy, and giving it its own coordinate is what stops it being
+rendered into Core's `reason`, where no reader could tell which authority spoke
+(issue #637). **Co-location is not conflation.**
+
+Two properties are structural rather than conventional:
+
+- A request record **always** states one of the three. Absence therefore means
+  exactly one thing — a record predating ADR-MCPRE-066 — and in particular
+  *nobody asked* is a state, not an absence. An unconfigured proxy's record is
+  distinguishable from a policy-protected one's, which is the whole reason
+  ADR-MCPRE-065 built three postures instead of a boolean.
+- A **response** record carries no authorization coordinate. Authorization is
+  request-side; a response does not represent a second decision.
+
+**Enforcement.** A CI drift guard
+(`//mcp-re-conformance:audit_vocabulary_guard_test`, ADR-MCPS-035) reads
+`error.rs` and `audit.rs` from disk and FAILS if any audit rejection `reason`
+is not a member of `McpReError::wire_code()`, if the success set is not exactly
+the two-item allowlist, or if an `authorization_hash_mismatch` notion reappears
+as an audit reason. `scripts/refusal_provenance_gate.py` (ADR-MCPRE-066)
+additionally holds the two structural properties above and asserts `PolicyError`
+has no route into the Core taxonomy.
+
+### 9.2 Reconciliation notes
+
+Each row is a place where the archived statement above and the tree at the time of
+restoration differ. The archived statement is kept in the text above; the tree is cited
+for the difference. None is resolved here.
+
+| # | archived statement | current tree | difference |
+|---|---|---|---|
+| R1 | "Success events are the only net-new surface" (§9, third bullet) | `mcp-re-core/src/audit.rs:88-97` (`KEY_LIFECYCLE_EVENT_TYPES`; constants at `:60-69`); `mcp-re-conformance/tests/audit_vocabulary_guard_test.rs:4-23,52-56` | The tree carries a third audit category beyond the two success events: `mcp-re.delegated_key.{issued,rotated,retired}`, authorized by ADR-MCPRE-052 §7, with no `reason`. The two-item success allowlist itself is unchanged and the guard pins the lifecycle set at exactly three. The archived text does not mention the category |
+| R2 | `Authorized` carries "authority · version · action · request-evidence handle" (§9.1) | `mcp-re-proxy/src/authorization/audit.rs:117-139` (`AuthorizationAttribution`) | The tree carries six members: those four plus `authority_decision_id` and `decision_evidence`. Two more fields than the archived list |
+| R3 | The `{ "event_type": …, "reason": … }` example (§9, first bullet) | `docs/architecture/audit-composition.md:463-475`; `mcp-re-proxy/src/audit_sink/mod.rs` | The product emits no JSON audit record; the sink renders key=value lines on the proxy's diagnostic channel. audit-composition.md reads the example as vocabulary, not wire format, and states that ADR-MCPRE-066 introduces no serialization contract |
+| R4 | The enforcement paragraph lists three drift-guard checks (§9.1) | `mcp-re-conformance/tests/audit_vocabulary_guard_test.rs:4-24,53-69` | The guard additionally pins the key-lifecycle set at exactly three, the execution set at exactly one (R5) and the accounting set at exactly one (R6), checks that no `event_type` collides with a `wire_code()` token, and checks that no producer outside `error.rs` mints an `mcp-re.*` token (ADR-MCPRE-066 Slice 2). The archived list is a subset |
+| R5 | "Success events are the only net-new surface" (§9, third bullet); "exactly two" | `mcp-re-core/src/audit.rs:72-74,103-107` (`EXECUTION_INTENT`, `EXECUTION_EVENT_TYPES`); `mcp-re-core/src/audit/half.rs` (`AuditHalf::Execution`); `mcp-re-conformance/tests/audit_vocabulary_guard_test.rs:59-63` (`execution_event_set_is_exactly_the_one_item_allowlist`) | Vocabulary revision 2 adds a fourth category, authorized by ADR-MCPRE-070 D1 as a documented, versioned extension: `mcp-re.execution.intent`, the commitment made before an admitted exchange is dispatched. It is not a success event — the success allowlist stays at exactly two, and the guard refuses the intent in any other set — it carries no `reason` and no `Decision`, and it is never offered to the observer, so the best-effort stderr stream emits no intent line. `request.accepted` still means admitted, not executed (ADR-MCPRE-070 §16 item 2). The archived text does not mention the category |
+| R6 | "Success events are the only net-new surface" (§9, third bullet) | `mcp-re-core/src/audit.rs:76-77,109-112` (`AUDIT_ACCOUNTING`, `ACCOUNTING_EVENT_TYPES`); `mcp-re-core/src/audit/half.rs` (`AuditHalf::NonExchange`); `mcp-re-conformance/tests/audit_vocabulary_guard_test.rs:65-69` (`accounting_event_set_is_exactly_the_one_item_allowlist`); `mcp-re-proxy/src/audit_record/accounting.rs` | Vocabulary revision 3 adds a fifth category, authorized by ADR-MCPRE-070 D2 and Q3 as a documented, versioned extension: `mcp-re.audit.accounting`, the bounded aggregate accounting record a deployment under the required posture commits once per interval of its run. It is attributed by run (its identity) and interval (`interval`, `from`, `to`), carries no actor and no `reason`, and is never offered to the observer. Its counts are cumulative from the start of the run, so a missing record loses no count; `missed` states how many earlier intervals produced no committed record; `dropped`/`dropped_unattributed` are records the observer knows it lost and `uncertain` is commitments whose outcome is unknown; `coverage` is always `observed-lower-bound`, because refusals before any record exists are not counted and nothing is claimed exhaustive under an outage or saturation. The two success events keep their meanings and the success allowlist stays at exactly two. The archived text does not mention the category |

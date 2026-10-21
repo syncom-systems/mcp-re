@@ -161,6 +161,7 @@ _PROXY_LIB_SRCS = [
     "src/config_state/custody.rs",
     "src/config_state/delegated_signing.rs",
     "src/config_state/evidence.rs",
+    "src/config_state/audit_policy.rs",
     "src/config_state/freshness.rs",
     "src/config_state/in_flight_limit.rs",
     "src/config_state/kms_endpoint.rs",
@@ -373,6 +374,20 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPS-035: the serving path's audit emission seam (admitted actor, rejection
     # wire code, response signing key). Pure std, no feature gate — always compiled.
     "src/audit_record/mod.rs",
+    "src/audit_record/emission.rs",
+    # ADR-MCPRE-070 §8: the produced event — identity, scope, canonical bytes, digest.
+    "src/audit_record/envelope/mod.rs",
+    "src/audit_record/envelope/allocator.rs",
+    "src/audit_record/envelope/binding.rs",
+    "src/audit_record/envelope/canonical.rs",
+    "src/audit_record/envelope/digest.rs",
+    "src/audit_record/envelope/event.rs",
+    "src/audit_record/envelope/event_id.rs",
+    "src/audit_record/envelope/identity_failure.rs",
+    "src/audit_record/envelope/run_id.rs",
+    "src/audit_record/envelope/scope.rs",
+    "src/audit_record/intent.rs",
+    "src/audit_record/accounting.rs",
     "src/audit_record/scalar.rs",
     "src/audit_record/subject.rs",
     "src/audit_record/text.rs",
@@ -382,6 +397,42 @@ _PROXY_LIB_SRCS = [
     "src/audit_sink/writer.rs",
     "src/audit_sink/stream.rs",
     "src/audit_sink/stderr.rs",
+    "src/audit_sink/observer_accounting.rs",
+    # ADR-MCPRE-070 §2, §9: the commitment authority, separate from the observer above.
+    # `reference*.rs`, `forgery.rs` and `harness.rs` compile only into test builds and the
+    # test-only `audit_commitment_reference` flavors; `fixtures.rs` only into unit tests.
+    "src/audit_commitment/mod.rs",
+    "src/audit_commitment/accounting.rs",
+    "src/audit_commitment/authority.rs",
+    "src/audit_commitment/bound.rs",
+    "src/audit_commitment/budget.rs",
+    "src/audit_commitment/cadence.rs",
+    "src/audit_commitment/crossing.rs",
+    "src/audit_commitment/established/mod.rs",
+    "src/audit_commitment/established/caught.rs",
+    "src/audit_commitment/established/witness.rs",
+    "src/audit_commitment/established_audit.rs",
+    "src/audit_commitment/establish_failure.rs",
+    "src/audit_commitment/failure.rs",
+    "src/audit_commitment/fixtures.rs",
+    "src/audit_commitment/forgery.rs",
+    "src/audit_commitment/harness.rs",
+    "src/audit_commitment/intent.rs",
+    "src/audit_commitment/machine.rs",
+    "src/audit_commitment/not_required.rs",
+    "src/audit_commitment/outcome.rs",
+    "src/audit_commitment/plan.rs",
+    "src/audit_commitment/posture.rs",
+    "src/audit_commitment/provider_failure.rs",
+    "src/audit_commitment/provider_id.rs",
+    "src/audit_commitment/providers.rs",
+    "src/audit_commitment/receipt.rs",
+    "src/audit_commitment/reference.rs",
+    "src/audit_commitment/reference_probe.rs",
+    "src/audit_commitment/reference_step.rs",
+    "src/audit_commitment/refusal.rs",
+    "src/audit_commitment/request.rs",
+    "src/audit_commitment/tier.rs",
     # Issue #4034: PKCS#11/HSM-backed KeySource (behind #[cfg(feature =
     # "pkcs11_keysource")]; cfg'd out of the default build).
     "src/pkcs11_keysource/mod.rs",
@@ -407,6 +458,7 @@ _PROXY_LIB_SRCS = [
     # the features that link an HTTP client, so both are cfg'd out of the base flavor.
     "src/outbound_fetch/binding.rs",
     "src/outbound_fetch/credential_egress.rs",
+    "src/outbound_fetch/public_roots.rs",
     "src/outbound_fetch/resolver.rs",
     "src/outbound_fetch/url.rs",
     # ADR-MCPRE-051 §4: the ASYNC etcd authoritative replay backend (hyper over the
@@ -455,6 +507,8 @@ _PROXY_LIB_SRCS = [
     "src/http_profile_serve/dispatch_commitment.rs",
     "src/http_profile_serve/reply_assembly/mod.rs",
     "src/http_profile_serve/reply_assembly/notification.rs",
+    "src/http_profile_serve/reply_assembly/success_exit.rs",
+    "src/http_profile_serve/reply_assembly/dispatched.rs",
     "src/http_profile_serve/reply_assembly/accepted.rs",
     # ADR-MCPRE-052 §4 / ADR-MCPS-035 §9: what the proxy asserts under its own credential
     # when it refuses — the posture, the record it is, and how the artifact is built.
@@ -462,6 +516,7 @@ _PROXY_LIB_SRCS = [
     "src/http_profile_serve/receipt/audit_event.rs",
     "src/http_profile_serve/receipt/artifact.rs",
     "src/app.rs",
+    "src/app/entry.rs",
     # ADR-MCPRE-057 §9 / ADR-MCPRE-058 §14: the owner of a partly-built runtime —
     # lifecycle state cannot advance beyond the ownership it describes. Crate-internal.
     "src/materializing_runtime/mod.rs",
@@ -479,12 +534,16 @@ _PROXY_LIB_SRCS = [
     # irreversible effect — the typed pre-dispatch boundary and the retention
     # obligation carried across it. Crate-internal.
     "src/request_stages.rs",
+    "src/request_stages/intent_disposition.rs",
+    "src/request_stages/outcome_disposition.rs",
+    "src/request_stages/retention_disposition.rs",
     # ADR-MCPRE-058 §7.2: the seven optional serving capabilities, each as one domain
     # operation producing what to attach and the posture line describing it.
     # Crate-internal.
     "src/serving_capabilities.rs",
     # ADR-MCPS-047 / #744 D1b′: the continuation capability's own seam. Its own module
     # because its OFF branch is a fact about an operator's SELECTION, not about the build.
+    "src/serving_capabilities/audit_posture.rs",
     "src/serving_capabilities/continuation.rs",
     # ADR-MCPRE-056 §5.2: what startup INTENDS to build, decided from validated
     # configuration alone — no I/O, no environment, no clock. Crate-internal.
@@ -752,6 +811,7 @@ _PROXY_EXT_CRATES = [
     "@crates_mcp_re//:tower-service",
     "@crates_mcp_re//:rustls-native-certs",
     "@crates_mcp_re//:ureq",
+    "@crates_mcp_re//:webpki-roots",
     # ADR-MCPS-028 §B: SigV4 HMAC-SHA256 for the AWS KMS Ed25519 signer (feature
     # aws_kms_keysource). NOTE: base64 moved to _PROXY_LIB_DEPS — the registration
     # leaf below the auditor now uses it unconditionally, so ext inherits it via LIB
@@ -794,7 +854,10 @@ nt_rust_library(
     name = "mcp_re_proxy_async_pre052",
     testonly = True,
     srcs = _PROXY_LIB_SRCS,
-    crate_features = ["async_serve"],
+    # `audit_commitment_reference` (test-only, `scripts/fixture_feature_gate.py`): the scripted
+    # reference commitment authority and the installer that makes it the required posture's
+    # provider, for the ADR-MCPRE-070 G1 serving suites.
+    crate_features = ["async_serve", "audit_commitment_reference"],
     crate_name = "mcp_re_proxy",
     edition = "2021",
     deps = _PROXY_LIB_DEPS_PRE052,
@@ -894,7 +957,10 @@ nt_rust_library(
     crate_features = ["scitt_registration"],
     crate_name = "mcp_re_proxy",
     edition = "2021",
-    deps = _PROXY_LIB_DEPS + ["@crates_mcp_re//:ureq"],
+    deps = _PROXY_LIB_DEPS + [
+        "@crates_mcp_re//:ureq",
+        "@crates_mcp_re//:webpki-roots",
+    ],
 )
 
 # ADR-MCPRE-054 / #841 G-2: the AUDITOR executable. A separate binary rather than a mode
@@ -935,6 +1001,7 @@ nt_rust_test(
         "@crates_mcp_re//:serde",
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:ureq",
+        "@crates_mcp_re//:webpki-roots",
         "@crates_mcp_re//:zeroize",
     ],
 )
@@ -1302,7 +1369,7 @@ nt_rust_test(
         "tests/common/mod.rs",
     ],
     crate_root = "tests/integration_async/main.rs",
-    crate_features = ["async_serve"],
+    crate_features = ["async_serve", "audit_commitment_reference"],
     # The transparency suite runs the SHIPPED auditor as a child process. A composition
     # root proved only in-process is a composition root nobody can run, so the lane needs
     # the executable itself rather than the library behind it.
@@ -1357,7 +1424,7 @@ nt_rust_test(
         "tests/common/mod.rs",
     ],
     crate_root = "tests/integration_async/main.rs",
-    crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
+    crate_features = ["async_serve", "audit_commitment_reference"] + _PROXY_EXT_FEATURES,
     env_inherit = [
         "MCP_RE_TEST_REDIS_URL",
         "MCP_RE_TEST_ETCD_URL",
@@ -1489,7 +1556,7 @@ nt_rust_library(
     name = "mcp_re_proxy_ext_pre052",
     testonly = True,
     srcs = _PROXY_LIB_SRCS,
-    crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
+    crate_features = ["async_serve", "audit_commitment_reference"] + _PROXY_EXT_FEATURES,
     crate_name = "mcp_re_proxy",
     edition = "2021",
     deps = _PROXY_LIB_DEPS_PRE052 + _PROXY_EXT_CRATES,
@@ -1545,6 +1612,7 @@ nt_rust_test(
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:spki",
         "@crates_mcp_re//:ureq",
+        "@crates_mcp_re//:webpki-roots",
         "@crates_mcp_re//:zeroize",
     ],
 )
@@ -1626,6 +1694,7 @@ nt_rust_test(
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
         "@crates_mcp_re//:ureq",
+        "@crates_mcp_re//:webpki-roots",
     ],
 )
 
@@ -1877,6 +1946,7 @@ nt_rust_binary(
         "//mcp-re-http-profile:mcp_re_http_profile",
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:ureq",
+        "@crates_mcp_re//:webpki-roots",
     ],
 )
 

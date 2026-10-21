@@ -45,6 +45,7 @@ pub fn reason_label(error: &McpReError) -> &'static str {
             "Retained-evidence write failed after the call had already executed"
         }
         McpReError::ExchangeInvariantViolation => "Exchange invariant violation",
+        McpReError::AuditCommitmentUnavailable => "Required audit commitment unavailable",
         // Draft-02 (v0.6) — ADR-MCPS-040 / decision F.1.
         McpReError::AuthorizationBindingMissing => "authorization_binding missing",
         McpReError::AuthorizationBindingTypeUnsupported => "authorization_binding type unsupported",

@@ -148,35 +148,6 @@ pub(crate) fn mcp_transport_contract(
     )
 }
 
-/// ADR-MCPS-035 — the per-request accepted/rejected/signed attribution record.
-///
-/// The artifact is the concrete [`StderrAuditSink`](crate::audit_sink::StderrAuditSink),
-/// so the STDERR line cannot be paired with any other sink. OFF attaches nothing, and the
-/// serving path's absent sink is the no-emission posture.
-pub(crate) fn security_audit_record(
-    state: crate::config_state::AuditState,
-) -> Result<Established<crate::audit_sink::StderrAuditSink>, String> {
-    match state {
-        crate::config_state::AuditState::Stderr => Ok(Established::on(
-            crate::audit_sink::StderrAuditSink::open().ok_or(
-                "--audit-sink stderr: the OS CSPRNG did not yield the audit stream's run \
-                 identity, so its records could not be told from another run's",
-            )?,
-            "security audit record = STDERR (ADR-MCPS-035): a numbered line per \
-             accepted / rejected / signed decision, carrying the verifier-resolved actor \
-             and the frozen mcp-re.* wire code, numbered within a run named on every line. \
-             Best-effort by design: a full queue drops lines rather than delaying a request, \
-             a gap in a run's seq marks each drop, and the drop count is reported.",
-        )),
-        crate::config_state::AuditState::None => Ok(Established::off(AUDIT_OFF)),
-    }
-}
-
-/// The OFF line for the attribution record.
-const AUDIT_OFF: &str = "security audit record = OFF (--audit-sink none): no per-request \
-     record is emitted, so this deployment has no attribution surface for a later \
-     incident. Pass --audit-sink stderr to enable it.";
-
 /// ADR-MCPRE-054 — retention of the full request and response of accepted calls.
 ///
 /// Opening the store is effectful and FAILS STARTUP. A deployment that cannot open it
@@ -250,6 +221,8 @@ const VERIFIED_CONTEXT_OFF: &str = "verified-context carrier = OFF (#415 §10): 
 /// about this build, and its two arms differ in whether they can honour one. The other
 /// capabilities read a value and attach a thing; this one answers "did the deployment ask
 /// for this, and did it get exactly that".
+mod audit_posture;
+pub(crate) use audit_posture::{audit_commitment, audit_posture};
 mod continuation;
 pub(crate) use continuation::mrtr_continuation_store;
 
@@ -432,7 +405,6 @@ mod tests {
     fn every_off_line_tells_the_operator_what_to_do_about_it() {
         let lines: &[(&str, &str)] = &[
             ("OCSP_OFF", OCSP_OFF),
-            ("AUDIT_OFF", AUDIT_OFF),
             ("RETENTION_OFF", RETENTION_OFF),
             ("VERIFIED_CONTEXT_OFF", VERIFIED_CONTEXT_OFF),
             #[cfg(feature = "redis_replay")]
@@ -440,6 +412,7 @@ mod tests {
             #[cfg(not(feature = "redis_replay"))]
             ("ADMISSION_NO_BACKEND", ADMISSION_NO_BACKEND),
         ];
+        // The audit OFF line is checked by its own module (`audit_posture`), where it lives.
         // The continuation lines are checked by their own module, which asserts more than
         // this rule: that the OFF line names the flag AND promises no tier the deployment
         // does not have. Restating the weaker rule here would leave two places to keep in
@@ -478,27 +451,6 @@ mod tests {
             verified_context_carrier(crate::config_state::VerifiedContextState::Disabled)
                 .into_parts();
         assert_eq!(artifact, None);
-        assert!(matches!(posture, SeamState::Off { .. }));
-    }
-
-    /// The STDERR posture installs the stderr sink and the NONE posture installs none.
-    ///
-    /// The artifact's type is the binding: `Option<StderrAuditSink>` is what the ON line
-    /// travels with, so a null sink under the STDERR line does not compile, and the OFF
-    /// arm has nothing to install.
-    #[test]
-    fn the_security_audit_posture_travels_with_the_sink_it_installs() {
-        let (sink, posture): (Option<crate::audit_sink::StderrAuditSink>, _) =
-            security_audit_record(crate::config_state::AuditState::Stderr)
-                .expect("the OS CSPRNG yields an incarnation")
-                .into_parts();
-        assert!(sink.is_some());
-        assert!(matches!(posture, SeamState::On { .. }));
-
-        let (sink, posture) = security_audit_record(crate::config_state::AuditState::None)
-            .expect("OFF opens nothing")
-            .into_parts();
-        assert!(sink.is_none());
         assert!(matches!(posture, SeamState::Off { .. }));
     }
 

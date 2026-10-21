@@ -193,10 +193,12 @@ count = 31
 # 83 -> 79: measured at e4faa23c, after the r12 fixes and the retired sync replay stores.
 # 79 -> 78: `RequestHeaders::parse` ends its iterator at the header terminator, so the
 # skip branch inside its loop is gone.
+# 78 -> 77: #1205 (ADR-MCPRE-070 G2) — the reply tail moved into the one success exit;
+# count measured by this gate.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 78
+count = 77
 
 # 0 -> 4: the same measurement correction as `arithmetic_side_effects` above; 1 -> 0 when
 # the trust-epoch reader's second, GET-based read path was folded into the one MGET read.
@@ -214,10 +216,12 @@ count = 19
 # 0 -> 3: the same measurement correction as `arithmetic_side_effects` above.
 # 3 -> 2: MCPRE-196 — the admission owner projects its enforcer, so the capability no longer
 # re-maps posture and availability field by field.
+# 2 -> 1: #1204 (ADR-MCPRE-070 G1) — the pre-dispatch sequence in `http_profile_serve`
+# was restructured around the intent gate; count measured by this gate.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "too_many_lines"
-count = 2
+count = 1
 
 # 3 -> 0: the runfiles-only resolver replaced the source-tree fallbacks.
 [[debt]]

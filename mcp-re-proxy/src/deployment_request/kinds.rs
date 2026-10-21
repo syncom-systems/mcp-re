@@ -28,6 +28,31 @@ pub enum AuditSinkKind {
     Stderr,
 }
 
+/// Whether a durable audit commitment is a prerequisite of dispatch and of visible
+/// success (ADR-MCPRE-070 §2). No default: the CLI supplies `BestEffort` when
+/// `--audit-commitment` is absent, which is the v0.18.1 behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditDeliveryKind {
+    /// Observation only: a record never affects a request.
+    BestEffort,
+    /// A committed intent before dispatch and a committed outcome before success, through a
+    /// commitment provider the build registers. Selected explicitly, never inferred.
+    Required,
+}
+
+/// The requested audit policy: where records are observed, and how they are delivered.
+///
+/// Two independent choices with one compatibility rule between them, which layer A owns
+/// (`config_state::audit`): a required delivery needs an observer, so `Required` with sink
+/// `None` is representable here in order to be refused there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuditRequest {
+    /// Where the per-request security record goes.
+    pub sink: AuditSinkKind,
+    /// Whether commitment is a prerequisite of dispatch and success.
+    pub delivery: AuditDeliveryKind,
+}
+
 /// Whether the PEP writes its own verified context into the body forwarded to the
 /// inner server (#415 rev 2 §10).
 ///

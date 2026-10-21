@@ -12,6 +12,52 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Added — required audit commitment before dispatch (ADR-MCPRE-070 G1)
+
+- New wire token `mcp-re.audit_commitment_unavailable` (D12): under the required audit
+  posture, an admitted exchange whose execution intent cannot be committed is refused BEFORE
+  the backend is reached — 503 where the commitment provider was unavailable or uncertain,
+  500 where it refused or no accepted event exists to name. The token states nothing about
+  execution; the signed rejection's disposition does (nothing executed). Existing tokens are
+  unchanged.
+- Audit vocabulary revision 2 adds the `mcp-re.execution.intent` category (D1). It is not a
+  success event (the success set stays at two) and the best-effort stderr stream never emits
+  it. The canonical event encoding moves to version 2 to carry it.
+- The required posture is selected with `--audit-commitment required` (below).
+
+### Added — typed audit delivery posture and the commitment-provider seam (ADR-MCPRE-070 §2, §7, §11, D2, D3, Q3)
+
+- New flag `--audit-commitment best-effort|required` (Helm `auditCommitment`), default
+  `best-effort`: the v0.18.1 behavior, unchanged. `--audit-sink none|stderr` is unchanged.
+- `required` needs a commitment provider the BUILD registers through `app::run_with` and the
+  new public seam (`CommitmentAuthority`, `AuditProviders`, `ProviderId`, …). The open-source
+  binary registers none and refuses to start with `required`; so does any build whose provider
+  declares a tier below `SURVIVES_PROXY_PROCESS_LOSS` (`audit-durability/v1`) or fails its
+  bounded startup probe. `required` with `--audit-sink none` is refused as configuration. A
+  required posture is never served as best-effort, and a registered provider is never used
+  under best-effort.
+- The `security audit record` startup line now states the delivery: `BEST-EFFORT`, or
+  `REQUIRED via provider <id>, tier <tier> … as DECLARED`, disclosing that the observer's seq
+  then has gaps that are not drops. The OFF line names its delivery too.
+- Commitments have their own non-blocking budget (1024 in flight); a spent budget refuses
+  before dispatch with the same 503 as an outage, and never touches the observer.
+- Audit vocabulary revision 3 adds `mcp-re.audit.accounting` (D2, Q3): one bounded record per
+  60s interval of a required run, cumulative, run- and interval-attributed, with no actor and
+  no reason, never claiming exhaustive counts. The canonical event encoding moves to version 3
+  to carry it (a `Run` scope). A shutdown line reports the commitment counts.
+
+### Added — committed outcome before visible success (ADR-MCPRE-070 G2)
+
+- Under the required audit posture a success — a bodied reply or a notification's 202 (D4) —
+  is served only after its `response.signed` event is committed AND retention has completed
+  (Q2). An outcome that cannot be committed is refused with `mcp-re.audit_commitment_unavailable`
+  at 500, never 503, stating `possibly_executed`, and retention holds that refusal; a retention
+  failure after the commit is the existing `evidence_retention_indeterminate` refusal. The
+  observer's `response.signed` line is the committed event itself. Best-effort serving is
+  unchanged.
+- The notification's success terminal is entered only when its 202 is served, so a refusal
+  after the 202 was approved is served from a non-terminal state (ADR-MCPRE-070 §16 item 7).
+
 ## [0.18.1] — 2026-10-17
 
 v0.18.1 makes the Redis replay store's connection pool configurable and takes the rustls fix

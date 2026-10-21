@@ -116,6 +116,13 @@ _Avoid_: conflating `server_signer` (TrustResolver identity) with `keyid` (key s
 
 _Avoid_: "EMA enforcement mode" / Mode 2 (cut — internally contradictory under bind-not-interpret; a deployment with no downstream validator is **insecure**, not a mode); an `ema-*` artifact type (dead vocabulary — "EMA" is issuance provenance, not a credential class); a fifth §B axis for an operational property; "no live proof, no claim" read as license to DELETE (**no deletion without architectural or maintenance cause**).
 
+### Audit commitment (ADR-MCPRE-070, epic #1201)
+
+- **Delivery posture** — How a deployment's audit facts are delivered, chosen with `--audit-commitment`: **best-effort** (the observer is offered every record and never affects a request; the default) or **required** (an execution intent is committed before dispatch and the outcome before visible success). Selected explicitly, never inferred; a required posture is never run as best-effort (S4).
+- **Commitment provider** — An independently compiled implementation of the public `CommitmentAuthority` seam, registered by a build in `AuditProviders` and handed to `app::run_with`. It declares a durability tier and answers commits with receipts or failures; it never produces a witness. Its tier is a **declaration** — persistence is an external evidence obligation (D3). The open-source build registers none.
+
+_Avoid_: "durable audit sink" (a sink is an observer and authorizes nothing; the commitment is a separate authority); "audit backend" for the reference authority (it is a test fixture, never a deployment's backend, §9).
+
 ## Flagged ambiguities
 
 - **`documents/mcp-re/security-boundary.md`** (canonical doc §7) — stale path reference; rename to `docs/spec/security-boundary.md`. Fix in 0.5.
