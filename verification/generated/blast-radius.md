@@ -136,6 +136,8 @@ attestations this view cannot see.
 | unit://proxy.async_replay_retention | source, contracts or evidence | THM-0105 | _no consumer_ |
 | unit://proxy.attestation_artifact | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.audit_authority_coordinates | source, contracts or evidence | THM-0069 | _no consumer_ |
+| unit://proxy.audit_commitment_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://proxy.audit_commitment_witness | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.audit_delivery | source, contracts or evidence | THM-0070 | _no consumer_ |
 | unit://proxy.audit_run_receipt_recording | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.audit_text_rendering | source, contracts or evidence | THM-0130 | _no consumer_ |

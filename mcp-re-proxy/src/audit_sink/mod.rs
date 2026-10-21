@@ -38,6 +38,10 @@ use crate::audit_record::{AuditEnvelope, AuditRecord, EventIdentityFailure};
 /// envelope again, and its consumers deduplicate on [`AuditEnvelope::binding`]: the same
 /// identity with the same digest is one event, and the same identity with another digest is
 /// an [`IntegrityConflict`](crate::audit_record::IntegrityConflict), never an overwrite.
+///
+/// A sink is an OBSERVER. `record` returns nothing, and nothing it does is evidence that an
+/// event was committed; required durable commitment is a separate authority with its own
+/// contract, `crate::audit_commitment` (ADR-MCPRE-070 §2).
 pub trait AuditSink: Send + Sync {
     /// Record one decision. Failures are the sink's own problem: a sink that cannot
     /// write MUST NOT fail the request, because refusing to serve a verified request

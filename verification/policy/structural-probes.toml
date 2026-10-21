@@ -2196,3 +2196,259 @@ module-tree-visibility = "both fields are bare-private to `tls_plane::crl_refere
 alternate-constructors = "`CrlReference::of(&StartupReading, &CrlRevocationState)` is the only associated function returning `Self`; `unix_seconds` is `pub(super)` and returns a copy"
 generated-or-deserialization = "the derives are Debug, Clone and Copy; no Default, From or Deserialize"
 test-only-construction = "the owner's tests build references only through `of`; no test-gated constructor exists"
+
+# --- proxy.audit_commitment_sole_producer (ADR-MCPRE-070 P3, P4; #1203) ------------------
+#
+# P3 is "an observer cannot mint authority", and its only falsifier is a construction the
+# compiler refuses. Each probe attacks one route from the observer or the serving path to a
+# witness or its redemption.
+
+[[probe]]
+id = "S61"
+unit = "proxy.audit_commitment_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "the observer's module cannot write a CommitmentWitness literal, so every witness came from the shared owner's checked `mint`"
+insertion_parent = "mcp-re-proxy/src/audit_sink/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S61. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use std::marker::PhantomData;
+use std::sync::Arc;
+
+use crate::audit_commitment::{CommitmentWitness, EstablishedProvider, Intent};
+use crate::audit_record::EventBinding;
+
+fn hostile(binding: EventBinding, provider: Arc<EstablishedProvider>) -> CommitmentWitness<Intent> {
+    CommitmentWitness {
+        binding, // STRUCTURAL-PROBE-SITE
+        provider,
+        _crossing: PhantomData,
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the witness's and Redeemed's fields are bare-private to `audit_commitment::established::witness`; `mint` is `pub(super)`, visible to `established` alone; `established` is a private module of `audit_commitment`, which re-exports the TYPES `pub(crate)`. The probe sits in the observer's or the serving path's module, which can name the types and is refused everything else"
+alternate-constructors = "the only literal construction of `CommitmentWitness` is `mint`, called only by `EstablishedProvider::commit`; the only literal construction of `Redeemed` is `CommitmentWitness::redeem`. There is no `From`, `Into`, `Deref`, `Default` or builder, and `CommitmentReceipt` converts into nothing"
+generated-or-deserialization = "the witness derives Debug only and Redeemed derives Debug only: no Clone, Copy, Default, Serialize or Deserialize, so nothing fills the fields positionally and nothing duplicates a witness"
+test-only-construction = "the reference authority is a sibling of `established`, not a child, so even under `cfg(test)` it cannot name `mint`; it answers with receipts and failures only, and every test obtains a witness through `EstablishedProvider::commit`. No test-gated constructor or field visibility exists on either type"
+
+[[probe]]
+id = "S62"
+unit = "proxy.audit_commitment_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "the observer's module cannot call the function that mints a witness, so a witness is minted only inside the commit procedure"
+insertion_parent = "mcp-re-proxy/src/audit_sink/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0603"
+construction = """
+// ADR-MCPRE-068 structural probe S62. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use std::sync::Arc;
+
+use crate::audit_commitment::{
+    CommitmentFailure, CommitmentReceipt, CommitmentWitness, EstablishedProvider, Intent,
+};
+use crate::audit_record::AuditEnvelope;
+
+fn hostile(
+    provider: &Arc<EstablishedProvider>,
+    sent: &AuditEnvelope,
+    receipt: CommitmentReceipt,
+) -> Result<CommitmentWitness<Intent>, CommitmentFailure> {
+    crate::audit_commitment::established::witness::mint(provider, sent, receipt) // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the witness's and Redeemed's fields are bare-private to `audit_commitment::established::witness`; `mint` is `pub(super)`, visible to `established` alone; `established` is a private module of `audit_commitment`, which re-exports the TYPES `pub(crate)`. The probe sits in the observer's or the serving path's module, which can name the types and is refused everything else"
+alternate-constructors = "the only literal construction of `CommitmentWitness` is `mint`, called only by `EstablishedProvider::commit`; the only literal construction of `Redeemed` is `CommitmentWitness::redeem`. There is no `From`, `Into`, `Deref`, `Default` or builder, and `CommitmentReceipt` converts into nothing"
+generated-or-deserialization = "the witness derives Debug only and Redeemed derives Debug only: no Clone, Copy, Default, Serialize or Deserialize, so nothing fills the fields positionally and nothing duplicates a witness"
+test-only-construction = "the reference authority is a sibling of `established`, not a child, so even under `cfg(test)` it cannot name `mint`; it answers with receipts and failures only, and every test obtains a witness through `EstablishedProvider::commit`. No test-gated constructor or field visibility exists on either type"
+
+[[probe]]
+id = "S63"
+unit = "proxy.audit_commitment_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "what an observer's `record` returns is not a commitment witness"
+insertion_parent = "mcp-re-proxy/src/audit_sink/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0308"
+construction = """
+// ADR-MCPRE-068 structural probe S63. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::audit_commitment::{CommitmentWitness, Intent};
+use crate::audit_record::AuditEnvelope;
+use crate::audit_sink::AuditSink;
+
+fn hostile(sink: &dyn AuditSink, envelope: &AuditEnvelope) -> CommitmentWitness<Intent> {
+    sink.record(envelope) // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the witness's and Redeemed's fields are bare-private to `audit_commitment::established::witness`; `mint` is `pub(super)`, visible to `established` alone; `established` is a private module of `audit_commitment`, which re-exports the TYPES `pub(crate)`. The probe sits in the observer's or the serving path's module, which can name the types and is refused everything else"
+alternate-constructors = "the only literal construction of `CommitmentWitness` is `mint`, called only by `EstablishedProvider::commit`; the only literal construction of `Redeemed` is `CommitmentWitness::redeem`. There is no `From`, `Into`, `Deref`, `Default` or builder, and `CommitmentReceipt` converts into nothing"
+generated-or-deserialization = "the witness derives Debug only and Redeemed derives Debug only: no Clone, Copy, Default, Serialize or Deserialize, so nothing fills the fields positionally and nothing duplicates a witness"
+test-only-construction = "the reference authority is a sibling of `established`, not a child, so even under `cfg(test)` it cannot name `mint`; it answers with receipts and failures only, and every test obtains a witness through `EstablishedProvider::commit`. No test-gated constructor or field visibility exists on either type"
+
+[[probe]]
+id = "S64"
+unit = "proxy.audit_commitment_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "a provider's receipt — its bare `Ok` — is not a commitment witness"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0308"
+construction = """
+// ADR-MCPRE-068 structural probe S64. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::audit_commitment::{CommitmentReceipt, CommitmentWitness, Intent};
+
+fn hostile(receipt: CommitmentReceipt) -> CommitmentWitness<Intent> {
+    receipt // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the witness's and Redeemed's fields are bare-private to `audit_commitment::established::witness`; `mint` is `pub(super)`, visible to `established` alone; `established` is a private module of `audit_commitment`, which re-exports the TYPES `pub(crate)`. The probe sits in the observer's or the serving path's module, which can name the types and is refused everything else"
+alternate-constructors = "the only literal construction of `CommitmentWitness` is `mint`, called only by `EstablishedProvider::commit`; the only literal construction of `Redeemed` is `CommitmentWitness::redeem`. There is no `From`, `Into`, `Deref`, `Default` or builder, and `CommitmentReceipt` converts into nothing"
+generated-or-deserialization = "the witness derives Debug only and Redeemed derives Debug only: no Clone, Copy, Default, Serialize or Deserialize, so nothing fills the fields positionally and nothing duplicates a witness"
+test-only-construction = "the reference authority is a sibling of `established`, not a child, so even under `cfg(test)` it cannot name `mint`; it answers with receipts and failures only, and every test obtains a witness through `EstablishedProvider::commit`. No test-gated constructor or field visibility exists on either type"
+
+[[probe]]
+id = "S65"
+unit = "proxy.audit_commitment_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "the observer's `Accepted` token — proof only that `record_to` was called — is not a redeemed intent commitment"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0308"
+construction = """
+// ADR-MCPRE-068 structural probe S65. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::audit_commitment::{Intent, Redeemed};
+
+fn hostile(accepted: super::receipt::Accepted<'_>) -> Redeemed<Intent> {
+    accepted // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the witness's and Redeemed's fields are bare-private to `audit_commitment::established::witness`; `mint` is `pub(super)`, visible to `established` alone; `established` is a private module of `audit_commitment`, which re-exports the TYPES `pub(crate)`. The probe sits in the observer's or the serving path's module, which can name the types and is refused everything else"
+alternate-constructors = "the only literal construction of `CommitmentWitness` is `mint`, called only by `EstablishedProvider::commit`; the only literal construction of `Redeemed` is `CommitmentWitness::redeem`. There is no `From`, `Into`, `Deref`, `Default` or builder, and `CommitmentReceipt` converts into nothing"
+generated-or-deserialization = "the witness derives Debug only and Redeemed derives Debug only: no Clone, Copy, Default, Serialize or Deserialize, so nothing fills the fields positionally and nothing duplicates a witness"
+test-only-construction = "the reference authority is a sibling of `established`, not a child, so even under `cfg(test)` it cannot name `mint`; it answers with receipts and failures only, and every test obtains a witness through `EstablishedProvider::commit`. No test-gated constructor or field visibility exists on either type"
+
+[[probe]]
+id = "S66"
+unit = "proxy.audit_commitment_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "an outcome witness cannot be spent where an intent witness is required"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0308"
+construction = """
+// ADR-MCPRE-068 structural probe S66. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::audit_commitment::{CommitmentWitness, Intent, Outcome};
+
+fn hostile(witness: CommitmentWitness<Outcome>) -> CommitmentWitness<Intent> {
+    witness // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the witness's and Redeemed's fields are bare-private to `audit_commitment::established::witness`; `mint` is `pub(super)`, visible to `established` alone; `established` is a private module of `audit_commitment`, which re-exports the TYPES `pub(crate)`. The probe sits in the observer's or the serving path's module, which can name the types and is refused everything else"
+alternate-constructors = "the only literal construction of `CommitmentWitness` is `mint`, called only by `EstablishedProvider::commit`; the only literal construction of `Redeemed` is `CommitmentWitness::redeem`. There is no `From`, `Into`, `Deref`, `Default` or builder, and `CommitmentReceipt` converts into nothing"
+generated-or-deserialization = "the witness derives Debug only and Redeemed derives Debug only: no Clone, Copy, Default, Serialize or Deserialize, so nothing fills the fields positionally and nothing duplicates a witness"
+test-only-construction = "the reference authority is a sibling of `established`, not a child, so even under `cfg(test)` it cannot name `mint`; it answers with receipts and failures only, and every test obtains a witness through `EstablishedProvider::commit`. No test-gated constructor or field visibility exists on either type"
+
+[[probe]]
+id = "S67"
+unit = "proxy.audit_commitment_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "a witness cannot be duplicated, so it is spent at most once"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0599"
+construction = """
+// ADR-MCPRE-068 structural probe S67. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::audit_commitment::{CommitmentWitness, Intent};
+
+fn hostile(witness: CommitmentWitness<Intent>) -> (CommitmentWitness<Intent>, CommitmentWitness<Intent>) {
+    let spent_twice = witness.clone(); // STRUCTURAL-PROBE-SITE
+    (spent_twice, witness)
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the witness's and Redeemed's fields are bare-private to `audit_commitment::established::witness`; `mint` is `pub(super)`, visible to `established` alone; `established` is a private module of `audit_commitment`, which re-exports the TYPES `pub(crate)`. The probe sits in the observer's or the serving path's module, which can name the types and is refused everything else"
+alternate-constructors = "the only literal construction of `CommitmentWitness` is `mint`, called only by `EstablishedProvider::commit`; the only literal construction of `Redeemed` is `CommitmentWitness::redeem`. There is no `From`, `Into`, `Deref`, `Default` or builder, and `CommitmentReceipt` converts into nothing"
+generated-or-deserialization = "the witness derives Debug only and Redeemed derives Debug only: no Clone, Copy, Default, Serialize or Deserialize, so nothing fills the fields positionally and nothing duplicates a witness"
+test-only-construction = "the reference authority is a sibling of `established`, not a child, so even under `cfg(test)` it cannot name `mint`; it answers with receipts and failures only, and every test obtains a witness through `EstablishedProvider::commit`. No test-gated constructor or field visibility exists on either type"
+
+[[probe]]
+id = "S68"
+unit = "proxy.audit_commitment_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside the witness's own module can write a Redeemed literal, so a crossing holding one holds a spent, checked witness"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S68. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use std::marker::PhantomData;
+
+use crate::audit_commitment::{DurabilityTier, Intent, Redeemed};
+use crate::audit_record::EventBinding;
+
+fn hostile(binding: EventBinding, tier: DurabilityTier) -> Redeemed<Intent> {
+    Redeemed {
+        binding, // STRUCTURAL-PROBE-SITE
+        tier,
+        _crossing: PhantomData,
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the witness's and Redeemed's fields are bare-private to `audit_commitment::established::witness`; `mint` is `pub(super)`, visible to `established` alone; `established` is a private module of `audit_commitment`, which re-exports the TYPES `pub(crate)`. The probe sits in the observer's or the serving path's module, which can name the types and is refused everything else"
+alternate-constructors = "the only literal construction of `CommitmentWitness` is `mint`, called only by `EstablishedProvider::commit`; the only literal construction of `Redeemed` is `CommitmentWitness::redeem`. There is no `From`, `Into`, `Deref`, `Default` or builder, and `CommitmentReceipt` converts into nothing"
+generated-or-deserialization = "the witness derives Debug only and Redeemed derives Debug only: no Clone, Copy, Default, Serialize or Deserialize, so nothing fills the fields positionally and nothing duplicates a witness"
+test-only-construction = "the reference authority is a sibling of `established`, not a child, so even under `cfg(test)` it cannot name `mint`; it answers with receipts and failures only, and every test obtains a witness through `EstablishedProvider::commit`. No test-gated constructor or field visibility exists on either type"
+
+[[probe]]
+id = "S69"
+unit = "proxy.audit_commitment_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "the reference authority does not exist in the library outside its unit tests, so no build a deployment runs can select it"
+insertion_parent = "mcp-re-proxy/src/audit_sink/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0433"
+construction = """
+// ADR-MCPRE-068 structural probe S69. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+fn hostile() {
+    let _ = crate::audit_commitment::reference::ReferenceAuthority::new; // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the witness's and Redeemed's fields are bare-private to `audit_commitment::established::witness`; `mint` is `pub(super)`, visible to `established` alone; `established` is a private module of `audit_commitment`, which re-exports the TYPES `pub(crate)`. The probe sits in the observer's or the serving path's module, which can name the types and is refused everything else"
+alternate-constructors = "the only literal construction of `CommitmentWitness` is `mint`, called only by `EstablishedProvider::commit`; the only literal construction of `Redeemed` is `CommitmentWitness::redeem`. There is no `From`, `Into`, `Deref`, `Default` or builder, and `CommitmentReceipt` converts into nothing"
+generated-or-deserialization = "the witness derives Debug only and Redeemed derives Debug only: no Clone, Copy, Default, Serialize or Deserialize, so nothing fills the fields positionally and nothing duplicates a witness"
+test-only-construction = "this probe IS the test-only route: `reference` is declared `#[cfg(test)]`, so the library a deployment links does not contain it and the path does not resolve. Its receipts still go through `mint` when it does exist (S61, S62)"
