@@ -87,7 +87,7 @@ impl MachineStates {
             authorization: r
                 .authorization
                 .ok_or_else(|| unrecognised("authorization"))?,
-            audit: t.audit,
+            audit: r.audit.ok_or_else(|| unrecognised("audit"))?,
             channel_binding: r
                 .channel_binding
                 .ok_or_else(|| unrecognised("channel-binding"))?,

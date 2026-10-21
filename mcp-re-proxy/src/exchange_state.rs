@@ -349,10 +349,6 @@ impl ExchangeEvent {
 
 /// A success the serving path is about to publish, and the pipeline tail that reaches it.
 ///
-/// The bodied exits are `Terminal` and `OpenLeg`; the bodyless 202 reaches its own terminal
-/// through a stage's witness and uses
-/// [`establish_terminal`](ExchangeProgress::establish_terminal) instead.
-///
 /// The tail is written HERE and read twice — once to decide whether the success may be
 /// published, once to publish it. Two lists at the two call sites would be a correspondence
 /// held by remembering, which is the defect class [`Established`] exists to remove.
@@ -362,6 +358,8 @@ pub(crate) enum ServedSuccess {
     Terminal,
     /// The client may continue, and the continuation it depends on is durable.
     OpenLeg,
+    /// The bodyless 202: the boundary accepted the message, never that it completed.
+    Acknowledged,
 }
 
 impl ServedSuccess {
@@ -371,6 +369,7 @@ impl ServedSuccess {
         match self {
             Self::Terminal => &[E::EvidenceRetained, E::TerminalResponseServed],
             Self::OpenLeg => &[E::EvidenceRetained, E::OpenLegResponseServed],
+            Self::Acknowledged => &[E::NotificationAcknowledged],
         }
     }
 }
@@ -706,29 +705,13 @@ impl ExchangeProgress {
         established.value
     }
 
-    /// Take a stage's established fact AT A SUCCESS TERMINAL, or refuse to publish it.
-    ///
-    /// [`establish`](Self::establish) for the one place where refusing is possible. `Err`
-    /// leaves the machine at the last state it legally reached and does not consume the
-    /// fact, so the caller's refusal is minted from a machine that never claimed the
-    /// terminal — and, because the anomaly has latched, from one that knows it cannot
-    /// vouch for the exchange.
-    pub(crate) fn establish_terminal<T>(
-        &mut self,
-        established: Established<T>,
-    ) -> Result<T, &'static str> {
-        if let Some(violation) = self.prospective_refusal(&[established.event]) {
-            return Err(violation);
-        }
-        Ok(self.establish(established))
-    }
-
     /// Whether this exchange may publish `success`, deciding BEFORE anything is published.
     ///
-    /// The bodied success path discharges retention and emits `response.signed` before it
-    /// reaches its terminal, and both of those publish the claim. So the question is asked
-    /// here, against the tuple the exchange WOULD hold, and the answer is acted on while
-    /// refusing is still possible.
+    /// Every success path commits its outcome, discharges retention and emits
+    /// `response.signed` before it reaches its terminal, and each of those publishes the
+    /// claim; the 202 is also signed first. So the question is asked here, against the tuple
+    /// the exchange WOULD hold, and the answer is acted on while refusing is still possible:
+    /// `Err` leaves the machine where it legally was, with the anomaly latched.
     pub(crate) fn may_publish(&mut self, success: ServedSuccess) -> Result<(), &'static str> {
         match self.prospective_refusal(success.tail()) {
             Some(violation) => Err(violation),
@@ -1935,8 +1918,9 @@ mod tests {
         let mut p = signed_and_settled(ExchangeEvent::ContinuationNotRequired);
         // A tail that reaches no success terminal. The caller asked the wrong question,
         // which is itself the model and the code driving it disagreeing.
-        let witness = Established::new((), ExchangeEvent::TransportBindingChecked);
-        assert!(p.establish_terminal(witness).is_err());
+        assert!(p
+            .prospective_refusal(&[ExchangeEvent::TransportBindingChecked])
+            .is_some());
         // It LATCHED on the live machine, not only on the discarded copy. The exchange is
         // otherwise coherent and this tail IS legal, so without the latch the very next
         // publication would succeed — published by a machine that has already said it
@@ -1994,33 +1978,59 @@ mod tests {
         // The 202 is a signed statement that a backend accepted the message. Bytes that
         // exist because the transport failed cannot be the evidence for it.
         p.observe_origin(ResponseOrigin::DispatchIndeterminate);
-        let witness = Established::new((), ExchangeEvent::NotificationAcknowledged);
         assert_eq!(
-            p.establish_terminal(witness),
+            p.may_publish(ServedSuccess::Acknowledged),
             Err("synthesized transport-failure bytes were served as a success")
         );
         assert_eq!(
             p.state(),
             ExchangeState::Dispatched,
-            "the acknowledgement must not be consumed by a refused publication"
+            "the acknowledgement must not be entered by a refused publication"
         );
 
-        // And the coherent one IS consumed, so the refusal above is about the tuple and not
+        // And the coherent one IS published, so the refusal above is about the tuple and not
         // about the operation refusing everything.
         let mut ok = progressed_to(ExchangeState::RetentionCommitted);
         ok.advance(ExchangeEvent::BackendDispatched);
-        let witness = Established::new(7_u8, ExchangeEvent::NotificationAcknowledged);
-        assert_eq!(ok.establish_terminal(witness), Ok(7));
+        assert_eq!(ok.may_publish(ServedSuccess::Acknowledged), Ok(()));
+        assert_eq!(
+            ok.state(),
+            ExchangeState::Dispatched,
+            "decided, not entered"
+        );
+        ok.publish(ServedSuccess::Acknowledged);
         assert_eq!(ok.state(), ExchangeState::AcknowledgedNotification);
+        assert_eq!(ok.anomaly(), None);
+    }
+
+    /// ADR-MCPRE-070 §16 item 7. The 202 terminal is entered only when the 202 is served, so
+    /// a refusal decided after the acknowledgement was approved — its signing failed, or its
+    /// outcome could not be committed — is served from a machine that never claimed success,
+    /// and still says the backend may have run.
+    #[test]
+    fn a_refused_202_is_served_from_a_non_terminal_state() {
+        let mut p = progressed_to(ExchangeState::RetentionCommitted);
+        p.advance(ExchangeEvent::BackendDispatched);
+        p.observe_origin(ResponseOrigin::BackendReplied);
+        assert_eq!(p.may_publish(ServedSuccess::Acknowledged), Ok(()));
+        // The 202 was approved, then refused: nothing published it.
+        assert_eq!(p.state(), ExchangeState::Dispatched);
+        assert!(!p.state().is_success_terminal());
+        assert_eq!(p.retry_semantics(), RetrySemantics::NotRetrySafe);
+        assert_eq!(
+            ServedSuccess::Acknowledged.tail(),
+            &[ExchangeEvent::NotificationAcknowledged]
+        );
     }
 
     #[test]
     fn a_tail_that_reaches_no_success_terminal_is_refused_rather_than_passed() {
-        // `establish_terminal` answers ONE question. Handed a mid-pipeline fact it must not
-        // silently answer it about something else and return `Ok`.
+        // The publication decision answers ONE question. Handed a mid-pipeline fact it must
+        // not silently answer it about something else and pass.
         let mut p = progressed_to(ExchangeState::Verified);
-        let witness = Established::new((), ExchangeEvent::TransportBindingChecked);
-        assert!(p.establish_terminal(witness).is_err());
+        assert!(p
+            .prospective_refusal(&[ExchangeEvent::TransportBindingChecked])
+            .is_some());
         assert!(p.anomaly().is_some());
         assert_eq!(p.state(), ExchangeState::Verified);
     }

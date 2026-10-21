@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The last four things asked before the backend is reached, in the only order that keeps
+//! The last five things asked before the backend is reached, in the only order that keeps
 //! the durable record honest.
 //!
 //! Local saturation and a fully-ejected backend set are facts about this proxy, knowable
@@ -14,24 +14,31 @@
 //! before the threshold turns that into a refusal the client can act on, while refusing is
 //! still free.
 //!
-//! What writes comes after, in two steps that are two facts. The retention obligation is
+//! What writes comes after, in three steps that are three facts. The retention obligation is
 //! ACCEPTED, which asserts nothing about execution and is rescinded by dropping the value
-//! that carries it. Then the crossing is RECORDED, and that recording is the execution
-//! threshold: it is the last refusal of any kind, and the request relation says so —
-//! `DispatchCommitted` is the state the dispatch leaves from, so a pipeline that recorded
-//! the crossing before asking the questions that could still refuse would be rejected by
-//! the machine rather than merely recorded oddly.
+//! that carries it. Then, under the required audit posture, the exchange's execution INTENT
+//! is committed and its witness redeemed (ADR-MCPRE-070 G1, D7): after the reserve, so a
+//! refused reservation commits no intent, and before the crossing, so no `.pending` marker
+//! exists for an exchange whose intent was never committed. Then the crossing is RECORDED,
+//! and that recording is the execution threshold: it is the last refusal of any kind, and
+//! the request relation says so — `DispatchCommitted` is the state the dispatch leaves from,
+//! so a pipeline that recorded the crossing before asking the questions that could still
+//! refuse would be rejected by the machine rather than merely recorded oddly.
+//!
+//! The signing window is asked to survive the intent's bounded wait as well as the
+//! dispatch's, because both now lie between the window's single clock reading and the
+//! reply it will sign.
 
 use mcp_re_core::McpReError;
 
-use crate::async_inner::PreparedInnerDispatch;
 use crate::async_serve::ServedHttpResponse;
+use crate::audit_record::ExecutionIntent;
 use crate::authorization::AuthorizationPosture;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
 use crate::exchange_state::ExchangeProgress;
 use crate::refusal::Refusal;
-use crate::request_stages::RetentionDisposition;
+use crate::request_stages::ReadyForDispatch;
 
 use super::body_boundary::ForwardedBody;
 use super::receipt::Accepted;
@@ -52,8 +59,12 @@ impl HttpProfileProxy {
         progress: &ExchangeProgress,
     ) -> ServedHttpResponse {
         let owed = Self::disposition(progress, refusal.execution_refinement);
-        self.responses
-            .refuse(&self.audit, RefusalPoint::Response(acc), refusal, owed)
+        self.responses.refuse(
+            self.audit.observer(),
+            RefusalPoint::Response(acc),
+            refusal,
+            owed,
+        )
     }
 
     /// FORWARDED — strip the proxy-owned `_meta` so the backend sees clean MCP.
@@ -87,16 +98,16 @@ impl HttpProfileProxy {
         ))
     }
 
-    /// Assemble the two values the dispatch consumes, refusing while refusing is still
+    /// Assemble the ready state the dispatch consumes, refusing while refusing is still
     /// possible.
     ///
     /// The body is prepared first because preparing it decides nothing; the inner plane is
     /// prepared second because its refusal is free and leaves nothing behind; the signing
     /// window is checked against that plane's completion bound third, because the bound
     /// does not exist until the capability does; the retention obligation is accepted
-    /// fourth because it is the only one that writes; and the crossing is recorded LAST,
-    /// because recording it is what makes every earlier refusal free and every later one
-    /// impossible.
+    /// fourth because it is the first that writes; the intent is committed fifth (G1); and
+    /// the crossing is recorded LAST, because recording it is what makes every earlier
+    /// refusal free and every later one impossible.
     ///
     /// The inner-plane capability is HELD from here to the dispatch. If the reservation
     /// then refuses, the prepared dispatch is dropped on the way out and everything it took
@@ -109,9 +120,9 @@ impl HttpProfileProxy {
         acc: &Accepted<'_>,
         envelope: &ValidatedRequestEnvelope<'_>,
         authorized: AuthorizationPosture,
-        window: &SigningWindow,
+        window: SigningWindow,
         progress: &mut ExchangeProgress,
-    ) -> Result<(PreparedInnerDispatch<'p>, RetentionDisposition), ServedHttpResponse> {
+    ) -> Result<ReadyForDispatch<'p>, ServedHttpResponse> {
         let forwarded = match self.forward_body_stage(acc.exchange(), envelope) {
             Ok(body) => progress.establish(body),
             Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
@@ -121,10 +132,14 @@ impl HttpProfileProxy {
             Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
         };
         // The signing window must still be admissible at the worst instant this dispatch
-        // can complete at — asked HERE because this is the first point where the bound
-        // exists and the last where refusing is free. The capability is already held, so a
-        // refusal drops it and returns everything it took.
-        if !signing_window::covers(window, prepared.completion_bound()) {
+        // can complete at, after the intent crossing's own bounded wait — asked HERE because
+        // this is the first point where the bound exists and the last where refusing is
+        // free. The capability is already held, so a refusal drops it and returns everything
+        // it took.
+        let completion = prepared
+            .completion_bound()
+            .after(self.audit.pre_dispatch_wait());
+        if !signing_window::covers(&window, completion) {
             return Err(self.refuse_accepted(
                 acc,
                 Refusal::new(McpReError::DelegatedSigningUnavailable, 503),
@@ -135,11 +150,46 @@ impl HttpProfileProxy {
             Ok(accepted) => accepted,
             Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
         };
+        // G1 (ADR-MCPRE-070 D7). A refusal drops `accepted`, which rescinds the reservation,
+        // and `prepared`, which returns the plane's capacity: nothing is left behind.
+        let intent = ExecutionIntent::new(acc.exchange().actor_id, acc.exchange().now);
+        let intent = match self.audit.intent(acc.exchange_coordinate(), intent).await {
+            Ok(intent) => intent,
+            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
+        };
         let retention = match self.retention.commit(accepted).await {
             Ok(disposition) => progress.establish(disposition),
             Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
         };
-        Ok((prepared, retention))
+        Ok(ReadyForDispatch::new(prepared, window, retention, intent))
+    }
+
+    /// Serve under `audit`, the posture the composition root established. Crate-wide: only
+    /// the root holds one; an embedder installs an observer with `with_audit_sink`.
+    pub(crate) fn with_audit_posture(
+        mut self,
+        audit: crate::audit_commitment::AuditPosture,
+    ) -> Self {
+        self.audit = audit;
+        self
+    }
+
+    /// Require a committed execution intent before every dispatch, committed to the scripted
+    /// `reference` authority within `bound` (ADR-MCPRE-070 G1), keeping the observer.
+    ///
+    /// Established exactly as startup establishes a provider (`establish_reference`). Test
+    /// builds and the test-only `audit_commitment_reference` feature only: `pub` because the
+    /// serving integration suites are another crate, and no deployable library compiles it.
+    #[cfg(any(test, feature = "audit_commitment_reference"))]
+    pub fn with_required_audit_commitment(
+        mut self,
+        reference: &crate::audit_commitment::ReferenceCommitment,
+        bound: std::time::Duration,
+    ) -> Result<Self, String> {
+        let (provider, bound) = crate::audit_commitment::establish_reference(reference, bound)?;
+        let observer = self.audit.observer().clone();
+        self.audit = crate::audit_commitment::AuditPosture::required(observer, provider, bound);
+        Ok(self)
     }
 }
 

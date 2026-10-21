@@ -71,7 +71,7 @@ impl HttpProfileProxy {
         match self.requests.verify(http_req, now) {
             Ok(verified) => Ok(progress.establish(verified)),
             Err(cause) => Err(self.responses.rejection(
-                &self.audit,
+                self.audit.observer(),
                 http_req,
                 &cause,
                 403,

@@ -3614,7 +3614,11 @@ tested_symbols = [
 id = "proxy.unestablishable_capability_refusal"
 class = "V0"
 description = "A CAPABILITY THE DEPLOYMENT SELECTED THAT CANNOT BE ESTABLISHED REFUSES STARTUP AND NAMES WHAT IS MISSING, rather than serving without it: an authorization profile whose issuer is enrolled in no authority slot refuses at boot naming the slot the operator has to fill, a shared replay tier that cannot be opened refuses before the listener exists and names why it could not be opened, and a key source or durability tier this build does not carry refuses at construction naming the feature. The refusal is invariant across build profiles; only the reason varies, and the controls distinguish the lanes rather than asserting whichever one they were written in. Says nothing about WHICH postures are legal, which is layer A's and each classifier's own unit; nothing about the ORDER the planes are established in, which no theorem states; and nothing about what an established capability then does."
-paths = ["mcp-re-proxy/src/app.rs"]
+paths = [
+  "mcp-re-proxy/src/app.rs",
+  # Where a startup refusal leaves `run`: the entry points left `app.rs` in #1206.
+  "mcp-re-proxy/src/app/entry.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -4228,6 +4232,10 @@ paths = [
   "mcp-re-proxy/src/exchange_state.rs",
   "mcp-re-proxy/src/http_profile_serve/reply_assembly/accepted.rs",
   "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs",
+  # Where the decided success is published: every success exit reaches its terminal here.
+  "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs",
+  # Where a dispatched exchange is routed to the notification terminal or the reply.
+  "mcp-re-proxy/src/http_profile_serve/reply_assembly/dispatched.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -4247,8 +4255,10 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::a_coherent_success_is_published_and_reaches_its_terminal",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::the_notification_terminal_is_refused_on_the_same_terms",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::a_tail_that_reaches_no_success_terminal_is_refused_rather_than_passed",
+  "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::a_refused_202_is_served_from_a_non_terminal_state",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::accepted::tests::the_publication_decision_precedes_retention_and_the_response_signed_record",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::notification::tests::the_terminal_is_decided_before_the_202_is_minted",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::dispatched::tests::a_notification_is_answered_before_any_reply_is_assembled",
 ]
 
 [[unit]]
@@ -4293,9 +4303,13 @@ tested_symbols = [
 [[unit]]
 id = "proxy.dispatch_commitment"
 class = "V0"
-description = "The one pre-dispatch boundary the compiler holds: the backend is reached only by consuming a ReadyForDispatch, which cannot be assembled without the inner plane's real dispatch capability — itself obtainable only from an authorization-released body — a signing window snapshotted before the backend runs and shown to survive that plane's own declared completion bound, and a discharged retention disposition. Crossing it is one-way, and the transmission happens inside the crossing."
+description = "The one pre-dispatch boundary the compiler holds: the backend is reached only by consuming a ReadyForDispatch, which cannot be assembled without the inner plane's real dispatch capability — itself obtainable only from an authorization-released body — a signing window snapshotted before the backend runs and shown to survive that plane's own declared completion bound extended by the audit posture's pre-dispatch wait, a discharged retention disposition, and an intent disposition (ADR-MCPRE-070 G1). Crossing it is one-way, and the transmission happens inside the crossing."
 paths = [
   "mcp-re-proxy/src/request_stages.rs",
+  # The retention owner's two lifecycle products, and the intent crossing's, are the
+  # dispositions the ready state carries; they left `request_stages.rs` for a file each.
+  "mcp-re-proxy/src/request_stages/retention_disposition.rs",
+  "mcp-re-proxy/src/request_stages/intent_disposition.rs",
   "mcp-re-proxy/src/async_inner/mod.rs",
   # The seam became a directory when the boundary gained a second question. `PreparedInnerDispatch`
   # owns the CAPABILITY, `completion_bound.rs` owns what the plane says about COMPLETION, and
@@ -4348,7 +4362,7 @@ gate_controls = [
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::dispatch_commitment::tests::the_crossing_is_recorded_after_everything_that_can_refuse_and_before_the_dispatch",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::dispatch_commitment::tests::the_last_state_that_can_refuse_freely_is_the_one_before_the_crossing",
-  "//mcp-re-proxy:proxy_unit_test#request_stages::tests::the_retention_obligation_has_exactly_two_cases",
+  "//mcp-re-proxy:proxy_unit_test#request_stages::retention_disposition::tests::the_retention_obligation_has_exactly_two_cases",
   "//mcp-re-proxy:proxy_unit_test#request_stages::tests::the_dispatch_boundary_consumes_the_ready_state",
   "//mcp-re-proxy:proxy_unit_test#async_inner::tests::preparing_transmits_nothing",
   "//mcp-re-proxy:proxy_unit_test#async_inner::tests::dropping_a_prepared_dispatch_transmits_nothing_and_releases_what_it_held",
@@ -7806,6 +7820,9 @@ paths = [
   # claim is about.
   "mcp-re-proxy/src/outbound_fetch/binding.rs",
   "mcp-re-proxy/src/outbound_fetch/credential_egress.rs",
+  # The TLS the bound agent speaks. Same reason: it rides the same features, and which
+  # roots an HTTPS destination is authenticated against is part of what the agent carries.
+  "mcp-re-proxy/src/outbound_fetch/public_roots.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -8007,6 +8024,8 @@ paths = [
   # WHICH REFUSAL each failure earns, which stays with `proxy.refusal_site_totality` and is
   # why `http_profile_serve/retention/` is still absent below.
   "mcp-re-proxy/src/http_profile_serve/reply_assembly/accepted.rs",
+  # Where every success exit now completes retention, after its outcome is committed.
+  "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -9337,6 +9356,22 @@ paths = [
   # The sink and the run it numbers within: `seq` is ordered only inside one incarnation.
   "mcp-re-proxy/src/audit_sink/stderr.rs",
   "mcp-re-proxy/src/audit_sink/stream.rs",
+  # Where `(run, seq)` is allocated, once per produced event (ADR-MCPRE-070 §8). Six of this
+  # unit's `tested_symbols` are `lib#audit_record::envelope::{allocator,run_id}::tests::*`.
+  # The rest of the envelope subtree and the emission funnel are fingerprinted here because
+  # every line this unit's stream writes is numbered by the event they produce and offer;
+  # the envelope's own proposition (NP-282) is not yet a unit.
+  "mcp-re-proxy/src/audit_record/emission.rs",
+  "mcp-re-proxy/src/audit_record/envelope/mod.rs",
+  "mcp-re-proxy/src/audit_record/envelope/allocator.rs",
+  "mcp-re-proxy/src/audit_record/envelope/binding.rs",
+  "mcp-re-proxy/src/audit_record/envelope/canonical.rs",
+  "mcp-re-proxy/src/audit_record/envelope/digest.rs",
+  "mcp-re-proxy/src/audit_record/envelope/event.rs",
+  "mcp-re-proxy/src/audit_record/envelope/event_id.rs",
+  "mcp-re-proxy/src/audit_record/envelope/identity_failure.rs",
+  "mcp-re-proxy/src/audit_record/envelope/run_id.rs",
+  "mcp-re-proxy/src/audit_record/envelope/scope.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -9357,12 +9392,18 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::every_line_names_its_run_and_its_number_in_that_run",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::a_stream_states_its_start_once_naming_its_run",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::recorded_lines_are_drainable_at_shutdown",
-  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::each_record_of_a_run_takes_the_next_number",
-  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::two_runs_with_the_same_numbers_stay_distinguishable",
-  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::a_position_has_no_number_in_another_run",
-  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::a_run_renders_as_32_hex_digits",
-  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::the_process_stream_is_drawn_once",
-  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::a_failed_draw_opens_nothing",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::envelope::allocator::tests::each_record_of_a_run_takes_the_next_number",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::envelope::allocator::tests::two_runs_with_the_same_numbers_stay_distinguishable",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::envelope::allocator::tests::a_position_has_no_number_in_another_run",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::envelope::run_id::tests::a_run_renders_as_32_hex_digits",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::envelope::allocator::tests::the_process_stream_is_drawn_once",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::envelope::allocator::tests::a_failed_draw_opens_nothing",
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::the_stream_lines_name_the_opened_run",
+  # The record line is byte-identical to v0.18.1 now that its `(run, seq)` is the produced
+  # event's identity rather than the sink's own position.
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::a_record_line_is_byte_identical_to_v0_18_1",
+  # A run that stops numbering says so on the stream rather than going quiet.
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::an_exhausted_run_says_so_once",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::tests::the_ceiling_a_record_is_admitted_at_is_chosen_by_its_attribution",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::writer::tests::a_burst_that_stops_still_reports_what_it_cost",
   # "One record in, one line out" is a DELIVERY claim: whatever the record says, the stream
@@ -9439,6 +9480,368 @@ tested_symbols = [
 # five-tuple has an injectivity argument in prose, and no theorem named either. Found by
 # asking of each root what it requires rather than by reading the registry upward.
 # ---------------------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+#
+# ADR-MCPRE-070 §2, §3, §9 (P4) — required durable commitment, owned apart from the observer.
+# What the shared owner does with a provider's answer, not whether the provider persisted
+# anything: that is the provider's assumption (P9), and no unit here claims it.
+
+[[unit]]
+id = "proxy.audit_commitment_witness"
+class = "V0"
+description = "A commitment witness is minted only from a provider receipt that matches the envelope the shared owner SENT — event identity, content digest, crossing kind, and the tier the provider declared when it was established — and is spent once, by move, only for that event (its run included) against that same established provider instance. Every provider answer that is not a matching receipt — rejection, unavailability, a wait past the nonzero bound, a dropped completion, a panic before or during polling — is a typed CommitmentFailure that is never absorbed and never reads as committed. States nothing about whether any provider persisted anything (ADR-MCPRE-070 §9, P9, D3)."
+paths = [
+  # `fixtures.rs` is compiled only into the unit tests and `reference.rs` only into test
+  # builds and the test-only `audit_commitment_reference` flavor; they are listed because
+  # most of this unit's controls drive the owner through them.
+  "mcp-re-proxy/src/audit_commitment/mod.rs",
+  "mcp-re-proxy/src/audit_commitment/authority.rs",
+  "mcp-re-proxy/src/audit_commitment/bound.rs",
+  "mcp-re-proxy/src/audit_commitment/crossing.rs",
+  "mcp-re-proxy/src/audit_commitment/established/mod.rs",
+  "mcp-re-proxy/src/audit_commitment/established/caught.rs",
+  "mcp-re-proxy/src/audit_commitment/established/witness.rs",
+  "mcp-re-proxy/src/audit_commitment/failure.rs",
+  "mcp-re-proxy/src/audit_commitment/fixtures.rs",
+  "mcp-re-proxy/src/audit_commitment/provider_failure.rs",
+  "mcp-re-proxy/src/audit_commitment/receipt.rs",
+  "mcp-re-proxy/src/audit_commitment/reference.rs",
+  "mcp-re-proxy/src/audit_commitment/reference_probe.rs",
+  "mcp-re-proxy/src/audit_commitment/reference_step.rs",
+  "mcp-re-proxy/src/audit_commitment/forgery.rs",
+  "mcp-re-proxy/src/audit_commitment/request.rs",
+  "mcp-re-proxy/src/audit_commitment/tier.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/audit/commitment_witness",
+  "mutation://proxy/audit/commitment_witness",
+]
+tested_symbols = [
+  # Receipt-to-witness binding at mint: a provider's Ok is checked against what was SENT —
+  # identity, digest, crossing and the tier declared at establishment — and a stale receipt
+  # is another event's.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_matching_the_sent_envelope_mints_a_witness",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_for_another_event_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_for_other_bytes_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_at_another_tier_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_for_the_other_crossing_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_stale_receipt_from_the_previous_event_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::receipt::tests::a_receipt_projects_exactly_what_it_was_built_from",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::request::tests::a_request_projects_exactly_one_envelope",
+  # Single redemption: against THIS event (its run included) and THIS provider instance.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::redeem_refuses_a_witness_for_another_event",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::redeem_refuses_a_witness_from_another_run",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::redeem_refuses_a_witness_for_other_bytes",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::redeem_refuses_a_witness_from_another_established_instance",
+  # Every answer that is not a matching receipt is typed and visible, never absorbed: the
+  # bounded wait, the provider's panic before and during polling, its cancellation.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_committed_event_yields_a_witness",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_provider_rejection_is_typed_rejected",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::an_unavailable_provider_is_typed_unavailable",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_provider_that_never_answers_is_uncertain_timed_out_within_the_bound",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_dropped_provider_completion_is_uncertain_cancelled",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_provider_panic_while_polled_is_uncertain_and_does_not_unwind",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_provider_panic_before_its_future_exists_is_uncertain_and_does_not_unwind",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::the_commit_future_is_send",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::caught::tests::a_panic_while_polled_is_an_answer",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::caught::tests::an_answer_passes_through_unchanged",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::failure::tests::rejected_and_unavailable_are_definitely_not_committed",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::failure::tests::every_uncertain_cause_is_possibly_committed",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::failure::tests::a_provider_cancellation_is_uncertain_not_unavailable",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::provider_failure::tests::a_rejection_names_its_reason",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::authority::tests::the_seam_is_object_safe_send_and_sync",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::bound::tests::a_zero_bound_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::bound::tests::a_bound_above_the_request_deadline_ceiling_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::bound::tests::a_bound_at_the_ceiling_is_the_last_legal_value",
+  # The contrast the issue names: an observer's panic is absorbed and authorizes nothing; an
+  # authority's panic is a typed failure.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::tests::a_panicking_observer_neither_fails_nor_authorizes_a_commitment",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::tests::a_panicking_authority_is_typed_not_swallowed",
+  # The closed, versioned tier vocabulary and its one policy threshold (D3), read once.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::tier::tests::the_vocabulary_is_closed_at_two_in_v1",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::tier::tests::only_survives_proxy_process_loss_meets_the_required_minimum",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::tier::tests::no_guarantee_claims_unconditional_durability",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::an_eligible_provider_that_answers_is_established_reading_its_tier_once",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::forgery::tests::a_forged_crossing_names_another_crossing",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::reference_probe::tests::each_step_answers_as_named",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::reference_step::tests::a_hook_prints_as_a_hook",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_tier_below_the_minimum_is_refused_before_the_probe",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::crossing::tests::intent_and_outcome_have_distinct_kinds",
+  # The instrument's own controls: the test-only reference authority deduplicates an
+  # identical retry, refuses a reused identity, and is deterministic. Without them a green
+  # above could be the reference's leniency rather than the owner's check.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::reference::tests::an_identical_retry_is_deduplicated_to_an_equal_receipt",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::reference::tests::the_same_id_with_other_bytes_is_an_identity_conflict",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::reference::tests::the_same_script_yields_the_same_outcomes",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::fixtures::tests::the_conflicting_pair_shares_an_identity_and_not_its_content",
+]
+
+# The sole-producer half, and why it is a separate unit: every control above stays green
+# if `mint` is made crate-visible or the witness gains a public field, because none of them
+# attempts the construction the change admits (docs/dev/sealed-owners.md, "Property 1 needs
+# a witness"). Only a hostile construction the compiler refuses can say that P3 holds.
+
+[[unit]]
+id = "proxy.audit_commitment_sole_producer"
+class = "V0"
+description = "No code outside `audit_commitment::established` can produce a CommitmentWitness or a Redeemed, and nothing the observer path produces — `AuditSink::record`'s unit, `Accepted`, a provider's CommitmentReceipt — is accepted where one is required; a witness is not clonable, an outcome witness is not an intent witness, and the reference authority does not exist in the library outside test builds and the test-only `audit_commitment_reference` flavor. So holding a Redeemed means the shared owner checked a receipt and the crossing spent the witness (ADR-MCPRE-070 P3)."
+paths = [
+  "mcp-re-proxy/src/audit_commitment/mod.rs",
+  "mcp-re-proxy/src/audit_commitment/crossing.rs",
+  "mcp-re-proxy/src/audit_commitment/receipt.rs",
+  "mcp-re-proxy/src/audit_commitment/established/mod.rs",
+  "mcp-re-proxy/src/audit_commitment/established/witness.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "high"
+evidence = [
+  "structural://proxy/audit/commitment_witness_sole_producer",
+]
+
+# ---------------------------------------------------------------------------
+#
+# ADR-MCPRE-070 G1 (§4, §6 W1-W3, D7, D9, D12) — no dispatch without the bound intent.
+# What the serving path does with a commitment, not whether a provider persisted it: that
+# stays the provider's assumption (P9), and the required posture is reachable only through
+# the test-only installer until #1206.
+
+[[unit]]
+id = "proxy.audit_intent_gate"
+class = "V0"
+description = "Under the required audit posture no backend dispatch exists without the exchange's execution intent committed and its witness redeemed for THIS exchange's event — the intent names the coordinate of the exchange's request.accepted (D9) — against the provider the posture holds. G1 runs after the retention reserve and before the retention commit and dispatch (D7), on notifications and bodied calls alike, with one bounded attempt; every failure (absent coordinate, rejection, unavailability, timeout, dropped completion, panic, forged or stale receipt) is a signed mcp-re.audit_commitment_unavailable refusal before the backend is reached (503 where a retry can succeed, 500 where it cannot), carrying the machine's NothingExecuted disposition, rescinding the reservation and returning the plane's capacity. The signing window must survive the intent's wait as well as the dispatch's. Cancellation during or after G1 dispatches nothing. Under the best-effort posture the posture owner states NotRequired and nothing is produced, committed or observed (D1)."
+paths = [
+  "mcp-re-proxy/src/request_stages/intent_disposition.rs",
+  "mcp-re-proxy/src/audit_commitment/posture.rs",
+  "mcp-re-proxy/src/audit_commitment/intent.rs",
+  "mcp-re-proxy/src/audit_commitment/not_required.rs",
+  # The model of A, checked against R and the G1 types; test-only.
+  "mcp-re-proxy/src/audit_commitment/machine.rs",
+  # The instrument the serving suites drive; test builds and the test-only flavor only.
+  "mcp-re-proxy/src/audit_commitment/harness.rs",
+  "mcp-re-proxy/src/request_stages.rs",
+  "mcp-re-proxy/src/audit_record/intent.rs",
+  # Shared with `proxy.dispatch_commitment`: G1 is placed, and the window extended, there.
+  "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs",
+  "mcp-re-proxy/src/async_inner/completion_bound.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/audit/intent_gate",
+  "mutation://proxy/audit/intent_gate",
+]
+tested_symbols = [
+  # The crossing's procedure and its one refusal decision.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::commit_gives_a_redeemed_intent_for_this_exchange",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_rejected_intent_is_500",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::an_unavailable_provider_is_503",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_provider_that_never_answers_times_out_within_the_bound_as_503",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_dropped_completion_is_503",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_panicking_provider_is_503_and_does_not_unwind",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_forged_or_stale_receipt_is_503",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::an_absent_coordinate_is_500_and_asks_nothing",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_coordinate_from_another_run_is_500_and_asks_nothing",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::each_failure_class_earns_its_own_status",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_spent_budget_refuses_before_dispatch_and_asks_nobody",
+  # The posture: best-effort mints the owner's statement and asks nothing; required never does.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::only_best_effort_mints_not_required",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_required_posture_never_yields_not_required",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::installing_an_observer_keeps_the_commitment_posture",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::not_required::tests::the_statement_is_a_value_the_owner_hands_out",
+  "//mcp-re-proxy:proxy_unit_test#request_stages::intent_disposition::tests::the_intent_obligation_has_exactly_two_cases",
+  # Machine A, composed with R (D7).
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::machine::tests::machine_a_admits_dispatch_only_from_intent_committed_or_not_required",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::machine::tests::machine_a_composes_with_r_only_between_inner_plane_accepted_and_retention_committed",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::machine::tests::the_g1_types_carry_exactly_the_states_the_model_names",
+  # The intent fact: three fields, an exchange it names, an identity of its own.
+  "//mcp-re-proxy:proxy_unit_test#audit_record::intent::tests::an_intent_encodes_exactly_its_three_fields",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::intent::tests::an_intent_needs_an_exchange_link",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::intent::tests::each_production_is_a_new_event_of_the_run",
+  "//mcp-re-proxy:proxy_unit_test#async_inner::completion_bound::tests::completion_bound_after_is_checked",
+  # The instrument's own controls.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::harness::tests::a_fresh_reference_has_been_asked_nothing",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::harness::tests::each_answer_maps_to_its_own_step",
+  # `PreparedInnerDispatch::dispatch` is `pub`; the call graph, measured, holds that only the
+  # ready state transmits — so nothing reaches the backend around the intent disposition.
+  "//mcp-re-proxy:integration_test#prepared_dispatch_source_test::prepared_dispatch_is_transmitted_only_by_the_ready_state",
+  "//mcp-re-proxy:integration_test#prepared_dispatch_source_test::the_scanner_sees_a_bypass_and_ignores_comments_and_tests",
+  # Through the production HttpProfileProxy: zero backend invocations on every negative path.
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::best_effort_dispatch_and_refusals_are_unchanged",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_commit_dispatches_once_after_the_intent_is_journaled",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_failures_reach_no_backend",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::a_stale_receipt_reaches_no_backend",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_notification_without_commitment_gets_no_202",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::cancelled_during_intent_commit_reaches_no_backend",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::crash_window_w2_store_may_hold_intent_but_nothing_ran",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::an_uncertain_intent_identity_is_never_reused_by_the_next_exchange",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::w3_retention_commit_failure_after_intent_leaves_no_pending_and_no_dispatch",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::g1_failure_rescinds_the_reservation",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::the_window_must_survive_the_commitment_wait",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::the_installer_refuses_a_volatile_authority_and_an_illegal_bound",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_over_a_loopback_http_backend_dispatches_only_after_commit",
+]
+
+# The structural half, for the reason `proxy.audit_commitment_sole_producer` is separate: the
+# battery above stays green if `NoCommitmentRequired` gains a public field or the ready state
+# loses its intent parameter, because no control attempts the construction that admits.
+
+[[unit]]
+id = "proxy.audit_intent_gate_sole_producer"
+class = "V0"
+description = "The ready state cannot be assembled without an intent disposition; outside `audit_commitment` no code can state NotRequired (the posture owner's statement) or place an unredeemed witness, or an outcome's, where a redeemed intent is required; an execution intent cannot be offered to the observer; and the default library has no route into the required posture."
+paths = [
+  "mcp-re-proxy/src/request_stages.rs",
+  "mcp-re-proxy/src/request_stages/intent_disposition.rs",
+  "mcp-re-proxy/src/audit_commitment/not_required.rs",
+  "mcp-re-proxy/src/audit_commitment/posture.rs",
+  "mcp-re-proxy/src/audit_record/intent.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://proxy/audit/intent_gate_sole_producer",
+]
+
+# ADR-MCPRE-070 G2 (#1205): the outcome crossing and the one success exit.
+
+[[unit]]
+id = "proxy.audit_outcome_gate"
+class = "V0"
+description = "Under the required audit posture no completed success — bodied reply or notification 202 (D4) — is visible without the exchange's response.signed event committed and its witness redeemed for that event, the event scoped to the coordinate of the exchange's request.accepted (D9) and distinct from its intent. Requiredness is the state G1 carried across the dispatch, never the posture re-read. The outcome is committed BEFORE retention completes and the success is served only after both (Q2): an outcome commit failure is a signed 500 mcp-re.audit_commitment_unavailable stating possibly_executed, never 503, with retention discharged by that refusal (W5); a retention failure after the commit is the evidence_retention_indeterminate refusal and never success (W5b). The observer is offered the committed event itself, not a second one. Post-dispatch refusals are observed, not committed (D8). Cancellation after dispatch invents no outcome and leaves the crossing marked (W4); a response lost after its outcome was committed claims no delivery (W6). The 202 terminal is decided before signing and entered only when served (§16 item 7). Under the best-effort posture nothing is produced, committed or reordered."
+paths = [
+  "mcp-re-proxy/src/audit_commitment/outcome.rs",
+  "mcp-re-proxy/src/request_stages/outcome_disposition.rs",
+  "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs",
+  # Shared: the A-state reading lives in the posture, the provider in the intent crossing.
+  "mcp-re-proxy/src/audit_commitment/posture.rs",
+  # Shared: the model of A, whose success admission this unit adds; test-only.
+  "mcp-re-proxy/src/audit_commitment/machine.rs",
+  "mcp-re-proxy/src/audit_commitment/intent.rs",
+  # Shared: produce and offer are split so the committed event is the observed one.
+  "mcp-re-proxy/src/audit_record/emission.rs",
+  # Shared: both success exits enter here.
+  "mcp-re-proxy/src/http_profile_serve/reply_assembly/accepted.rs",
+  "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/audit/outcome_gate",
+  "mutation://proxy/audit/outcome_gate",
+]
+tested_symbols = [
+  # The procedure: one bounded attempt, the actual status, always 500.
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::outcome::tests::outcome_commit_gives_committed_with_the_actual_status",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::outcome::tests::every_outcome_failure_is_500",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::outcome::tests::an_absent_coordinate_is_500_and_asks_nothing",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::outcome::tests::an_intent_receipt_does_not_commit_an_outcome",
+  # Requiredness from the carried A state; one token, two status tables (D12).
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::not_required_passes_through_and_asks_nothing",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_g1_and_g2_status_tables_differ_only_in_the_retry_safe_rows",
+  "//mcp-re-proxy:proxy_unit_test#request_stages::outcome_disposition::tests::the_outcome_obligation_has_exactly_two_cases",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::machine::tests::machine_a_admits_success_only_from_outcome_committed_or_not_required",
+  # The exit's order (Q2), and that it is the only success exit.
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::success_exit::tests::the_outcome_is_committed_before_retention_and_both_before_success_is_served",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::success_exit::tests::success_exit_is_the_only_success_served_call",
+  # Through the production HttpProfileProxy, each window of §6 forced.
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::best_effort_success_and_notification_are_unchanged",
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_success_is_visible_only_after_the_outcome_is_committed",
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_outcome_failure_never_serves_success",
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_outcome_failure_discharges_retention_with_the_refusal_served",
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::retention_failure_after_outcome_commit_never_serves_success",
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_notification_gets_no_202_without_a_committed_outcome",
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::signed_refusals_under_required_are_unchanged_and_commit_no_outcome",
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::w4_cancel_after_dispatch_never_claims_nothing_executed",
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::w6_outcome_committed_then_lost_before_the_write",
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::a_full_observer_queue_changes_neither_dispatch_nor_success",
+]
+
+
+[[unit]]
+id = "proxy.audit_posture"
+class = "V0"
+description = "THE REQUESTED AUDIT DELIVERY AND THE ESTABLISHED ONE ARE ONE FACT (ADR-MCPRE-070 §2, §7, §11, D2, D3, Q3). `--audit-commitment required` is never served as best-effort and never declared OFF: it refuses startup — before any plane materializes — when the build registers no commitment provider, when the registered provider is the test-only reference authority without its acknowledgement, when the provider declares a tier below SURVIVES_PROXY_PROCESS_LOSS (audit-durability/v1), when its bounded startup probe fails, times out or panics, and (at the configuration boundary) when the observer is `--audit-sink none`. The refusal names only the provider id, a tier, a class and a bound — never provider text. A registered provider under best-effort is named and never asked. The REQUIRED posture line is assembled only over an established provider, states the tier as DECLARED, and discloses the observer's seq gaps. Commitments have their own try-acquired budget: a spent one refuses before dispatch with the outage's 503, asks no provider, and leaves the observer untouched. The run's mcp-re.audit.accounting record is committed once per interval, cumulative, run- and interval-attributed, with missed intervals stated and coverage always a lower bound. Says nothing about whether any provider persists anything: the tier is a declaration and an external evidence obligation (D3)."
+paths = [
+  "mcp-re-proxy/src/audit_commitment/plan.rs",
+  "mcp-re-proxy/src/audit_commitment/providers.rs",
+  "mcp-re-proxy/src/audit_commitment/provider_id.rs",
+  "mcp-re-proxy/src/audit_commitment/refusal.rs",
+  "mcp-re-proxy/src/audit_commitment/establish_failure.rs",
+  "mcp-re-proxy/src/audit_commitment/established_audit.rs",
+  "mcp-re-proxy/src/audit_commitment/budget.rs",
+  "mcp-re-proxy/src/audit_commitment/accounting.rs",
+  "mcp-re-proxy/src/audit_commitment/cadence.rs",
+  # Shared with `proxy.audit_commitment_witness`: establishment, and the budget's try-acquire.
+  "mcp-re-proxy/src/audit_commitment/established/mod.rs",
+  "mcp-re-proxy/src/audit_record/accounting.rs",
+  "mcp-re-proxy/src/audit_sink/observer_accounting.rs",
+  "mcp-re-proxy/src/config_state/audit_policy.rs",
+  "mcp-re-proxy/src/serving_capabilities/audit_posture.rs",
+  "mcp-re-proxy/src/app/entry.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/audit/posture",
+  "mutation://proxy/audit/posture",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#app::entry::tests::the_default_entry_refuses_a_required_deployment_before_any_effect",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::plan::tests::required_without_a_provider_is_refused_never_best_effort",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::plan::tests::the_reference_authority_is_refused_without_the_acknowledgement",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::plan::tests::a_registered_provider_is_not_promoted_under_best_effort",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::plan::tests::best_effort_establishes_nothing",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::providers::tests::none_registers_nothing",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::providers::tests::only_the_test_constructor_acknowledges_the_reference",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::provider_id::tests::a_name_in_the_grammar_is_accepted_verbatim",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::provider_id::tests::anything_outside_the_grammar_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::provider_id::tests::the_reference_name_is_reserved",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::refusal::tests::every_refusal_names_the_flag",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::refusal::tests::a_tier_refusal_names_the_vocabulary_and_the_declared_tier",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::establish_failure::tests::every_class_has_a_distinct_wire_name",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established_audit::tests::best_effort_names_without_holding",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_probe_that_fails_hangs_or_panics_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::the_refusal_carries_no_provider_text",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_spent_budget_refuses_before_the_provider_is_asked",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::budget::tests::a_spent_budget_refuses_at_once_and_a_dropped_permit_returns",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::budget::tests::a_cancelled_holder_returns_its_permit",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::accounting::tests::each_settled_attempt_is_counted_by_its_class",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::accounting::tests::an_attempt_dropped_unsettled_is_uncertain",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::accounting::tests::the_shutdown_line_states_its_limits",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::cadence::tests::a_failed_record_is_a_missed_interval_the_next_one_states",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::cadence::tests::a_spent_budget_is_a_missed_interval_not_a_wait",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::cadence::tests::a_hanging_provider_is_bounded_and_missed",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::accounting::tests::the_record_names_no_actor_and_no_reason",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::accounting::tests::the_coverage_is_always_a_lower_bound",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::accounting::tests::an_unrepresentable_count_saturates_rather_than_wraps",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::accounting::tests::the_record_belongs_to_the_run_and_no_exchange",
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::observer_accounting::tests::each_class_is_counted_and_never_reset",
+  "//mcp-re-proxy:proxy_unit_test#config_state::audit_policy::tests::the_three_legal_forms_are_classified",
+  "//mcp-re-proxy:proxy_unit_test#config_state::audit_policy::tests::required_without_an_observer_is_refused_not_downgraded",
+  "//mcp-re-proxy:proxy_unit_test#config_state::audit_policy::tests::the_projections_follow_the_state",
+  "//mcp-re-proxy:proxy_unit_test#serving_capabilities::audit_posture::tests::an_unused_provider_is_named_and_not_promoted",
+  "//mcp-re-proxy:proxy_unit_test#serving_capabilities::audit_posture::tests::the_required_posture_carries_its_established_provider_and_says_so",
+  "//mcp-re-proxy:proxy_unit_test#serving_capabilities::audit_posture::tests::a_required_posture_that_cannot_be_established_refuses",
+  "//mcp-re-proxy:integration_test#app_startup_characterization_test::the_open_source_binary_refuses_a_required_audit_posture_before_any_plane",
+  "//mcp-re-proxy:integration_test#app_startup_characterization_test::a_required_audit_posture_without_an_observer_is_refused_as_configuration",
+  "//mcp-re-proxy:integration_test#app_startup_characterization_test::injected_provider::a_fake_qualified_provider_that_fails_establishment_is_refused",
+  "//mcp-re-proxy:integration_test#app_startup_characterization_test::injected_provider::a_volatile_provider_is_refused_without_being_probed",
+  "//mcp-re-proxy:integration_test#app_startup_characterization_test::injected_provider::a_qualified_provider_is_established_inside_the_real_startup",
+  "//mcp-re-proxy:integration_test#app_startup_characterization_test::injected_provider::a_registered_provider_is_not_promoted_under_best_effort",
+  "//mcp-re-proxy:integration_test#startup_transcript::normalize_tests::an_unrecognized_audit_delivery_fails_rather_than_guessing",
+  "//mcp-re-proxy:integration_test#startup_transcript::normalize_tests::every_audit_posture_production_states_is_read",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::a_spent_commitment_budget_refuses_before_dispatch_and_the_observer_is_unaffected",
+]
+
 
 [[unit]]
 id = "http_profile.bodyless_acknowledgement"
@@ -12226,7 +12629,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.evidence_retention_state"
 class = "V0"
-description = "WHAT THIS DEPLOYMENT RECORDS, AND WHAT IT MERELY ASSERTS: every legal state form of the audit, retention and verified-context machines is classified, retention is selected by its OWN locator so the posture and the path are one answer, the retaining state carries the directory that selected it rather than leaving a second question to ask, and only the TRUSTED verified-context state asserts the inner-channel property no configuration check can confirm. Says nothing about whether the named directory is writable or whether the asserted isolation holds — the last clause is precisely the boundary between what configuration checks and what a trusted context asserts."
+description = "WHAT THIS DEPLOYMENT RETAINS, AND WHAT IT MERELY ASSERTS: every legal state form of the retention and verified-context machines is classified, retention is selected by its OWN locator so the posture and the path are one answer, the retaining state carries the directory that selected it rather than leaving a second question to ask, and only the TRUSTED verified-context state asserts the inner-channel property no configuration check can confirm. Says nothing about whether the named directory is writable or whether the asserted isolation holds — the last clause is precisely the boundary between what configuration checks and what a trusted context asserts."
 paths = ["mcp-re-proxy/src/config_state/evidence.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -12575,6 +12978,9 @@ evidence = [
 tested_symbols = [
   "//mcp-re-conformance:audit_vocabulary_guard_test#event_types_do_not_collide_with_frozen_wire_codes",
   "//mcp-re-conformance:audit_vocabulary_guard_test#every_audit_token_is_a_wire_code_or_a_fixed_event_type",
+  # ADR-MCPRE-070 D1: the execution category, a versioned extension pinned at exactly one.
+  "//mcp-re-conformance:audit_vocabulary_guard_test#execution_event_set_is_exactly_the_one_item_allowlist",
+  "//mcp-re-conformance:audit_vocabulary_guard_test#accounting_event_set_is_exactly_the_one_item_allowlist",
   "//mcp-re-conformance:audit_vocabulary_guard_test#guard_inputs_are_non_empty",
   "//mcp-re-conformance:audit_vocabulary_guard_test#key_lifecycle_event_set_is_exactly_the_three_item_allowlist",
   "//mcp-re-conformance:audit_vocabulary_guard_test#no_authorization_hash_mismatch_audit_reason",
@@ -12960,7 +13366,11 @@ tested_symbols = [
 id = "proxy.serving_capability_posture"
 class = "V0"
 description = "AN OPTIONAL SERVING CAPABILITY IS ON WITH THE ARTIFACT IT ATTACHES OR OFF WITH NONE, AND WHICH IT IS FOLLOWS THE CLASSIFIED CONFIGURATION: the ON constructor cannot be reached without the artifact and the OFF constructor has nowhere to put one, so `the transcript says this protection is running` and `something was established` are one value rather than two statements kept in agreement; the verified-context carrier is attached only for a trusted inner channel and the security-audit posture only for the classified audit state; a retention store is opened exactly when the state named a directory, and a directory that cannot be opened REFUSES STARTUP rather than resolving to the OFF posture. It says nothing about the ORDER capabilities are established in, which is the composition root's, and nothing about what an OFF line tells the operator to do, which is an operator-facing promise left in the ADR-069 census under NP-123."
-paths = ["mcp-re-proxy/src/serving_capabilities.rs"]
+paths = [
+  "mcp-re-proxy/src/serving_capabilities.rs",
+  # The security-audit seam, in its own child since #1206.
+  "mcp-re-proxy/src/serving_capabilities/audit_posture.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
@@ -12971,7 +13381,7 @@ evidence = [
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::an_on_posture_always_carries_an_artifact_and_an_off_posture_never_does",
   "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::the_verified_context_carrier_is_attached_only_for_a_trusted_inner_channel",
-  "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::the_security_audit_posture_travels_with_the_sink_it_installs",
+  "//mcp-re-proxy:proxy_unit_test#serving_capabilities::audit_posture::tests::best_effort_keeps_its_meaning_and_installs_what_its_line_says",
   "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::evidence_retention_attaches_a_store_only_for_a_named_directory",
   "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::an_unopenable_retention_directory_refuses_startup_naming_the_flag",
 ]

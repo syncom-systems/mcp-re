@@ -237,12 +237,19 @@ startup; catching it here names the value instead of CrashLooping the pods.
 {{- end -}}
 
 {{/*
-ADR-MCPS-035 audit sink and the #415 §10 verified-context carrier: both are
-enumerations the proxy refuses at parse. Catching a typo here names the value rather
+ADR-MCPS-035 audit sink, the ADR-MCPRE-070 audit delivery and the #415 §10
+verified-context carrier: each is an enumeration the proxy refuses at parse, and a
+required delivery over no observer is refused by the proxy at its configuration boundary. Catching a typo here names the value rather
 than CrashLooping the pods on an argument error.
 */}}
 {{- if not (has .Values.auditSink (list "none" "stderr")) -}}
 {{- fail (printf "auditSink=%q must be \"none\" or \"stderr\"" .Values.auditSink) -}}
+{{- end -}}
+{{- if not (has .Values.auditCommitment (list "best-effort" "required")) -}}
+{{- fail (printf "auditCommitment=%q must be \"best-effort\" or \"required\"" .Values.auditCommitment) -}}
+{{- end -}}
+{{- if and (eq .Values.auditCommitment "required") (eq .Values.auditSink "none") -}}
+{{- fail "auditCommitment=\"required\" with auditSink=\"none\": a required audit posture needs the stderr observer (ADR-MCPRE-070 §11); set auditSink: stderr or auditCommitment: best-effort" -}}
 {{- end -}}
 {{- if not (has .Values.verifiedContextCarrier (list "disabled" "trusted")) -}}
 {{- fail (printf "verifiedContextCarrier=%q must be \"disabled\" or \"trusted\"" .Values.verifiedContextCarrier) -}}

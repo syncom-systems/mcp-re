@@ -66,7 +66,7 @@ use serde_json::json;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const ROOT_SEED: [u8; 32] = [55u8; 32];
-const NOW: i64 = 1_700_000_100;
+pub(super) const NOW: i64 = 1_700_000_100;
 const TARGET: &str = "https://mcp.example.com/mcp?route=a";
 const CLIENT_KEY_ID: &str = "client-key-1";
 const ROOT_KID: &str = "root-kid";
@@ -192,6 +192,16 @@ fn build_server() -> HttpProfileProxy {
 /// the server's key — revocation, for instance — must ask which key was minted rather
 /// than assume a kid it can spell.
 fn build_server_with_kid() -> (HttpProfileProxy, String) {
+    build_server_over(canned_inner(), 300)
+}
+
+/// The real delegated-required server over `inner`, signing responses valid for
+/// `sig_ttl_secs`, and the delegated kid it issued. Shared with
+/// `intent_before_dispatch_test`, which needs to count and to fail the backend.
+pub(super) fn build_server_over(
+    inner: Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer>,
+    sig_ttl_secs: i64,
+) -> (HttpProfileProxy, String) {
     let config = server_config();
     let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
         .expect("the root states its key");
@@ -220,8 +230,8 @@ fn build_server_with_kid() -> (HttpProfileProxy, String) {
             ),
             ReplayPosture::SingleProcess,
         ),
-        canned_inner(),
-        300,
+        inner,
+        sig_ttl_secs,
         Arc::clone(&wiring.signer),
     );
     (proxy, issued_kid.to_owned())
@@ -330,6 +340,19 @@ fn client_proxy_with_revocation(
     server: HttpProfileProxy,
     revocation: Box<dyn RevocationSource>,
 ) -> ClientProxy {
+    client_proxy_over_with(Box::new(InProcessServer::new(server, NOW)), revocation)
+}
+
+/// The delegated-required client over any in-process `transport`. Shared with
+/// `intent_before_dispatch_test`, whose transport counts statuses and cancels.
+pub(super) fn client_proxy_over(transport: Box<dyn RemoteTransport>) -> ClientProxy {
+    client_proxy_over_with(transport, Box::new(StaticRevocationList::new()))
+}
+
+fn client_proxy_over_with(
+    transport: Box<dyn RemoteTransport>,
+    revocation: Box<dyn RevocationSource>,
+) -> ClientProxy {
     let route = Route {
         route_id: "r1".into(),
         target_uri: TARGET.into(),
@@ -349,12 +372,7 @@ fn client_proxy_with_revocation(
         ),
     };
     let registry = RouteRegistry::new().register(route);
-    ClientProxy::new(
-        registry,
-        client_key(),
-        CLIENT_KEY_ID,
-        Box::new(InProcessServer::new(server, NOW)),
-    )
+    ClientProxy::new(registry, client_key(), CLIENT_KEY_ID, transport)
 }
 
 /// The same client, but with its trust anchors loaded from a SIGNED trust-anchor
@@ -455,14 +473,14 @@ impl Drop for FloorPath {
 
 /// A one-way JSON-RPC NOTIFICATION: the ABSENT `id` is what makes it one, and both the
 /// signer and the serving path classify on exactly that key's absence.
-fn plain_notification() -> serde_json::Value {
+pub(super) fn plain_notification() -> serde_json::Value {
     json!({
         "jsonrpc": "2.0",
         "method": "notifications/initialized",
     })
 }
 
-fn plain_request() -> serde_json::Value {
+pub(super) fn plain_request() -> serde_json::Value {
     json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -477,7 +495,7 @@ fn fixed_now() -> i64 {
     NOW
 }
 
-fn params(nonce: &str) -> CallParams<'static> {
+pub(super) fn params(nonce: &str) -> CallParams<'static> {
     CallParams {
         nonce: format!("{nonce}-padded-to-the-128-bit-floor"),
         created: NOW - 100,
@@ -870,6 +888,123 @@ fn a_replay_emits_exactly_one_rejection_carrying_the_frozen_wire_code() {
             mcp_re_proxy::authorization::AuthorizationFacet::NotConfigured,
             mcp_re_proxy::admission_enforcer::AdmissionFacet::NotConfigured
         )
+    );
+}
+
+/// ADR-MCPRE-070 D9: a response event names the exchange it belongs to by the identity of
+/// that exchange's `request.accepted` event — one run, generated before it.
+#[test]
+fn an_accepted_exchange_links_its_signed_response_to_the_accepted_event() {
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let proxy = client_proxy(build_server().with_audit_sink(sink.clone()));
+    proxy
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
+        .expect("round trip succeeds");
+
+    let envelopes = sink.envelopes();
+    assert_eq!(
+        envelopes.len(),
+        2,
+        "accept-then-sign, both produced as events"
+    );
+    let (accepted, signed) = (&envelopes[0], &envelopes[1]);
+    assert_eq!(
+        accepted.scope(),
+        mcp_re_proxy::audit_record::EventScope::Origin
+    );
+    let coordinate = accepted
+        .exchange_coordinate()
+        .expect("an accepted request opens an exchange");
+    assert_eq!(coordinate.accepted_event(), accepted.id());
+    assert_eq!(
+        signed.scope(),
+        mcp_re_proxy::audit_record::EventScope::Exchange(coordinate),
+        "the signed response names the accepted event of its own exchange"
+    );
+    let run = accepted.id().run();
+    assert_eq!(signed.id().run(), run, "one exchange, one run");
+    assert!(
+        signed.id().seq_within(&run) > accepted.id().seq_within(&run),
+        "the response was generated after the acceptance"
+    );
+    assert!(sink.unnumbered_failures().is_empty());
+}
+
+/// D9: a request refused before acceptance has no accepted identity to name, and is given
+/// none.
+#[test]
+fn a_refusal_before_acceptance_carries_the_pre_acceptance_scope() {
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let proxy = client_proxy(build_server().with_audit_sink(sink.clone()));
+    let p = params(&mcp_re_test_paths::unique_test_nonce());
+    proxy.handle("r1", &plain_request(), &p).expect("first ok");
+    let before = sink.envelopes().len();
+    proxy
+        .handle("r1", &plain_request(), &p)
+        .expect("the rejection receipt verifies");
+
+    let replay: Vec<_> = sink.envelopes().into_iter().skip(before).collect();
+    assert_eq!(replay.len(), 1, "the replayed request records ONE event");
+    assert_eq!(
+        replay[0].record().event().event_type(),
+        "mcp-re.request.rejected"
+    );
+    assert_eq!(
+        replay[0].scope(),
+        mcp_re_proxy::audit_record::EventScope::PreAcceptance
+    );
+    assert_eq!(replay[0].exchange_coordinate(), None);
+}
+
+/// The envelope carries the record the serving path produced: the verifier-resolved actor
+/// and each authority's own facet, and its canonical bytes encode exactly those.
+#[test]
+fn the_envelope_keeps_the_verifier_resolved_actor_and_both_facets() {
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let proxy = client_proxy(build_server().with_audit_sink(sink.clone()));
+    proxy
+        .handle(
+            "r1",
+            &plain_request(),
+            &params(&mcp_re_test_paths::unique_test_nonce()),
+        )
+        .expect("round trip succeeds");
+
+    let envelopes = sink.envelopes();
+    let accepted = &envelopes[0];
+    assert_eq!(
+        accepted.record().subject,
+        mcp_re_proxy::AuditSubject::request_accepted(
+            &mcp_re_proxy::authorization::AuthorizationPosture::NoPolicyConfigured,
+            mcp_re_proxy::admission_enforcer::AdmissionFacet::NotConfigured
+        )
+    );
+    let actor = accepted
+        .record()
+        .actor_id
+        .clone()
+        .expect("an admitted request carries the resolved actor");
+    for envelope in &envelopes {
+        assert_eq!(envelope.record().actor_id.as_deref(), Some(actor.as_str()));
+        assert!(
+            envelope
+                .canonical_bytes()
+                .windows(actor.len())
+                .any(|w| w == actor.as_bytes()),
+            "the canonical bytes carry the resolved actor"
+        );
+    }
+    assert!(
+        envelopes[1].record().subject.authorization().is_none(),
+        "a response event carries no authorization coordinate"
+    );
+    assert_eq!(
+        sink.records(),
+        [accepted.record().clone(), envelopes[1].record().clone()]
     );
 }
 

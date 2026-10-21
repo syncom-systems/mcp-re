@@ -84,6 +84,10 @@ pub mod transparency;
 /// Interpretation and validation of trust-document bytes — the authoritative boundary
 /// every construction path reaches, whether or not it meets a parser.
 pub(crate) mod trust_document;
+
+/// ADR-MCPRE-070 §2: required durable commitment, a separate authority from `audit_sink`.
+pub(crate) mod audit_commitment;
+
 // ADR-MCPS-028 §C: native GCP Cloud KMS Ed25519 response signer over blocking HTTPS
 // (ureq) + OAuth2 bearer — NO async google-cloud SDK. Compiled ONLY under the
 // non-default `gcp_kms_keysource` feature.
@@ -312,6 +316,19 @@ pub use delegated_wiring::ProdDelegatedRotor;
 pub use delegated_tls::DelegatedCertResolver;
 pub use delegated_tls::RawEd25519TlsSigner;
 // ADR-MCPS-028 §C: the GCP Cloud KMS Ed25519 backend (feature-gated).
+/// The commitment-provider seam an independently compiled provider implements and a build
+/// registers through `app::run_with` (ADR-MCPRE-070 §2, #1206). A provider produces receipts,
+/// failures, a name and an establishment class — never a witness.
+pub use audit_commitment::{
+    AuditProviders, CommitFuture, CommitRequest, CommitmentAuthority, CommitmentReceipt,
+    CrossingKind, DurabilityTier, EstablishFailure, EstablishFuture, ProviderFailure, ProviderId,
+    RejectReason,
+};
+/// The scripted reference commitment authority the serving integration tests install as the
+/// required posture's provider. Test builds and the test-only `audit_commitment_reference`
+/// feature only, so no deployable library exports it (ADR-MCPRE-070 §14 item 10).
+#[cfg(any(test, feature = "audit_commitment_reference"))]
+pub use audit_commitment::{ReferenceCommitment, ScriptedAnswer};
 pub use audit_record::AuditRecord;
 pub use audit_record::AuditSubject;
 pub use audit_sink::AuditSink;

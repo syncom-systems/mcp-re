@@ -184,7 +184,7 @@ impl Flags {
             request_signer_currency: currency.finish()?,
             admission: self.admission.finish()?,
             authorization: self.authorization.finish(),
-            audit_sink: audit.sink,
+            audit: audit.request,
             retained_evidence_dir: audit.retained_evidence_dir,
             verified_context: audit.verified_context,
             delegated_signing: self.delegated_signing.finish(
@@ -2635,12 +2635,12 @@ mod tests {
     #[test]
     fn the_audit_sink_defaults_to_on() {
         let config = parse_request(&minimal_durable()).expect("minimal durable config parses");
-        assert_eq!(config.audit_sink, AuditSinkKind::Stderr);
+        assert_eq!(config.audit.sink, AuditSinkKind::Stderr);
         // Turning it off stays possible, but only by naming it.
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--audit-sink", "none"]));
         assert_eq!(
-            parse_request(&a).expect("explicit none parses").audit_sink,
+            parse_request(&a).expect("explicit none parses").audit.sink,
             AuditSinkKind::None
         );
     }

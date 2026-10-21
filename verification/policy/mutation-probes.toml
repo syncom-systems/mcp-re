@@ -2601,15 +2601,15 @@ conjunct = "the notification terminal is decided before the 202 is signed, and t
 # The notification half of the same proposition M92 covers for the bodied path, and the one
 # the unit could not state until `notification.rs` entered its `paths`.
 #
-# The weakening is deliberately NOT a deletion. It keeps the call, so `establish_terminal`
-# has a consumer and nothing goes dead; it keeps the latch, so the machine still records the
-# disagreement; and it DISCARDS THE ANSWER. That is the pre-enforcement behaviour restored
-# exactly — the 202 is signed, retained and recorded for an exchange the machine has just
-# said it cannot vouch for — and it is the mutation an order-only control reads as clean,
-# which is why the control asserts the refusing form and the exit rather than the order.
+# The weakening is deliberately NOT a deletion. It keeps the call, so `may_publish` still
+# runs; it keeps the latch, so the machine still records the disagreement; and it DISCARDS
+# THE ANSWER. That is the pre-enforcement behaviour restored exactly — the 202 is signed,
+# committed, retained and recorded for an exchange the machine has just said it cannot vouch
+# for — and it is the mutation an order-only control reads as clean, which is why the control
+# asserts the refusing form and the exit rather than the order.
 path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs"
 anchor = """
-        if progress.establish_terminal(acknowledged).is_err() {
+        if progress.may_publish(ServedSuccess::Acknowledged).is_err() {
             let refusal = crate::refusal::Refusal::new(
                 mcp_re_core::McpReError::ExchangeInvariantViolation,
                 500,
@@ -2620,7 +2620,7 @@ anchor = """
         }
 """
 weakening = """
-        let _ = progress.establish_terminal(acknowledged);
+        let _ = progress.may_publish(ServedSuccess::Acknowledged);
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::notification::tests::the_terminal_is_decided_before_the_202_is_minted",
@@ -4308,7 +4308,7 @@ conjunct = "a signing window snapshotted before the backend runs and shown to su
 # twice. Deleting the question is the defect, and the battery must go red on it.
 path = "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
 anchor = """
-        if !signing_window::covers(window, prepared.completion_bound()) {
+        if !signing_window::covers(&window, completion) {
 """
 weakening = """
         if false {
@@ -10679,7 +10679,7 @@ conjunct = "Illegal, unsupported or internally contradictory deployment postures
 # this unit holds are DECIDED in three different modules -- the authorization evaluator, the
 # replay plane's materialization, `build_key_source` -- and each of those modules keeps its
 # own battery green under this weakening, because none of them is changed. What is deleted
-# is the only thing `app.rs` contributes: that the failure LEAVES `run`. A replica under the
+# is the only thing the root's entry (`app/entry.rs`) contributes: that the failure LEAVES `run`. A replica under the
 # weakening exits 0 having established nothing and served nothing, which is the shape an
 # operator reads as a clean start.
 #
@@ -10687,12 +10687,12 @@ conjunct = "Illegal, unsupported or internally contradictory deployment postures
 # weakening swallows every startup refusal, not only an unestablishable capability's. A
 # narrower anchor on one `?` would measure one of the three establishing modules' call sites
 # and say nothing about the other two, and this unit's proposition is about all three.
-path = "mcp-re-proxy/src/app.rs"
+path = "mcp-re-proxy/src/app/entry.rs"
 anchor = """
-    drained(run_validated(&deployment, shutdown))
+    let outcome = drained(super::run_validated(&deployment, plan, shutdown));
 """
 weakening = """
-    drained(run_validated(&deployment, shutdown).or_else(|_| Ok(())))
+    let outcome = drained(super::run_validated(&deployment, plan, shutdown).or_else(|_| Ok(())));
 """
 expect_red = [
   "//mcp-re-proxy:integration_test#app_startup_characterization_test::a_configured_profile_with_no_enrolled_authority_refuses_to_start",
@@ -11626,18 +11626,18 @@ conjunct = "Every security capability held by the serving runtime is derived fro
 # The audit seam's artifact is the concrete stderr sink, so an ON line over a null sink no
 # longer compiles. What remains a runtime choice is which ARM attaches it: the NONE state
 # installing the sink is a capability nobody selected, announced as its own posture.
-path = "mcp-re-proxy/src/serving_capabilities.rs"
+path = "mcp-re-proxy/src/serving_capabilities/audit_posture.rs"
 anchor = """
-        crate::config_state::AuditState::None => Ok(Established::off(AUDIT_OFF)),
+        return Ok(Established::off(format!("{AUDIT_OFF}{unused}")));
 """
 weakening = """
-        crate::config_state::AuditState::None => Ok(Established::on(
-            crate::audit_sink::StderrAuditSink::open().ok_or("the OS CSPRNG failed")?,
-            AUDIT_OFF,
-        )),
+        return Ok(Established::on(
+            AuditPosture::best_effort(stderr_observer()?),
+            format!("{AUDIT_OFF}{unused}"),
+        ));
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::the_security_audit_posture_travels_with_the_sink_it_installs",
+  "//mcp-re-proxy:proxy_unit_test#serving_capabilities::audit_posture::tests::best_effort_keeps_its_meaning_and_installs_what_its_line_says",
 ]
 
 [[probe]]
@@ -12192,7 +12192,7 @@ expect_red = [
 id = "M494-proxy-a-seq-has-no-meaning-in-another-run"
 unit = "proxy.audit_delivery"
 conjunct = "a position's seq is handed out only for its own run, so two runs' numbers cannot be compared as one order"
-path = "mcp-re-proxy/src/audit_sink/stream.rs"
+path = "mcp-re-proxy/src/audit_record/envelope/event_id.rs"
 anchor = """
         (self.run == *run).then_some(self.seq)
 """
@@ -12201,7 +12201,7 @@ weakening = """
         Some(self.seq)
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::a_position_has_no_number_in_another_run",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::envelope::allocator::tests::a_position_has_no_number_in_another_run",
 ]
 
 [[probe]]
@@ -13760,4 +13760,631 @@ weakening = """
 """
 expect_red = [
   "//sdk/binding-core:mcp_re_binding_core_test#sign::tests::a_device_that_fails_is_a_device_failure_carrying_the_host_error",
+]
+
+# --- proxy.audit_commitment_witness (ADR-MCPRE-070 §3, §9, P4; #1203) -------------------
+
+[[probe]]
+id = "M596-proxy-a-receipt-for-another-binding-mints-no-witness"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a receipt naming another event identity or other content than the envelope sent mints no witness"
+path = "mcp-re-proxy/src/audit_commitment/established/witness.rs"
+anchor = """
+    if receipt.binding() != binding {
+"""
+weakening = """
+    if receipt.binding() != binding && false {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_for_another_event_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_for_other_bytes_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_stale_receipt_from_the_previous_event_is_refused",
+]
+
+[[probe]]
+id = "M597-proxy-a-receipt-for-the-other-crossing-mints-no-witness"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a receipt echoing the other crossing kind mints no witness for this one"
+path = "mcp-re-proxy/src/audit_commitment/established/witness.rs"
+anchor = """
+    if receipt.crossing() != K::KIND {
+"""
+weakening = """
+    if receipt.crossing() != K::KIND && false {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_for_the_other_crossing_is_refused",
+]
+
+[[probe]]
+id = "M598-proxy-a-receipt-at-another-tier-mints-no-witness"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a receipt claiming another tier than the provider declared at establishment mints no witness"
+path = "mcp-re-proxy/src/audit_commitment/established/witness.rs"
+anchor = """
+    if receipt.tier() != provider.tier {
+"""
+weakening = """
+    if receipt.tier() != provider.tier && false {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::a_receipt_at_another_tier_is_refused",
+]
+
+[[probe]]
+id = "M599-proxy-a-witness-redeems-only-for-its-own-event"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a witness is redeemed only for the event it binds: another event, another run's same position, or other content is refused"
+path = "mcp-re-proxy/src/audit_commitment/established/witness.rs"
+anchor = """
+        if self.binding != binding {
+"""
+weakening = """
+        if self.binding != binding && false {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::redeem_refuses_a_witness_for_another_event",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::redeem_refuses_a_witness_from_another_run",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::redeem_refuses_a_witness_for_other_bytes",
+]
+
+[[probe]]
+id = "M600-proxy-a-witness-redeems-only-at-its-own-provider-instance"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a witness minted by one established provider instance is refused at a crossing holding another"
+path = "mcp-re-proxy/src/audit_commitment/established/witness.rs"
+anchor = """
+        if !Arc::ptr_eq(&self.provider, current) {
+"""
+weakening = """
+        if false {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::witness::tests::redeem_refuses_a_witness_from_another_established_instance",
+]
+
+[[probe]]
+id = "M601-proxy-the-commitment-wait-is-the-chosen-bound"
+unit = "proxy.audit_commitment_witness"
+conjunct = "the provider is awaited for the chosen bound and no longer; a provider that never answers is Uncertain(TimedOut) within it"
+path = "mcp-re-proxy/src/audit_commitment/established/mod.rs"
+anchor = """
+        let answer = tokio::time::timeout(bound.get(), Caught::new(pending))
+"""
+weakening = """
+        let answer = tokio::time::timeout(super::bound::MAX_COMMITMENT_BOUND, Caught::new(pending))
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_provider_that_never_answers_is_uncertain_timed_out_within_the_bound",
+]
+
+[[probe]]
+id = "M602-proxy-a-provider-panic-while-polled-is-typed"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a provider that panics while polled yields Uncertain(ProviderPanicked) and does not unwind into the request"
+path = "mcp-re-proxy/src/audit_commitment/established/caught.rs"
+anchor = """
+        match catch_unwind(AssertUnwindSafe(|| Pin::new(&mut self.inner).poll(cx))) {
+"""
+weakening = """
+        match Ok::<_, ()>(Pin::new(&mut self.inner).poll(cx)) {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_provider_panic_while_polled_is_uncertain_and_does_not_unwind",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::tests::a_panicking_authority_is_typed_not_swallowed",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::caught::tests::a_panic_while_polled_is_an_answer",
+]
+
+[[probe]]
+id = "M603-proxy-a-provider-panic-before-its-future-is-typed"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a provider that panics before returning its future yields Uncertain(ProviderPanicked) and does not unwind"
+path = "mcp-re-proxy/src/audit_commitment/established/mod.rs"
+anchor = """
+        let pending = catch_unwind(AssertUnwindSafe(|| self.authority.commit(request)))
+            .map_err(|_| CommitmentFailure::Uncertain(UncertainCause::ProviderPanicked))?;
+"""
+weakening = """
+        let pending = self.authority.commit(request);
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_provider_panic_before_its_future_exists_is_uncertain_and_does_not_unwind",
+]
+
+[[probe]]
+id = "M604-proxy-a-dropped-provider-completion-is-uncertain"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a provider's dropped acknowledgement is Uncertain(Cancelled), never the definite Unavailable"
+path = "mcp-re-proxy/src/audit_commitment/failure.rs"
+anchor = """
+            ProviderFailure::Cancelled => CommitmentFailure::Uncertain(UncertainCause::Cancelled),
+"""
+weakening = """
+            ProviderFailure::Cancelled => CommitmentFailure::Unavailable,
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_dropped_provider_completion_is_uncertain_cancelled",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::failure::tests::a_provider_cancellation_is_uncertain_not_unavailable",
+]
+
+[[probe]]
+id = "M605-proxy-a-definite-refusal-is-not-possibly-committed"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a rejection or unavailability is definitely not committed; only Uncertain is possibly committed"
+path = "mcp-re-proxy/src/audit_commitment/failure.rs"
+anchor = """
+        matches!(self, CommitmentFailure::Uncertain(_))
+"""
+weakening = """
+        !matches!(self, CommitmentFailure::Unavailable)
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::failure::tests::rejected_and_unavailable_are_definitely_not_committed",
+]
+
+[[probe]]
+id = "M606-proxy-a-zero-commitment-bound-is-refused"
+unit = "proxy.audit_commitment_witness"
+conjunct = "a zero commitment bound is refused rather than firing before the provider is asked"
+path = "mcp-re-proxy/src/audit_commitment/bound.rs"
+anchor = """
+        (!wait.is_zero() && wait <= MAX_COMMITMENT_BOUND).then_some(CommitmentBound(wait))
+"""
+weakening = """
+        (wait <= MAX_COMMITMENT_BOUND).then_some(CommitmentBound(wait))
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::bound::tests::a_zero_bound_is_refused",
+]
+
+[[probe]]
+id = "M607-proxy-only-the-d3-minimum-tier-is-eligible"
+unit = "proxy.audit_commitment_witness"
+conjunct = "only a provider declaring survival of proxy-process loss meets the required minimum (D3)"
+path = "mcp-re-proxy/src/audit_commitment/tier.rs"
+anchor = """
+        matches!(self, DurabilityTier::SurvivesProxyProcessLoss)
+"""
+weakening = """
+        true
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::tier::tests::only_survives_proxy_process_loss_meets_the_required_minimum",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_tier_below_the_minimum_is_refused_before_the_probe",
+]
+
+[[probe]]
+id = "M608-proxy-the-required-posture-asks-the-provider"
+unit = "proxy.audit_intent_gate"
+conjunct = "the required posture commits the intent and never hands out the best-effort statement"
+path = "mcp-re-proxy/src/audit_commitment/posture.rs"
+anchor = """
+            Commitment::Required(crossing) => crossing
+                .commit(coordinate, intent)
+                .await
+                .map(IntentDisposition::Committed),
+"""
+weakening = """
+            Commitment::Required(_) => Ok(IntentDisposition::NotRequired(
+                NoCommitmentRequired::minted_by_posture(),
+            )),
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_required_posture_never_yields_not_required",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_failures_reach_no_backend",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_notification_without_commitment_gets_no_202",
+]
+
+[[probe]]
+id = "M609-proxy-a-failed-intent-commit-does-not-proceed"
+unit = "proxy.audit_intent_gate"
+conjunct = "a failed intent commitment refuses; it never proceeds as though no commitment were owed"
+path = "mcp-re-proxy/src/audit_commitment/posture.rs"
+anchor = """
+            Commitment::Required(crossing) => crossing
+                .commit(coordinate, intent)
+                .await
+                .map(IntentDisposition::Committed),
+"""
+weakening = """
+            Commitment::Required(crossing) => Ok(crossing
+                .commit(coordinate, intent)
+                .await
+                .map_or_else(
+                    |_| IntentDisposition::NotRequired(NoCommitmentRequired::minted_by_posture()),
+                    IntentDisposition::Committed,
+                )),
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_required_posture_never_yields_not_required",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_failures_reach_no_backend",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::a_stale_receipt_reaches_no_backend",
+]
+
+[[probe]]
+id = "M610-proxy-the-intent-is-committed-before-the-crossing-is-recorded"
+unit = "proxy.audit_intent_gate"
+conjunct = "G1 runs before the retention commit, so no .pending marker exists for an exchange whose intent was not committed (D7)"
+path = "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
+anchor = """
+        let intent = ExecutionIntent::new(acc.exchange().actor_id, acc.exchange().now);
+        let intent = match self.audit.intent(acc.exchange_coordinate(), intent).await {
+            Ok(intent) => intent,
+            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
+        };
+        let retention = match self.retention.commit(accepted).await {
+            Ok(disposition) => progress.establish(disposition),
+            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
+        };
+"""
+weakening = """
+        let retention = match self.retention.commit(accepted).await {
+            Ok(disposition) => progress.establish(disposition),
+            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
+        };
+        let intent = ExecutionIntent::new(acc.exchange().actor_id, acc.exchange().now);
+        let intent = match self.audit.intent(acc.exchange_coordinate(), intent).await {
+            Ok(intent) => intent,
+            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
+        };
+"""
+expect_red = [
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::w3_retention_commit_failure_after_intent_leaves_no_pending_and_no_dispatch",
+]
+
+[[probe]]
+id = "M611-proxy-the-signing-window-survives-the-intent-wait"
+unit = "proxy.audit_intent_gate"
+conjunct = "the signing window is asked to survive the intent crossing's bounded wait as well as the dispatch"
+path = "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
+anchor = """
+        let completion = prepared
+            .completion_bound()
+            .after(self.audit.pre_dispatch_wait());
+"""
+weakening = """
+        let completion = prepared.completion_bound();
+"""
+expect_red = [
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::the_window_must_survive_the_commitment_wait",
+]
+
+[[probe]]
+id = "M612-proxy-a-commitment-failure-earns-the-status-of-its-class"
+unit = "proxy.audit_intent_gate"
+conjunct = "an unavailable or uncertain provider earns a retryable 503 and a rejecting one a 500"
+path = "mcp-re-proxy/src/audit_commitment/intent.rs"
+anchor = """
+        CommitmentFailure::Rejected(_) => cannot_commit(),
+        CommitmentFailure::Unavailable | CommitmentFailure::Uncertain(_) => {
+            Refusal::new(McpReError::AuditCommitmentUnavailable, 503)
+        }
+"""
+weakening = """
+        CommitmentFailure::Rejected(_) | CommitmentFailure::Unavailable => cannot_commit(),
+        CommitmentFailure::Uncertain(_) => {
+            Refusal::new(McpReError::AuditCommitmentUnavailable, 503)
+        }
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::each_failure_class_earns_its_own_status",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::an_unavailable_provider_is_503",
+]
+
+[[probe]]
+id = "M613-proxy-an-unrepresentable-completion-bound-states-none"
+unit = "proxy.audit_intent_gate"
+conjunct = "a completion bound extended past what a Duration holds is Unstated, never a shorter bound"
+path = "mcp-re-proxy/src/async_inner/completion_bound.rs"
+anchor = """
+            DispatchCompletionBound::Within(d) => d.checked_add(wait).map_or(
+                DispatchCompletionBound::Unstated,
+"""
+weakening = """
+            DispatchCompletionBound::Within(d) => d.checked_add(wait).map_or(
+                DispatchCompletionBound::Within(d),
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#async_inner::completion_bound::tests::completion_bound_after_is_checked",
+]
+
+[[probe]]
+id = "M614-proxy-an-exchange-with-no-accepted-event-is-not-told-to-retry"
+unit = "proxy.audit_intent_gate"
+conjunct = "with no accepted event to name, no intent is produced and the refusal is 500: no retry on this replica can number one (D9)"
+path = "mcp-re-proxy/src/audit_commitment/intent.rs"
+anchor = """
+        let coordinate = coordinate.ok_or_else(cannot_commit)?;
+"""
+weakening = """
+        let coordinate = match coordinate {
+            Some(coordinate) => coordinate,
+            None => return Err(Refusal::new(McpReError::AuditCommitmentUnavailable, 503)),
+        };
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::an_absent_coordinate_is_500_and_asks_nothing",
+]
+
+[[probe]]
+id = "M615-proxy-a-failed-outcome-commit-does-not-proceed"
+unit = "proxy.audit_outcome_gate"
+conjunct = "a failed outcome commitment refuses; it never proceeds as though no commitment were owed"
+# The G2 guard (S2). Pill-evidenced RED in #1205 (PP1).
+path = "mcp-re-proxy/src/audit_commitment/posture.rs"
+anchor = """
+                .map(|committed| OutcomeDisposition::Committed(Box::new(committed))),
+"""
+weakening = """
+                .map(|committed| OutcomeDisposition::Committed(Box::new(committed)))
+                .or_else(|_| {
+                    Ok(OutcomeDisposition::NotRequired(
+                        NoCommitmentRequired::minted_by_posture(),
+                    ))
+                }),
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_g1_and_g2_status_tables_differ_only_in_the_retry_safe_rows",
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_outcome_failure_never_serves_success",
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_notification_gets_no_202_without_a_committed_outcome",
+]
+
+[[probe]]
+id = "M616-proxy-success-needs-completed-retention"
+unit = "proxy.audit_outcome_gate"
+conjunct = "a success is served only after retention has completed, as well as the outcome committed"
+# Q2: committed outcome AND completed retention. Pill-evidenced RED in #1205 (PP2).
+path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs"
+anchor = """
+        if let Some(rejection) = self
+            .retain_accepted(acc, &response, retention, progress)
+            .await
+        {
+            return rejection;
+        }
+"""
+weakening = """
+        let _ = self
+            .retain_accepted(acc, &response, retention, progress)
+            .await;
+"""
+expect_red = [
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::retention_failure_after_outcome_commit_never_serves_success",
+]
+
+[[probe]]
+id = "M617-proxy-the-202-leaves-through-the-success-exit"
+unit = "proxy.audit_outcome_gate"
+conjunct = "a notification 202 is visible only through the success exit, after its outcome is committed (D4)"
+# D4. Pill-evidenced RED in #1205 (PP4).
+path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs"
+anchor = """
+                self.publish_success(
+                    acc,
+                    progress,
+                    ServedSuccess::Acknowledged,
+                    ack,
+                    retention,
+                    intent,
+                )
+                .await
+"""
+weakening = """
+                let _ = (retention, intent);
+                progress.publish(ServedSuccess::Acknowledged);
+                super::super::served(ack)
+"""
+expect_red = [
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_notification_gets_no_202_without_a_committed_outcome",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::success_exit::tests::success_exit_is_the_only_success_served_call",
+]
+
+[[probe]]
+id = "M618-proxy-the-outcome-is-committed-before-retention-completes"
+unit = "proxy.audit_outcome_gate"
+conjunct = "G2 precedes retention completion, so a G2 refusal is what retention holds (Q2, ADR-MCPRE-054)"
+# The placement probe: the ADR-literal order retains success bytes the client never got.
+# Pill-evidenced RED in #1205 (PP6: the store held [200]).
+path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs"
+anchor = """
+        // G2 BEFORE retention completes (Q2): a refusal here is what retention then holds, so
+        // the retained representation stays the one actually served.
+        let outcome = match self
+            .audit
+            .outcome(intent, acc.exchange_coordinate(), observed.clone())
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(refusal) => {
+                return self
+                    .refuse_retained(acc, refusal, progress, retention)
+                    .await
+            }
+        };
+        if let Some(rejection) = self
+            .retain_accepted(acc, &response, retention, progress)
+            .await
+        {
+            return rejection;
+        }
+"""
+weakening = """
+        if let Some(rejection) = self
+            .retain_accepted(acc, &response, retention, progress)
+            .await
+        {
+            return rejection;
+        }
+        // G2 BEFORE retention completes (Q2): a refusal here is what retention then holds, so
+        // the retained representation stays the one actually served.
+        let outcome = match self
+            .audit
+            .outcome(intent, acc.exchange_coordinate(), observed.clone())
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(refusal) => {
+                return self
+                    .refuse_retained(acc, refusal, progress, retention)
+                    .await
+            }
+        };
+"""
+expect_red = [
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_outcome_failure_discharges_retention_with_the_refusal_served",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::success_exit::tests::the_outcome_is_committed_before_retention_and_both_before_success_is_served",
+]
+
+[[probe]]
+id = "M619-proxy-an-outcome-refusal-is-never-503"
+unit = "proxy.audit_outcome_gate"
+conjunct = "every G2 refusal is 500: the backend may have acted and 503 is the status clients retry"
+path = "mcp-re-proxy/src/audit_commitment/outcome.rs"
+anchor = """
+    Refusal::new(McpReError::AuditCommitmentUnavailable, 500)
+"""
+weakening = """
+    Refusal::new(McpReError::AuditCommitmentUnavailable, 503)
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::outcome::tests::every_outcome_failure_is_500",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_g1_and_g2_status_tables_differ_only_in_the_retry_safe_rows",
+  "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_outcome_failure_never_serves_success",
+]
+
+[[probe]]
+id = "M620-proxy-required-without-a-provider-is-never-best-effort"
+unit = "proxy.audit_posture"
+conjunct = "a required posture with no registered provider refuses startup; it never resolves to best-effort (S4)"
+# Pill-evidenced RED in #1206 (PP1).
+path = "mcp-re-proxy/src/audit_commitment/plan.rs"
+anchor = """
+        let authority = registered.ok_or(AuditPostureRefusal::NoProviderInBuild)?;
+"""
+weakening = """
+        let Some(authority) = registered else {
+            return Ok(AuditPlan::BestEffort { unused: None });
+        };
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::plan::tests::required_without_a_provider_is_refused_never_best_effort",
+  "//mcp-re-proxy:proxy_unit_test#app::entry::tests::the_default_entry_refuses_a_required_deployment_before_any_effect",
+  "//mcp-re-proxy:integration_test#app_startup_characterization_test::the_open_source_binary_refuses_a_required_audit_posture_before_any_plane",
+]
+
+[[probe]]
+id = "M621-proxy-the-reference-authority-needs-its-acknowledgement"
+unit = "proxy.audit_posture"
+conjunct = "the test-only reference authority is refused as a provider unless registered with the test acknowledgement (§9)"
+# Pill-evidenced RED in #1206 (PP2).
+path = "mcp-re-proxy/src/audit_commitment/plan.rs"
+anchor = """
+        if provider.is_reference() && !providers.reference_acknowledged() {
+"""
+weakening = """
+        if provider.is_reference() && !providers.reference_acknowledged() && false {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::plan::tests::the_reference_authority_is_refused_without_the_acknowledgement",
+]
+
+[[probe]]
+id = "M622-proxy-required-without-an-observer-is-refused"
+unit = "proxy.audit_posture"
+conjunct = "`--audit-commitment required` with `--audit-sink none` is refused at the configuration boundary (§11)"
+# Pill-evidenced RED in #1206 (PP3).
+path = "mcp-re-proxy/src/config_state/audit_policy.rs"
+anchor = """
+            (None, vec![REQUIRED_WITHOUT_OBSERVER.to_string()])
+"""
+weakening = """
+            (Some(AuditState::Required), vec![])
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::audit_policy::tests::required_without_an_observer_is_refused_not_downgraded",
+  "//mcp-re-proxy:integration_test#app_startup_characterization_test::a_required_audit_posture_without_an_observer_is_refused_as_configuration",
+]
+
+[[probe]]
+id = "M623-proxy-a-spent-commitment-budget-refuses-before-dispatch"
+unit = "proxy.audit_posture"
+conjunct = "a spent commitment budget is Unavailable before the provider is asked, so the exchange is refused before dispatch (§7.3, §7.4)"
+# Pill-evidenced RED in #1206 (PP4).
+path = "mcp-re-proxy/src/audit_commitment/established/mod.rs"
+anchor = """
+        let Some(_permit) = self.accounting.budget().try_acquire() else {
+            self.accounting.note_budget_exhausted();
+            return Err(CommitmentFailure::Unavailable);
+        };
+"""
+weakening = """
+        let _permit = self.accounting.budget().try_acquire();
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_spent_budget_refuses_before_the_provider_is_asked",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::cadence::tests::a_spent_budget_is_a_missed_interval_not_a_wait",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::a_spent_commitment_budget_refuses_before_dispatch_and_the_observer_is_unaffected",
+]
+
+[[probe]]
+id = "M624-proxy-a-provider-that-fails-establishment-is-refused"
+unit = "proxy.audit_posture"
+conjunct = "a provider whose bounded startup probe fails is refused at startup, however qualified its declared tier (D3, §11)"
+# Pill-evidenced RED in #1206 (PP5).
+path = "mcp-re-proxy/src/audit_commitment/established/mod.rs"
+anchor = """
+            .map_err(|_| failed(EstablishFailure::Refused))?
+            .map_err(failed)?;
+"""
+weakening = """
+            .map_err(|_| failed(EstablishFailure::Refused))?
+            .ok();
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_probe_that_fails_hangs_or_panics_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::the_refusal_carries_no_provider_text",
+  "//mcp-re-proxy:integration_test#app_startup_characterization_test::injected_provider::a_fake_qualified_provider_that_fails_establishment_is_refused",
+]
+
+[[probe]]
+id = "M625-proxy-an-uncertain-intent-is-never-reused-for-another-exchange"
+unit = "proxy.audit_intent_gate"
+theorem = "THM-0135"
+conjunct = "each exchange's intent is a new event of its own, so an intent left uncertain by a timed-out G1 is never resent, and never redeemed, for the next exchange (ADR-MCPRE-070 §3, §8)"
+# Pill-evidenced RED in #1207 (PP1): the second exchange was dispatched under the first
+# exchange's intent, and only the new control noticed. The held intent is keyed by the
+# established provider instance the crossing commits to, so a parallel test in the same
+# binary, which commits to its own provider, can neither take nor clear the killer's entry.
+path = "mcp-re-proxy/src/audit_commitment/intent.rs"
+anchor = """
+        let event = intent.produce(coordinate).map_err(|_| cannot_commit())?;
+        let witness = self
+            .provider
+            .commit::<Intent>(&event, self.bound)
+            .await
+            .map_err(|failure| refusal_for(&failure))?;
+"""
+weakening = """
+        static UNCERTAIN: std::sync::Mutex<Vec<(usize, crate::audit_record::CanonicalEvent)>> =
+            std::sync::Mutex::new(Vec::new());
+        let key = Arc::as_ptr(&self.provider) as usize;
+        let retried = {
+            let mut held = UNCERTAIN.lock().unwrap();
+            let at = held.iter().position(|(k, _)| *k == key);
+            at.map(|i| held.swap_remove(i).1)
+        };
+        let event = match retried {
+            Some(event) => event,
+            None => intent.produce(coordinate).map_err(|_| cannot_commit())?,
+        };
+        UNCERTAIN.lock().unwrap().push((key, event.clone()));
+        let witness = self
+            .provider
+            .commit::<Intent>(&event, self.bound)
+            .await
+            .map_err(|failure| refusal_for(&failure))?;
+        UNCERTAIN.lock().unwrap().retain(|(k, _)| *k != key);
+"""
+expect_red = [
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::an_uncertain_intent_identity_is_never_reused_by_the_next_exchange",
 ]

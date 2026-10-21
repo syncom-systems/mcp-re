@@ -467,3 +467,17 @@ graph BT
 graph BT
     THM_0134["THM-0134<br/>The RFC 9421 wire surface is closed, and refuses rather than normalises"]
 ```
+
+## Component 25
+
+```mermaid
+graph BT
+    THM_0135["THM-0135<br/>Under the required audit posture, no backend dispatch happens without the exchange's execution intent committed and its witness redeemed"]
+```
+
+## Component 26
+
+```mermaid
+graph BT
+    THM_0136["THM-0136<br/>Under the required audit posture, no completed success is visible without the exchange's outcome committed and its witness redeemed"]
+```

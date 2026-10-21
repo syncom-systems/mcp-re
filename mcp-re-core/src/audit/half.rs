@@ -3,8 +3,10 @@
 //!
 //! A PROJECTION of the frozen vocabulary, and not a new audit token. Core already owns the
 //! fact — it is spread across [`SUCCESS_EVENT_TYPES`](super::SUCCESS_EVENT_TYPES),
-//! [`REJECTION_EVENT_TYPES`](super::REJECTION_EVENT_TYPES) and
-//! [`KEY_LIFECYCLE_EVENT_TYPES`](super::KEY_LIFECYCLE_EVENT_TYPES) — and answering the
+//! [`REJECTION_EVENT_TYPES`](super::REJECTION_EVENT_TYPES),
+//! [`EXECUTION_EVENT_TYPES`](super::EXECUTION_EVENT_TYPES),
+//! [`KEY_LIFECYCLE_EVENT_TYPES`](super::KEY_LIFECYCLE_EVENT_TYPES) and
+//! [`ACCOUNTING_EVENT_TYPES`](super::ACCOUNTING_EVENT_TYPES) — and answering the
 //! question here is what stops a consumer re-deriving it from a second list of its own.
 //!
 //! The consumer this exists for is `mcp-re-proxy`'s audit record, whose `Request` arm
@@ -23,13 +25,17 @@ pub enum AuditHalf {
     Request,
     /// About the RESPONSE: it was signed, or it was rejected.
     Response,
+    /// About the crossing between the two: the exchange's dispatch was committed to
+    /// (ADR-MCPRE-070 D1). Neither half, and still about one exchange.
+    Execution,
     /// About no exchange at all.
     ///
     /// The delegated-key lifecycle events are emitted by the custody layer at issuance,
     /// rotation and retirement rather than by a verification outcome, so they describe
-    /// neither half. The variant exists because that category exists; if ADR-MCPRE-052 §7
-    /// ever withdraws it, this goes with it rather than staying as a resting place for
-    /// whatever is unmapped.
+    /// neither half, and the accounting record (ADR-MCPRE-070 D2, Q3) counts a run's
+    /// interval rather than any one exchange. The variant exists because those categories
+    /// exist; if both are withdrawn, this goes with them rather than staying as a resting
+    /// place for whatever is unmapped.
     NonExchange,
 }
 
@@ -43,13 +49,14 @@ impl AuditEvent {
     /// `&'static str`, so the compiler cannot check this match for exhaustiveness and a
     /// newly minted event would fall silently into `NonExchange`. That is the failure mode
     /// this is designed against, not one it accepts:
-    /// `every_pinned_event_type_is_given_a_half` walks all three allowlists and fails the
+    /// `every_pinned_event_type_is_given_a_half` walks all five allowlists and fails the
     /// battery if any member lands in the catch-all.
     #[must_use]
     pub fn half(&self) -> AuditHalf {
         match self.event_type {
             event_type::REQUEST_ACCEPTED | event_type::REQUEST_REJECTED => AuditHalf::Request,
             event_type::RESPONSE_SIGNED | event_type::RESPONSE_REJECTED => AuditHalf::Response,
+            event_type::EXECUTION_INTENT => AuditHalf::Execution,
             _ => AuditHalf::NonExchange,
         }
     }
@@ -70,8 +77,8 @@ mod tests {
     }
 
     /// **The control the catch-all rests on.** Every event type the drift guard pins is
-    /// given a half deliberately, and the key-lifecycle set is the ONLY one that may reach
-    /// `NonExchange`.
+    /// given a half deliberately, and the key-lifecycle and accounting sets are the ONLY ones
+    /// that may reach `NonExchange`.
     ///
     /// Without this, adding a fifth exchange event to an allowlist and forgetting this file
     /// would make it `NonExchange` — silently, and in the direction that reads as "this is
@@ -82,6 +89,7 @@ mod tests {
         for t in super::super::SUCCESS_EVENT_TYPES
             .iter()
             .chain(super::super::REJECTION_EVENT_TYPES)
+            .chain(super::super::EXECUTION_EVENT_TYPES)
         {
             assert_ne!(
                 of(t).half(),
@@ -89,11 +97,25 @@ mod tests {
                 "{t} is an exchange event and must name the half it describes"
             );
         }
+        for t in super::super::EXECUTION_EVENT_TYPES {
+            assert_eq!(
+                of(t).half(),
+                AuditHalf::Execution,
+                "{t} is about the crossing between the halves, not either half"
+            );
+        }
         for t in super::super::KEY_LIFECYCLE_EVENT_TYPES {
             assert_eq!(
                 of(t).half(),
                 AuditHalf::NonExchange,
                 "{t} is emitted by the custody layer and describes neither half"
+            );
+        }
+        for t in super::super::ACCOUNTING_EVENT_TYPES {
+            assert_eq!(
+                of(t).half(),
+                AuditHalf::NonExchange,
+                "{t} counts a run's interval and describes no exchange"
             );
         }
     }
@@ -114,13 +136,14 @@ mod tests {
         );
     }
 
-    /// The three halves are three values. A derive that made two compare equal would let a
+    /// The four halves are four values. A derive that made two compare equal would let a
     /// consumer reach the wrong arm without the compiler or this battery noticing.
     #[test]
     fn the_three_halves_are_distinguishable() {
         let all = [
             AuditHalf::Request,
             AuditHalf::Response,
+            AuditHalf::Execution,
             AuditHalf::NonExchange,
         ];
         for (i, a) in all.iter().enumerate() {

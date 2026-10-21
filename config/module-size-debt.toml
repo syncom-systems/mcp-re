@@ -283,8 +283,11 @@ path = "mcp-re-proxy/src/app.rs"
 # MCPRE-210: the startup clock reading is a value; the CRL freshness reference is the TLS
 # plane's own input, so the root no longer carries the fault refusal or reads the clock
 # twice: 697 (measured at a36c92f) -> 645. `baseline_sha` names that parent.
-baseline_prod_loc = 645
-baseline_sha = "a36c92f"
+# #1206: the entry points (`run`, `run_request`, the new `run_with`, `drained`) move to the
+# child `app/entry.rs`, where the audit plan meets the registered providers: 645 (measured at
+# ab46131a) -> 633. `baseline_sha` names that parent.
+baseline_prod_loc = 633
+baseline_sha = "ab46131a"
 status = "reviewed-exception"
 review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 
@@ -360,7 +363,9 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/exchange_state.rs"
-baseline_prod_loc = 892
+# #1205: the 202 terminal is published through `may_publish`/`publish` like the bodied
+# terminals, so `establish_terminal` lost its only caller and was deleted: 892 -> 874.
+baseline_prod_loc = 874
 baseline_sha = "a15fc1e"
 status = "reviewed-exception"
 review_ref = "EX-001 in docs/architecture/review-dispositions.md"
@@ -584,8 +589,10 @@ status = "unreviewed"
 path = "mcp-re-proxy/src/config_state/validation/mod.rs"
 # MCPRE-204: the three residue calls become one owner's splice. With MCPRE-203's X10 clause
 # already spliced on main: 374 (measured at 0ba3db2) -> 362. `baseline_sha` names that parent.
-baseline_prod_loc = 362
-baseline_sha = "0ba3db2"
+# #1206: the `Audit` machine joins the refusable splice (+5) and a stale doc enumeration of
+# refused postures is replaced by the machines that own them: 362 (measured at ab46131a) -> 357.
+baseline_prod_loc = 357
+baseline_sha = "ab46131a"
 status = "unreviewed"
 
 [[debt]]
@@ -599,8 +606,10 @@ path = "mcp-re-proxy/src/serving_capabilities.rs"
 # MCPRE-196: the admission owner projects the enforcer's budget and posture, so the
 # capability no longer re-maps them and `AdmissionGate` is gone: 408 (measured at bff0cb9)
 # -> 377.
-baseline_prod_loc = 377
-baseline_sha = "bff0cb9"
+# #1206: the audit seam moves to its own child, `serving_capabilities/audit_posture.rs`, with
+# the required posture: 375 (measured at ab46131a) -> 348.
+baseline_prod_loc = 348
+baseline_sha = "ab46131a"
 status = "unreviewed"
 
 # MCPRE-211: the two delegated emitters are crate-private and read their signer from one

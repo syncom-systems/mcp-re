@@ -260,6 +260,33 @@ def check_audit_flush_budget(root: Path = REPO) -> list[str]:
     return problems
 
 
+def check_audit_commitment_enumeration(root: Path = REPO) -> list[str]:
+    """The chart's `auditCommitment` values are exactly the ones the proxy parses.
+
+    `_helpers.tpl` refuses a value outside its list so that a typo names the value instead
+    of CrashLooping the pods. That only holds while the list is the parser's: a value the
+    parser gained and the chart did not would be refused by the chart for no reason, and one
+    the parser lost would render and then fail at startup.
+    """
+    flags = (root / "mcp-re-proxy" / "src" / "cli" / "audit_flags.rs").read_text(encoding="utf-8")
+    if '"--audit-commitment" => self.delivery = Some(delivery_kind(value)?)' not in flags:
+        return ["mcp-re-proxy/src/cli/audit_flags.rs does not parse `--audit-commitment` "
+                "through `delivery_kind`; the chart's enumeration can no longer be checked "
+                "against the parser"]
+    body = flags.split("fn delivery_kind(", 1)
+    if len(body) != 2:
+        return ["mcp-re-proxy/src/cli/audit_flags.rs has no `delivery_kind`; the chart's "
+                "enumeration can no longer be checked against the parser"]
+    parsed = set(re.findall(r'"([a-z-]+)" =>', body[1].split("other =>", 1)[0]))
+    helpers = (root / CHART.relative_to(REPO) / "templates" / "_helpers.tpl").read_text(encoding="utf-8")
+    listed = re.search(r"has \.Values\.auditCommitment \(list ([^)]*)\)", helpers)
+    charted = set(re.findall(r'"([^"]+)"', listed.group(1))) if listed else set()
+    if parsed != charted:
+        return [f"_helpers.tpl allows auditCommitment {sorted(charted)} but the proxy parses "
+                f"{sorted(parsed)}"]
+    return []
+
+
 def check_image_serves_every_key_source(root: Path = REPO) -> list[str]:
     """Every custody mode the chart's `keySource` comment offers must be compiled in."""
     problems: list[str] = []
@@ -615,6 +642,18 @@ CASES: list[tuple[str, dict, bool, str]] = [
         "auditSink",
     ),
     (
+        "an unknown auditCommitment is refused",
+        merged({"auditCommitment": "durable"}),
+        False,
+        "auditCommitment",
+    ),
+    (
+        "a required audit delivery with no observer is refused",
+        merged({"auditCommitment": "required", "auditSink": "none"}),
+        False,
+        "needs the stderr observer",
+    ),
+    (
         "an unknown verifiedContextCarrier is refused",
         merged({"verifiedContextCarrier": "yes"}),
         False,
@@ -851,8 +890,8 @@ ARGV_CASES: list[tuple[str, dict, list[tuple[str, str]], list[str]]] = [
     (
         "the audit sink and revocation bounds are rendered by default",
         merged(),
-        [("--audit-sink", "stderr"), ("--max-connection-age-secs", "300"),
-         ("--drain-grace-secs", "30")],
+        [("--audit-sink", "stderr"), ("--audit-commitment", "best-effort"),
+         ("--max-connection-age-secs", "300"), ("--drain-grace-secs", "30")],
         ["--verified-context-carrier"],
     ),
     (
@@ -1090,6 +1129,7 @@ TEXT_CHECKS = (
      check_documented_handshake_signing_bounds),
     ("the documented continuation bound is the code's", check_documented_continuation_bound),
     ("the drain arithmetic budgets the code's audit flush", check_audit_flush_budget),
+    ("the chart's audit deliveries are the parser's", check_audit_commitment_enumeration),
 )
 
 #: The files the text checks read, repository-relative.
@@ -1102,6 +1142,7 @@ TEXT_INPUTS = (
     "mcp-re-proxy/src/delegated_tls/sign_capacity.rs",
     "mcp-re-proxy/src/continuation_store/capacity.rs",
     "mcp-re-proxy/src/audit_sink/drain.rs",
+    "mcp-re-proxy/src/cli/audit_flags.rs",
     "scripts/stage_image_binaries.sh",
     "verification/generated/rust-targets.json",
 )
@@ -1119,7 +1160,7 @@ def _without_feature(table: str, feature: str) -> str:
 def selftest() -> int:
     """Each text check goes red on a copy of the tree with the drift it exists to catch.
 
-    The six checks run over a temporary copy of the files they read, first unchanged, then
+    The seven checks run over a temporary copy of the files they read, first unchanged, then
     with one edit each: the image running as root, and a code constant the chart documents
     changed under it. No `helm` render runs; the render matrix needs the binary.
     """
@@ -1150,6 +1191,12 @@ def selftest() -> int:
             "mcp-re-proxy/src/audit_sink/drain.rs",
             lambda text: re.sub(r"(AUDIT_FLUSH_TIMEOUT: Duration = Duration::from_secs\()(\d+)",
                                 lambda m: f"{m.group(1)}{int(m.group(2)) + 1}", text),
+        ),
+        "the chart's audit deliveries are the parser's": (
+            "mcp-re-proxy/src/cli/audit_flags.rs",
+            lambda text: text.replace('"required" => Ok(AuditDeliveryKind::Required),',
+                                      '"required" => Ok(AuditDeliveryKind::Required),\n'
+                                      '        "eventual" => Ok(AuditDeliveryKind::Required),'),
         ),
     }
     failures = 0

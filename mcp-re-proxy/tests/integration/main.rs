@@ -42,6 +42,7 @@ mod http_profile_dispatch_test;
 mod mtls_transport_binding_test;
 mod outstanding_id_provenance_test;
 mod plane_config_reachback_test;
+mod prepared_dispatch_source_test;
 mod refusal_audit_emission_test;
 mod refusal_site_totality_test;
 mod remote_signer_bound_test;

@@ -45,6 +45,7 @@ rust_lint_config(
     rustc_check_cfg = {
         "feature": [
             "async_serve",
+            "audit_commitment_reference",
             "aws_kms_keysource",
             "cpstore_etcd",
             "dev-probe",

@@ -136,7 +136,13 @@ attestations this view cannot see.
 | unit://proxy.async_replay_retention | source, contracts or evidence | THM-0105 | _no consumer_ |
 | unit://proxy.attestation_artifact | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.audit_authority_coordinates | source, contracts or evidence | THM-0069 | _no consumer_ |
+| unit://proxy.audit_commitment_sole_producer | source, contracts or evidence | THM-0135, THM-0136 | _no consumer_ |
+| unit://proxy.audit_commitment_witness | source, contracts or evidence | THM-0135, THM-0136 | _no consumer_ |
 | unit://proxy.audit_delivery | source, contracts or evidence | THM-0070 | _no consumer_ |
+| unit://proxy.audit_intent_gate | source, contracts or evidence | THM-0135 | _no consumer_ |
+| unit://proxy.audit_intent_gate_sole_producer | source, contracts or evidence | THM-0135, THM-0136 | _no consumer_ |
+| unit://proxy.audit_outcome_gate | source, contracts or evidence | THM-0136 | _no consumer_ |
+| unit://proxy.audit_posture | source, contracts or evidence | THM-0135, THM-0136 | _no consumer_ |
 | unit://proxy.audit_run_receipt_recording | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.audit_text_rendering | source, contracts or evidence | THM-0130 | _no consumer_ |
 | unit://proxy.audit_vocabulary_import | source, contracts or evidence | THM-0071 | _no consumer_ |
@@ -467,6 +473,8 @@ attestations this view cannot see.
 | THM-0132 | statement, consequence, scope or review requirement | specification review | THM-0129 |
 | THM-0133 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0134 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0135 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0136 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
 
@@ -557,3 +565,6 @@ attestations this view cannot see.
 | ASM-0086 | description, justification, scope or mechanism | proxy.credential_currency | assumption review |
 | ASM-0087 | description, justification, scope or mechanism | sdk_typescript.native_binding | assumption review |
 | ASM-0088 | description, justification, scope or mechanism | sdk_python.native_binding | assumption review |
+| ASM-0089 | description, justification, scope or mechanism | proxy.audit_commitment_witness, proxy.audit_intent_gate, proxy.audit_outcome_gate, proxy.audit_posture | assumption review |
+| ASM-0090 | description, justification, scope or mechanism | proxy.audit_commitment_witness, proxy.audit_intent_gate, proxy.audit_outcome_gate, proxy.audit_posture | assumption review |
+| ASM-0091 | description, justification, scope or mechanism | proxy.audit_intent_gate, proxy.audit_outcome_gate, proxy.audit_posture | assumption review |

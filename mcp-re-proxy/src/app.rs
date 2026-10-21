@@ -89,29 +89,10 @@ pub fn build_actor_resolver(
     })
 }
 
-/// Serve a validated deployment on the per-core async fleet until `shutdown` is flipped
-/// (SIGTERM/SIGINT in the binary; a test flag in tests). The argv path arrives with the proof
-/// [`crate::cli::parse_args`] produced, so it validates once.
-pub fn run(deployment: ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Result<(), String> {
-    drained(run_validated(&deployment, shutdown))
-}
-
-/// [`run`] for a request built in code, which met no parser and so no guard: it is
-/// validated here, and nothing past this point sees an unchecked request.
-pub fn run_request(config: DeploymentRequest, shutdown: Arc<AtomicBool>) -> Result<(), String> {
-    match ValidatedDeployment::try_from(config) {
-        Ok(deployment) => run(deployment, shutdown),
-        Err(refusal) => drained(Err(refusal)),
-    }
-}
-
-/// `outcome`, once the audit writer's teardown obligation is discharged. Every exit passes
-/// here — a clean drain, a failed serve, a refused startup — because a sink installed past
-/// this seam still leaves records in the same global queue.
-fn drained(outcome: Result<(), String>) -> Result<(), String> {
-    crate::audit_sink::drain::at_shutdown();
-    outcome
-}
+/// How a deployment arrives here (argv, code, or an embedder with providers), and what
+/// every exit discharges.
+mod entry;
+pub use entry::{run, run_request, run_with};
 
 /// The serving path proper. Reachable only with a [`crate::config_state::validation::ValidatedDeployment`], which
 /// is the whole point: there is no route into it that skips the guards.
@@ -147,7 +128,11 @@ fn drained(outcome: Result<(), String>) -> Result<(), String> {
 // The allowance is on this function alone rather than on the module, so anything else here
 // that grows past the threshold is still reported.
 #[allow(clippy::too_many_lines)]
-fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Result<(), String> {
+fn run_validated(
+    config: &ValidatedDeployment,
+    audit: crate::audit_commitment::AuditPlan,
+    shutdown: Arc<AtomicBool>,
+) -> Result<(), String> {
     let values = config.config();
     // Clock-fault diagnosis (audit #94 F5). The host clock is read ONCE, and every startup
     // consumer of the boot instant receives that reading. A faulted reading that only feeds
@@ -228,6 +213,9 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     // installed in the documented order instead of unwinding locals in reverse
     // declaration order (F3).
     let mut building = crate::materializing_runtime::MaterializingRuntime::begin(config)?;
+    // ADR-MCPRE-070 §11: a required audit commitment is established before any plane, so a
+    // provider that cannot be refuses startup with nothing yet running. Declared below.
+    let audit = crate::serving_capabilities::audit_commitment(audit, building.control())?;
 
     building.install_trust(crate::trust_plane::TrustPlane::materialize(
         &trust_plan,
@@ -435,12 +423,12 @@ fn run_validated(config: &ValidatedDeployment, shutdown: Arc<AtomicBool>) -> Res
     proxy = proxy.with_verifier_policy(verifier_policy);
     proxy = proxy.with_transport_binding(binding);
 
-    // ADR-MCPS-035: the per-request security record. OFF installs nothing: the serving
-    // path's absent sink is the no-emission posture.
-    let (audit_sink, audit_state) =
-        crate::serving_capabilities::security_audit_record(config.state().audit())?.into_parts();
-    if let Some(sink) = audit_sink {
-        proxy = proxy.with_audit_sink(Arc::new(sink));
+    // ADR-MCPS-035 / ADR-MCPRE-070 §2: the observer opens here, over the commitment above.
+    // OFF installs nothing: the serving path's default is the no-emission posture.
+    let (audit, audit_state) =
+        crate::serving_capabilities::audit_posture(config.state().audit(), audit)?.into_parts();
+    if let Some(audit) = audit {
+        proxy = proxy.with_audit_posture(audit);
     }
     posture.declare(Seam::SecurityAuditRecord, audit_state);
 
@@ -674,8 +662,6 @@ mod tests {
     /// checks by looking for the LAST sequence number rather than any of them.
     #[test]
     fn a_record_enqueued_immediately_before_teardown_still_reaches_stderr() {
-        use crate::audit_sink::AuditSink;
-
         const BATCH: u64 = 2000;
         const CHILD_MARKER: &str = "MCP_RE_AUDIT_FLUSH_TEARDOWN_CHILD";
         const TEST_NAME: &str = "app::tests::\
@@ -691,16 +677,19 @@ mod tests {
             // an absent seq means "lost at exit" rather than "refused by the queue".
             let sink = crate::audit_sink::StderrAuditSink::open()
                 .expect("the OS CSPRNG yields an incarnation");
+            let audit: crate::audit_sink::MaybeAuditSink = Some(std::sync::Arc::new(sink));
             for i in 0..BATCH {
-                sink.record(&crate::audit_record::AuditRecord {
-                    subject: crate::audit_record::AuditSubject::request_accepted(
+                crate::audit_record::record_to(
+                    &audit,
+                    None,
+                    crate::audit_record::AuditSubject::request_accepted(
                         &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
                         crate::admission_enforcer::AdmissionFacet::NotConfigured,
                     ),
-                    actor_id: Some("teardown-actor".to_string()),
-                    status: 200,
-                    at_unix: i as i64,
-                });
+                    Some("teardown-actor".to_string()),
+                    200,
+                    i as i64,
+                );
             }
             let _ = super::run_request(
                 config,
