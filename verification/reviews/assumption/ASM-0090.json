@@ -1,0 +1,10 @@
+{
+  "axis": "assumption",
+  "components": {
+    "assumption_entry": "sha256:c83a7a90b3f3dd56d3c2edb024dd6c8ceb5e6adac96ea6e69370960e351ec8a1"
+  },
+  "notes": "Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written.  Read in the packet (ASM section), with the D8 wording fix of 11d940f9: holds as a liveness premise, not used for safety. The liveness-unit split is deferred until after assurance closure (direction 8). Needs the owner's ENTRY approval at its exact text.",
+  "reviewed_fingerprint": "sha256:c83a7a90b3f3dd56d3c2edb024dd6c8ceb5e6adac96ea6e69370960e351ec8a1",
+  "reviewer": "agent:claude-opus-5-5 (exec #1201; prepared for owner ratification, not an owner signature)",
+  "subject": "ASM-0090"
+}

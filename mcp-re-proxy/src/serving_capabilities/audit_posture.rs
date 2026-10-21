@@ -133,15 +133,20 @@ fn required_line(provider: &EstablishedProvider, bound: CommitmentBound) -> Stri
     format!(
         "security audit record = STDERR, delivery = REQUIRED via provider {id}, tier {tier} \
          ({vocabulary}) as DECLARED by the provider ({guarantee}): no dispatch without a \
-         committed intent and no success without a committed outcome; a commitment that \
+         committed intent and no success without a committed outcome. A commitment that \
          fails, outlasts {bound}ms or finds all {budget} in-flight commitments taken refuses \
-         the request (503 before dispatch). Persistence is the provider's declaration and an \
-         external evidence obligation (ADR-MCPRE-070 D3), not verified here. An \
-         mcp-re.audit.accounting record is committed every {every}s; its counts are a lower \
-         bound. The stderr observer stays best-effort, and under this posture its seq has \
-         gaps that are not drops: an execution intent consumes a seq and is never observed \
-         (D1), and neither is an outcome that could not be committed or whose retention \
-         failed after it was (G2, W5b).",
+         the request: for the intent, BEFORE dispatch, with 503 where a retry can succeed \
+         and 500 where it cannot; for the outcome, AFTER dispatch, always with 500 and \
+         possibly_executed, a spent budget included. Persistence is the provider's \
+         declaration and an external evidence obligation (ADR-MCPRE-070 D3), not verified \
+         here. An mcp-re.audit.accounting record is committed every {every}s; its counts are \
+         a lower bound, and an interval it cannot commit is missed without refusing a \
+         request. The delegated-key lifecycle lines are outside this posture (D11). The \
+         stderr observer stays best-effort, and under this posture its seq has gaps that are \
+         not drops: an execution intent consumes a seq and is never observed (D1), and \
+         neither is an outcome that could not be committed or whose retention failed after \
+         it was (G2, W5b), nor an mcp-re.audit.accounting record (D2, Q3). The drop count \
+         counts drops only.",
         id = provider.accounting().provider(),
         tier = tier.wire_name(),
         vocabulary = crate::audit_commitment::TIER_VOCABULARY,
@@ -225,7 +230,11 @@ mod tests {
             "tier SURVIVES_PROXY_PROCESS_LOSS (audit-durability/v1) as DECLARED",
             "not verified here",
             "mcp-re.audit.accounting",
+            "BEFORE dispatch, with 503 where a retry can succeed and 500 where it cannot",
+            "AFTER dispatch, always with 500 and possibly_executed, a spent budget included",
             "gaps that are not drops",
+            "nor an mcp-re.audit.accounting record (D2, Q3)",
+            "outside this posture (D11)",
         ] {
             assert!(line.contains(needle), "{needle:?} missing from {line}");
         }

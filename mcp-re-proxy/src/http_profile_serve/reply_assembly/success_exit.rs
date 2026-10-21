@@ -5,13 +5,13 @@
 //! ```text
 //! may_publish(success)        decided by the caller, before anything publishes the claim
 //!   └─ G2: outcome committed  ── refused ──> 500 audit_commitment_unavailable; retention
-//!        │                                   discharged with that refusal (W5)
+//!        │                                   completion attempted with that refusal (W5)
 //!        └─ retention completes ── failed ──> 500 evidence_retention_indeterminate (W5b)
 //!             └─ the observer is offered the record, the terminal is published, served
 //! ```
 //!
-//! Both success terminals come through here, the bodied reply and the bodyless 202, so the
-//! order is one function rather than two copies of it. Every refusal on the way out is served
+//! Every success terminal comes through here — the bodied reply's two and the bodyless 202 —
+//! so the order is one function rather than two copies of it. Every refusal on the way out is served
 //! from a machine that has crossed the dispatch and never claimed success, so it states
 //! `PossiblyExecuted` — never `NothingExecuted`, and never the success bytes.
 //!
@@ -26,6 +26,7 @@ use crate::audit_record::{AuditRecord, AuditSubject};
 use crate::exchange_state::{ExchangeProgress, ServedSuccess};
 use crate::request_stages::{IntentDisposition, OutcomeDisposition, RetentionDisposition};
 
+use super::super::inner_plane::NotificationDelivered;
 use super::super::receipt::Accepted;
 use super::super::served;
 use super::super::HttpProfileProxy;
@@ -40,7 +41,7 @@ impl HttpProfileProxy {
         &self,
         acc: &Accepted<'_>,
         progress: &mut ExchangeProgress,
-        success: ServedSuccess,
+        success: ServedSuccess<NotificationDelivered>,
         response: HttpResponse,
         retention: &RetentionDisposition,
         intent: IntentDisposition,
@@ -145,6 +146,7 @@ mod tests {
     fn success_exit_is_the_only_success_served_call() {
         for (name, source) in [
             ("accepted.rs", include_str!("accepted.rs")),
+            ("dispatched.rs", include_str!("dispatched.rs")),
             ("notification.rs", include_str!("notification.rs")),
             ("mod.rs", include_str!("mod.rs")),
         ] {

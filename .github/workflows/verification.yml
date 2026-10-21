@@ -170,7 +170,7 @@ on:
       - "mcp-re-proxy/src/request_stages.rs"
       # The dispositions the ready state carries, a file each (ADR-MCPRE-070 G1).
       - "mcp-re-proxy/src/request_stages/**"
-      # #1206: the root's entry points and the audit machine (proxy.audit_posture).
+      # The root's entry points and the audit machine (proxy.audit_posture).
       - "mcp-re-proxy/src/app/**"
       - "mcp-re-proxy/src/config_state/audit_policy.rs"
       # v0.17 trust-plane ownership slice: the runtime trust plane, `proxy.trust_plane_runtime`.
@@ -602,7 +602,7 @@ on:
       - "mcp-re-proxy/src/request_stages.rs"
       # The dispositions the ready state carries, a file each (ADR-MCPRE-070 G1).
       - "mcp-re-proxy/src/request_stages/**"
-      # #1206: the root's entry points and the audit machine (proxy.audit_posture).
+      # The root's entry points and the audit machine (proxy.audit_posture).
       - "mcp-re-proxy/src/app/**"
       - "mcp-re-proxy/src/config_state/audit_policy.rs"
       # v0.17 trust-plane ownership slice: the runtime trust plane, `proxy.trust_plane_runtime`.

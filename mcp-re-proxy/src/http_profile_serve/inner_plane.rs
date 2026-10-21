@@ -45,6 +45,23 @@ use crate::exchange_state::ExchangeProgress;
 use crate::exchange_state::ResponseOrigin;
 use crate::refusal::Refusal;
 
+/// The inner plane received a notification: the one fact a 202 is published on.
+///
+/// Its field is private to this module, so [`InnerPlane::observe_acknowledgement`] is the only
+/// code that can construct one, and it does so only on the arms that say the backend received
+/// the message. Crate-visible because the exchange machine's 202 publication
+/// (`ServedSuccess::Acknowledged`) requires it by value: the 202 terminal is not published
+/// unless this observation succeeded.
+pub(crate) struct NotificationDelivered(());
+
+impl NotificationDelivered {
+    /// A delivery no backend observed, for the exchange machine's own unit tests.
+    #[cfg(test)]
+    pub(crate) fn for_a_test() -> Self {
+        Self(())
+    }
+}
+
 /// The async client to the stateless Streamable-HTTP backend, and the reading of every
 /// answer it can give.
 ///
@@ -131,8 +148,8 @@ impl InnerPlane {
     /// NOTIFICATION-OBSERVED — may a 202 be minted for what the inner plane managed to do?
     ///
     /// ```text
-    /// ensures   Ok  => the backend RECEIVED the message; no transition — the 202
-    ///                  terminal is entered only when the 202 is served
+    /// ensures   Ok  => the backend RECEIVED the message, carried as the 202's
+    ///                  `NotificationAcknowledged` fact, entered only when the 202 is served
     ///           Err => 504 — transmitted, no answer
     /// refusal   NOT free — the exchange has crossed the threshold either way
     /// ```
@@ -158,11 +175,14 @@ impl InnerPlane {
         &self,
         progress: &mut ExchangeProgress,
         outcome: &DispatchedOutcome,
-    ) -> Result<(), Refusal> {
+    ) -> Result<Established<NotificationDelivered>, Refusal> {
         match outcome {
             DispatchedOutcome::Replied(_) | DispatchedOutcome::InvalidUpstream(_) => {
                 progress.observe_origin(ResponseOrigin::BackendReplied);
-                Ok(())
+                Ok(Established::new(
+                    NotificationDelivered(()),
+                    ExchangeEvent::NotificationAcknowledged,
+                ))
             }
             DispatchedOutcome::Indeterminate(_) => {
                 progress.observe_origin(ResponseOrigin::DispatchIndeterminate);

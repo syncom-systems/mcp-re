@@ -3885,6 +3885,12 @@ depends_on = [
   # ADEQUACY — whether the operator chose enough. This is IDENTITY — whether the set being
   # served is the one validated. The scope disclaims the first and is silent on the second.
   "THM-0077",
+  # ADR-MCPRE-070 G1. Under the required audit posture a committed execution intent is a
+  # pre-dispatch obligation the validated deployment selected, and THM-0135 is the leaf that
+  # says it is established by its owner (the shared commitment owner, against this exchange's
+  # intent event) before the backend is reached. Refusal-direction, the shape of this root;
+  # its statement and scope are unchanged.
+  "THM-0135",
 ]
 
 [[theorem]]
@@ -4053,6 +4059,12 @@ supported_by = [
   # in terms: "an unavailable tier failing closed is inside the claim". `supported_by` is
   # the only field this change touches.
   "unit://proxy.unestablishable_capability_refusal",
+  # ADR-MCPRE-070 §2, D3. The audit posture is one the operator selects, and this unit's
+  # refusals are this statement's "cannot be silently reinterpreted into a weaker posture":
+  # `--audit-commitment required` is never served as best-effort and refuses startup without
+  # an established provider at the minimum tier, a passing probe, and an observer.
+  # `supported_by` is the only field this change touches.
+  "unit://proxy.audit_posture",
 ]
 depends_on = [
   "THM-0067",
@@ -5730,9 +5742,12 @@ drives:
 Every `ExchangeEvent` the machine learns of reaches it in one of exactly two ways. A
 STAGE-OWNED event travels inside an `Established<T>`: the carrier is constructed at the site
 the stage's work returned its product, has no public field and no reader other than
-`ExchangeProgress::establish` and `establish_terminal`, which delegates to it, and is
-`#[must_use]`, so the assembly cannot obtain the product without the machine advancing the
-event in the same step and cannot discard the product without a warning the build refuses. An
+`ExchangeProgress::establish` and, for the notification terminal's carrier,
+`ServedSuccess::tail`, which reads its event alone — for `may_publish` to check before the 202
+is signed and for `publish` to advance after the outcome commitment and retention, the product
+never yielded — and is `#[must_use]`, so the assembly cannot obtain the product without the
+machine advancing the event in the same step and cannot discard the product without a warning
+the build refuses. An
 ASSEMBLY-OWNED event is stated by a direct `advance` in the serving path, and the set of events
 stated that way is exactly the three inventoried with the reason no stage's success could carry
 each: `BackendDispatched`, `ContinuationRetired`, `ContinuationNotRequired`. The success tail —
@@ -5773,8 +5788,8 @@ or that a refusal carries the right disposition (THM-0081).
 
 `Established` is constructible anywhere in the crate; the claim is not that a wrong carrier is
 unconstructible but that every carrier in the serving path is built at its stage's success site
-(source-measured, listed in the packet) and that nothing but `establish`, and
-`establish_terminal` which delegates to it, can open one (structural). Source-text evidence,
+(source-measured, listed in the packet) and that nothing but `establish` can open one, and
+nothing but `establish` and `ServedSuccess::tail` reads one (structural). Source-text evidence,
 recorded as evidence: deleting the battery leaves a reintroduced `advance` compiling. Class V0.
 """
 owner = "proxy.exchange_transition_ownership"
@@ -7165,8 +7180,10 @@ and it is one BY TYPE: no constructor in the audit vocabulary takes a string, so
 event is built from an `McpReError` or — when the authority that ended the exchange was not
 Core — from nothing at all.
 
-The net-new surface is exactly five events the error taxonomy cannot express: two successes
-(`mcp-re.request.accepted`, `mcp-re.response.signed`) and three delegated-key lifecycle events.
+The net-new surface is exactly seven events the error taxonomy cannot express: two successes
+(`mcp-re.request.accepted`, `mcp-re.response.signed`), three delegated-key lifecycle events, the
+execution intent (`mcp-re.execution.intent`, ADR-MCPRE-070 D1) and the bounded accounting record
+(`mcp-re.audit.accounting`, ADR-MCPRE-070 D2/Q3); neither of the last two carries a reason.
 There is no `authorization_hash_mismatch` reason, because "mismatch" would claim Core compared
 an authorization artifact it only binds.
 
@@ -7726,10 +7743,14 @@ serving path cannot state it.
 G1 runs after the retention reserve and before the retention commit and the dispatch, as one
 bounded attempt. Every other answer — an absent coordinate, a rejection, unavailability, a
 spent commitment budget, a wait past the bound, a dropped completion, a provider panic, a
-forged, stale or mismatched receipt — refuses before the backend is reached, with the signed
-`mcp-re.audit_commitment_unavailable` refusal carrying the machine's `NothingExecuted`
-disposition and the retention reservation rescinded. A request dropped during G1 dispatches
-nothing. A posture requested as required is never served as best-effort: startup refuses it
+forged, stale or mismatched receipt — refuses before the backend is reached with the
+`mcp-re.audit_commitment_unavailable` refusal, at 503 where a retry can succeed and 500 where
+it cannot, and with the retention reservation rescinded. The refusal is signed, or is the
+unsigned last-resort body when the signed rejection cannot be built. It carries the machine's
+pre-dispatch disposition, which never states a success: `NothingExecuted`, or
+`ApprovalSpentNothingExecuted` when the exchange already spent a continuation approval, or
+`PossiblyExecuted` when a latched model anomaly means the machine cannot vouch for the
+exchange. A request dropped during G1 dispatches nothing. A posture requested as required is never served as best-effort: startup refuses it
 without an established provider at the minimum tier.
 
 "Committed" is the proxy's fact — it holds a redeemed witness for a matching receipt. It is not
@@ -7741,8 +7762,10 @@ commitment provider was not asked to record and did not answer for. A provider o
 saturated budget, a slow or panicking provider, a cancelled request, a receipt for another
 event, crossing or tier, a receipt replayed from an earlier exchange, and a configuration that
 would quietly fall back to observation each end in a refusal before the execution threshold,
-never in an unrecorded execution. Each of those refusals states `NothingExecuted` truthfully,
-because nothing was dispatched.
+never in an unrecorded execution. None of those refusals claims a success, and none overstates
+what was spared: nothing was dispatched, so each states `NothingExecuted`, or
+`ApprovalSpentNothingExecuted` where a continuation approval was already spent, unless a
+latched model anomaly makes the machine decline to vouch and state `PossiblyExecuted`.
 """
 direct_consequence_severity = "critical"
 scope = """
@@ -7783,8 +7806,10 @@ statement = """
 For an `HttpProfileProxy` serving under the required audit posture, and for every dispatched
 exchange:
 
-`RequiredAudit && SuccessVisible => OutcomeCommitted`. Both success terminals — the bodied
-reply and the notification's 202 — are served through one success exit. That exit commits the
+`RequiredAudit && SuccessVisible => OutcomeCommitted`. The three success terminals — a
+completed reply, a reply that opens a continuation leg, and the notification's 202 — are
+reached from two exits, the bodied reply's and the notification's, and both serve through one
+success exit. That exit commits the
 exchange's `response.signed` event, scoped to the coordinate of its `request.accepted` and
 distinct from its intent, and redeems the witness for that event against the provider G1 used,
 BEFORE retention completes; the success terminal is published and the bytes served only after
@@ -7793,9 +7818,12 @@ carried across the dispatch, never a re-read of the posture, so an exchange that
 under the required posture cannot reach the exit as not required.
 
 An outcome commitment that fails — rejection, unavailability, a wait past the bound, a dropped
-completion, a panic, a forged or stale receipt, an absent coordinate — is a signed 500
-`mcp-re.audit_commitment_unavailable` refusal stating `PossiblyExecuted`, and retention is
-discharged with that refusal. A retention failure after the outcome committed is the
+completion, a panic, a forged or stale receipt, an absent coordinate, a spent commitment
+budget — is a 500 `mcp-re.audit_commitment_unavailable` refusal after dispatch, stating
+`PossiblyExecuted`; it is signed, or is the unsigned last-resort body when the signed
+rejection cannot be built. Retention completion is attempted with that refusal, and an attempt
+that fails leaves the exchange's `.pending` marker while the refusal is still served. A
+retention failure after the outcome committed is the
 `evidence_retention_indeterminate` refusal. Neither serves the success bytes, and nothing
 after the dispatch states `NothingExecuted`. The observer is offered the committed event
 itself, not a second one, and an observer that drops every record changes neither the
@@ -7823,10 +7851,16 @@ A request dropped after dispatch leaves an intent with no outcome, which reads a
 `PossiblyExecuted` (W4); nothing here reconciles it. No exactly-once delivery, no unconditional
 permanence, and no downstream archive (L3, P10).
 
-Neither THM-0071, THM-0070, THM-0085 nor THM-0101 is revised: that the success tail is
-advanced only by the owner's publication is THM-0101's claim, and this theorem says what must
-hold before that tail is reached under the required posture. The best-effort posture keeps its
-order and bytes and is claimed nothing here. Machine A's model is test-only. Class V0: tested,
+THM-0071, THM-0070 and THM-0085 are not revised. That a success terminal is reached only
+through the owner's publication — the bodied tail driven after the publication decision, and
+the 202's terminal entered only through the carrier the inner plane mints when the message
+was delivered, whose event alone the publication reads — is THM-0101's claim, which this theorem depends on. This theorem says what
+must hold before a success terminal is reached under the required posture. The best-effort
+posture keeps its order and bytes and is claimed nothing here. Machine A's model is test-only.
+That both exits serve through the one success exit, and that exit's order, are source-measured
+(the source-scan tests in `success_exit.rs`, `accepted.rs` and `notification.rs`, and
+M615-M619): the compiler refuses neither a second exit nor another order, and the structural
+probes reach the witness types and the intent disposition, not the exit. Class V0: tested,
 mutation-probed and structurally probed, not proved.
 """
 owner = "proxy.audit_outcome_gate"
@@ -7838,4 +7872,4 @@ supported_by = [
   "unit://proxy.audit_commitment_sole_producer",
   "unit://proxy.audit_posture",
 ]
-depends_on = []
+depends_on = ["THM-0101"]

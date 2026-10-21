@@ -21,6 +21,7 @@ use crate::exchange_state::ServedSuccess;
 use crate::refusal::RefusalCause;
 use crate::request_stages::{IntentDisposition, RetentionDisposition};
 
+use super::super::inner_plane::NotificationDelivered;
 use super::super::receipt::Accepted;
 use super::super::signing_window::SigningWindow;
 use super::super::HttpProfileProxy;
@@ -36,6 +37,7 @@ impl HttpProfileProxy {
         &self,
         acc: &Accepted<'_>,
         progress: &mut ExchangeProgress,
+        acknowledged: ServedSuccess<NotificationDelivered>,
         window: &SigningWindow,
         retention: &RetentionDisposition,
         intent: IntentDisposition,
@@ -43,15 +45,8 @@ impl HttpProfileProxy {
         let ex = acc.exchange();
         match sign_delegated_accepted_202(ex.http_req, window) {
             Ok(ack) => {
-                self.publish_success(
-                    acc,
-                    progress,
-                    ServedSuccess::Acknowledged,
-                    ack,
-                    retention,
-                    intent,
-                )
-                .await
+                self.publish_success(acc, progress, acknowledged, ack, retention, intent)
+                    .await
             }
             // SIGNING failed, so there is no signed terminal to retain. The marker stays, and
             // it is the true statement: this exchange crossed and nothing discharges it.
@@ -82,7 +77,9 @@ impl HttpProfileProxy {
     ///
     /// The 202 terminal is DECIDED here and ENTERED only when the 202 is served, so a refusal
     /// after this point — signing, the outcome commitment, retention — is served from a
-    /// machine that never claimed success (ADR-MCPRE-070 §16 item 7).
+    /// machine that never claimed success (ADR-MCPRE-070 §16 item 7). What it is entered by
+    /// is the observation's own carrier: no other code can construct the delivery fact, so
+    /// without the observation there is no 202 to decide or to publish.
     pub(in crate::http_profile_serve) async fn answer_notification_terminal(
         &self,
         acc: &Accepted<'_>,
@@ -97,15 +94,18 @@ impl HttpProfileProxy {
         // operator reading the archive then finds *the backend may have executed and the
         // client was told this*, instead of a bare surviving marker that says only
         // *unaccounted for*.
-        if let Err(refusal) = self.inner_async.observe_acknowledgement(progress, outcome) {
-            return self
-                .refuse_retained(acc, refusal, progress, retention)
-                .await;
-        }
+        let acknowledged = match self.inner_async.observe_acknowledgement(progress, outcome) {
+            Ok(delivered) => ServedSuccess::Acknowledged(delivered),
+            Err(refusal) => {
+                return self
+                    .refuse_retained(acc, refusal, progress, retention)
+                    .await
+            }
+        };
         // The 202 is a signed success claim, so an exchange that no longer satisfies its
         // model may not mint one — and the decision is taken before the acknowledgement is
         // signed, while the exchange can still reach a post-dispatch refusal instead.
-        if progress.may_publish(ServedSuccess::Acknowledged).is_err() {
+        if progress.may_publish(&acknowledged).is_err() {
             let refusal = crate::refusal::Refusal::new(
                 mcp_re_core::McpReError::ExchangeInvariantViolation,
                 500,
@@ -114,7 +114,7 @@ impl HttpProfileProxy {
                 .refuse_retained(acc, refusal, progress, retention)
                 .await;
         }
-        self.answer_notification(acc, progress, window, retention, intent)
+        self.answer_notification(acc, progress, acknowledged, window, retention, intent)
             .await
     }
 }
@@ -140,7 +140,7 @@ mod tests {
         // behaviour with the enforcement still present and simply not acted on. An order
         // check alone reads that as clean, so the refusing form is what is asserted.
         let decision = body
-            .find("progress.may_publish(ServedSuccess::Acknowledged).is_err()")
+            .find("progress.may_publish(&acknowledged).is_err()")
             .expect("the terminal decision is branched on");
         let mint = body
             .find("self.answer_notification(")

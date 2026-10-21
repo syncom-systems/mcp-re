@@ -16,7 +16,7 @@
     "theorem_id": "THM-0080",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G5.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 4f9eb062 after the CodeQL remediation (work/security-audit-2026-09-22-r12/CODEQL-REREVIEW.md): test sources only; the accept-any-server TLS test verifier was replaced by verification against the test's server CA, no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G5.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 4f9eb062 after the CodeQL remediation (work/security-audit-2026-09-22-r12/CODEQL-REREVIEW.md): test sources only; the accept-any-server TLS test verifier was replaced by verification against the test's server CA, no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded. Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written. Read in verification/reviews/packets/epic-1201-assurance-closure-2026-10-21.md: verdict CLEAN, cause source movement (shared harness).  Evidence class as registered; V0 units are tested and probed, not machine-checked proofs.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -38,7 +38,7 @@
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:e37a211806d4cafd484cb520afa6925aa1104618d02b2e0962c35428999a20ca",
         "test_selection": "sha256:98e7462778f3ac04720135baefa986471e223488e27cc7b7da4d8be1de22102a",
-        "test_sources": "sha256:4ede162bf5e22a461a25ba51f4157bd71d53eb8a0a9932dcefaca675633280c9",
+        "test_sources": "sha256:94dfaa338808959316751debd390baf2894b099a7cb4e4220d54664b9bfba57c",
         "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "unit_id": "sha256:c18026c90d86e56f4d82d88c6ad95903580709ca4af5a61ccbaa2032e1c0223f"
       }
@@ -56,8 +56,8 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:d8fe595fe39ce14aaaee3daf848cb38e2bd3f196779a130c25c80cd30fcdb3d0",
+  "review_digest": "sha256:11625925c83c710f85ec2ee2b79f9ae37d20fa1389e916bf0e4992a26f9c95ae",
   "reviewed_fingerprint": "sha256:e5fd5b87e8c336c522e5cb2f865ccf86a3983b80851c14390c270931ad2197b0",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-opus-5-5 (exec #1201; prepared for owner ratification, not an owner signature)",
   "subject": "THM-0080"
 }

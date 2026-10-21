@@ -82,7 +82,7 @@ const ORDINARY: &[(&str, &str)] = &[
     ),
 ];
 
-/// Every `values.<field>` the production half of `app.rs` reads.
+/// Every `values.<field>` the production half of the composition root reads.
 ///
 /// `values` is the root's binding for `config.config()`, so this is exactly the set of raw
 /// request reads. Matched on the binding rather than on `config()` because a read written
@@ -106,9 +106,30 @@ fn raw_reads(source: &str) -> BTreeSet<String> {
     found
 }
 
+/// The composition root: `app.rs` and every file of its `app/` subtree, so a root function
+/// that moves into a submodule stays measured.
 fn app_source() -> String {
     let path = mcp_re_test_paths::resolve_runfile("MCP_RE_APP_SRC");
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"))
+    let read = |p: &std::path::Path| {
+        std::fs::read_to_string(p).unwrap_or_else(|e| panic!("read {p:?}: {e}"))
+    };
+    let mut source = read(&path);
+    let subtree = path.with_extension("");
+    let mut files: Vec<_> = std::fs::read_dir(&subtree)
+        .unwrap_or_else(|e| panic!("read {subtree:?}: {e}"))
+        .map(|entry| entry.expect("directory entry").path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "rs"))
+        .collect();
+    files.sort();
+    assert!(
+        !files.is_empty(),
+        "{subtree:?} holds no source: the subtree scan would measure nothing"
+    );
+    for file in files {
+        source.push('\n');
+        source.push_str(&read(&file));
+    }
+    source
 }
 
 /// The root reads exactly the inventory, and nothing else.
@@ -120,7 +141,7 @@ fn the_composition_root_reads_only_ordinary_validated_parameters() {
     let undeclared: Vec<&String> = actual.difference(&declared).collect();
     assert!(
         undeclared.is_empty(),
-        "app.rs reads {undeclared:?} raw. Before adding to ORDINARY, ask whether this value \
+        "the composition root reads {undeclared:?} raw. Before adding to ORDINARY, ask whether this value \
          changing — with every owner state unchanged — could change a security-sensitive \
          decision. If it could, it needs an owner, not an entry."
     );
@@ -128,7 +149,7 @@ fn the_composition_root_reads_only_ordinary_validated_parameters() {
     let stale: Vec<&String> = declared.difference(&actual).collect();
     assert!(
         stale.is_empty(),
-        "ORDINARY names {stale:?}, which app.rs no longer reads. A field that acquired an \
+        "ORDINARY names {stale:?}, which the composition root no longer reads. A field that acquired an \
          owner should leave this list, so the list stays a measurement rather than a memory."
     );
 }

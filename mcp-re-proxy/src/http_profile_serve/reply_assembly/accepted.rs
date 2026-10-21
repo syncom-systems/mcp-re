@@ -30,10 +30,10 @@ use super::SignedReply;
 impl HttpProfileProxy {
     /// Decide the terminal the classifier selected, then leave through the success exit.
     ///
-    /// The `response.signed` record is emitted on the way out, not at signing time:
-    /// everything before it can still discard this response, and a record for bytes the
-    /// client never received is exactly the kind of contradiction that makes an audit stream
-    /// unusable.
+    /// The observer's `response.signed` line is offered only on the way out, not at signing
+    /// time: everything before it can still discard this response. Under the required posture
+    /// the committed outcome is a different statement — what the proxy observed and signed,
+    /// never that it was served (ADR-MCPRE-070 Q2).
     pub(in crate::http_profile_serve) async fn serve_retained(
         &self,
         acc: &Accepted<'_>,
@@ -53,7 +53,7 @@ impl HttpProfileProxy {
         // `response.signed` record are all assertions that this exchange succeeded, so a
         // tuple the machine cannot vouch for has to be caught while a refusal is still
         // reachable — which is why this is not a `debug_assert!` and not a check after the fact.
-        if progress.may_publish(success).is_err() {
+        if progress.may_publish(&success).is_err() {
             let refusal = crate::refusal::Refusal::new(
                 mcp_re_core::McpReError::ExchangeInvariantViolation,
                 500,
@@ -205,7 +205,7 @@ mod tests {
             .1;
         // Branched on, not merely called — see the same assertion in `notification.rs`.
         let decision = body
-            .find("progress.may_publish(success).is_err()")
+            .find("progress.may_publish(&success).is_err()")
             .expect("the publication decision is branched on");
         let exit = body
             .find("self.publish_success(")

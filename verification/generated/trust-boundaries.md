@@ -22,7 +22,7 @@ about the boundary.
 
 | boundary | kind | class cap | premises crossing it | reaches theorems |
 |---|---|---|---|---|
-| boundary.audit_commitment_provider | external-service | V0 | ASM-0089, ASM-0090, ASM-0091 | THM-0135, THM-0136 |
+| boundary.audit_commitment_provider | external-service | V0 | ASM-0089, ASM-0090, ASM-0091 | THM-0077, THM-0135, THM-0136 |
 | boundary.base64_encoding | foreign-dependency | V0 | ASM-0073, ASM-0075 | THM-0007 |
 | boundary.clock | environment | V0 | ASM-0057, ASM-0061, ASM-0069, ASM-0076, ASM-0077 | THM-0001, THM-0003, THM-0004, THM-0005, THM-0006, THM-0014, THM-0016, THM-0017, THM-0019, THM-0020, THM-0021, THM-0022, THM-0039, THM-0053, THM-0057, THM-0058, THM-0063, THM-0075, THM-0106, THM-0107, THM-0116, THM-0117, THM-0120, THM-0127, THM-0129 |
 | boundary.cose_cbor | foreign-dependency | V0 | ASM-0085 | THM-0041 |
@@ -41,7 +41,7 @@ about the boundary.
 | boundary.pyo3_marshalling | foreign-dependency | V0 | ASM-0088 | THM-0094 |
 | boundary.rust_std | language-runtime | _no cap_ | ASM-0002, ASM-0003, ASM-0005, ASM-0006, ASM-0010, ASM-0014, ASM-0020, ASM-0056 | THM-0001, THM-0002, THM-0003, THM-0004, THM-0005, THM-0006, THM-0007, THM-0014, THM-0016, THM-0017, THM-0021, THM-0022, THM-0069, THM-0132 |
 | boundary.shared_state_store | external-service | V0 | ASM-0040, ASM-0041, ASM-0044, ASM-0047, ASM-0048, ASM-0058, ASM-0059, ASM-0071, ASM-0081 | THM-0087, THM-0092, THM-0093, THM-0106, THM-0107, THM-0133 |
-| boundary.tls_mechanism | foreign-dependency | V0 | ASM-0033, ASM-0034, ASM-0035, ASM-0036, ASM-0039, ASM-0070 | THM-0027, THM-0028, THM-0029, THM-0030, THM-0031, THM-0109 |
+| boundary.tls_mechanism | foreign-dependency | V0 | ASM-0033, ASM-0034, ASM-0035, ASM-0036, ASM-0039, ASM-0070, ASM-0092 | THM-0027, THM-0028, THM-0029, THM-0030, THM-0031, THM-0090, THM-0109 |
 | boundary.unmodelled_own_behaviour | proof-lane | V0 | ASM-0001, ASM-0004, ASM-0009, ASM-0011, ASM-0012, ASM-0013, ASM-0021, ASM-0023, ASM-0024, ASM-0029, ASM-0045, ASM-0046, ASM-0066, ASM-0067 | THM-0001, THM-0002, THM-0003, THM-0004, THM-0005, THM-0006, THM-0007, THM-0009, THM-0010, THM-0014, THM-0016, THM-0017, THM-0019, THM-0020, THM-0021, THM-0022, THM-0057, THM-0058 |
 | boundary.x509 | foreign-dependency | V0 | ASM-0030, ASM-0031, ASM-0032, ASM-0038, ASM-0080, ASM-0086 | THM-0024, THM-0025, THM-0026, THM-0032, THM-0131 |
 

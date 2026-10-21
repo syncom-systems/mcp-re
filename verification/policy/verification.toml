@@ -4298,6 +4298,14 @@ tested_symbols = [
   # `verification/reviews/packets/adr069-np-168-thm-0101-inventory-drift-2026-09-20.md`. It is
   # pre-existing, already witnessed by the sibling above, and fixing it is a §28 event.
   "//mcp-re-proxy:integration_test#exchange_transition_ownership_test::no_terminal_the_owner_publishes_is_advanced_by_the_serving_path_again",
+  # The 202's terminal event travels in the carrier `observe_acknowledgement` mints on the arms
+  # that say the backend received the message, and the publication entering the terminal opens
+  # it. The source control measures that the event is a stage's; the two serving controls,
+  # registered from NP-151, measure the correspondence it carries: a notification transmitted
+  # with no answer earns a 504, never a 202, and one the backend received still earns its 202.
+  "//mcp-re-proxy:integration_test#exchange_transition_ownership_test::the_202_terminal_is_entered_through_its_stage_s_carrier",
+  "//mcp-re-proxy:integration_async_test#mrt_continuation_serving_test::a_notification_the_inner_plane_never_delivered_is_not_acknowledged",
+  "//mcp-re-proxy:integration_async_test#mrt_continuation_serving_test::a_delivered_notification_is_still_acknowledged_with_a_202",
 ]
 
 [[unit]]
@@ -9607,13 +9615,13 @@ evidence = [
 #
 # ADR-MCPRE-070 G1 (§4, §6 W1-W3, D7, D9, D12) — no dispatch without the bound intent.
 # What the serving path does with a commitment, not whether a provider persisted it: that
-# stays the provider's assumption (P9), and the required posture is reachable only through
-# the test-only installer until #1206.
+# stays the provider's assumption (P9), and the required posture is entered only over a
+# provider established at startup (`proxy.audit_posture`).
 
 [[unit]]
 id = "proxy.audit_intent_gate"
 class = "V0"
-description = "Under the required audit posture no backend dispatch exists without the exchange's execution intent committed and its witness redeemed for THIS exchange's event — the intent names the coordinate of the exchange's request.accepted (D9) — against the provider the posture holds. G1 runs after the retention reserve and before the retention commit and dispatch (D7), on notifications and bodied calls alike, with one bounded attempt; every failure (absent coordinate, rejection, unavailability, timeout, dropped completion, panic, forged or stale receipt) is a signed mcp-re.audit_commitment_unavailable refusal before the backend is reached (503 where a retry can succeed, 500 where it cannot), carrying the machine's NothingExecuted disposition, rescinding the reservation and returning the plane's capacity. The signing window must survive the intent's wait as well as the dispatch's. Cancellation during or after G1 dispatches nothing. Under the best-effort posture the posture owner states NotRequired and nothing is produced, committed or observed (D1)."
+description = "Under the required audit posture no backend dispatch exists without the exchange's execution intent committed and its witness redeemed for THIS exchange's event — the intent names the coordinate of the exchange's request.accepted (D9) — against the provider the posture holds. G1 runs after the retention reserve and before the retention commit and dispatch (D7), on notifications and bodied calls alike, with one bounded attempt; every failure (absent coordinate, rejection, unavailability, a spent commitment budget, timeout, dropped completion, panic, forged or stale receipt) is an mcp-re.audit_commitment_unavailable refusal before the backend is reached (503 where a retry can succeed, 500 where it cannot), signed or the unsigned last-resort body, carrying the machine's pre-dispatch disposition — NothingExecuted, ApprovalSpentNothingExecuted after a spent continuation approval, or PossiblyExecuted under a latched model anomaly, never a success — rescinding the reservation and returning the plane's capacity. The signing window must survive the intent's wait as well as the dispatch's. Cancellation during or after G1 dispatches nothing. Under the best-effort posture the posture owner states NotRequired and nothing is produced, committed or observed (D1)."
 paths = [
   "mcp-re-proxy/src/request_stages/intent_disposition.rs",
   "mcp-re-proxy/src/audit_commitment/posture.rs",
@@ -9682,6 +9690,7 @@ tested_symbols = [
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::an_uncertain_intent_identity_is_never_reused_by_the_next_exchange",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::w3_retention_commit_failure_after_intent_leaves_no_pending_and_no_dispatch",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::g1_failure_rescinds_the_reservation",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::an_intent_refusal_leaves_no_pending_marker",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::the_window_must_survive_the_commitment_wait",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::the_installer_refuses_a_volatile_authority_and_an_illegal_bound",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_over_a_loopback_http_backend_dispatches_only_after_commit",
@@ -9714,7 +9723,7 @@ evidence = [
 [[unit]]
 id = "proxy.audit_outcome_gate"
 class = "V0"
-description = "Under the required audit posture no completed success — bodied reply or notification 202 (D4) — is visible without the exchange's response.signed event committed and its witness redeemed for that event, the event scoped to the coordinate of the exchange's request.accepted (D9) and distinct from its intent. Requiredness is the state G1 carried across the dispatch, never the posture re-read. The outcome is committed BEFORE retention completes and the success is served only after both (Q2): an outcome commit failure is a signed 500 mcp-re.audit_commitment_unavailable stating possibly_executed, never 503, with retention discharged by that refusal (W5); a retention failure after the commit is the evidence_retention_indeterminate refusal and never success (W5b). The observer is offered the committed event itself, not a second one. Post-dispatch refusals are observed, not committed (D8). Cancellation after dispatch invents no outcome and leaves the crossing marked (W4); a response lost after its outcome was committed claims no delivery (W6). The 202 terminal is decided before signing and entered only when served (§16 item 7). Under the best-effort posture nothing is produced, committed or reordered."
+description = "Under the required audit posture no completed success — bodied reply or notification 202 (D4) — is visible without the exchange's response.signed event committed and its witness redeemed for that event, the event scoped to the coordinate of the exchange's request.accepted (D9) and distinct from its intent. Requiredness is the state G1 carried across the dispatch, never the posture re-read. The outcome is committed BEFORE retention completes and the success is served only after both (Q2): an outcome commit failure is a 500 mcp-re.audit_commitment_unavailable stating possibly_executed, never 503, signed or the unsigned last-resort body, with retention completion attempted with that refusal and the refusal served whether or not it completes — a failed attempt leaves the .pending marker (W5); a retention failure after the commit is the evidence_retention_indeterminate refusal and never success (W5b). The observer is offered the committed event itself, not a second one. Post-dispatch refusals are observed, not committed (D8). Cancellation after dispatch invents no outcome and leaves the crossing marked (W4); a response lost after its outcome was committed claims no delivery (W6). The 202 terminal is decided before signing and entered only when served (§16 item 7). Under the best-effort posture nothing is produced, committed or reordered."
 paths = [
   "mcp-re-proxy/src/audit_commitment/outcome.rs",
   "mcp-re-proxy/src/request_stages/outcome_disposition.rs",
@@ -9768,7 +9777,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.audit_posture"
 class = "V0"
-description = "THE REQUESTED AUDIT DELIVERY AND THE ESTABLISHED ONE ARE ONE FACT (ADR-MCPRE-070 §2, §7, §11, D2, D3, Q3). `--audit-commitment required` is never served as best-effort and never declared OFF: it refuses startup — before any plane materializes — when the build registers no commitment provider, when the registered provider is the test-only reference authority without its acknowledgement, when the provider declares a tier below SURVIVES_PROXY_PROCESS_LOSS (audit-durability/v1), when its bounded startup probe fails, times out or panics, and (at the configuration boundary) when the observer is `--audit-sink none`. The refusal names only the provider id, a tier, a class and a bound — never provider text. A registered provider under best-effort is named and never asked. The REQUIRED posture line is assembled only over an established provider, states the tier as DECLARED, and discloses the observer's seq gaps. Commitments have their own try-acquired budget: a spent one refuses before dispatch with the outage's 503, asks no provider, and leaves the observer untouched. The run's mcp-re.audit.accounting record is committed once per interval, cumulative, run- and interval-attributed, with missed intervals stated and coverage always a lower bound. Says nothing about whether any provider persists anything: the tier is a declaration and an external evidence obligation (D3)."
+description = "THE REQUESTED AUDIT DELIVERY AND THE ESTABLISHED ONE ARE ONE FACT (ADR-MCPRE-070 §2, §7, §11, D2, D3, Q3). `--audit-commitment required` is never served as best-effort and never declared OFF: it refuses startup — before any plane materializes — when the build registers no commitment provider, when the registered provider is the test-only reference authority without its acknowledgement, when the provider declares a tier below SURVIVES_PROXY_PROCESS_LOSS (audit-durability/v1), when its bounded startup probe fails, times out or panics, and (at the configuration boundary) when the observer is `--audit-sink none`. The refusal names only the provider id, a tier, a class and a bound — never provider text. A registered provider under best-effort is named and never asked. The REQUIRED posture line is assembled only over an established provider, states the tier as DECLARED, states the status mapping of each crossing, and names every class of event that takes an observer seq without being observed: intents, outcomes that could not be committed or whose retention failed, and accounting records. Commitments have their own try-acquired budget, one per established provider and shared by G1, G2 and the accounting cadence: a spent one asks no provider and leaves the observer untouched; at G1 it refuses before dispatch with the outage's 503, at G2 it refuses after dispatch with 500 and PossiblyExecuted, and at the accounting cadence it is a missed interval. The run's mcp-re.audit.accounting record is committed once per interval, cumulative, run- and interval-attributed, with missed intervals stated and coverage always a lower bound. Says nothing about whether any provider persists anything: the tier is a declaration and an external evidence obligation (D3)."
 paths = [
   "mcp-re-proxy/src/audit_commitment/plan.rs",
   "mcp-re-proxy/src/audit_commitment/providers.rs",
@@ -11766,7 +11775,7 @@ tested_symbols = [
 [[unit]]
 id = "core.audit_vocabulary"
 class = "V0"
-description = "What a security record may say: a rejection reason is a frozen Core token by TYPE, since no constructor takes a string; the success set is exactly two events the error enum cannot express and the key-lifecycle set exactly three; the non-normative display label is never a token; and every pinned event type names the exchange half it describes, so no consumer keeps a second copy of that mapping."
+description = "What a security record may say: a rejection reason is a frozen Core token by TYPE, since no constructor takes a string; the success set is exactly two events the error enum cannot express, the key-lifecycle set exactly three, and the execution and accounting sets exactly one each; the non-normative display label is never a token; and every pinned event type names the exchange half it describes, so no consumer keeps a second copy of that mapping."
 paths = [
   "mcp-re-core/src/audit.rs",
   "mcp-re-core/src/audit/reason_label.rs",
@@ -11807,7 +11816,7 @@ tested_symbols = [
   # `event_type` moves it.
   "//mcp-re-core:mcp_re_core_test#audit::half::tests::every_pinned_event_type_is_given_a_half",
   "//mcp-re-core:mcp_re_core_test#audit::half::tests::the_constructors_land_on_the_half_their_names_claim",
-  "//mcp-re-core:mcp_re_core_test#audit::half::tests::the_three_halves_are_distinguishable",
+  "//mcp-re-core:mcp_re_core_test#audit::half::tests::the_four_halves_are_distinguishable",
 ]
 
 # The deployable client's local serving pipeline. `client.local_ingress_authority` (THM-0091)
@@ -12962,7 +12971,7 @@ tested_symbols = [
 [[unit]]
 id = "conformance.audit_vocabulary_drift"
 class = "V0"
-description = "WHAT AN AUDIT TOKEN MAY BE, MEASURED BETWEEN THE TWO FILES ON DISK RATHER THAN INSIDE EITHER: the frozen `McpReError::wire_code()` set is parsed from `error.rs`'s own match arms, the `mcp-re.*` tokens the audit layer names are parsed from `audit.rs`, and every one of the latter is either a member of the former or one of the seven fixed event types. The success set is EXACTLY the two events the error taxonomy cannot express and the key-lifecycle set EXACTLY the three ADR-MCPRE-052 §7 authorizes, both resolved through the `event_type` constants rather than through duplicated literals; no event type is itself a frozen wire token, so a rejection sub-name cannot masquerade as an event; and no `authorization_hash_mismatch` notion exists in either file, because Core binds an authorization artifact it never compares. The anti-vacuity arm is part of the claim and not apparatus around it: a guard whose runfiles wiring is broken parses an empty vocabulary and reports a clean one, so the parse must yield at least fifteen frozen tokens, a representative token by name, and every pinned rejection event. Says NOTHING about the CARRIERS — whether a producer outside the frozen taxonomies keeps a vocabulary of its own is `conformance.carrier_minting_absence`, under THM-0111 rather than THM-0122. Says nothing about emission, about a sink, or about which coordinate an authority writes into, and nothing about whether the type-level containment holds — that is `core.audit_vocabulary`'s, and the two are different evidence for the same clause: one reads the compiled constants, this one reads the two files and asks whether they have drifted apart."
+description = "WHAT AN AUDIT TOKEN MAY BE, MEASURED BETWEEN THE TWO FILES ON DISK RATHER THAN INSIDE EITHER: the frozen `McpReError::wire_code()` set is parsed from `error.rs`'s own match arms, the `mcp-re.*` tokens the audit layer names are parsed from `audit.rs`, and every one of the latter is either a member of the former or one of the nine fixed event types. The success set is EXACTLY the two events the error taxonomy cannot express, the key-lifecycle set EXACTLY the three ADR-MCPRE-052 §7 authorizes, and the execution and accounting sets EXACTLY the one event each ADR-MCPRE-070 D1 and D2/Q3 authorize, both resolved through the `event_type` constants rather than through duplicated literals; no event type is itself a frozen wire token, so a rejection sub-name cannot masquerade as an event; and no `authorization_hash_mismatch` notion exists in either file, because Core binds an authorization artifact it never compares. The anti-vacuity arm is part of the claim and not apparatus around it: a guard whose runfiles wiring is broken parses an empty vocabulary and reports a clean one, so the parse must yield at least fifteen frozen tokens, a representative token by name, and every pinned rejection event. Says NOTHING about the CARRIERS — whether a producer outside the frozen taxonomies keeps a vocabulary of its own is `conformance.carrier_minting_absence`, under THM-0111 rather than THM-0122. Says nothing about emission, about a sink, or about which coordinate an authority writes into, and nothing about whether the type-level containment holds — that is `core.audit_vocabulary`'s, and the two are different evidence for the same clause: one reads the compiled constants, this one reads the two files and asks whether they have drifted apart."
 paths = [
   "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs",
   "mcp-re-core/src/audit.rs",

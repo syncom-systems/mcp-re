@@ -2609,7 +2609,7 @@ conjunct = "the notification terminal is decided before the 202 is signed, and t
 # asserts the refusing form and the exit rather than the order.
 path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs"
 anchor = """
-        if progress.may_publish(ServedSuccess::Acknowledged).is_err() {
+        if progress.may_publish(&acknowledged).is_err() {
             let refusal = crate::refusal::Refusal::new(
                 mcp_re_core::McpReError::ExchangeInvariantViolation,
                 500,
@@ -2620,7 +2620,7 @@ anchor = """
         }
 """
 weakening = """
-        let _ = progress.may_publish(ServedSuccess::Acknowledged);
+        let _ = progress.may_publish(&acknowledged);
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::notification::tests::the_terminal_is_decided_before_the_202_is_minted",
@@ -2636,7 +2636,7 @@ conjunct = "the success terminal is decided before retention discharges and befo
 # enforcement still present and simply never consulted.
 path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/accepted.rs"
 anchor = """
-        if progress.may_publish(success).is_err() {
+        if progress.may_publish(&success).is_err() {
             let refusal = crate::refusal::Refusal::new(
                 mcp_re_core::McpReError::ExchangeInvariantViolation,
                 500,
@@ -10422,7 +10422,7 @@ placed on the header rule rather than on the schema token.
 id = "M349-audit-third-success-event"
 unit = "conformance.audit_vocabulary_drift"
 theorem = "THM-0122"
-conjunct = "The net-new surface is exactly five events the error taxonomy cannot express: two successes (`mcp-re.request.accepted`, `mcp-re.response.signed`) and three delegated-key lifecycle events."
+conjunct = "The net-new surface is exactly seven events the error taxonomy cannot express: two successes (`mcp-re.request.accepted`, `mcp-re.response.signed`), three delegated-key lifecycle events, the execution intent (`mcp-re.execution.intent`, ADR-MCPRE-070 D1) and the bounded accounting record (`mcp-re.audit.accounting`, ADR-MCPRE-070 D2/Q3); neither of the last two carries a reason."
 path = "mcp-re-core/src/audit.rs"
 anchor = """
 pub const SUCCESS_EVENT_TYPES: &[&str] =
@@ -14030,6 +14030,7 @@ weakening = """
 """
 expect_red = [
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::w3_retention_commit_failure_after_intent_leaves_no_pending_and_no_dispatch",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::an_intent_refusal_leaves_no_pending_marker",
 ]
 
 [[probe]]
@@ -14159,19 +14160,12 @@ conjunct = "a notification 202 is visible only through the success exit, after i
 # D4. Pill-evidenced RED in #1205 (PP4).
 path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs"
 anchor = """
-                self.publish_success(
-                    acc,
-                    progress,
-                    ServedSuccess::Acknowledged,
-                    ack,
-                    retention,
-                    intent,
-                )
-                .await
+                self.publish_success(acc, progress, acknowledged, ack, retention, intent)
+                    .await
 """
 weakening = """
                 let _ = (retention, intent);
-                progress.publish(ServedSuccess::Acknowledged);
+                progress.publish(acknowledged);
                 super::super::served(ack)
 """
 expect_red = [

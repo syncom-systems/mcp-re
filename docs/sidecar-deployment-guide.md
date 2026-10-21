@@ -221,10 +221,12 @@ size ([`docs/bench/replay-path-cpu-scheduling-2026-10-16.md`](bench/replay-path-
 | `--audit-commitment required` | An execution intent is committed before dispatch and the outcome before success, through a commitment provider the build registers. Needs `--audit-sink stderr`. |
 
 The open-source binary registers **no** commitment provider, so it refuses to start with
-`--audit-commitment required`: a required posture is never served as best-effort. It is
-meaningful only in a downstream build that registers a qualified provider, and the startup
-line then names the provider and the tier it **declares** — persistence is the provider's
-claim and an external evidence obligation, not something the proxy proves.
+`--audit-commitment required`: a required posture is never served as best-effort. The
+test-only reference authority the test suites commit against is not in any deployable build,
+so it cannot stand in for a provider. A required posture is meaningful only in a downstream
+build that registers a qualified provider, and the startup line then names the provider and
+the tier it **declares** — persistence is the provider's claim and an external evidence
+obligation, not something the proxy proves.
 
 What each posture gives you, and what it does not:
 
@@ -233,7 +235,9 @@ What each posture gives you, and what it does not:
   stderr stream, or a log collector's acknowledgement of it, as a durable audit trail.
 - **Required.** The proxy refuses to dispatch without a committed intent and refuses to show
   a success without a committed outcome; a provider outage or a spent commitment budget turns
-  requests into refusals (503 before dispatch, 500 after it), never into unrecorded calls.
+  requests into refusals, never into unrecorded calls. Before dispatch the refusal is 503 where
+  a retry can succeed and 500 where it cannot; after dispatch it is always 500 and says the
+  backend may have run, so do not retry it blindly.
   Whether a committed event survives a crash depends on the provider's declared tier being
   true: qualify the provider yourself.
 - **Downstream of the provider.** Delivery to an archive is at-least-once. Deduplicate on the

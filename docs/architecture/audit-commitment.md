@@ -2,8 +2,8 @@
 
 # ADR-MCPRE-070 — Audit commitment: observation is not commitment
 
-**Status:** **PROPOSED** 2026-10-19, with all twelve decisions ruled by the owner on 2026-10-19
-(§15). The rulings bind the implementation slices of epic #1201. The document itself is under
+**Status:** **PROPOSED** 2026-10-19, with all twelve decisions ruled by the owner on 2026-10-19,
+Q1–Q3 on 2026-10-20, and O4 and O5 on 2026-10-21 (§15). The rulings bind the implementation slices of epic #1201. The document itself is under
 review for ratification in its Discussion, and that review does not suspend the slices.
 **Discussion:** [#1212](https://github.com/matssun/mcp-re/discussions/1212).
 **Issue:** #1191 (Slice 0). **Epic:** #1201.
@@ -102,7 +102,8 @@ Created ──► Offered (observer) ──────────────�
 - **Created** means the identity is allocated and the canonical bytes are fixed (§8).
 - Under required posture, `Uncertain` counts as **not committed** for the prerequisite, so
   nothing is dispatched. It counts as **possibly committed** for identity, so the ID is never
-  reused for other content and a retry resends the identical bytes.
+  reused for other content. The proxy makes one attempt per crossing; any retry is the
+  provider's own, and it must resend the identical bytes.
 
 | layer | what its acknowledgement means | commitment? |
 |---|---|---|
@@ -134,13 +135,16 @@ flowchart TD
     G2 --> RT[Retained]
     RT --> CT[CompletedTerminal]
     RT --> CO[CompletedContinuationOpen]
-    D --> AN[AcknowledgedNotification]
-    AN --> G2N{{"G2 on the 202, before served()"}}
+    D --> SIGN202[202 signed] --> G2N{{"G2 on the 202, before retention completes"}}
+    G2N --> RET202[retention completed] --> AN[AcknowledgedNotification, entered when served]
 ```
 
-The audit-commitment progress of one exchange is a **sibling machine** *A* (D7).
-Today's tuple already has the siblings R, C, B, O and L (`mcp-re-proxy/src/exchange_state.rs:569-582`).
-Making it a sibling leaves the frozen request region (`:471`) untouched (D7).
+The audit-commitment progress of one exchange is a **separately modelled machine** *A* (D7).
+Its runtime carrier is the closed `IntentDisposition` → `OutcomeDisposition` typestate
+(`request_stages/intent_disposition.rs`, `request_stages/outcome_disposition.rs`), and its model
+is test-only (`audit_commitment/machine.rs`). It is not a field of the R tuple, whose siblings
+are C, B, O and L (`mcp-re-proxy/src/exchange_state.rs:569-582` at the pin), so the frozen
+request region (`:471`) is untouched (D7).
 
 ```mermaid
 stateDiagram-v2
@@ -156,10 +160,11 @@ stateDiagram-v2
 | crossing | placement | type-level form (illustrative) |
 |---|---|---|
 | **G1** intent | After every refusable step whose failure leaves no durable trace (forward, prepare, signing window, retention reserve). Before the retention commit and before `BackendDispatched`. The ordering against `RetentionCommitted` is D7. | `ReadyForDispatch::new` takes an *IntentDisposition* = `NotRequired` \| `Committed(witness)`, on the pattern of `RetentionDisposition` (`mcp-re-proxy/src/request_stages.rs:95-105`). `NotRequired` is not a fake witness. |
-| **G2** outcome | Bodied path: after signing, **before retention completes** (Q2). Completed success becomes visible only after both the outcome is committed and retention has completed, so the retained representation stays what is actually served (ADR-MCPRE-054). Notification: before `served(ack)` (`reply_assembly/notification.rs:76`), because its terminal state is already entered at `:127` (F11; resolved by #1205, §16 item 7, which routes the 202 through the same success exit). | The success-serve step takes an *OutcomeDisposition* bound to the same exchange coordinate. |
+| **G2** outcome | Bodied path: after signing, **before retention completes** (Q2). Completed success becomes visible only after both the outcome is committed and retention has completed, so the retained representation stays what is actually served (ADR-MCPRE-054). Notification: through the same success exit — the 202 is signed, then G2, then retention, then the 202 terminal is entered and served (D4, Q2; §16 item 7). A failed outcome commitment is `mcp-re.audit_commitment_unavailable` at 500, PossiblyExecuted, after dispatch. | The success-serve step takes an *OutcomeDisposition* bound to the same exchange coordinate. |
 
-- **Execution intent is a fact distinct from `request.accepted`.** Admitted ≠ executed. Five
-  refusal points lie between the two (F7).
+- **Execution intent is a fact distinct from `request.accepted`.** Admitted ≠ executed. Four
+  refusal points lie between admission and the intent, and the retention commit lies between
+  the intent and dispatch (F7, D7).
 - **Decision ownership.** The state machine and the semantic owners decide what happened. The
   commitment authority records a fact it was handed. A transport never reinterprets a
   verification, authorization, replay or signing decision. It can only refuse to commit, and
@@ -175,17 +180,17 @@ rulings in §15.
 | TLS or client-cert refusal | none (`async_serve/connection.rs:52-53`) | unchanged | no (D2) | as today |
 | per-core shed 503, malformed header 400, oversized or late body 413, body budget 503, routing 403 | none (`async_serve/request.rs:66-107`, `async_serve/inbound.rs:61-129`) | unchanged | no; THM-0081 pre-exchange replies (D2) | as today |
 | unauthenticated signature failure | `request.rejected`, `actor=None` (`pre_admission/mod.rs:69-91`) | unchanged, under the 3072 ceiling | not individually (D2) | refusal as today |
-| envelope, binding, admission or authz refusal | `request.rejected` (`pre_admission/mod.rs:115-135`) | unchanged | attempted, not a prerequisite (D8) | refusal as today |
-| continuation, replay or answerable refusal | `request.rejected` (`answering_commitment.rs:106-151`) | unchanged | attempted (D8) | refusal as today |
-| `request.accepted` | admitted (`http_profile_serve/mod.rs:471`) | unchanged | attempted (D8); **not** the intent | — |
-| post-accept pre-intent refusal (forward, prepare, window, reserve) | `response.rejected` (`dispatch_commitment.rs:115-135`) | unchanged | attempted (D8) | NothingExecuted |
-| **intent** (new) | none | **no line**; stderr stays v0.18.1-compatible (D1) | **G1 prerequisite** | failure → typed 503 before dispatch (D12) |
-| retention-commit refusal after intent | `response.rejected` (`dispatch_commitment.rs:136-139`) | unchanged | outcome attempted (D7) | NothingExecuted to the caller; audit reads intent-only as PossiblyExecuted unless the outcome commits |
+| envelope, binding, admission or authz refusal | `request.rejected` (`pre_admission/mod.rs:115-135`) | unchanged | observed, not committed; not a prerequisite (D8) | refusal as today |
+| continuation, replay or answerable refusal | `request.rejected` (`answering_commitment.rs:106-151`) | unchanged | observed, not committed (D8) | refusal as today |
+| `request.accepted` | admitted (`http_profile_serve/mod.rs:471`) | unchanged | observed, not committed (D8); **not** the intent | — |
+| post-accept pre-intent refusal (forward, prepare, window, reserve) | `response.rejected` (`dispatch_commitment.rs:115-135`) | unchanged | observed, not committed (D8) | NothingExecuted |
+| **intent** (new) | none | **no line**; stderr stays v0.18.1-compatible (D1) | **G1 prerequisite** | failure → typed refusal before dispatch: 503 where a retry can succeed, 500 where it cannot (D12) |
+| retention-commit refusal after intent | `response.rejected` (`dispatch_commitment.rs:136-139`) | unchanged | observed, not committed (D8) | NothingExecuted to the caller; the store holds the intent alone, which a reconciler reads as PossiblyExecuted (an upper bound, W3) |
 | dispatch threshold | none (`http_profile_serve/mod.rs:495`) | none | covered by the intent | — |
-| post-dispatch refusal: illegal upstream, sign failure, continuation record, invariant, retention-indeterminate | `response.rejected` (`reply_assembly/mod.rs:84-138`, `reply_assembly/accepted.rs:57-192`) | unchanged | outcome attempted; the refusal is served regardless (D8) | PossiblyExecuted |
-| `response.signed`, bodied | after retention (`reply_assembly/accepted.rs:82-88`) | unchanged | **G2 prerequisite** | commit failure → refusal, PossiblyExecuted, never success |
-| notification 202 | `response.signed`, status 202 (`reply_assembly/notification.rs:66-76`) | unchanged | **G2 prerequisite** (D4) | as bodied, with outcome kind *acknowledged* |
-| 202 signing failure | `response.rejected` (`reply_assembly/notification.rs:79-89`) | unchanged | outcome attempted | PossiblyExecuted |
+| post-dispatch refusal: illegal upstream, sign failure, continuation record, invariant, retention-indeterminate | `response.rejected` (`reply_assembly/mod.rs:84-138`, `reply_assembly/accepted.rs:57-192`) | unchanged | observed, not committed; the refusal is served regardless (D8) | PossiblyExecuted |
+| `response.signed`, bodied | after retention (`reply_assembly/accepted.rs:82-88`) | unchanged | **G2 prerequisite** | commit failure → 500 `mcp-re.audit_commitment_unavailable` after dispatch, PossiblyExecuted, never success |
+| notification 202 | `response.signed`, status 202 (`reply_assembly/notification.rs:66-76`) | unchanged | **G2 prerequisite** (D4) | as bodied; the committed `response.signed` carries status 202, which is how the record distinguishes acknowledgement from completion (D4) |
+| 202 signing failure | `response.rejected` (`reply_assembly/notification.rs:79-89`) | unchanged | observed, not committed (D8) | PossiblyExecuted |
 | cancellation or future drop | none (`async_serve/connection.rs:131-139`) | none | before G1: nothing exists; after G1: intent without outcome | `OutcomeUncertain`, read as PossiblyExecuted |
 | panic on the serving path | none | none | as cancellation | as cancellation |
 | shutdown or drain | stream line only (`audit_sink/drain.rs:148-170`) | unchanged | no new dispatch without a witness; outstanding commits are bounded (#1206) | dispatched exchanges fall into W4 (§6) |
@@ -201,10 +206,15 @@ rulings in §15.
 | W2 intent commit in flight | unknown (`Uncertain`) | timeout → typed 503, NothingExecuted (nothing was dispatched); crash → reset | the proxy knows nothing ran. The store may hold an intent with no outcome, which a reconciler reads as **PossiblyExecuted** (an upper bound) | event ID + exchange coordinate; an identical retry is idempotent |
 | W3 after intent, before dispatch | intent, and possibly `.pending` | refusal NothingExecuted (retention commit failed), or a reset | the live process: NothingExecuted. After a crash: **PossiblyExecuted**. Where retention is configured, a missing `.pending` corroborates no dispatch (INFERRED from the G1-before-retention ordering) | exchange coordinate, `.pending` |
 | W4 after dispatch, before outcome | intent, and `.pending` where configured | a post-dispatch refusal (PossiblyExecuted), a timeout, or a reset | **PossiblyExecuted** | intent + `.pending` |
-| W5 outcome commit failed | intent | refusal PossiblyExecuted, **never** the success bytes; retention is discharged with that refusal | **PossiblyExecuted**: the proxy observed an outcome it could not commit | intent; the observed outcome is in the observer line |
-| W5b outcome committed, retention completion failed | intent + outcome | refusal PossiblyExecuted (retention-indeterminate), **never** success | the committed outcome records only what the proxy observed and committed. It is **not** a served response, and nothing reads it as NothingExecuted (Q2) | intent + outcome; the refusal's own record |
+| W5 outcome commit failed | intent | `mcp-re.audit_commitment_unavailable` at 500, PossiblyExecuted, **never** the success bytes; retention completion is attempted with that refusal, and a failed attempt leaves `.pending` | **PossiblyExecuted**: the proxy observed an outcome it could not commit | intent; the refusal's observer record; where retention is configured, the retained refusal (`retained_statuses` = [500]) |
+| W5b outcome committed, retention completion failed | intent + outcome | refusal PossiblyExecuted (retention-indeterminate), **never** success | the committed outcome records only what the proxy observed and committed. It is **not** a served response, and nothing reads it as NothingExecuted (Q2). A committed outcome without a matching retained terminal is not evidence of a served response (Q2) | intent + committed outcome + the surviving `.pending` marker where retention is configured; the refusal record is observer-only (D8) |
 | W6 after outcome commit, before the response write | intent + outcome | possibly nothing (the connection dropped) | the outcome was produced and committed. Delivery to the client is **not** claimed | outcome event; retention |
 | W7 drain timeout | whatever was committed | in-flight exchanges are cut | nothing beyond the held witnesses; the observer drain says `OutcomeUnknown` (F6) | per-exchange as W2–W6 |
+
+Where this table says a pre-dispatch refusal is NothingExecuted, the signed rejection carries
+the request machine's free-of-execution disposition: `NothingExecuted`, or
+`ApprovalSpentNothingExecuted` when the exchange had already consumed its continuation
+(`ExchangeProgress::retry_semantics`). Neither states that the backend ran.
 
 ## 7. Finite-capacity policy
 
@@ -215,9 +225,15 @@ rulings in §15.
 2. **No individual persistence of unbounded unauthenticated attempts.** Under a total storage
    outage, unauthenticated and pre-exchange attempts stay observer-only, under the existing
    unattributed ceiling (F3). An aggregate count is the strongest honest statement (D2).
-3. **The required posture fails closed.** If the commitment authority is unavailable, out of
-   budget or uncertain, an admitted exchange is refused **before dispatch** with a typed,
-   retry-safe 503 (D12). It never degrades to observation.
+3. **The required posture fails closed.** At G1, if the commitment authority is unavailable,
+   out of budget or uncertain, an admitted exchange is refused **before dispatch** with a
+   typed, retry-safe 503; a rejection, an exchange with no accepted event to coordinate on,
+   an intent that cannot be given an identity, or a witness that does not redeem is refused
+   before dispatch with 500 (D12). At G2 the backend has already run: every
+   outcome-commitment failure, a spent budget included, is a 500 refusal **after dispatch**
+   stating PossiblyExecuted. The accounting cadence draws on the same budget, and a spent
+   budget there is a missed interval that refuses no request. It never degrades to
+   observation.
 4. **Separate accounting.** The observer keeps its 4096-slot queue and its 3072 unattributed
    ceiling. The commitment authority gets its own bounded in-flight budget, acquired
    non-blocking, so neither can starve the other and an unauthenticated flood cannot consume
@@ -225,42 +241,49 @@ rulings in §15.
 5. **Relation to retention.** The retention `.pending` reservations (`MAX_RESERVATIONS = 1024`,
    `transparency/durability_bounds.rs:17`) are an independent budget with an independent owner
    (ADR-MCPRE-054). Both budgets are try-acquired and released on drop, so they cannot
-   deadlock. Their overload refusals have the same shape: before dispatch, retry-safe 503.
-   Neither budget is reused for the other, and neither store is reused for the other.
+   deadlock. Their overload refusals before dispatch have the same shape, a retry-safe 503.
+   The commitment budget is also drawn after dispatch, at G2, where a spent budget is a 500
+   PossiblyExecuted refusal (§7.3). Neither budget is reused for the other, and neither store
+   is reused for the other.
 
 ## 8. Event identity and retry rules
 
 | rule | statement |
 |---|---|
 | allocation | `(run_id, seq)` is allocated **once, at semantic production**, never per write attempt. The run is the existing 128-bit CSPRNG identity (`audit_sink/stream.rs:13-28`). The allocator moves from the sink to the producer (#1202). |
-| canonical bytes | the canonical encoding (D5) is fixed at Created, and its digest is the content identity. |
+| canonical bytes | the canonical encoding (D5) is fixed at Created, and its digest is the content identity. The encoding is version 3 (`audit_record/envelope/canonical.rs`), and its compatibility and migration policy is that module's. The digest is `SHA-256("mcp-re-audit-v1/envelope" ‖ 0x00 ‖ bytes)`: the label versions the digest construction, not the encoding, whose version byte is inside the digested bytes. |
+| scope | every event carries one typed scope: `Origin`, `Exchange(coordinate)`, `PreAcceptance` or `Run` (the accounting record, which names no exchange). An event without an accepted exchange never carries a fabricated accepted ID (D9, Q3). |
 | identical retry | it preserves both the ID and the bytes, so a provider can deduplicate on `(ID, digest)`. |
 | conflict | the same ID with a different digest is an **integrity conflict**: a typed failure, never an overwrite. |
-| exhaustion | the allocator uses checked arithmetic. Exhaustion is an explicit failure, never a wrap (today `fetch_add` wraps and rendering saturates, F4). Under required posture it fails closed. |
+| exhaustion | the allocator uses checked arithmetic. Exhaustion is an explicit failure, never a wrap (at `8262c5fa`, `fetch_add` wrapped and rendering saturated, F4). Under required posture it fails closed. Under the best-effort posture an event that cannot be numbered is not offered, and the stream states once per process that its run stopped numbering. |
 | transport position | a stream ID or offset is a **location, not identity**. A retried `XADD` gets a new stream ID for the same event. |
 | order | generation order is `seq` within a run. Arrival order is a transport fact (F5). There is no global order across runs. |
+| observer gaps | under the required posture an execution intent, an outcome that could not be committed, an outcome whose retention then failed (W5b) and every `mcp-re.audit.accounting` record consume a `seq` and are never offered to the observer, so the observer's stream has gaps that are not drops. The REQUIRED startup line names them; the drop report counts drops only. Under the best-effort posture none of these events is produced. |
 | exchange coordinate | intent and outcome are distinct immutable events that carry one **stable exchange coordinate**. It is the event ID of the exchange's `request.accepted` (D9). That needs no new counter and no wire-derived content, and it respects ADR-MCPS-020 (D9). |
 | cross-replica | `run_id` is per process, so `(run_id, seq)` is unique across replicas with overwhelming probability, with no global counter. |
 
 ## 9. Witness and trust
 
 - **Shape.** A *CommitmentWitness* is opaque. It binds the event ID, the canonical digest, the
-  **established** provider identity (`Established<T>`, #1206), the declared tier, and the
-  crossing kind (Intent \| Outcome).
+  **established** provider identity (`EstablishedProvider`, on the `Established<T>` pattern,
+  #1206), the declared tier, and the crossing kind (Intent \| Outcome \| Accounting).
 - **Who mints it.** The provider returns a typed *receipt*. The shared commitment owner checks
   that receipt against the envelope it sent, and only then mints the witness, through a
   constructor private to its module. That makes the shared owner the sole legitimate producer
   of the value, so sealing it is meaningful (`docs/dev/sealed-owners.md`).
-- **What shared code enforces.** The witness is consumed exactly once, at G1 or G2, for this
-  exchange and this kind. A witness that is missing, forged, stale (from another run or
+- **What shared code enforces.** The witness is consumed exactly once, at G1, at G2, or by the
+  accounting cadence (which gates nothing), for this event and this kind. A witness that is missing, forged, stale (from another run or
   provider), or mismatched (another event, digest or kind) is refused. An unestablished
   provider cannot produce a receipt the owner accepts.
 - **What it cannot enforce.** Whether the provider actually persisted anything. That is an
   **assumption** that needs independent mechanism evidence (ADR-MCPRE-068 external-boundary
   premise). It is never a Rust type proof.
 - **Reference authority.** The deterministic, test-only reference authority (#1203) exercises
-  the machine. It is **never** a qualified deployment backend, and the default binary must
-  refuse it.
+  the machine. It is **never** a qualified deployment backend. No deployable build contains
+  it: it is compiled only into test builds and the test-only `audit_commitment_reference`
+  flavour, and its name is reserved. The default binary registers no provider and refuses
+  `--audit-commitment required` for that reason. A test flavour that registers it without
+  the test acknowledgement is refused at startup.
 
 ## 10. Proof-obligation map
 
@@ -273,13 +296,14 @@ rulings in §15.
 | P5 S1, no dispatch without an intent witness | shared machine (#1204) | **new theorem THM-0135** (#1207). THM-0071 is a claim about refusals and is not widened | conditional on the posture being Required |
 | P6 S2, no visible success without an outcome witness | shared machine (#1205) | **new theorem THM-0136**, same as P5 | — |
 | P7 S5, never NothingExecuted after the threshold | shared machine | existing `backend_may_have_executed` / `RetrySemantics` (F16), unchanged | — |
-| P8 S4, no silent downgrade | startup (#1206) | `Established<T>` pattern | — |
+| P8 S4, no silent downgrade | startup (#1206) | `EstablishedProvider`, on the `Established<T>` pattern | — |
 | P9 a committed event survives proxy loss | **provider assumption** (ASM-0089) | the replacement for F18's non-claim is conditional | mechanism evidence, per provider |
 | P10 eventual archive | provider + downstream assumption (ASM-0090; capacity, ASM-0091) | L3 | never a test result |
 | P11 refusals are offered before they are answered | unchanged | **THM-0085, THM-0071 as stated** ("offered", in-process) | not weakened, not silently widened |
 
-ADR-MCPS-035's vocabulary gains the `execution.intent` category through a documented, versioned
-extension (D1). Its success set is unchanged. ADR-MCPRE-066's algebra (two
+ADR-MCPS-035's vocabulary gains `execution.intent` (revision 2, D1) and
+`mcp-re.audit.accounting` (revision 3, D2, Q3) through documented, versioned extensions. Its
+success set is unchanged. ADR-MCPRE-066's algebra (two
 authorities, one record, facets as coordinates) is preserved. A new execution coordinate
 would be a coordinate beside the frozen tokens, on its Addendum-1 precedent
 ([`admission-facet.md`](admission-facet.md)).
@@ -290,9 +314,9 @@ would be a coordinate beside the frozen tokens, on its Addendum-1 precedent
 |---|---|---|
 | pre-dispatch refusal | zero backend calls; stderr unchanged | #1204 |
 | provider outage at G1 | typed 503 before dispatch; zero backend calls | #1204 |
-| commitment budget exhausted | as provider outage; observer unaffected | #1206 |
+| commitment budget exhausted | at G1 as provider outage; at G2 a 500 PossiblyExecuted refusal after dispatch; at the accounting cadence a missed interval; observer unaffected | #1206 |
 | observer queue full | drops counted (THM-0070); dispatch and success unaffected in both postures | existing + #1203 |
-| restart, then a retry of the same event | same ID and same bytes; deduplicated | #1202 |
+| retry of the same event within a run | same ID and same bytes; deduplicable. A restart opens a new run and never reallocates an ID (D9) | #1202 |
 | retry with different content | integrity conflict; refused | #1202 |
 | G1 timeout or cancel | no dispatch; `Uncertain`; ID not reused | #1203, #1204 |
 | G2 failure after dispatch | refusal PossiblyExecuted; no success bytes | #1205 |
@@ -300,7 +324,7 @@ would be a coordinate beside the frozen tokens, on its Addendum-1 precedent
 | witness forged, stale or mismatched | refused at consumption | #1203 |
 | a fake transport ack treated as commitment | unconstructible: a receipt is not a witness | #1203 |
 | notification without an outcome | no 202 under required posture (D4) | #1205 |
-| silent downgrade (no provider, the reference authority, `none`) | startup refusal | #1206 |
+| silent downgrade (no provider in the build, the reference authority registered without its test acknowledgement in a test flavour, `--audit-sink none`) | startup refusal | #1206 |
 
 Each new control must be poison-pilled, with its observed red retained (#1207).
 
@@ -324,7 +348,7 @@ are independent of the replay pool (#1206).
 
 | slice | takes from this ADR |
 |---|---|
-| #1202 envelope and identity | §8 in full; D5, D9 |
+| #1202 envelope and identity | §8 in full; D5, D9; Q1 (the entropy draw stays in `audit_sink/stream.rs`) |
 | #1203 observation vs commitment | §2, §3, §9; the receipt-vs-witness split; the reference authority's status |
 | #1204 intent before dispatch | §4 G1, §5 intent row, §6 W1–W3, §7.3; D1, D7, D12 |
 | #1205 outcome before success | §4 G2, §6 W4–W6 (incl. W5b); D4, D8, Q2 |
@@ -336,13 +360,14 @@ are independent of the replay pool (#1206).
 1. No durability of the best-effort stderr sink, now or after this ADR (F18 stands).
 2. No claim that any external provider persists anything. A provider's persistence is an assumption with its own evidence (P9).
 3. No exactly-once delivery, no global order, no unconditional permanence.
-4. No individual record of unbounded unauthenticated or pre-exchange attempts under outage.
+4. No individual record of unbounded unauthenticated or pre-exchange attempts under outage. The `mcp-re.audit.accounting` counts are an observed lower bound (`coverage = observed-lower-bound`), never exhaustive under a provider outage or saturation; a missed interval is stated, not reconstructed (D2, Q3).
 5. No atomicity between a backend's side effects and the audit journal. After the threshold the claim is PossiblyExecuted, not "executed".
 6. A committed outcome does not mean the client received the response (W6).
 7. The 202 claims acceptance, never completion (#418).
 8. No claim about the delegated-key lifecycle lines (D11).
 9. THM-0071 is not weakened, and it is not widened to dispatch, success or durability.
 10. The reference authority is not a deployment backend.
+11. The signing window is checked before dispatch against the dispatch bound and the G1 wait, not against the G2 wait or retention completion that follow signing. Near the end of a delegated credential's window a client can therefore reject a signed success the backend already acted on. This can cause a rejection after execution, never a false acceptance: the window is fixed before G2 and never extended, and a verifying client refuses a lapsed one (`outcome_before_success_test.rs`, `a_window_that_lapses_during_g2_is_refused_by_the_client_never_accepted`). It is an availability limitation, not a correctness guarantee (owner ruling O5); follow-up #1224.
 
 ## 15. Owner rulings (D1–D12, 2026-10-19)
 
@@ -361,7 +386,10 @@ its stated conditions, and how this ADR reads it.
   (`mcp-re-core/src/audit.rs:57-62`).
 - Outcome reading: outcomes reuse `response.signed` / `response.rejected`, carrying the
   exchange coordinate (D9). This adds no outcome token.
-- The best-effort stderr stream emits no intent line. Its v0.18.1 contract is unchanged.
+- Under the best-effort posture the stderr stream emits no intent line and its v0.18.1
+  contract is unchanged. Under the required posture the observer stays best-effort but its
+  `seq` has gaps that are not drops (§8, observer gaps); the REQUIRED startup line names them.
+  The compatibility this ruling keeps is the best-effort posture's (owner ruling O4).
 
 **D2. Unauthenticated and pre-exchange coverage: APPROVED WITH BOUND.**
 - Individual unauthenticated and pre-exchange attempts stay best-effort.
@@ -468,6 +496,35 @@ Q1–Q3"). They bind the slices on the same terms as D1–D12.
   record.
 - The meanings of the two existing success events are unchanged.
 
+### Owner rulings, 2026-10-21 (authority closure)
+
+These rulings settle the items the pre-assurance review left open (epic #1201, "Final authority
+closure"). They bind on the same terms as D1–D12.
+
+**O4. D1's compatibility scope: APPROVED.**
+- The best-effort audit stream contract is preserved: under best-effort the stream emits no
+  intent line and its v0.18.1 contract is unchanged (D1 reading).
+- The required-commitment behaviour is separate and documented: the commitment authority, not
+  the stream, carries the intent and the outcome; the observer stays best-effort, and its
+  `seq` has gaps that are not drops (§8, observer gaps), which the REQUIRED startup line names.
+
+**O5. Signing window and the G2 wait: APPROVED AS A DOCUMENTED AVAILABILITY LIMITATION.**
+- It is recorded as a limitation, not as a correctness guarantee (§14 item 11). Near the end
+  of a delegated credential's window a client can reject a signed success the backend already
+  acted on. That is lost availability after execution.
+- No false success is permitted, and none is claimed: a success is served only after G2 and
+  retention completion (Q2), and a client verifying the signature refuses a response outside
+  its window. Negative tests pin both halves. Follow-up: #1224.
+
+**Theorem graph (D10).**
+- THM-0135 composes under the root THM-0074 ("no unearned dispatch"), whose proposition is
+  unchanged.
+- THM-0136 is not attached to a root by default; its root edge is decided on its own logical
+  dependency.
+- The audit posture unit supports THM-0077 ("no deployment serves a posture nobody selected").
+- The optional split of ASM-0090 and ASM-0091 into their own liveness unit is deferred until
+  after assurance closure.
+
 ## 16. Related findings outside this boundary
 
 1. Delegated-key lifecycle events go out through bare `eprintln!`. They have no run or seq, ignore `--audit-sink`, and fall outside THM-0070 (`signing_plane/mint_successor.rs:90-98`). **Follow-up #1208** (D11).
@@ -476,4 +533,4 @@ Q1–Q3"). They bind the slices on the same terms as D1–D12.
 4. ADR-MCPRE-066 contains stale lines. The status line says "Not yet implemented" (`audit-composition.md:5`), contradicting its own §10. `NoAuditSink` and `app.rs:1439,1450` no longer exist (`audit-composition.md:479-492`). **Follow-up #1210.**
 5. Stderr lines may appear out of seq order across cores (F5), while THM-0070's order property is tested only on the collector (`audit_sink/mod.rs:223`). **Follow-up #1211**; #1202 states the generation-vs-arrival order contract.
 6. Stale pointers to the missing §9: `audit-composition.md:12`, `:463-470`; `audit_sink/mod.rs:18-19`; `http_profile_serve/mod.rs:222`; `delegated_client_server_e2e_test.rs:746` (D6). **Resolved in this ADR's PR:** §9 is restored under its original number, so these citations resolve.
-7. The notification arm enters a success terminal before its 202 is signed or retained, so a later failure is served from a terminal state (`reply_assembly/notification.rs:127` vs `:79-89`). INFERRED from source order; no test asserts the state at that refusal. **Resolved in #1205.** The 202 terminal is decided by `may_publish(ServedSuccess::Acknowledged)` before signing and entered by `publish` only when the 202 is served, through the same success exit as a bodied reply, after G2 and retention (D4, Q2). A refusal after the decision is served from `Dispatched` (`exchange_state::tests::a_refused_202_is_served_from_a_non_terminal_state`).
+7. The notification arm enters a success terminal before its 202 is signed or retained, so a later failure is served from a terminal state (`reply_assembly/notification.rs:127` vs `:79-89`). INFERRED from source order; no test asserts the state at that refusal. **Resolved in #1205.** The 202 terminal is decided by `may_publish` over `ServedSuccess::Acknowledged` before signing, and entered by `publish` only when the 202 is served, through the same success exit as a bodied reply, after G2 and retention (D4, Q2). The variant carries the `Established` fact `InnerPlane::observe_acknowledgement` mints only for a delivered message, and `publish` drives the one event that fact carries as the 202's tail (`ServedSuccess::tail`), so the terminal still implies the backend received the message. A refusal after the decision is served from `Dispatched` (`exchange_state::tests::a_refused_202_is_served_from_a_non_terminal_state`).

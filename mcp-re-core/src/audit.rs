@@ -44,9 +44,9 @@ pub use reason_label::reason_label;
 
 use crate::error::McpReError;
 
-/// The fixed `event_type` of every MCP-RE audit event. Rejections reuse two of
-/// these; the two success events are the only net-new tokens (the error enum
-/// cannot express a success/lifecycle outcome).
+/// The fixed `event_type` of every MCP-RE audit event. Rejections reuse two of these;
+/// the rest are success, lifecycle, intent and accounting tokens, which the error enum
+/// cannot express (ADR-MCPS-035; ADR-MCPRE-052 §7; ADR-MCPRE-070 D1, Q3).
 pub mod event_type {
     /// A request was ADMITTED: verified, replay-admitted, answerable, continuation-retired.
     /// Not executed (ADR-MCPRE-070 §16 item 2). A net-new success event.
@@ -145,7 +145,7 @@ pub struct AuditEvent {
 /// events are reject. There is no "mismatch" or other interpreted verdict here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
-    /// Request passed verification (`mcp-re.request.accepted`).
+    /// Request was admitted (`mcp-re.request.accepted`); not executed (ADR-MCPRE-070 §16 item 2).
     Accepted,
     /// Response was signed (`mcp-re.response.signed`).
     Signed,
