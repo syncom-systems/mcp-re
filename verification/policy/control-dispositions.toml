@@ -15121,6 +15121,15 @@ consequence = "medium"
 root_relationship = "under THM-0077 — no deployment serves a posture nobody selected: a pool size is a value an operator states, and one stated beside no Redis store, or outside the admitted range, is refused rather than ignored or clamped"
 record = "docs/architecture/control-dispositions.md#np-281"
 
+[[proposition]]
+id = "NP-290"
+title = "An outbound agent's TLS authenticates a server against the public Web PKI roots and refuses one outside them"
+carrier = "mcp-re-proxy/src/outbound_fetch/public_roots.rs (RootedConnector, installed by VettedDestination::agent)"
+likely_owner = "none. proxy.outbound_destination holds the carrier in its paths but states admissibility of a destination, which a server-authentication test does not falsify."
+consequence = "critical"
+root_relationship = "Server authentication for every credential-bearing outbound request (KMS, STS, metadata, SCITT registration): the roots that request is authenticated against, after ureq's own `tls` feature and its webpki-roots 0.26 shim left the graph (RUSTSEC-2026-0381)."
+record = "docs/architecture/control-dispositions.md#np-290"
+
 [[disposition]]
 id = "CD-20489"
 project = "mcp-re-proxy"
@@ -15481,3 +15490,35 @@ control = "src/lib.rs#audit_record::envelope::scope::tests::an_intent_belongs_on
 decision = "new-proposition"
 proposition = "NP-282"
 recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20600"
+project = "mcp-re-proxy"
+control = "src/lib.rs#outbound_fetch::public_roots::tests::a_server_under_a_trusted_root_completes_the_handshake_and_carries_bytes"
+decision = "new-proposition"
+proposition = "NP-290"
+recorded = "2026-10-21"
+
+[[disposition]]
+id = "CD-20601"
+project = "mcp-re-proxy"
+control = "src/lib.rs#outbound_fetch::public_roots::tests::the_public_connector_refuses_a_server_outside_the_public_roots"
+decision = "new-proposition"
+proposition = "NP-290"
+recorded = "2026-10-21"
+
+[[disposition]]
+id = "CD-20602"
+project = "mcp-re-proxy"
+control = "src/lib.rs#outbound_fetch::public_roots::tests::the_public_connector_is_built_over_the_shipped_root_set"
+decision = "new-proposition"
+proposition = "NP-290"
+recorded = "2026-10-21"
+
+[[disposition]]
+id = "CD-20603"
+project = "mcp-re-proxy"
+control = "src/lib.rs#outbound_fetch::public_roots::tests::a_name_that_is_not_a_server_name_is_refused"
+decision = "new-proposition"
+proposition = "NP-290"
+recorded = "2026-10-21"
