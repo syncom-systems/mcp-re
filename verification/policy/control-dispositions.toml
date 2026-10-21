@@ -15114,6 +15114,15 @@ consequence = "critical"
 root_relationship = "under THM-0090: server authentication for every credential-bearing outbound request (KMS, STS, metadata, SCITT registration), resting on ASM-0092 (rustls over the shipped webpki-roots 1.x set; its certificate authorities are the external trust boundary); recorded when ureq's own `tls` feature and its webpki-roots 0.26 shim left the graph (RUSTSEC-2026-0381)."
 record = "docs/architecture/control-dispositions.md#np-290"
 
+[[proposition]]
+id = "NP-291"
+title = "Under the required audit posture a success is served with the signature window fixed before G2, and a verifying client refuses it once that window has lapsed"
+carrier = "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs (served after G2 and retention, never re-signed) and mcp-re-http-profile/src/verify/floor/params.rs (the client's window rule)"
+likely_owner = "none. proxy.audit_outcome_gate states the G2 order, not the signature window; the window rule is the client verifier's. ADR-MCPRE-070 O5 records the interaction as an availability limitation, not a theorem (follow-up #1224)."
+consequence = "high"
+root_relationship = "the no-false-success half of ADR-MCPRE-070 O5: a window that lapses during a successful G2 costs availability after execution and never yields an accepted success; beside THM-0136, not under it"
+record = "docs/architecture/control-dispositions.md#np-291"
+
 [[disposition]]
 id = "CD-20489"
 project = "mcp-re-proxy"
@@ -15505,4 +15514,12 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#outbound_fetch::public_roots::tests::a_name_that_is_not_a_server_name_is_refused"
 decision = "new-proposition"
 proposition = "NP-290"
+recorded = "2026-10-21"
+
+[[disposition]]
+id = "CD-20604"
+project = "mcp-re-proxy"
+control = "tests/integration_async/main.rs#outcome_before_success_test::required::a_window_that_lapses_during_g2_is_refused_by_the_client_never_accepted"
+decision = "new-proposition"
+proposition = "NP-291"
 recorded = "2026-10-21"

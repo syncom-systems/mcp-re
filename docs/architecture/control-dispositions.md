@@ -5038,3 +5038,15 @@ this one covers request signers too. No theorem depends on it.
 **Severity:** `critical`.
 **Root relationship.** Under THM-0090: server authentication for every credential-bearing outbound request, resting on ASM-0092 (rustls over the shipped `webpki-roots` 1.x set; its certificate authorities are the external trust boundary, and revocation is not checked). Recorded when ureq's own `tls` feature and its webpki-roots 0.26 shim left the graph (RUSTSEC-2026-0381, -0382).
 **Recorded:** 2026-10-21, RUSTSEC-2026-0381/-0382 dependency remediation.
+
+## NP-291 — under the required audit posture a success is served with the signature window fixed before G2, and a verifying client refuses it once that window has lapsed
+
+**Controls:** `mcp-re-proxy` `integration_async#outcome_before_success_test::required` (1) — `a_window_that_lapses_during_g2_is_refused_by_the_client_never_accepted`.
+**Carrier:** `mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs` (served after G2 and retention, never re-signed); `mcp-re-http-profile/src/verify/floor/params.rs` (the client's window rule).
+**Statement.** *Under `--audit-commitment required`, a bodied success and a notification 202 are served with the signature window opened before dispatch; when that window lapses while a successful G2 commits, the proxy serves the success as signed, and a verifying client refuses it with `StaleWindow` and never returns a success.*
+**If false.** A client accepts a success whose signature no longer covers the instant it was checked, or the proxy extends or re-signs a window after the backend ran.
+**Likely owner:** none. `proxy.audit_outcome_gate` states the G2 order, not the signature window; the window rule is the client verifier's. ADR-MCPRE-070 O5 records the interaction as an availability limitation, not a theorem (follow-up #1224).
+**Severity:** `high`.
+**Root relationship.** The no-false-success half of ADR-MCPRE-070 O5; beside THM-0136, not under it.
+**Recorded:** 2026-10-21, owner ruling O5 (epic #1201 final authority closure).
+
