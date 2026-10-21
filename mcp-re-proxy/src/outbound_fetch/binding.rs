@@ -13,6 +13,7 @@
 
 use std::time::Duration;
 
+use super::public_roots::RootedConnector;
 use super::resolver::VettingResolver;
 use super::{Provenance, VettedDestination};
 
@@ -30,9 +31,14 @@ impl VettedDestination {
     ///
     /// The agent carries `timeout` as its overall request bound, so a request built from it
     /// is bounded even when the call site sets no `.timeout(..)` of its own (a per-request
-    /// timeout overrides it). The bound covers connect and I/O, not name resolution.
+    /// timeout overrides it). The bound covers connect and I/O, not name resolution. Its TLS
+    /// authenticates a server against the public Web PKI roots, through the connector
+    /// `public_roots` owns.
     pub fn agent(&self, timeout: Duration) -> ureq::Agent {
-        let builder = ureq::AgentBuilder::new().redirects(0).timeout(timeout);
+        let builder = ureq::AgentBuilder::new()
+            .redirects(0)
+            .timeout(timeout)
+            .tls_connector(RootedConnector::public());
         let builder = match self.provenance {
             Provenance::CertificateDerived => builder.resolver(VettingResolver::std()),
             Provenance::OperatorConfigured => builder,
