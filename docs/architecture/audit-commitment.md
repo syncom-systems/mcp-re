@@ -2,8 +2,8 @@
 
 # ADR-MCPRE-070 — Audit commitment: observation is not commitment
 
-**Status:** **PROPOSED** 2026-10-19, with all twelve decisions ruled by the owner on 2026-10-19
-and Q1–Q3 on 2026-10-20 (§15). The rulings bind the implementation slices of epic #1201. The document itself is under
+**Status:** **PROPOSED** 2026-10-19, with all twelve decisions ruled by the owner on 2026-10-19,
+Q1–Q3 on 2026-10-20, and O4 and O5 on 2026-10-21 (§15). The rulings bind the implementation slices of epic #1201. The document itself is under
 review for ratification in its Discussion, and that review does not suspend the slices.
 **Discussion:** [#1212](https://github.com/matssun/mcp-re/discussions/1212).
 **Issue:** #1191 (Slice 0). **Epic:** #1201.
@@ -367,6 +367,7 @@ are independent of the replay pool (#1206).
 8. No claim about the delegated-key lifecycle lines (D11).
 9. THM-0071 is not weakened, and it is not widened to dispatch, success or durability.
 10. The reference authority is not a deployment backend.
+11. The signing window is checked before dispatch against the dispatch bound and the G1 wait, not against the G2 wait or retention completion that follow signing. Near the end of a delegated credential's window a client can therefore reject a signed success the backend already acted on. This can cause a rejection after execution, never a false acceptance: the window is fixed before G2 and never extended, and a verifying client refuses a lapsed one (`outcome_before_success_test.rs`, `a_window_that_lapses_during_g2_is_refused_by_the_client_never_accepted`). It is an availability limitation, not a correctness guarantee (owner ruling O5); follow-up #1224.
 
 ## 15. Owner rulings (D1–D12, 2026-10-19)
 
@@ -385,7 +386,10 @@ its stated conditions, and how this ADR reads it.
   (`mcp-re-core/src/audit.rs:57-62`).
 - Outcome reading: outcomes reuse `response.signed` / `response.rejected`, carrying the
   exchange coordinate (D9). This adds no outcome token.
-- The best-effort stderr stream emits no intent line. Its v0.18.1 contract is unchanged.
+- Under the best-effort posture the stderr stream emits no intent line and its v0.18.1
+  contract is unchanged. Under the required posture the observer stays best-effort but its
+  `seq` has gaps that are not drops (§8, observer gaps); the REQUIRED startup line names them.
+  The compatibility this ruling keeps is the best-effort posture's (owner ruling O4).
 
 **D2. Unauthenticated and pre-exchange coverage: APPROVED WITH BOUND.**
 - Individual unauthenticated and pre-exchange attempts stay best-effort.
@@ -491,6 +495,35 @@ Q1–Q3"). They bind the slices on the same terms as D1–D12.
 - Saturation, missing-interval, outage and non-exhaustiveness semantics are documented with the
   record.
 - The meanings of the two existing success events are unchanged.
+
+### Owner rulings, 2026-10-21 (authority closure)
+
+These rulings settle the items the pre-assurance review left open (epic #1201, "Final authority
+closure"). They bind on the same terms as D1–D12.
+
+**O4. D1's compatibility scope: APPROVED.**
+- The best-effort audit stream contract is preserved: under best-effort the stream emits no
+  intent line and its v0.18.1 contract is unchanged (D1 reading).
+- The required-commitment behaviour is separate and documented: the commitment authority, not
+  the stream, carries the intent and the outcome; the observer stays best-effort, and its
+  `seq` has gaps that are not drops (§8, observer gaps), which the REQUIRED startup line names.
+
+**O5. Signing window and the G2 wait: APPROVED AS A DOCUMENTED AVAILABILITY LIMITATION.**
+- It is recorded as a limitation, not as a correctness guarantee (§14 item 11). Near the end
+  of a delegated credential's window a client can reject a signed success the backend already
+  acted on. That is lost availability after execution.
+- No false success is permitted, and none is claimed: a success is served only after G2 and
+  retention completion (Q2), and a client verifying the signature refuses a response outside
+  its window. Negative tests pin both halves. Follow-up: #1224.
+
+**Theorem graph (D10).**
+- THM-0135 composes under the root THM-0074 ("no unearned dispatch"), whose proposition is
+  unchanged.
+- THM-0136 is not attached to a root by default; its root edge is decided on its own logical
+  dependency.
+- The audit posture unit supports THM-0077 ("no deployment serves a posture nobody selected").
+- The optional split of ASM-0090 and ASM-0091 into their own liveness unit is deferred until
+  after assurance closure.
 
 ## 16. Related findings outside this boundary
 
