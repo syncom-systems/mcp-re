@@ -146,6 +146,7 @@ mod tests {
     fn success_exit_is_the_only_success_served_call() {
         for (name, source) in [
             ("accepted.rs", include_str!("accepted.rs")),
+            ("dispatched.rs", include_str!("dispatched.rs")),
             ("notification.rs", include_str!("notification.rs")),
             ("mod.rs", include_str!("mod.rs")),
         ] {

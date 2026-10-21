@@ -3260,8 +3260,7 @@ tool_specific_mechanism = "foreign-dependency"
 # record what those claims do NOT establish and a deployment must therefore trust: that a
 # receipt means persistence (ASM-0089, P9), that a required deployment makes progress and its
 # committed events reach an archive (ASM-0090, L1, L3, P10), and that the provider has the
-# capacity the deployment offers it (ASM-0091). None of them is a test result. Proposed by
-# #1207 and not yet ratified: no review record names any of them.
+# capacity the deployment offers it (ASM-0091). None of them is a test result.
 
 [[assumption]]
 id = "ASM-0089"
@@ -3297,7 +3296,7 @@ scope = [
   "boundary://boundary.audit_commitment_provider",
 ]
 owner = "mats@sundvall.name"
-introduced_by = "#1207 (ADR-MCPRE-070 D3, D10, P9); proposed, not yet ratified"
+introduced_by = "#1207 (ADR-MCPRE-070 D3, D10, P9)"
 review_requirement = "Owner review on any change to the CommitmentAuthority seam, the receipt-to-witness binding, the tier vocabulary or its minimum, and on registering any provider for the required posture."
 premise_class = "external-boundary"
 boundary_owner = """
@@ -3343,7 +3342,7 @@ scope = [
   "boundary://boundary.audit_commitment_provider",
 ]
 owner = "mats@sundvall.name"
-introduced_by = "#1207 (ADR-MCPRE-070 D10, L1, L3, P10); proposed, not yet ratified"
+introduced_by = "#1207 (ADR-MCPRE-070 D10, L1, L3, P10)"
 review_requirement = "Owner review on any change to the commitment bound, to the refusal a failed commitment earns, or to the documented downstream delivery contract."
 premise_class = "external-boundary"
 boundary_owner = """
@@ -3389,7 +3388,7 @@ scope = [
   "boundary://boundary.audit_commitment_provider",
 ]
 owner = "mats@sundvall.name"
-introduced_by = "#1207 (ADR-MCPRE-070 D2, D10, §7); proposed, not yet ratified"
+introduced_by = "#1207 (ADR-MCPRE-070 D2, D10, §7)"
 review_requirement = "Owner review on any change to the commitment budget, its ceiling, or the accounting cadence."
 premise_class = "external-boundary"
 boundary_owner = """

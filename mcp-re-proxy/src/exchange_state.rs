@@ -699,8 +699,8 @@ impl ExchangeProgress {
 
     /// Take a stage's established fact, advancing the machine by the event the stage named.
     ///
-    /// The only way to open an [`Established`]. The machine cannot learn less than the
-    /// pipeline did, because the value and the transition arrive together.
+    /// The only way to take an [`Established`]'s value. The machine cannot learn less than
+    /// the pipeline did, because the value and the transition arrive together.
     pub(crate) fn establish<T>(&mut self, established: Established<T>) -> T {
         let [event] = established.event;
         self.advance(event);

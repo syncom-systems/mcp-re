@@ -211,6 +211,11 @@ rulings in §15.
 | W6 after outcome commit, before the response write | intent + outcome | possibly nothing (the connection dropped) | the outcome was produced and committed. Delivery to the client is **not** claimed | outcome event; retention |
 | W7 drain timeout | whatever was committed | in-flight exchanges are cut | nothing beyond the held witnesses; the observer drain says `OutcomeUnknown` (F6) | per-exchange as W2–W6 |
 
+Where this table says a pre-dispatch refusal is NothingExecuted, the signed rejection carries
+the request machine's free-of-execution disposition: `NothingExecuted`, or
+`ApprovalSpentNothingExecuted` when the exchange had already consumed its continuation
+(`ExchangeProgress::retry_semantics`). Neither states that the backend ran.
+
 ## 7. Finite-capacity policy
 
 1. **Bounded ingress is already in place, before any record exists:** the per-core in-flight
@@ -222,8 +227,9 @@ rulings in §15.
    unattributed ceiling (F3). An aggregate count is the strongest honest statement (D2).
 3. **The required posture fails closed.** At G1, if the commitment authority is unavailable,
    out of budget or uncertain, an admitted exchange is refused **before dispatch** with a
-   typed, retry-safe 503; a rejection, or an exchange with no accepted event to coordinate
-   on, is refused before dispatch with 500 (D12). At G2 the backend has already run: every
+   typed, retry-safe 503; a rejection, an exchange with no accepted event to coordinate on,
+   an intent that cannot be given an identity, or a witness that does not redeem is refused
+   before dispatch with 500 (D12). At G2 the backend has already run: every
    outcome-commitment failure, a spent budget included, is a 500 refusal **after dispatch**
    stating PossiblyExecuted. The accounting cadence draws on the same budget, and a spent
    budget there is a missed interval that refuses no request. It never degrades to
@@ -249,7 +255,7 @@ rulings in §15.
 | scope | every event carries one typed scope: `Origin`, `Exchange(coordinate)`, `PreAcceptance` or `Run` (the accounting record, which names no exchange). An event without an accepted exchange never carries a fabricated accepted ID (D9, Q3). |
 | identical retry | it preserves both the ID and the bytes, so a provider can deduplicate on `(ID, digest)`. |
 | conflict | the same ID with a different digest is an **integrity conflict**: a typed failure, never an overwrite. |
-| exhaustion | the allocator uses checked arithmetic. Exhaustion is an explicit failure, never a wrap (at `8262c5fa`, `fetch_add` wrapped and rendering saturated, F4). Under required posture it fails closed. |
+| exhaustion | the allocator uses checked arithmetic. Exhaustion is an explicit failure, never a wrap (at `8262c5fa`, `fetch_add` wrapped and rendering saturated, F4). Under required posture it fails closed. Under the best-effort posture an event that cannot be numbered is not offered, and the stream states once per process that its run stopped numbering. |
 | transport position | a stream ID or offset is a **location, not identity**. A retried `XADD` gets a new stream ID for the same event. |
 | order | generation order is `seq` within a run. Arrival order is a transport fact (F5). There is no global order across runs. |
 | observer gaps | under the required posture an execution intent, an outcome that could not be committed, an outcome whose retention then failed (W5b) and every `mcp-re.audit.accounting` record consume a `seq` and are never offered to the observer, so the observer's stream has gaps that are not drops. The REQUIRED startup line names them; the drop report counts drops only. Under the best-effort posture none of these events is produced. |
@@ -354,7 +360,7 @@ are independent of the replay pool (#1206).
 1. No durability of the best-effort stderr sink, now or after this ADR (F18 stands).
 2. No claim that any external provider persists anything. A provider's persistence is an assumption with its own evidence (P9).
 3. No exactly-once delivery, no global order, no unconditional permanence.
-4. No individual record of unbounded unauthenticated or pre-exchange attempts under outage.
+4. No individual record of unbounded unauthenticated or pre-exchange attempts under outage. The `mcp-re.audit.accounting` counts are an observed lower bound (`coverage = observed-lower-bound`), never exhaustive under a provider outage or saturation; a missed interval is stated, not reconstructed (D2, Q3).
 5. No atomicity between a backend's side effects and the audit journal. After the threshold the claim is PossiblyExecuted, not "executed".
 6. A committed outcome does not mean the client received the response (W6).
 7. The 202 claims acceptance, never completion (#418).
@@ -494,4 +500,4 @@ Q1–Q3"). They bind the slices on the same terms as D1–D12.
 4. ADR-MCPRE-066 contains stale lines. The status line says "Not yet implemented" (`audit-composition.md:5`), contradicting its own §10. `NoAuditSink` and `app.rs:1439,1450` no longer exist (`audit-composition.md:479-492`). **Follow-up #1210.**
 5. Stderr lines may appear out of seq order across cores (F5), while THM-0070's order property is tested only on the collector (`audit_sink/mod.rs:223`). **Follow-up #1211**; #1202 states the generation-vs-arrival order contract.
 6. Stale pointers to the missing §9: `audit-composition.md:12`, `:463-470`; `audit_sink/mod.rs:18-19`; `http_profile_serve/mod.rs:222`; `delegated_client_server_e2e_test.rs:746` (D6). **Resolved in this ADR's PR:** §9 is restored under its original number, so these citations resolve.
-7. The notification arm enters a success terminal before its 202 is signed or retained, so a later failure is served from a terminal state (`reply_assembly/notification.rs:127` vs `:79-89`). INFERRED from source order; no test asserts the state at that refusal. **Resolved in #1205.** The 202 terminal is decided by `may_publish` over `ServedSuccess::Acknowledged` before signing, and entered by `publish` only when the 202 is served, through the same success exit as a bodied reply, after G2 and retention (D4, Q2). The variant carries the `Established` fact `InnerPlane::observe_acknowledgement` mints only for a delivered message, and `publish` opens it through `establish`, so the terminal still implies the backend received the message. A refusal after the decision is served from `Dispatched` (`exchange_state::tests::a_refused_202_is_served_from_a_non_terminal_state`).
+7. The notification arm enters a success terminal before its 202 is signed or retained, so a later failure is served from a terminal state (`reply_assembly/notification.rs:127` vs `:79-89`). INFERRED from source order; no test asserts the state at that refusal. **Resolved in #1205.** The 202 terminal is decided by `may_publish` over `ServedSuccess::Acknowledged` before signing, and entered by `publish` only when the 202 is served, through the same success exit as a bodied reply, after G2 and retention (D4, Q2). The variant carries the `Established` fact `InnerPlane::observe_acknowledgement` mints only for a delivered message, and `publish` drives the one event that fact carries as the 202's tail (`ServedSuccess::tail`), so the terminal still implies the backend received the message. A refusal after the decision is served from `Dispatched` (`exchange_state::tests::a_refused_202_is_served_from_a_non_terminal_state`).

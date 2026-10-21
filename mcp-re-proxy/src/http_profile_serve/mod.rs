@@ -419,7 +419,7 @@ impl HttpProfileProxy {
     /// It does not advance the request machine except at its own fact, the dispatch; the
     /// terminals are entered by the success exit. A stage's success arrives as an
     /// [`Established`](crate::exchange_state::Established), and `progress.establish` is the
-    /// only way to open one — so the machine learns that a step ran by the value being
+    /// only way to take its value — so the machine learns that a step ran by the value being
     /// CONSUMED, not by anyone remembering to say so afterwards.
     ///
     /// Every refusal is minted by `refuse` from a `Refusal` the stage named. `handle` never
