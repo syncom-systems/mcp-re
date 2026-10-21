@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 //! What this deployment records, and what it forwards about a verified request.
 
-use crate::deployment_request::{AuditSinkKind, VerifiedContextKind};
+use crate::deployment_request::{
+    AuditDeliveryKind, AuditRequest, AuditSinkKind, VerifiedContextKind,
+};
 
 /// The audit inputs, as they accumulate across the argument list.
 #[derive(Default)]
 pub(super) struct AuditFlags {
     sink: Option<AuditSinkKind>,
+    delivery: Option<AuditDeliveryKind>,
     retained_evidence_dir: Option<String>,
     verified_context: Option<VerifiedContextKind>,
 }
 
 /// What one deployment records.
 pub(super) struct AuditSurface {
-    pub(super) sink: AuditSinkKind,
+    pub(super) request: AuditRequest,
     pub(super) retained_evidence_dir: Option<String>,
     pub(super) verified_context: VerifiedContextKind,
 }
@@ -23,7 +26,10 @@ impl AuditFlags {
     pub(super) fn owns(flag: &str) -> bool {
         matches!(
             flag,
-            "--audit-sink" | "--retained-evidence-dir" | "--verified-context-carrier"
+            "--audit-sink"
+                | "--audit-commitment"
+                | "--retained-evidence-dir"
+                | "--verified-context-carrier"
         )
     }
 
@@ -39,6 +45,9 @@ impl AuditFlags {
                     }
                 })
             }
+            // ADR-MCPRE-070 §2: whether commitment is a prerequisite. Mapped, never judged:
+            // `required` with `--audit-sink none` is refused by layer A, not here.
+            "--audit-commitment" => self.delivery = Some(delivery_kind(value)?),
             // ADR-MCPS-035: the per-request security record. Without this the emission
             // points exist and nothing consumes them, so a deployment has no per-request
             // attribution at all.
@@ -62,17 +71,32 @@ impl AuditFlags {
         Ok(())
     }
 
-    /// What this deployment records. Both selections have a default, and the defaults are
-    /// the safe ones: the record is ON unless a deployment names the opposite, and the
-    /// unsigned carrier is OFF unless it does.
+    /// What this deployment records. Every selection has a default, and the defaults are
+    /// the v0.18.1 ones: the record is ON unless a deployment names the opposite, its
+    /// delivery is best-effort unless it requires commitment, and the unsigned carrier is
+    /// OFF unless it is named.
     pub(super) fn finish(self) -> AuditSurface {
         AuditSurface {
-            sink: self.sink.unwrap_or(AuditSinkKind::Stderr),
+            request: AuditRequest {
+                sink: self.sink.unwrap_or(AuditSinkKind::Stderr),
+                delivery: self.delivery.unwrap_or(AuditDeliveryKind::BestEffort),
+            },
             retained_evidence_dir: self.retained_evidence_dir,
             verified_context: self
                 .verified_context
                 .unwrap_or(VerifiedContextKind::Disabled),
         }
+    }
+}
+
+/// `--audit-commitment`'s two spellings.
+fn delivery_kind(value: &str) -> Result<AuditDeliveryKind, String> {
+    match value {
+        "best-effort" => Ok(AuditDeliveryKind::BestEffort),
+        "required" => Ok(AuditDeliveryKind::Required),
+        other => Err(format!(
+            "--audit-commitment must be best-effort|required, got {other:?}"
+        )),
     }
 }
 
@@ -84,7 +108,8 @@ mod tests {
     #[test]
     fn the_defaults_record_and_forward_nothing_unsigned() {
         let surface = AuditFlags::default().finish();
-        assert_eq!(surface.sink, AuditSinkKind::Stderr);
+        assert_eq!(surface.request.sink, AuditSinkKind::Stderr);
+        assert_eq!(surface.request.delivery, AuditDeliveryKind::BestEffort);
         assert_eq!(surface.verified_context, VerifiedContextKind::Disabled);
         assert_eq!(surface.retained_evidence_dir, None);
     }
@@ -94,13 +119,19 @@ mod tests {
     fn an_unknown_selection_is_refused_rather_than_defaulted() {
         let mut flags = AuditFlags::default();
         assert!(flags.take("--audit-sink", "syslog").is_err());
+        assert!(flags.take("--audit-commitment", "durable").is_err());
+        assert!(flags.take("--audit-commitment", "Required").is_err());
         assert!(flags.take("--verified-context-carrier", "maybe").is_err());
         flags.take("--audit-sink", "none").expect("a known sink");
+        flags
+            .take("--audit-commitment", "required")
+            .expect("a known delivery");
         flags
             .take("--verified-context-carrier", "trusted")
             .expect("a known carrier");
         let surface = flags.finish();
-        assert_eq!(surface.sink, AuditSinkKind::None);
+        assert_eq!(surface.request.sink, AuditSinkKind::None);
+        assert_eq!(surface.request.delivery, AuditDeliveryKind::Required);
         assert_eq!(surface.verified_context, VerifiedContextKind::Trusted);
     }
 }

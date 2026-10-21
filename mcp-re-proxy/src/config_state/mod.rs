@@ -56,6 +56,7 @@
 //! this".
 
 pub mod admission;
+pub mod audit_policy;
 pub mod authorization;
 mod channel_binding_effects;
 pub mod channel_credential_custody;
@@ -85,6 +86,7 @@ pub mod trust_revocation;
 pub mod validation;
 
 pub use admission::{AdmissionAvailability, AdmissionPosture, AdmissionState, EnforcedAdmission};
+pub use audit_policy::AuditState;
 pub use authorization::{AuthorizationState, EnforcedAuthorization};
 pub(crate) use channel_binding_effects::ChannelBindingEffects;
 pub use channel_credential_custody::ChannelCredentialCustodyState;
@@ -96,7 +98,7 @@ pub use credential_currency_bound::{credential_currency_bound, CredentialCurrenc
 pub use crl_revocation::CrlRevocationState;
 pub use custody::{AwsCredentialMode, CustodyMaterial, CustodyState, PrivateKeyExposure};
 pub use delegated_signing::DelegatedSigningFacts;
-pub use evidence::{AuditState, RetentionState, VerifiedContextState};
+pub use evidence::{RetentionState, VerifiedContextState};
 pub use freshness::FreshnessWindow;
 pub use in_flight_limit::{InFlightLimitBasis, InFlightLimitRequest};
 pub use key_file_access::KeyFileAccessPolicy;
@@ -500,7 +502,7 @@ pub(crate) mod test_support {
     pub(crate) fn retention_at(directory: String) -> super::RetentionState {
         let mut config = legal_config();
         config.retained_evidence_dir = Some(directory);
-        super::evidence::classify(&config).1
+        super::evidence::classify(&config).0
     }
 
     /// The posture a published tier plus its material names.

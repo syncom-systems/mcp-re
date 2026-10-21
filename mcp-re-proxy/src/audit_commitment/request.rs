@@ -8,11 +8,14 @@ use super::{CrossingKind, DurabilityTier};
 /// One commitment request: the event's binding and canonical bytes, the crossing it gates,
 /// and the tier the owner holds the provider to.
 ///
+/// `pub` because a provider reads it; built only by the shared owner (`new` is
+/// `pub(super)`), so a provider cannot construct one.
+///
 /// Borrowed and built only by the shared owner, so the bytes a provider is asked to store
 /// and the binding the owner will check its receipt against are projections of ONE
 /// envelope. A provider stores bytes, never the envelope.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct CommitRequest<'a> {
+pub struct CommitRequest<'a> {
     envelope: &'a CanonicalEvent,
     crossing: CrossingKind,
     tier: DurabilityTier,
@@ -32,49 +35,32 @@ impl<'a> CommitRequest<'a> {
         }
     }
 
-    // The projections are crate-wide because `CommitmentAuthority` is: a provider anywhere
-    // in the crate reads what it is asked to commit, and reading it grants nothing.
+    // The projections are `pub` because `CommitmentAuthority` is the embedder contract: a
+    // provider reads what it is asked to commit, and reading it grants nothing.
 
     /// The identity and digest the receipt must echo; a provider deduplicates on it.
-    #[cfg_attr(
-        not(any(test, feature = "audit_commitment_reference")),
-        allow(dead_code)
-    )] // read by providers; none is compiled into a deployable build
-    pub(crate) fn binding(&self) -> EventBinding {
+    pub fn binding(&self) -> EventBinding {
         self.envelope.binding()
     }
 
     /// The canonical bytes to store.
-    #[cfg_attr(not(test), allow(dead_code))] // read by providers; none is compiled outside tests
-    pub(crate) fn canonical_bytes(&self) -> &'a [u8] {
+    pub fn canonical_bytes(&self) -> &'a [u8] {
         self.envelope.canonical_bytes()
     }
 
     /// The exchange the event belongs to: the reconciliation handle a provider indexes an
     /// intent and its outcome by (ADR-MCPRE-070 §6, D9).
-    #[cfg_attr(
-        not(any(test, feature = "audit_commitment_reference")),
-        allow(dead_code)
-    )] // read by providers; none is compiled into a deployable build
-    pub(crate) fn exchange_coordinate(&self) -> Option<ExchangeCoordinate> {
+    pub fn exchange_coordinate(&self) -> Option<ExchangeCoordinate> {
         self.envelope.exchange_coordinate()
     }
 
     /// The crossing the receipt must echo.
-    #[cfg_attr(
-        not(any(test, feature = "audit_commitment_reference")),
-        allow(dead_code)
-    )] // read by providers; none is compiled into a deployable build
-    pub(crate) fn crossing(&self) -> CrossingKind {
+    pub fn crossing(&self) -> CrossingKind {
         self.crossing
     }
 
     /// The tier the provider was established at, which the receipt must echo.
-    #[cfg_attr(
-        not(any(test, feature = "audit_commitment_reference")),
-        allow(dead_code)
-    )] // read by providers; none is compiled into a deployable build
-    pub(crate) fn tier(&self) -> DurabilityTier {
+    pub fn tier(&self) -> DurabilityTier {
         self.tier
     }
 }

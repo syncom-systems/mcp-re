@@ -4,10 +4,10 @@
 /// The version of the tier vocabulary below. A tier is added only together with a new
 /// version, because a closed vocabulary that grows in place makes an old reading of a wire
 /// name silently mean something else.
-#[cfg_attr(not(test), allow(dead_code))] // published by the posture line; no emitter reads it yet
 pub(crate) const TIER_VOCABULARY: &str = "audit-durability/v1";
 
-/// What a commitment authority DECLARES its acknowledged writes survive.
+/// What a commitment authority DECLARES its acknowledged writes survive. `pub`: a provider
+/// declares it (the embedder contract).
 ///
 /// A **declaration**, never a property this crate proves (D3). The shared owner binds a
 /// witness to the tier the provider declared when it was established and refuses a receipt
@@ -19,11 +19,7 @@ pub(crate) const TIER_VOCABULARY: &str = "audit-durability/v1";
 /// minimum (surviving loss of a provider node, say) arrives with a vocabulary version and
 /// the first provider that declares it, never ahead of one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(any(test, feature = "audit_commitment_reference")),
-    allow(dead_code)
-)] // declared by providers; none is compiled into a deployable build
-pub(crate) enum DurabilityTier {
+pub enum DurabilityTier {
     /// Lost with the proxy process. Never eligible for the required posture.
     ProcessVolatile,
     /// Survives crash-stop of the proxy process (SIGKILL, OOM), under the provider's
@@ -33,8 +29,7 @@ pub(crate) enum DurabilityTier {
 
 impl DurabilityTier {
     /// The published spelling of this tier within [`TIER_VOCABULARY`].
-    #[cfg_attr(not(test), allow(dead_code))] // published by the posture line; no emitter reads it yet
-    pub(crate) fn wire_name(self) -> &'static str {
+    pub fn wire_name(self) -> &'static str {
         match self {
             DurabilityTier::ProcessVolatile => "PROCESS_VOLATILE",
             DurabilityTier::SurvivesProxyProcessLoss => "SURVIVES_PROXY_PROCESS_LOSS",
@@ -43,7 +38,6 @@ impl DurabilityTier {
 
     /// The honest guarantee this tier supports. Conditional by construction: no tier's
     /// guarantee holds independently of the provider's declaration.
-    #[cfg_attr(not(test), allow(dead_code))] // published by the posture line; no emitter reads it yet
     pub(crate) fn guarantee(self) -> &'static str {
         match self {
             DurabilityTier::ProcessVolatile => {

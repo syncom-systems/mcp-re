@@ -38,6 +38,9 @@ pub enum EventScope {
     /// A `request.rejected` event: refused before any exchange was accepted, so there is no
     /// accepted identity to name and none is invented.
     PreAcceptance,
+    /// An event about the run as a whole — the accounting record (ADR-MCPRE-070 D2, Q3).
+    /// It belongs to no exchange; the run it counts is the run in its own identity.
+    Run,
 }
 
 impl EventScope {
@@ -86,6 +89,16 @@ impl EventScope {
         } else {
             Err(EventIdentityFailure::ScopeRefused)
         }
+    }
+}
+
+impl EventScope {
+    /// The scope of an accounting record: the run, and no exchange. Visible to the
+    /// record's producer in `audit_record`, which is the one caller.
+    pub(in crate::audit_record) fn of_run(
+        _id: &EventId,
+    ) -> Result<EventScope, EventIdentityFailure> {
+        Ok(EventScope::Run)
     }
 }
 

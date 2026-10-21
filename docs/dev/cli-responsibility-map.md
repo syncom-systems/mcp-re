@@ -37,10 +37,10 @@ operation lands in exactly one of four buckets, the last of which is the negativ
 | struct literal | 1396–1503 | 108 | normalization, two exceptions |
 | handoff to `ValidatedDeployment::try_from` | 1505–1509 | 5 | — |
 
-### The ~78 match arms
+### The ~79 match arms
 
-**Syntax — 71 arms.** 41 plain `Some(value.clone())` / `push` captures; 9 enum-spelling
-arms (`--key-source`, `--client-ocsp`, `--admission`, `--audit-sink`,
+**Syntax — 72 arms.** 41 plain `Some(value.clone())` / `push` captures; 10 enum-spelling
+arms (`--key-source`, `--client-ocsp`, `--admission`, `--audit-sink`, `--audit-commitment`,
 `--verified-context-carrier`, `--admission-allow-degraded`, `--transport-binding`,
 `--transport-identity-source`, `--authz`); 2 arms
 delegating to a domain type's own parser (`ReplayDurabilityTier::parse`,

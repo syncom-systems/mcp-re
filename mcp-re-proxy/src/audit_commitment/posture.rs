@@ -4,16 +4,18 @@
 //! Two mechanisms, one decision. The OBSERVER is offered every record and can authorize
 //! nothing; the COMMITMENT, when the posture requires one, is a prerequisite of dispatch.
 //! They are held by one owner because they are one operator choice with a compatibility rule
-//! between them (a required posture refuses `--audit-sink none`, #1206) — not because they
-//! are one authority: the observer still mints nothing, and each is projected separately.
+//! between them (a required posture refuses `--audit-sink none`, layer A's
+//! `config_state::audit_policy`) — not because they are one authority: the observer still
+//! mints nothing, and each is projected separately.
 //!
-//! # Reachability before #1206
+//! # How the required posture is entered
 //!
-//! The required posture is entered only through [`AuditPosture::require`], which exists only
-//! in test builds and under the test-only `audit_commitment_reference` feature. The default
-//! library cannot hold one: every deployable build serves the best-effort posture until the
-//! operator selector lands.
+//! Only through [`AuditPosture::required`], which takes an [`EstablishedProvider`] — a value
+//! that exists only once a provider's tier met the minimum and its startup probe answered
+//! (D3). The operator selects it with `--audit-commitment required`; startup establishes it in
+//! `serving_capabilities::audit_posture` and refuses rather than fall back (S4).
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::audit_record::{AuditRecord, ExchangeCoordinate, ExecutionIntent};
@@ -22,7 +24,7 @@ use crate::refusal::Refusal;
 use crate::request_stages::{IntentDisposition, OutcomeDisposition};
 
 use super::intent::IntentCommitment;
-use super::NoCommitmentRequired;
+use super::{CommitmentBound, EstablishedProvider, NoCommitmentRequired};
 
 /// The deployment's audit posture: the observer it offers records to, and whether an
 /// execution intent must be committed before dispatch.
@@ -38,10 +40,6 @@ enum Commitment {
     /// Best-effort observation only (v0.18.1 behavior).
     BestEffort,
     /// Every dispatch requires the exchange's committed intent (G1).
-    #[cfg_attr(
-        not(any(test, feature = "audit_commitment_reference")),
-        allow(dead_code)
-    )] // entered only through the test-only `require` until #1206 selects the posture
     Required(IntentCommitment),
 }
 
@@ -51,6 +49,29 @@ impl AuditPosture {
         AuditPosture {
             observer,
             commitment: Commitment::BestEffort,
+        }
+    }
+
+    /// The required posture over `observer`: every dispatch requires the exchange's committed
+    /// intent, and every success its committed outcome, committed to `provider` within
+    /// `bound` (G1, G2).
+    pub(crate) fn required(
+        observer: MaybeAuditSink,
+        provider: Arc<EstablishedProvider>,
+        bound: CommitmentBound,
+    ) -> Self {
+        AuditPosture {
+            observer,
+            commitment: Commitment::Required(IntentCommitment::new(provider, bound)),
+        }
+    }
+
+    /// The established provider, under the required posture. Tests read it.
+    #[cfg(test)]
+    pub(crate) fn provider(&self) -> Option<&Arc<EstablishedProvider>> {
+        match &self.commitment {
+            Commitment::BestEffort => None,
+            Commitment::Required(crossing) => Some(crossing.provider()),
         }
     }
 
@@ -120,33 +141,10 @@ impl AuditPosture {
             }
         }
     }
-
-    /// Require a committed intent before every dispatch, committed to `authority` within
-    /// `bound`. Test builds and the test-only `audit_commitment_reference` feature only.
-    ///
-    /// Refuses an authority whose declared tier cannot serve the required posture (D3) and a
-    /// bound that is zero or above the request deadline, so not even a test runs the required
-    /// posture over a volatile store or a wait that outlasts the request it gates.
-    #[cfg(any(test, feature = "audit_commitment_reference"))]
-    pub(crate) fn require(
-        &mut self,
-        authority: std::sync::Arc<dyn super::CommitmentAuthority>,
-        bound: Duration,
-    ) -> Result<(), &'static str> {
-        let bound = super::CommitmentBound::new(bound)
-            .ok_or("the commitment bound is zero or above the request deadline")?;
-        let crossing =
-            IntentCommitment::over(super::EstablishedProvider::establish(authority), bound)
-                .ok_or("the authority's declared tier cannot serve the required posture (D3)")?;
-        self.commitment = Commitment::Required(crossing);
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
     use crate::audit_commitment::reference::{Forgery, ReferenceAuthority, Step};
     use crate::audit_commitment::{DurabilityTier, RejectReason};
@@ -157,9 +155,11 @@ mod tests {
     }
 
     fn required(authority: &Arc<ReferenceAuthority>, bound: Duration) -> AuditPosture {
-        let mut posture = AuditPosture::best_effort(None);
-        posture.require(authority.clone(), bound).expect("eligible");
-        posture
+        AuditPosture::required(
+            None,
+            crate::audit_commitment::EstablishedProvider::eligible_for_test(authority.clone()),
+            crate::audit_commitment::CommitmentBound::new(bound).expect("legal bound"),
+        )
     }
 
     /// Best-effort mints the owner's statement and asks no provider anything: no intent is
@@ -211,24 +211,6 @@ mod tests {
                 .await
                 .is_err(),
             "no coordinate, no intent, no dispatch"
-        );
-    }
-
-    /// D3 and the bound: the required posture is refused over a volatile authority and over
-    /// a wait the request could not survive, and the posture is left as it was.
-    #[test]
-    fn the_required_posture_is_refused_over_a_volatile_authority_or_an_illegal_bound() {
-        let mut posture = AuditPosture::best_effort(None);
-        let volatile = Arc::new(ReferenceAuthority::new(DurabilityTier::ProcessVolatile));
-        assert!(posture.require(volatile, Duration::from_secs(1)).is_err());
-        assert!(posture.require(eligible([]), Duration::ZERO).is_err());
-        assert!(posture
-            .require(eligible([]), Duration::from_secs(3600))
-            .is_err());
-        assert_eq!(
-            posture.pre_dispatch_wait(),
-            Duration::ZERO,
-            "still best-effort"
         );
     }
 

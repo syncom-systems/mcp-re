@@ -14,7 +14,8 @@
 //!   3. the key-lifecycle set is not EXACTLY the three-item allowlist
 //!      (`mcp-re.delegated_key.{issued,rotated,retired}`, ADR-MCPRE-052 §7), or the
 //!      execution set is not EXACTLY the one-item allowlist (`mcp-re.execution.intent`,
-//!      ADR-MCPRE-070 D1, vocabulary revision 2);
+//!      ADR-MCPRE-070 D1, vocabulary revision 2), or the accounting set is not EXACTLY the
+//!      one-item allowlist (`mcp-re.audit.accounting`, ADR-MCPRE-070 D2/Q3, revision 3);
 //!   4. an audit `event_type` collides with a frozen `wire_code()` token (a
 //!      rejection sub-name masquerading as an event type);
 //!   5. an `authorization_hash_mismatch` notion reappears as an audit reason
@@ -60,6 +61,12 @@ const EXPECTED_KEY_LIFECYCLE_EVENTS: &[&str] = &[
 /// admitted exchange was committed to: not a success event, not a verdict (no `reason`), and
 /// never on the best-effort stream. Nothing else may join this set without an ADR.
 const EXPECTED_EXECUTION_EVENTS: &[&str] = &["mcp-re.execution.intent"];
+
+/// The one accounting `event_type` — the fifth audit category, authorized by ADR-MCPRE-070 D2
+/// and Q3 as a documented, versioned extension (vocabulary revision 3). A bounded, run- and
+/// interval-attributed aggregate count: not a success event, not a verdict (no `reason`), no
+/// actor. Nothing else may join this set without an ADR.
+const EXPECTED_ACCOUNTING_EVENTS: &[&str] = &["mcp-re.audit.accounting"];
 
 // --- runfiles resolution (same scheme as the drift guards) -------------------
 
@@ -199,6 +206,7 @@ fn every_audit_token_is_a_wire_code_or_a_fixed_event_type() {
         .chain(EXPECTED_REJECTION_EVENTS.iter())
         .chain(EXPECTED_KEY_LIFECYCLE_EVENTS.iter())
         .chain(EXPECTED_EXECUTION_EVENTS.iter())
+        .chain(EXPECTED_ACCOUNTING_EVENTS.iter())
         .map(|s| s.to_string())
         .collect();
 
@@ -212,7 +220,7 @@ fn every_audit_token_is_a_wire_code_or_a_fixed_event_type() {
         foreign.is_empty(),
         "audit.rs mentions mcp-re.* token(s) that are neither a frozen McpReError::wire_code() nor \
          one of the fixed audit event_types (four verdict + three ADR-MCPRE-052 key-lifecycle + one \
-         ADR-MCPRE-070 execution) — a minted rejection reason outside the frozen taxonomy is forbidden (ADR-MCPS-035): {foreign:?}"
+         ADR-MCPRE-070 execution + one ADR-MCPRE-070 accounting) — a minted rejection reason outside the frozen taxonomy is forbidden (ADR-MCPS-035): {foreign:?}"
     );
 }
 
@@ -296,6 +304,39 @@ fn execution_event_set_is_exactly_the_one_item_allowlist() {
     }
 }
 
+/// Condition (2d): the accounting allowlist is EXACTLY the one expected event — derived from
+/// the `ACCOUNTING_EVENT_TYPES` slice declared in `audit.rs`, parsed from disk (ADR-MCPRE-070
+/// D2, Q3). A category of its own: it joins neither the success set, so the two success
+/// events keep their meanings, nor any other.
+#[test]
+fn accounting_event_set_is_exactly_the_one_item_allowlist() {
+    let audit = read("MCP_RE_CORE_SRC_AUDIT");
+    let consts = event_type_consts(&audit);
+    let declared =
+        resolve_slice_tokens(&slice_value_body(&audit, "ACCOUNTING_EVENT_TYPES"), &consts);
+    let expected: BTreeSet<String> = EXPECTED_ACCOUNTING_EVENTS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(
+        declared, expected,
+        "audit.rs ACCOUNTING_EVENT_TYPES must be EXACTLY the one-item allowlist \
+         (mcp-re.audit.accounting) — no second accounting event without an ADR (ADR-MCPRE-070 Q3)"
+    );
+    for other in [
+        "SUCCESS_EVENT_TYPES",
+        "REJECTION_EVENT_TYPES",
+        "KEY_LIFECYCLE_EVENT_TYPES",
+        "EXECUTION_EVENT_TYPES",
+    ] {
+        let members = resolve_slice_tokens(&slice_value_body(&audit, other), &consts);
+        assert!(
+            members.is_disjoint(&expected),
+            "{other} lists the accounting record; it is its own category (ADR-MCPRE-070 Q3)"
+        );
+    }
+}
+
 /// Condition (3): no audit `event_type` is itself a frozen `wire_code()` token.
 /// A rejection sub-name like `mcp-re.request.rejected.bad_signature` would either
 /// shadow a wire_code or duplicate it; the fixed event_types must stay disjoint
@@ -308,6 +349,7 @@ fn event_types_do_not_collide_with_frozen_wire_codes() {
         .chain(EXPECTED_REJECTION_EVENTS.iter())
         .chain(EXPECTED_KEY_LIFECYCLE_EVENTS.iter())
         .chain(EXPECTED_EXECUTION_EVENTS.iter())
+        .chain(EXPECTED_ACCOUNTING_EVENTS.iter())
     {
         assert!(
             !codes.contains(*ev),

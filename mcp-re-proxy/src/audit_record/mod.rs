@@ -49,6 +49,8 @@
 //! would model a producer that does not exist.
 
 /// Turning a decision into an event and offering it to the observer: the one funnel.
+/// The bounded aggregate accounting record: committed, never observed (ADR-MCPRE-070 D2, Q3).
+mod accounting;
 mod emission;
 /// The produced event: identity, scope, canonical bytes and digest (ADR-MCPRE-070 §8).
 mod envelope;
@@ -76,6 +78,9 @@ pub(crate) use emission::{offer_produced, produce, record_to};
 // Crate-wide because the stderr stream, in `audit_sink`, opens this process's run at startup
 // so the start line names it before any record is produced.
 pub(crate) use envelope::open_process_run;
+// Crate-wide because the required posture's accounting cadence, in `audit_commitment`,
+// commits it (ADR-MCPRE-070 D2, Q3).
+pub(crate) use accounting::{AccountingCounts, AccountingRecord};
 // Crate-wide because the intent is committed by the serving path's G1 (ADR-MCPRE-070).
 #[cfg(test)]
 pub(crate) use envelope::EventAllocator;

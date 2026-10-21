@@ -138,6 +138,7 @@ not an omission to hide.
 | proxy.audit_intent_gate | V0 | _none_ | 0 |
 | proxy.audit_intent_gate_sole_producer | V0 | _none_ | 0 |
 | proxy.audit_outcome_gate | V0 | _none_ | 0 |
+| proxy.audit_posture | V0 | _none_ | 0 |
 | proxy.audit_run_receipt_recording | V0 | _none_ | 0 |
 | proxy.audit_text_rendering | V0 | THM-0130 | 0 |
 | proxy.audit_vocabulary_import | V0 | THM-0071 | 0 |

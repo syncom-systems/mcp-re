@@ -66,6 +66,8 @@ mod stream;
 // function; the acquisition itself stays at its registered `boundary.os_entropy` site.
 pub(crate) use stream::draw_run_entropy;
 
+/// The observer's cumulative counts, read by the accounting record (ADR-MCPRE-070 D2).
+pub(crate) mod observer_accounting;
 /// What the writer thread does with a line, and what it can truthfully say afterwards.
 mod writer;
 
@@ -122,22 +124,24 @@ fn reserve_slot(queued: &std::sync::atomic::AtomicUsize, ceiling: usize) -> bool
 /// past it the line is dropped even though the channel would still accept it, which is
 /// what keeps an unauthenticated flood from choosing whose record is lost. The slot is
 /// reserved before the send and released if the send fails, so the reservation counts
-/// exactly what is on the queue.
+/// exactly what is on the queue. Answers whether the line was queued.
 fn offer(
     queue: &std::sync::mpsc::SyncSender<AuditMessage>,
     dropped: &std::sync::atomic::AtomicU64,
     queued: &std::sync::atomic::AtomicUsize,
     line: String,
     ceiling: usize,
-) {
+) -> bool {
     if !reserve_slot(queued, ceiling) {
         dropped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        return;
+        return false;
     }
-    if queue.try_send(AuditMessage::Line(line)).is_err() {
+    let sent = queue.try_send(AuditMessage::Line(line)).is_ok();
+    if !sent {
         queued.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         dropped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
+    sent
 }
 
 /// A harness sink, not a deployment one: it retains every event in memory, unbounded and

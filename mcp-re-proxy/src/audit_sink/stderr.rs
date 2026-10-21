@@ -111,13 +111,14 @@ impl StderrAuditSink {
 impl AuditSink for StderrAuditSink {
     fn record(&self, envelope: &AuditEnvelope) {
         let line = audit_line(&envelope.id(), envelope.record());
-        offer(
+        let queued = offer(
             stderr_audit_writer(),
             &STDERR_AUDIT_DROPPED,
             &STDERR_AUDIT_QUEUED,
             line,
             admission_ceiling(envelope.record()),
         );
+        super::observer_accounting::count_offer(envelope.record().actor_id.is_some(), queued);
     }
 
     fn unnumbered(&self, failure: &EventIdentityFailure) {

@@ -3614,7 +3614,11 @@ tested_symbols = [
 id = "proxy.unestablishable_capability_refusal"
 class = "V0"
 description = "A CAPABILITY THE DEPLOYMENT SELECTED THAT CANNOT BE ESTABLISHED REFUSES STARTUP AND NAMES WHAT IS MISSING, rather than serving without it: an authorization profile whose issuer is enrolled in no authority slot refuses at boot naming the slot the operator has to fill, a shared replay tier that cannot be opened refuses before the listener exists and names why it could not be opened, and a key source or durability tier this build does not carry refuses at construction naming the feature. The refusal is invariant across build profiles; only the reason varies, and the controls distinguish the lanes rather than asserting whichever one they were written in. Says nothing about WHICH postures are legal, which is layer A's and each classifier's own unit; nothing about the ORDER the planes are established in, which no theorem states; and nothing about what an established capability then does."
-paths = ["mcp-re-proxy/src/app.rs"]
+paths = [
+  "mcp-re-proxy/src/app.rs",
+  # Where a startup refusal leaves `run`: the entry points left `app.rs` in #1206.
+  "mcp-re-proxy/src/app/entry.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -9503,6 +9507,9 @@ paths = [
   "mcp-re-proxy/src/audit_commitment/provider_failure.rs",
   "mcp-re-proxy/src/audit_commitment/receipt.rs",
   "mcp-re-proxy/src/audit_commitment/reference.rs",
+  "mcp-re-proxy/src/audit_commitment/reference_probe.rs",
+  "mcp-re-proxy/src/audit_commitment/reference_step.rs",
+  "mcp-re-proxy/src/audit_commitment/forgery.rs",
   "mcp-re-proxy/src/audit_commitment/request.rs",
   "mcp-re-proxy/src/audit_commitment/tier.rs",
 ]
@@ -9558,8 +9565,11 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::tier::tests::the_vocabulary_is_closed_at_two_in_v1",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::tier::tests::only_survives_proxy_process_loss_meets_the_required_minimum",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::tier::tests::no_guarantee_claims_unconditional_durability",
-  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::the_tier_is_read_once_at_establishment",
-  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::an_ineligible_tier_is_reported_by_meets_required_minimum",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::an_eligible_provider_that_answers_is_established_reading_its_tier_once",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::forgery::tests::a_forged_crossing_names_another_crossing",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::reference_probe::tests::each_step_answers_as_named",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::reference_step::tests::a_hook_prints_as_a_hook",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_tier_below_the_minimum_is_refused_before_the_probe",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::crossing::tests::intent_and_outcome_have_distinct_kinds",
   # The instrument's own controls: the test-only reference authority deduplicates an
   # identical retry, refuses a reused identity, and is deterministic. Without them a green
@@ -9638,11 +9648,10 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::an_absent_coordinate_is_500_and_asks_nothing",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_coordinate_from_another_run_is_500_and_asks_nothing",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::each_failure_class_earns_its_own_status",
-  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_volatile_provider_cannot_serve_the_crossing",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_spent_budget_refuses_before_dispatch_and_asks_nobody",
   # The posture: best-effort mints the owner's statement and asks nothing; required never does.
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::only_best_effort_mints_not_required",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_required_posture_never_yields_not_required",
-  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_required_posture_is_refused_over_a_volatile_authority_or_an_illegal_bound",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::installing_an_observer_keeps_the_commitment_posture",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::not_required::tests::the_statement_is_a_value_the_owner_hands_out",
   "//mcp-re-proxy:proxy_unit_test#request_stages::intent_disposition::tests::the_intent_obligation_has_exactly_two_cases",
@@ -9751,6 +9760,84 @@ tested_symbols = [
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::signed_refusals_under_required_are_unchanged_and_commit_no_outcome",
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::w4_cancel_after_dispatch_never_claims_nothing_executed",
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::w6_outcome_committed_then_lost_before_the_write",
+]
+
+
+[[unit]]
+id = "proxy.audit_posture"
+class = "V0"
+description = "THE REQUESTED AUDIT DELIVERY AND THE ESTABLISHED ONE ARE ONE FACT (ADR-MCPRE-070 §2, §7, §11, D2, D3, Q3). `--audit-commitment required` is never served as best-effort and never declared OFF: it refuses startup — before any plane materializes — when the build registers no commitment provider, when the registered provider is the test-only reference authority without its acknowledgement, when the provider declares a tier below SURVIVES_PROXY_PROCESS_LOSS (audit-durability/v1), when its bounded startup probe fails, times out or panics, and (at the configuration boundary) when the observer is `--audit-sink none`. The refusal names only the provider id, a tier, a class and a bound — never provider text. A registered provider under best-effort is named and never asked. The REQUIRED posture line is assembled only over an established provider, states the tier as DECLARED, and discloses the observer's seq gaps. Commitments have their own try-acquired budget: a spent one refuses before dispatch with the outage's 503, asks no provider, and leaves the observer untouched. The run's mcp-re.audit.accounting record is committed once per interval, cumulative, run- and interval-attributed, with missed intervals stated and coverage always a lower bound. Says nothing about whether any provider persists anything: the tier is a declaration and an external evidence obligation (D3)."
+paths = [
+  "mcp-re-proxy/src/audit_commitment/plan.rs",
+  "mcp-re-proxy/src/audit_commitment/providers.rs",
+  "mcp-re-proxy/src/audit_commitment/provider_id.rs",
+  "mcp-re-proxy/src/audit_commitment/refusal.rs",
+  "mcp-re-proxy/src/audit_commitment/establish_failure.rs",
+  "mcp-re-proxy/src/audit_commitment/established_audit.rs",
+  "mcp-re-proxy/src/audit_commitment/budget.rs",
+  "mcp-re-proxy/src/audit_commitment/accounting.rs",
+  "mcp-re-proxy/src/audit_commitment/cadence.rs",
+  # Shared with `proxy.audit_commitment_witness`: establishment, and the budget's try-acquire.
+  "mcp-re-proxy/src/audit_commitment/established/mod.rs",
+  "mcp-re-proxy/src/audit_record/accounting.rs",
+  "mcp-re-proxy/src/audit_sink/observer_accounting.rs",
+  "mcp-re-proxy/src/config_state/audit_policy.rs",
+  "mcp-re-proxy/src/serving_capabilities/audit_posture.rs",
+  "mcp-re-proxy/src/app/entry.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/audit/posture",
+  "mutation://proxy/audit/posture",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#app::entry::tests::the_default_entry_refuses_a_required_deployment_before_any_effect",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::plan::tests::required_without_a_provider_is_refused_never_best_effort",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::plan::tests::the_reference_authority_is_refused_without_the_acknowledgement",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::plan::tests::a_registered_provider_is_not_promoted_under_best_effort",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::plan::tests::best_effort_establishes_nothing",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::providers::tests::none_registers_nothing",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::providers::tests::only_the_test_constructor_acknowledges_the_reference",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::provider_id::tests::a_name_in_the_grammar_is_accepted_verbatim",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::provider_id::tests::anything_outside_the_grammar_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::provider_id::tests::the_reference_name_is_reserved",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::refusal::tests::every_refusal_names_the_flag",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::refusal::tests::a_tier_refusal_names_the_vocabulary_and_the_declared_tier",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::establish_failure::tests::every_class_has_a_distinct_wire_name",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established_audit::tests::best_effort_names_without_holding",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_probe_that_fails_hangs_or_panics_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::the_refusal_carries_no_provider_text",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::a_spent_budget_refuses_before_the_provider_is_asked",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::budget::tests::a_spent_budget_refuses_at_once_and_a_dropped_permit_returns",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::budget::tests::a_cancelled_holder_returns_its_permit",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::accounting::tests::each_settled_attempt_is_counted_by_its_class",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::accounting::tests::an_attempt_dropped_unsettled_is_uncertain",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::accounting::tests::the_shutdown_line_states_its_limits",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::cadence::tests::a_failed_record_is_a_missed_interval_the_next_one_states",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::cadence::tests::a_spent_budget_is_a_missed_interval_not_a_wait",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::cadence::tests::a_hanging_provider_is_bounded_and_missed",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::accounting::tests::the_record_names_no_actor_and_no_reason",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::accounting::tests::the_coverage_is_always_a_lower_bound",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::accounting::tests::an_unrepresentable_count_saturates_rather_than_wraps",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::accounting::tests::the_record_belongs_to_the_run_and_no_exchange",
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::observer_accounting::tests::each_class_is_counted_and_never_reset",
+  "//mcp-re-proxy:proxy_unit_test#config_state::audit_policy::tests::the_three_legal_forms_are_classified",
+  "//mcp-re-proxy:proxy_unit_test#config_state::audit_policy::tests::required_without_an_observer_is_refused_not_downgraded",
+  "//mcp-re-proxy:proxy_unit_test#config_state::audit_policy::tests::the_projections_follow_the_state",
+  "//mcp-re-proxy:proxy_unit_test#serving_capabilities::audit_posture::tests::an_unused_provider_is_named_and_not_promoted",
+  "//mcp-re-proxy:proxy_unit_test#serving_capabilities::audit_posture::tests::the_required_posture_carries_its_established_provider_and_says_so",
+  "//mcp-re-proxy:proxy_unit_test#serving_capabilities::audit_posture::tests::a_required_posture_that_cannot_be_established_refuses",
+  "//mcp-re-proxy:integration_test#app_startup_characterization_test::the_open_source_binary_refuses_a_required_audit_posture_before_any_plane",
+  "//mcp-re-proxy:integration_test#app_startup_characterization_test::a_required_audit_posture_without_an_observer_is_refused_as_configuration",
+  "//mcp-re-proxy:integration_test#app_startup_characterization_test::injected_provider::a_fake_qualified_provider_that_fails_establishment_is_refused",
+  "//mcp-re-proxy:integration_test#app_startup_characterization_test::injected_provider::a_volatile_provider_is_refused_without_being_probed",
+  "//mcp-re-proxy:integration_test#app_startup_characterization_test::injected_provider::a_qualified_provider_is_established_inside_the_real_startup",
+  "//mcp-re-proxy:integration_test#app_startup_characterization_test::injected_provider::a_registered_provider_is_not_promoted_under_best_effort",
+  "//mcp-re-proxy:integration_test#startup_transcript::normalize_tests::an_unrecognized_audit_delivery_fails_rather_than_guessing",
+  "//mcp-re-proxy:integration_test#startup_transcript::normalize_tests::every_audit_posture_production_states_is_read",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::a_spent_commitment_budget_refuses_before_dispatch_and_the_observer_is_unaffected",
 ]
 
 
@@ -12540,7 +12627,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.evidence_retention_state"
 class = "V0"
-description = "WHAT THIS DEPLOYMENT RECORDS, AND WHAT IT MERELY ASSERTS: every legal state form of the audit, retention and verified-context machines is classified, retention is selected by its OWN locator so the posture and the path are one answer, the retaining state carries the directory that selected it rather than leaving a second question to ask, and only the TRUSTED verified-context state asserts the inner-channel property no configuration check can confirm. Says nothing about whether the named directory is writable or whether the asserted isolation holds — the last clause is precisely the boundary between what configuration checks and what a trusted context asserts."
+description = "WHAT THIS DEPLOYMENT RETAINS, AND WHAT IT MERELY ASSERTS: every legal state form of the retention and verified-context machines is classified, retention is selected by its OWN locator so the posture and the path are one answer, the retaining state carries the directory that selected it rather than leaving a second question to ask, and only the TRUSTED verified-context state asserts the inner-channel property no configuration check can confirm. Says nothing about whether the named directory is writable or whether the asserted isolation holds — the last clause is precisely the boundary between what configuration checks and what a trusted context asserts."
 paths = ["mcp-re-proxy/src/config_state/evidence.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -12891,6 +12978,7 @@ tested_symbols = [
   "//mcp-re-conformance:audit_vocabulary_guard_test#every_audit_token_is_a_wire_code_or_a_fixed_event_type",
   # ADR-MCPRE-070 D1: the execution category, a versioned extension pinned at exactly one.
   "//mcp-re-conformance:audit_vocabulary_guard_test#execution_event_set_is_exactly_the_one_item_allowlist",
+  "//mcp-re-conformance:audit_vocabulary_guard_test#accounting_event_set_is_exactly_the_one_item_allowlist",
   "//mcp-re-conformance:audit_vocabulary_guard_test#guard_inputs_are_non_empty",
   "//mcp-re-conformance:audit_vocabulary_guard_test#key_lifecycle_event_set_is_exactly_the_three_item_allowlist",
   "//mcp-re-conformance:audit_vocabulary_guard_test#no_authorization_hash_mismatch_audit_reason",
@@ -13276,7 +13364,11 @@ tested_symbols = [
 id = "proxy.serving_capability_posture"
 class = "V0"
 description = "AN OPTIONAL SERVING CAPABILITY IS ON WITH THE ARTIFACT IT ATTACHES OR OFF WITH NONE, AND WHICH IT IS FOLLOWS THE CLASSIFIED CONFIGURATION: the ON constructor cannot be reached without the artifact and the OFF constructor has nowhere to put one, so `the transcript says this protection is running` and `something was established` are one value rather than two statements kept in agreement; the verified-context carrier is attached only for a trusted inner channel and the security-audit posture only for the classified audit state; a retention store is opened exactly when the state named a directory, and a directory that cannot be opened REFUSES STARTUP rather than resolving to the OFF posture. It says nothing about the ORDER capabilities are established in, which is the composition root's, and nothing about what an OFF line tells the operator to do, which is an operator-facing promise left in the ADR-069 census under NP-123."
-paths = ["mcp-re-proxy/src/serving_capabilities.rs"]
+paths = [
+  "mcp-re-proxy/src/serving_capabilities.rs",
+  # The security-audit seam, in its own child since #1206.
+  "mcp-re-proxy/src/serving_capabilities/audit_posture.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
@@ -13287,7 +13379,7 @@ evidence = [
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::an_on_posture_always_carries_an_artifact_and_an_off_posture_never_does",
   "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::the_verified_context_carrier_is_attached_only_for_a_trusted_inner_channel",
-  "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::the_security_audit_posture_travels_with_the_sink_it_installs",
+  "//mcp-re-proxy:proxy_unit_test#serving_capabilities::audit_posture::tests::best_effort_keeps_its_meaning_and_installs_what_its_line_says",
   "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::evidence_retention_attaches_a_store_only_for_a_named_directory",
   "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::an_unopenable_retention_directory_refuses_startup_naming_the_flag",
 ]

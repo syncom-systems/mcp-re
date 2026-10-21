@@ -126,7 +126,7 @@ impl<K: Crossing> Redeemed<K> {
     }
 
     /// The tier it was committed at.
-    #[cfg_attr(not(test), allow(dead_code))] // read by the posture line (#1206); no emitter reads it yet
+    #[cfg_attr(not(test), allow(dead_code))] // no production reader: the posture line states the established provider's tier, and no crossing branches on a redeemed one
     pub(crate) fn tier(&self) -> DurabilityTier {
         self.tier
     }
@@ -148,7 +148,9 @@ mod tests {
     }
 
     fn provider(steps: impl IntoIterator<Item = Step>) -> Arc<EstablishedProvider> {
-        EstablishedProvider::establish(Arc::new(ReferenceAuthority::new(TIER).scripted(steps)))
+        EstablishedProvider::eligible_for_test(Arc::new(
+            ReferenceAuthority::new(TIER).scripted(steps),
+        ))
     }
 
     fn mismatch(field: BindingField) -> Result<(), CommitmentFailure> {
@@ -279,8 +281,8 @@ mod tests {
     #[tokio::test]
     async fn redeem_refuses_a_witness_from_another_established_instance() {
         let authority = Arc::new(ReferenceAuthority::new(TIER));
-        let earlier = EstablishedProvider::establish(authority.clone());
-        let current = EstablishedProvider::establish(authority);
+        let earlier = EstablishedProvider::eligible_for_test(authority.clone());
+        let current = EstablishedProvider::eligible_for_test(authority);
         let sent = fixtures::envelope(0, "actor-a");
         let witness = earlier
             .commit::<Intent>(&sent, bound())

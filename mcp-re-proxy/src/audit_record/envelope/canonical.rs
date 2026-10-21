@@ -5,10 +5,10 @@
 //!
 //! ```text
 //! off  size  field
-//! 0    1     version = 0x02
+//! 0    1     version = 0x03
 //! 1    16    id.run
 //! 17   8     id.seq            i64 BE, 0 <= seq < i64::MAX
-//! 25   1     scope             0x01 Origin | 0x02 Exchange | 0x03 PreAcceptance
+//! 25   1     scope             0x01 Origin | 0x02 Exchange | 0x03 PreAcceptance | 0x04 Run
 //! 26   24    (Exchange only)   coordinate.run[16] || coordinate.seq i64 BE
 //! ..   2     field count       u16 BE
 //! ..         per field: class u8, then its payload
@@ -19,9 +19,10 @@
 //! ```
 //!
 //! The field sequence is exactly the event's own `audit_fields()`: the owners' facets are
-//! projected, never re-derived (ADR-MCPRE-066 invariant 5). The event set has three arms: a
-//! request record (Origin or PreAcceptance), a response record (Exchange), and an execution
-//! intent (Exchange only; `event`, `actor`, `at` — ADR-MCPRE-070 D1). Names are not encoded, because
+//! projected, never re-derived (ADR-MCPRE-066 invariant 5). The event set has four arms: a
+//! request record (Origin or PreAcceptance), a response record (Exchange), an execution
+//! intent (Exchange only; `event`, `actor`, `at` — ADR-MCPRE-070 D1), and an accounting
+//! record (Run only; `event`, then thirteen fields — ADR-MCPRE-070 D2, Q3). Names are not encoded, because
 //! position is schema; the class byte is, because `Token("none")` and `Text("none")` are
 //! different facts. There are no varints, no optional padding and no alternative forms, so
 //! two encodings of one event are equal byte for byte.
@@ -32,21 +33,22 @@
 //! - An event's bytes are fixed when it is produced and are never re-encoded: a retry
 //!   resends the same bytes.
 //! - Any change to the header, the class set, the event set or any arm's field sequence is a
-//!   new version. `every_enumerable_record_matches_the_v2_schema_table` fails on such a
+//!   new version. `every_enumerable_record_matches_the_v3_schema_table` fails on such a
 //!   change until the version moves with it.
-//! - While no commitment provider exists, no canonical bytes leave the process, so a version
-//!   change replaces its predecessor whole. From the first provider on, each prior version's
-//!   golden vectors are kept and the set of versions a reader accepts is declared.
+//! - No commitment provider exists in this tree, so no canonical bytes have left a process and
+//!   a version change replaces its predecessor whole. From the first provider on, each prior
+//!   version's golden vectors are kept and the set of versions a reader accepts is declared.
 
 use super::{EventId, EventIdentityFailure, EventScope};
 use crate::audit_record::text::{AuditField, AuditValue};
 
 /// The one version this writer emits.
-pub const CANONICAL_VERSION: u8 = 2;
+pub const CANONICAL_VERSION: u8 = 3;
 
 const SCOPE_ORIGIN: u8 = 0x01;
 const SCOPE_EXCHANGE: u8 = 0x02;
 const SCOPE_PRE_ACCEPTANCE: u8 = 0x03;
+const SCOPE_RUN: u8 = 0x04;
 
 const CLASS_ABSENT: u8 = 0x00;
 const CLASS_TOKEN: u8 = 0x01;
@@ -71,6 +73,7 @@ pub(super) fn encode(
             push_id(&mut out, &coordinate.accepted_event());
         }
         EventScope::PreAcceptance => out.push(SCOPE_PRE_ACCEPTANCE),
+        EventScope::Run => out.push(SCOPE_RUN),
     }
     let count = u16::try_from(fields.len()).map_err(|_| EventIdentityFailure::Unencodable)?;
     out.extend_from_slice(&count.to_be_bytes());
@@ -195,9 +198,9 @@ mod tests {
         encode(&id(seq), scope, &record.audit_fields()).expect("a record encodes")
     }
 
-    /// The header every vector shares: version 2, run 0x11 x 16, seq 7.
+    /// The header every vector shares: version 3, run 0x11 x 16, seq 7.
     const HEADER: [u8; 25] = [
-        0x02, // version
+        0x03, // version
         0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, // run
         0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, //
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, // seq = 7
@@ -338,6 +341,54 @@ mod tests {
         .concat()
     }
 
+    /// (h) audit.accounting, interval 2 of the run, with one interval missed.
+    fn golden_accounting() -> Vec<u8> {
+        let n = |v: u8| [0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, v];
+        [
+            &HEADER[..],
+            &[0x04],       // scope Run
+            &[0x00, 0x0e], // 14 fields
+            &[0x01, 0x00, 0x00, 0x00, 0x17],
+            b"mcp-re.audit.accounting", // event Token(23)
+            &n(2),                      // interval
+            &n(120),                    // from
+            &n(180),                    // to
+            &n(1),                      // missed
+            &n(9),                      // unattributed
+            &n(3),                      // dropped
+            &n(2),                      // dropped_unattributed
+            &n(40),                     // committed
+            &n(1),                      // rejected
+            &n(4),                      // unavailable
+            &n(1),                      // uncertain
+            &n(5),                      // budget_exhausted
+            &[0x01, 0x00, 0x00, 0x00, 0x14],
+            b"observed-lower-bound", // coverage Token(20)
+        ]
+        .concat()
+    }
+
+    fn accounting_fields() -> Vec<AuditField<'static>> {
+        crate::audit_record::AccountingRecord {
+            interval: 2,
+            from_unix: 120,
+            to_unix: 180,
+            missed: 1,
+            counts: crate::audit_record::AccountingCounts {
+                unattributed: 9,
+                dropped: 3,
+                dropped_unattributed: 2,
+                committed: 40,
+                rejected: 1,
+                unavailable: 4,
+                uncertain: 1,
+                budget_exhausted: 5,
+            },
+        }
+        .audit_fields()
+        .to_vec()
+    }
+
     fn intent_fields() -> Vec<AuditField<'static>> {
         crate::audit_record::ExecutionIntent::new("actor-a", 10)
             .audit_fields()
@@ -388,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn the_v2_golden_vectors_are_byte_exact() {
+    fn the_v3_golden_vectors_are_byte_exact() {
         assert_eq!(
             encoded(&accepted(), 7, &EventScope::Origin),
             golden_accepted()
@@ -418,23 +469,31 @@ mod tests {
             encode(&id(7), &exchange(), &intent_fields()).expect("encodes"),
             golden_intent()
         );
+        assert_eq!(
+            encode(&id(7), &EventScope::Run, &accounting_fields()).expect("encodes"),
+            golden_accounting()
+        );
     }
 
-    /// The content identity of three vectors, computed independently of this crate:
+    /// The content identity of four vectors, computed independently of this crate:
     /// `xxd -r -p | (printf 'mcp-re-audit-v1/envelope\0'; cat) | shasum -a 256`.
     #[test]
-    fn the_v2_golden_digests_are_pinned() {
+    fn the_v3_golden_digests_are_pinned() {
         assert_eq!(
             ContentDigest::of(&golden_accepted()).to_string(),
-            "3cc2feec73ed9be18ce1f3a9bf5e5fabfce7486fb3644dab3c1c98a6d6771f17"
+            "2d2e2aa7e9fa95e3e693cdd69c19aa39b13d53ea79d8180605fef2e4d0a2a575"
         );
         assert_eq!(
             ContentDigest::of(&golden_signed()).to_string(),
-            "042dbf823c1d6eb1e2b439c8d2eab2b195fef67cfff06898ebfbf5c6e56552e2"
+            "8a8f501df97d6066289c056abd16b816b305837c231a3375e00a3c5d79c36f95"
         );
         assert_eq!(
             ContentDigest::of(&golden_intent()).to_string(),
-            "8e38b34bec77dbee94f92ab5deb94a958c87e83e74fc40179583c21a11060ab3"
+            "ff18fec070cca6e1d666935cf4971b51a3d6efac517bf5df958c0186e96de395"
+        );
+        assert_eq!(
+            ContentDigest::of(&golden_accounting()).to_string(),
+            "638fb531a35ec94f05b619c67b216d7a67d520b89bc2d3a2fb6c42565980e7dc"
         );
     }
 
@@ -543,6 +602,7 @@ mod tests {
         Origin,
         Exchange([u8; 16], i64),
         PreAcceptance,
+        Run,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -582,11 +642,11 @@ mod tests {
         }
     }
 
-    /// Reads exactly one canonical v2 event and refuses everything else.
+    /// Reads exactly one canonical v3 event and refuses everything else.
     fn read(bytes: &[u8]) -> Result<Decoded, String> {
         let mut c = Cursor(bytes);
         let version = c.byte()?;
-        if version != 0x02 {
+        if version != 0x03 {
             return Err(format!("version {version}"));
         }
         let (run, seq) = (c.run()?, c.i64()?);
@@ -603,6 +663,7 @@ mod tests {
                 Scope::Exchange(r, s)
             }
             0x03 => Scope::PreAcceptance,
+            0x04 => Scope::Run,
             tag => return Err(format!("scope tag {tag}")),
         };
         let count = u16::from_be_bytes(c.take(2)?.try_into().expect("2 bytes"));
@@ -635,9 +696,20 @@ mod tests {
         }
     }
 
-    /// The v2 schema, by position: an intent's three fields, or the six exchange-wide
-    /// fields and, for a request, the authorization group and the admission group.
+    /// The v3 schema, by position: an accounting record's fourteen fields, an intent's three,
+    /// or the six exchange-wide fields and, for a request, the authorization group and the
+    /// admission group.
     fn check_schema(scope: &Scope, values: &[Value]) -> Result<(), String> {
+        if token(values, 0)? == "mcp-re.audit.accounting" {
+            let counts = values.get(1..13).unwrap_or_default();
+            let numbers =
+                counts.len() == 12 && counts.iter().all(|v| matches!(v, Value::Number(_)));
+            return match (scope, numbers, values.get(13), values.len()) {
+                (Scope::Run, true, Some(Value::Token(_)), 14) => Ok(()),
+                (Scope::Run, ..) => Err("the accounting record's fields are malformed".into()),
+                _ => Err("an accounting record belongs to the run".into()),
+            };
+        }
         if token(values, 0)? == "mcp-re.execution.intent" {
             return match (scope, values) {
                 (Scope::Exchange(..), [Value::Token(_), Value::Text(_), Value::Number(_)]) => {
@@ -702,6 +774,7 @@ mod tests {
             golden_signed(),
             golden_response_rejected_elsewhere(),
             golden_intent(),
+            golden_accounting(),
         ]
     }
 
@@ -748,8 +821,8 @@ mod tests {
                 read(&[&vector[..], &[0x00]].concat()).is_err(),
                 "a trailing byte"
             );
-            assert!(read(&with(vector.clone(), 0, 0x01)).is_err(), "version 1");
-            assert!(read(&with(vector.clone(), 0, 0x03)).is_err(), "version 3");
+            assert!(read(&with(vector.clone(), 0, 0x02)).is_err(), "version 2");
+            assert!(read(&with(vector.clone(), 0, 0x04)).is_err(), "version 4");
             assert!(
                 read(&with_seq(vector.clone(), -1)).is_err(),
                 "a negative seq"
@@ -791,10 +864,25 @@ mod tests {
             read(&encoded(&signed(), 3, &exchange())).is_err(),
             "a coordinate that is not earlier than its event"
         );
-        for scope in [EventScope::Origin, EventScope::PreAcceptance] {
+        for scope in [
+            EventScope::Origin,
+            EventScope::PreAcceptance,
+            EventScope::Run,
+        ] {
             let intent = encode(&id(7), &scope, &intent_fields()).expect("encodes");
             assert!(read(&intent).is_err(), "an intent under {scope:?}");
         }
+        for scope in [EventScope::Origin, EventScope::PreAcceptance, exchange()] {
+            let accounting = encode(&id(7), &scope, &accounting_fields()).expect("encodes");
+            assert!(
+                read(&accounting).is_err(),
+                "an accounting record under {scope:?}"
+            );
+        }
+        assert!(
+            read(&encoded(&signed(), 7, &EventScope::Run)).is_err(),
+            "Run on signed"
+        );
         let decided = encoded(&signed(), 7, &exchange());
         let mut relabelled = golden_intent();
         relabelled.truncate(52);
@@ -804,17 +892,17 @@ mod tests {
         );
     }
 
-    // ---- the v2 schema table --------------------------------------------------------------
+    // ---- the v3 schema table --------------------------------------------------------------
 
     const T: u8 = CLASS_TOKEN;
     const N: u8 = CLASS_NUMBER;
     const X: u8 = CLASS_TEXT;
     const A: u8 = CLASS_ABSENT;
 
-    /// One position of the schema: the field's name and the classes v2 admits there.
+    /// One position of the schema: the field's name and the classes v3 admits there.
     type Slot = (&'static str, &'static [u8]);
 
-    /// Every field, by position, and the classes v2 admits there.
+    /// Every field, by position, and the classes v3 admits there.
     const EXCHANGE_WIDE: &[Slot] = &[
         ("event", &[T]),
         ("decision", &[T]),
@@ -845,6 +933,22 @@ mod tests {
         ),
     ];
     const INTENT: &[Slot] = &[("event", &[T]), ("actor", &[X]), ("at", &[N])];
+    const ACCOUNTING: &[Slot] = &[
+        ("event", &[T]),
+        ("interval", &[N]),
+        ("from", &[N]),
+        ("to", &[N]),
+        ("missed", &[N]),
+        ("unattributed", &[N]),
+        ("dropped", &[N]),
+        ("dropped_unattributed", &[N]),
+        ("committed", &[N]),
+        ("rejected", &[N]),
+        ("unavailable", &[N]),
+        ("uncertain", &[N]),
+        ("budget_exhausted", &[N]),
+        ("coverage", &[T]),
+    ];
     const ADMISSION: &[Slot] = &[("admission", &[T])];
     const ADMISSION_REFUSED: &[Slot] = &[("admission", &[T]), ("admission_refusal", &[T])];
 
@@ -857,7 +961,7 @@ mod tests {
         }
     }
 
-    /// The v2 field sequence `record` must have, from the table.
+    /// The v3 field sequence `record` must have, from the table.
     fn schema_of(record: &AuditRecord) -> Vec<Slot> {
         let mut schema = EXCHANGE_WIDE.to_vec();
         if record.subject.authorization().is_none() {
@@ -870,7 +974,7 @@ mod tests {
         let arm = AUTHZ_ARMS
             .iter()
             .find(|(name, _)| name == authz)
-            .unwrap_or_else(|| panic!("authz arm {authz} is not in the v2 table"));
+            .unwrap_or_else(|| panic!("authz arm {authz} is not in the v3 table"));
         schema.extend_from_slice(arm.1);
         schema.extend_from_slice(match record.subject.admission_refusal() {
             Some(_) => ADMISSION_REFUSED,
@@ -907,10 +1011,10 @@ mod tests {
             .expect("the evaluator grants")
     }
 
-    /// Every record this proxy can produce has exactly the v2 field sequence. A change to any
+    /// Every record this proxy can produce has exactly the v3 field sequence. A change to any
     /// arm — a field added, dropped, moved or reclassified — is a new canonical version.
     #[test]
-    fn every_enumerable_record_matches_the_v2_schema_table() {
+    fn every_enumerable_record_matches_the_v3_schema_table() {
         let admissions = [
             AdmissionFacet::NotReached,
             AdmissionFacet::NotConfigured,
@@ -978,9 +1082,9 @@ mod tests {
                         .all(|((name, c), (want, classes))| name == want && classes.contains(c));
                 assert!(
                     matches,
-                    "the field sequence of {record:?} is not the v2 schema — a change to it \
-                     is a new canonical version: bump CANONICAL_VERSION and keep the v2 \
-                     vectors.\nactual: {actual:?}\nv2:     {schema:?}"
+                    "the field sequence of {record:?} is not the v3 schema — a change to it \
+                     is a new canonical version: bump CANONICAL_VERSION and keep the v3 \
+                     vectors.\nactual: {actual:?}\nv3:     {schema:?}"
                 );
                 if let Some(AuditValue::Token(authz)) =
                     record.audit_fields().get(6).map(|f| f.value.clone())
@@ -996,8 +1100,21 @@ mod tests {
         assert_eq!(
             intent,
             INTENT.iter().map(|(n, c)| (*n, c[0])).collect::<Vec<_>>(),
-            "the intent's field sequence is not the v2 intent arm — a change to it is a new \
+            "the intent's field sequence is not the v3 intent arm — a change to it is a new \
              canonical version"
+        );
+        let accounting: Vec<(&str, u8)> = accounting_fields()
+            .iter()
+            .map(|f| (f.name, class(&f.value)))
+            .collect();
+        assert_eq!(
+            accounting,
+            ACCOUNTING
+                .iter()
+                .map(|(n, c)| (*n, c[0]))
+                .collect::<Vec<_>>(),
+            "the accounting record's field sequence is not the v3 accounting arm — a change to \
+             it is a new canonical version"
         );
         assert_eq!(
             arms_seen.len(),

@@ -93,7 +93,10 @@ mod tests {
         let authority = Arc::new(
             ReferenceAuthority::new(DurabilityTier::SurvivesProxyProcessLoss).scripted(steps),
         );
-        (authority.clone(), EstablishedProvider::establish(authority))
+        (
+            authority.clone(),
+            EstablishedProvider::eligible_for_test(authority),
+        )
     }
 
     fn bound(ms: u64) -> CommitmentBound {

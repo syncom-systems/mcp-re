@@ -2481,7 +2481,7 @@ fn hostile<'a>(
 module-tree-visibility = "`NoCommitmentRequired`'s one field is bare-private to `audit_commitment::not_required` and its constructor is `pub(in crate::audit_commitment)`; `Redeemed`'s fields are bare-private to `audit_commitment::established::witness`; `ReadyForDispatch` has one constructor, whose parameter list includes the intent disposition. The probes sit in the serving path's or the observer's modules, which can name the types and are refused everything else"
 alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes a `Redeemed<Intent>` by type; there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
 generated-or-deserialization = "`NoCommitmentRequired`, `IntentDisposition` and `Redeemed` derive Debug only: no Clone, Copy, Default, Serialize or Deserialize"
-test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`, and the required posture's only constructor, `AuditPosture::require`, is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
+test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`; the required posture's constructor `AuditPosture::required` takes an `EstablishedProvider`, whose only production constructor is the fallible `establish`, and the reference authority's registration `AuditProviders::with_reference_for_test` is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
 
 [[probe]]
 id = "S71"
@@ -2506,7 +2506,7 @@ fn hostile() -> NoCommitmentRequired {
 module-tree-visibility = "`NoCommitmentRequired`'s one field is bare-private to `audit_commitment::not_required` and its constructor is `pub(in crate::audit_commitment)`; `Redeemed`'s fields are bare-private to `audit_commitment::established::witness`; `ReadyForDispatch` has one constructor, whose parameter list includes the intent disposition. The probes sit in the serving path's or the observer's modules, which can name the types and are refused everything else"
 alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes a `Redeemed<Intent>` by type; there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
 generated-or-deserialization = "`NoCommitmentRequired`, `IntentDisposition` and `Redeemed` derive Debug only: no Clone, Copy, Default, Serialize or Deserialize"
-test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`, and the required posture's only constructor, `AuditPosture::require`, is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
+test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`; the required posture's constructor `AuditPosture::required` takes an `EstablishedProvider`, whose only production constructor is the fallible `establish`, and the reference authority's registration `AuditProviders::with_reference_for_test` is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
 
 [[probe]]
 id = "S72"
@@ -2532,7 +2532,7 @@ fn hostile(witness: CommitmentWitness<Intent>) -> IntentDisposition {
 module-tree-visibility = "`NoCommitmentRequired`'s one field is bare-private to `audit_commitment::not_required` and its constructor is `pub(in crate::audit_commitment)`; `Redeemed`'s fields are bare-private to `audit_commitment::established::witness`; `ReadyForDispatch` has one constructor, whose parameter list includes the intent disposition. The probes sit in the serving path's or the observer's modules, which can name the types and are refused everything else"
 alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes a `Redeemed<Intent>` by type; there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
 generated-or-deserialization = "`NoCommitmentRequired`, `IntentDisposition` and `Redeemed` derive Debug only: no Clone, Copy, Default, Serialize or Deserialize"
-test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`, and the required posture's only constructor, `AuditPosture::require`, is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
+test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`; the required posture's constructor `AuditPosture::required` takes an `EstablishedProvider`, whose only production constructor is the fallible `establish`, and the reference authority's registration `AuditProviders::with_reference_for_test` is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
 
 [[probe]]
 id = "S73"
@@ -2558,7 +2558,7 @@ fn hostile(outcome: Redeemed<Outcome>) -> IntentDisposition {
 module-tree-visibility = "`NoCommitmentRequired`'s one field is bare-private to `audit_commitment::not_required` and its constructor is `pub(in crate::audit_commitment)`; `Redeemed`'s fields are bare-private to `audit_commitment::established::witness`; `ReadyForDispatch` has one constructor, whose parameter list includes the intent disposition. The probes sit in the serving path's or the observer's modules, which can name the types and are refused everything else"
 alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes a `Redeemed<Intent>` by type; there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
 generated-or-deserialization = "`NoCommitmentRequired`, `IntentDisposition` and `Redeemed` derive Debug only: no Clone, Copy, Default, Serialize or Deserialize"
-test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`, and the required posture's only constructor, `AuditPosture::require`, is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
+test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`; the required posture's constructor `AuditPosture::required` takes an `EstablishedProvider`, whose only production constructor is the fallible `establish`, and the reference authority's registration `AuditProviders::with_reference_for_test` is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
 
 [[probe]]
 id = "S74"
@@ -2583,14 +2583,14 @@ fn hostile(sink: &dyn crate::audit_sink::AuditSink, intent: &CanonicalEvent) {
 module-tree-visibility = "`NoCommitmentRequired`'s one field is bare-private to `audit_commitment::not_required` and its constructor is `pub(in crate::audit_commitment)`; `Redeemed`'s fields are bare-private to `audit_commitment::established::witness`; `ReadyForDispatch` has one constructor, whose parameter list includes the intent disposition. The probes sit in the serving path's or the observer's modules, which can name the types and are refused everything else"
 alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes a `Redeemed<Intent>` by type; there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
 generated-or-deserialization = "`NoCommitmentRequired`, `IntentDisposition` and `Redeemed` derive Debug only: no Clone, Copy, Default, Serialize or Deserialize"
-test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`, and the required posture's only constructor, `AuditPosture::require`, is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
+test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`; the required posture's constructor `AuditPosture::required` takes an `EstablishedProvider`, whose only production constructor is the fallible `establish`, and the reference authority's registration `AuditProviders::with_reference_for_test` is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
 
 [[probe]]
 id = "S75"
 unit = "proxy.audit_intent_gate_sole_producer"
 kind = "in-crate-source-injection"
 crate = "//mcp-re-proxy:mcp_re_proxy"
-invariant = "the default library has no route into the required posture until the operator selector (#1206)"
+invariant = "the default library cannot register the test-only reference authority: its one route into the required posture is a provider that `EstablishedProvider::establish` established (ADR-MCPRE-070 §9, #1206)"
 insertion_parent = "mcp-re-proxy/src/http_profile_serve/mod.rs"
 marker = "STRUCTURAL-PROBE-SITE"
 error_code = "E0599"
@@ -2598,16 +2598,14 @@ construction = """
 // ADR-MCPRE-068 structural probe S75. Injected into a scratch copy by verify-structural;
 // this file cannot exist in the working tree, because it would not build — which is the
 // proposition it witnesses.
-use std::sync::Arc;
+use crate::audit_commitment::AuditProviders;
 
-use crate::audit_commitment::{AuditPosture, CommitmentAuthority};
-
-fn hostile(posture: &mut AuditPosture, authority: Arc<dyn CommitmentAuthority>) {
-    let _ = posture.require(authority, std::time::Duration::from_secs(1)); // STRUCTURAL-PROBE-SITE
+fn hostile() {
+    let _ = AuditProviders::with_reference_for_test; // STRUCTURAL-PROBE-SITE
 }
 """
 [probe.producer_paths]
 module-tree-visibility = "`NoCommitmentRequired`'s one field is bare-private to `audit_commitment::not_required` and its constructor is `pub(in crate::audit_commitment)`; `Redeemed`'s fields are bare-private to `audit_commitment::established::witness`; `ReadyForDispatch` has one constructor, whose parameter list includes the intent disposition. The probes sit in the serving path's or the observer's modules, which can name the types and are refused everything else"
 alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes a `Redeemed<Intent>` by type; there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
 generated-or-deserialization = "`NoCommitmentRequired`, `IntentDisposition` and `Redeemed` derive Debug only: no Clone, Copy, Default, Serialize or Deserialize"
-test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`, and the required posture's only constructor, `AuditPosture::require`, is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
+test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`; the required posture's constructor `AuditPosture::required` takes an `EstablishedProvider`, whose only production constructor is the fallible `establish`, and the reference authority's registration `AuditProviders::with_reference_for_test` is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
