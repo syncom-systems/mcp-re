@@ -337,8 +337,12 @@ crate.spec(
 crate.spec(
     package = "ureq",
     version = "2",
-    features = ["tls"],
     default_features = False,
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "webpki-roots",
+    version = "1",
     repositories = ["crates_mcp_re"],
 )
 crate.spec(

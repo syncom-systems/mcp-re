@@ -141,11 +141,15 @@ redis = { version = "1.4", default-features = false, features = ["tls-rustls"] }
 # so declaring them direct pulls ZERO new crates. SHA-256 CertIDs (no SHA-1 dep).
 x509-ocsp = { version = "0.2", features = ["builder"] }
 ureq = { version = "2", default-features = false }
+# The public Web PKI roots an outbound HTTPS agent authenticates a server against. ureq's own
+# `tls` feature reached them only through the 0.26 compatibility shim; the proxy installs
+# its own rustls connector over this crate instead (`outbound_fetch::public_roots`).
+webpki-roots = "1"
 # ADR-MCPS-028 (AWS KMS Ed25519 signer, feature `aws_kms_keysource`): SigV4 request
 # signing uses HMAC-SHA256 over RustCrypto primitives (sha2 is already in-closure),
 # NOT the async `aws-sdk-kms`/tokio/Smithy stack — the ADR-MCPS-018 lean-sync firewall
 # is a hard constraint. A pure, no-async crate; HTTPS transport reuses the blocking
-# `ureq` client (its `tls` feature is enabled only in mcp-re-proxy under that feature).
+# `ureq` client, over the proxy's own rustls connector (`outbound_fetch::public_roots`).
 # 0.13 is the `digest 0.11` generation — moves in lockstep with sha2/dalek above.
 hmac = "0.13"
 # der/spki/x509-cert are PINNED BY x509-ocsp 0.2.1 (the newest release), which
