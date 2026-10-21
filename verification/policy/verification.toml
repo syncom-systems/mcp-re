@@ -7806,6 +7806,9 @@ paths = [
   # claim is about.
   "mcp-re-proxy/src/outbound_fetch/binding.rs",
   "mcp-re-proxy/src/outbound_fetch/credential_egress.rs",
+  # The TLS the bound agent speaks. Same reason: it rides the same features, and which
+  # roots an HTTPS destination is authenticated against is part of what the agent carries.
+  "mcp-re-proxy/src/outbound_fetch/public_roots.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
