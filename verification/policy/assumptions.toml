@@ -3318,7 +3318,9 @@ description = "A required deployment's commitment provider answers within the co
 justification = """
 This is the condition of liveness, never of safety. THM-0135 and THM-0136 hold during any
 outage: an exchange whose intent or outcome cannot be committed is refused, before dispatch
-with `NothingExecuted` or after it with `PossiblyExecuted`, and that refusal is the claim
+with a disposition that never states a success (`NothingExecuted`, or
+`ApprovalSpentNothingExecuted` where a continuation approval was already spent) or after it
+with `PossiblyExecuted`, and that refusal is the claim
 working, not failing. That a required exchange eventually SUCCEEDS needs the provider to
 answer inside the bound and to come back after it stops (ADR-MCPRE-070 L1). That a committed
 event is eventually ARCHIVED needs the downstream transport, its consumers and the archive to

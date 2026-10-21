@@ -10422,7 +10422,7 @@ placed on the header rule rather than on the schema token.
 id = "M349-audit-third-success-event"
 unit = "conformance.audit_vocabulary_drift"
 theorem = "THM-0122"
-conjunct = "The net-new surface is exactly five events the error taxonomy cannot express: two successes (`mcp-re.request.accepted`, `mcp-re.response.signed`) and three delegated-key lifecycle events."
+conjunct = "The net-new surface is exactly seven events the error taxonomy cannot express: two successes (`mcp-re.request.accepted`, `mcp-re.response.signed`), three delegated-key lifecycle events, the execution intent (`mcp-re.execution.intent`, ADR-MCPRE-070 D1) and the bounded accounting record (`mcp-re.audit.accounting`, ADR-MCPRE-070 D2/Q3); neither of the last two carries a reason."
 path = "mcp-re-core/src/audit.rs"
 anchor = """
 pub const SUCCESS_EVENT_TYPES: &[&str] =

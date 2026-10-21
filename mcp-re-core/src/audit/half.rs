@@ -139,7 +139,7 @@ mod tests {
     /// The four halves are four values. A derive that made two compare equal would let a
     /// consumer reach the wrong arm without the compiler or this battery noticing.
     #[test]
-    fn the_three_halves_are_distinguishable() {
+    fn the_four_halves_are_distinguishable() {
         let all = [
             AuditHalf::Request,
             AuditHalf::Response,

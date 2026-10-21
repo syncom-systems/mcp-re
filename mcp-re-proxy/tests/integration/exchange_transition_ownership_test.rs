@@ -14,7 +14,7 @@
 //! deleted is a check being remembered, not owned.
 //!
 //! `Established<T>` closes it. A stage that succeeds returns the event it justifies, and
-//! `ExchangeProgress::establish` is the only way to open one — so the assembly cannot reach
+//! `ExchangeProgress::establish` is the only way to take its value — so the assembly cannot reach
 //! a stage's value without the machine learning the stage ran, and there is no `advance`
 //! call left at the call site to forget.
 //!
@@ -246,7 +246,7 @@ fn no_terminal_the_owner_publishes_is_advanced_by_the_serving_path_again() {
 ///
 /// The bodyless 202 says the inner plane RECEIVED the message, so its terminal event travels
 /// in the carrier the inner plane's observation mints on the arms that say so, and the
-/// publication that enters the terminal opens that carrier. Were the event driven from a
+/// publication that enters the terminal reads that carrier's event. Were it driven from a
 /// fixed tail instead, the 202 terminal would rest on the observation being called first —
 /// an order the compiler does not hold.
 #[test]
@@ -309,7 +309,7 @@ fn the_rule_would_catch_a_reintroduced_advance() {
 /// The carrier's other half: a stage's product cannot be read past the machine.
 ///
 /// `Established<T>` is constructible anywhere in the crate, so what makes it a carrier
-/// rather than a wrapper is that NOTHING opens it but `ExchangeProgress::establish` — no
+/// rather than a wrapper is that NOTHING yields its value but `ExchangeProgress::establish` — no
 /// public field, no accessor, no `Deref`. Privacy is a compile-time fact, but a widened
 /// field compiles too, and would leave every behavioural control green while the assembly
 /// quietly read `.value` without advancing. Measured at the source, in the production half

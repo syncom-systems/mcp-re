@@ -7168,8 +7168,10 @@ and it is one BY TYPE: no constructor in the audit vocabulary takes a string, so
 event is built from an `McpReError` or — when the authority that ended the exchange was not
 Core — from nothing at all.
 
-The net-new surface is exactly five events the error taxonomy cannot express: two successes
-(`mcp-re.request.accepted`, `mcp-re.response.signed`) and three delegated-key lifecycle events.
+The net-new surface is exactly seven events the error taxonomy cannot express: two successes
+(`mcp-re.request.accepted`, `mcp-re.response.signed`), three delegated-key lifecycle events, the
+execution intent (`mcp-re.execution.intent`, ADR-MCPRE-070 D1) and the bounded accounting record
+(`mcp-re.audit.accounting`, ADR-MCPRE-070 D2/Q3); neither of the last two carries a reason.
 There is no `authorization_hash_mismatch` reason, because "mismatch" would claim Core compared
 an authorization artifact it only binds.
 
@@ -7839,12 +7841,12 @@ permanence, and no downstream archive (L3, P10).
 
 THM-0071, THM-0070 and THM-0085 are not revised. That a success terminal is reached only
 through the owner's publication — the bodied tail driven after the publication decision, and
-the 202's terminal entered only by opening the carrier the inner plane mints when the message
-was delivered — is THM-0101's claim, which this theorem depends on. This theorem says what
+the 202's terminal entered only through the carrier the inner plane mints when the message
+was delivered, whose event alone the publication reads — is THM-0101's claim, which this theorem depends on. This theorem says what
 must hold before a success terminal is reached under the required posture. The best-effort
 posture keeps its order and bytes and is claimed nothing here. Machine A's model is test-only.
 That both exits serve through the one success exit, and that exit's order, are source-measured
-(the source-scan tests over `success_exit.rs`, `accepted.rs` and `notification.rs`, and
+(the source-scan tests in `success_exit.rs`, `accepted.rs` and `notification.rs`, and
 M615-M619): the compiler refuses neither a second exit nor another order, and the structural
 probes reach the witness types and the intent disposition, not the exit. Class V0: tested,
 mutation-probed and structurally probed, not proved.
