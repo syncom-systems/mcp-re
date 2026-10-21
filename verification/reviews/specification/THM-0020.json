@@ -10,7 +10,7 @@
     "theorem_id": "THM-0020",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G2.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G2.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded. Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written. Read in verification/reviews/packets/epic-1201-assurance-closure-2026-10-21.md: verdict CLEAN, cause dependency change (Core error.rs; freshness proof dependencies).  Evidence class as registered; V0 units are tested and probed, not machine-checked proofs.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -31,7 +31,7 @@
         "mutation_probes": "sha256:a37582caa83f9f94d13db2a653308d85bba75f130ef1fdcadd57b907bae57c33",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:c6f0b7558077a5b77fd79d066ea5509cafb1b25715f9dbe3777efef0a5f0f0d2",
+        "source_inputs": "sha256:3e864ead2b1ba79d04bd6a74fd0d2a065877f104d5da14c163262b37896aaad1",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:7ffc1f205b8c625daca3c7d9358ce73bc5ed5b40a4382b94061103b9f0e5caae",
         "test_selection": "sha256:c0771ec6ef6c7d2d96f3e3633c5c51dd27eb4675932ad8749ca80d49061182da",
@@ -51,7 +51,7 @@
         "mutation_probes": "sha256:95c4d8b27f24cf808a513c918e5686df70f8632fbbfce33efaee425f58ef87c0",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:610a459d6bbbc58c8f7dda1ebd9e7e030f4aeadd45598072d344611b485bd2b7",
+        "source_inputs": "sha256:06afb8be80136cd6ea35493ee42b11c770e3c6c903260558707721c86d1cb207",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:4fe64d6492cf08c4f6668dce9091e92a0d23ab2f271f4e9b3932a48fc2dd9d65",
         "test_selection": "sha256:a9b50cdf71364eae0a21105af8e1657c0b6ae10597b7ba9d7db80285f33ef032",
@@ -87,8 +87,8 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:909df1a03773a3c29823e90e7c2c4aec3dada9f3eadaa1ed49400a4389dbfe2e",
+  "review_digest": "sha256:92cc93b13bc2fbb14287414183c99c37fe3861536b3ef8868a07ef9e143e2bc1",
   "reviewed_fingerprint": "sha256:a176280bae758572695206bbce4e0f08e95b87034a45dbe7d4139c4001a7ef1f",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-opus-5-5 (exec #1201; prepared for owner ratification, not an owner signature)",
   "subject": "THM-0020"
 }

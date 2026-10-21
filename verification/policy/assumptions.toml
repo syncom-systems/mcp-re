@@ -3260,8 +3260,7 @@ tool_specific_mechanism = "foreign-dependency"
 # record what those claims do NOT establish and a deployment must therefore trust: that a
 # receipt means persistence (ASM-0089, P9), that a required deployment makes progress and its
 # committed events reach an archive (ASM-0090, L1, L3, P10), and that the provider has the
-# capacity the deployment offers it (ASM-0091). None of them is a test result. Proposed by
-# #1207 and not yet ratified: no review record names any of them.
+# capacity the deployment offers it (ASM-0091). None of them is a test result.
 
 [[assumption]]
 id = "ASM-0089"
@@ -3297,7 +3296,7 @@ scope = [
   "boundary://boundary.audit_commitment_provider",
 ]
 owner = "mats@sundvall.name"
-introduced_by = "#1207 (ADR-MCPRE-070 D3, D10, P9); proposed, not yet ratified"
+introduced_by = "#1207 (ADR-MCPRE-070 D3, D10, P9)"
 review_requirement = "Owner review on any change to the CommitmentAuthority seam, the receipt-to-witness binding, the tier vocabulary or its minimum, and on registering any provider for the required posture."
 premise_class = "external-boundary"
 boundary_owner = """
@@ -3319,7 +3318,9 @@ description = "A required deployment's commitment provider answers within the co
 justification = """
 This is the condition of liveness, never of safety. THM-0135 and THM-0136 hold during any
 outage: an exchange whose intent or outcome cannot be committed is refused, before dispatch
-with `NothingExecuted` or after it with `PossiblyExecuted`, and that refusal is the claim
+with a disposition that never states a success (`NothingExecuted`, or
+`ApprovalSpentNothingExecuted` where a continuation approval was already spent) or after it
+with `PossiblyExecuted`, and that refusal is the claim
 working, not failing. That a required exchange eventually SUCCEEDS needs the provider to
 answer inside the bound and to come back after it stops (ADR-MCPRE-070 L1). That a committed
 event is eventually ARCHIVED needs the downstream transport, its consumers and the archive to
@@ -3343,7 +3344,7 @@ scope = [
   "boundary://boundary.audit_commitment_provider",
 ]
 owner = "mats@sundvall.name"
-introduced_by = "#1207 (ADR-MCPRE-070 D10, L1, L3, P10); proposed, not yet ratified"
+introduced_by = "#1207 (ADR-MCPRE-070 D10, L1, L3, P10)"
 review_requirement = "Owner review on any change to the commitment bound, to the refusal a failed commitment earns, or to the documented downstream delivery contract."
 premise_class = "external-boundary"
 boundary_owner = """
@@ -3362,11 +3363,15 @@ description = "The commitment provider's capacity is finite, and a required depl
 justification = """
 Capacity is finite on both sides and the safety claims assume nothing else. The proxy bounds
 its own demand: commitments hold a try-acquired budget that is separate from the observer's
-queue and from the retention reservations, each crossing makes one bounded attempt, and a
-spent budget or a saturated provider is refused before dispatch with a retry-safe 503
-(ADR-MCPRE-070 §7). Under saturation THM-0135 and THM-0136 still hold, because nothing is
-dispatched or served as success without a witness. What does not hold is progress: a provider
-whose capacity is below the offered rate turns admitted exchanges into refusals.
+queue and from the retention reservations, and each crossing makes one bounded attempt. One
+budget per established provider is shared by G1, G2 and the accounting cadence. At G1 a spent
+budget or a saturated provider is refused before dispatch with a retry-safe 503. At G2 the
+same saturation is a 500 `PossiblyExecuted` refusal AFTER dispatch: the backend call has run
+and its success is withheld (ADR-MCPRE-070 §7). At the accounting cadence it is a missed
+interval, and no request is refused. Under saturation THM-0135 and THM-0136 still hold,
+because nothing is dispatched or served as success without a witness. What does not hold is
+progress: a provider whose capacity is below the offered rate turns admitted exchanges into
+refusals, and some of those refusals follow an execution.
 
 Sizing the provider against the deployment's commitment rate is the operator's and the
 provider's, and nothing in the proxy can establish it. Individual unauthenticated and
@@ -3385,7 +3390,7 @@ scope = [
   "boundary://boundary.audit_commitment_provider",
 ]
 owner = "mats@sundvall.name"
-introduced_by = "#1207 (ADR-MCPRE-070 D2, D10, §7); proposed, not yet ratified"
+introduced_by = "#1207 (ADR-MCPRE-070 D2, D10, §7)"
 review_requirement = "Owner review on any change to the commitment budget, its ceiling, or the accounting cadence."
 premise_class = "external-boundary"
 boundary_owner = """
@@ -3395,3 +3400,64 @@ answers Unavailable, rather than holding a commitment past the bound, when it is
 """
 affected_contracts = []
 tool_specific_mechanism = "none"
+
+[[assumption]]
+id = "ASM-0092"
+description = "rustls, over the whole public Web PKI root set the pinned `webpki-roots` 1.x crate ships, completes an outbound agent's handshake only for a server certificate that chains to one of those roots, names the destination host the agent connected to, and is inside its validity window at the handshake, presented by a server that proved possession of that certificate's private key; and the certificate authorities in that root set issue a certificate for a name only to the party that controls it."
+justification = """
+THM-0090 says a credential leaves this proxy only to the endpoint its rule admitted. The rule
+admits a NAME. That the server answering on the socket is the holder of that name is decided
+by TLS server authentication, and since RUSTSEC-2026-0381/-0382 the proxy installs that
+authentication itself: `VettedDestination::agent` builds every outbound agent with
+`RootedConnector::public()` (`mcp-re-proxy/src/outbound_fetch/public_roots.rs`), a rustls
+client on the ring provider, safe default protocol versions, no client certificate, over a
+`RootCertStore` holding exactly `webpki_roots::TLS_SERVER_ROOTS`, with the URL host ureq
+connected to as the server name. Those choices are this repository's and are tested (NP-290's
+controls CD-20600..20603): a server under a trusted root completes the handshake and carries
+bytes; a server under a private CA is refused as `UnknownIssuer` before any request byte; the
+store is the whole shipped set; a host that is not a server name is refused. ureq is built
+without its `tls` feature, so an agent without this connector refuses https rather than
+authenticating under another root set.
+
+Two facts are not this repository's, and this entry is both of them. First, that rustls and
+webpki check what the handshake reports: path building to a shipped root, the name match, the
+validity window, the CertificateVerify proof of key possession. That is the same mechanism
+premise ASM-0070 states for the client transport, but over a different root set and for a
+different unit. Second, and only here: the trust boundary is EXTERNAL. Every certificate
+authority in the shipped set, the Mozilla root program as `webpki-roots` packages it, is
+trusted to issue for any name. A mis-issued certificate under any one of them authenticates a
+server this proxy then sends a credential to. Nothing in the process can detect that.
+
+This is distinct from ASM-0070 and does not widen it. ASM-0070's roots are the ones an
+operator configured for one proxy. These are a public set the operator never named, chosen
+when the crate version is pinned. A change to one says nothing about the other.
+
+Not claimed: revocation (`with_root_certificates` builds the verifier without revocation, so
+a revoked, unexpired certificate under a shipped root is accepted); Certificate Transparency;
+that the shipped set is current (a CA distrusted after the pinned release is trusted until the
+pin moves, as RUSTSEC-2026-0381 was); pinning to any particular CA or key; and any property of
+the destination beyond holding a certificate for its name.
+
+It stops being acceptable if an outbound agent installs any connector or verifier other than
+`RootedConnector::public()` in a production build, if its root store is populated from anything
+but the whole `webpki-roots` set, if a client certificate or a custom verifier is added, or on
+any change to the pinned rustls, rustls-webpki or webpki-roots version.
+"""
+scope = [
+  "unit://proxy.outbound_destination",
+  "boundary://boundary.tls_mechanism",
+]
+owner = "mats@sundvall.name"
+introduced_by = "Owner ruling 2026-10-21, epic #1201 final authority closure, direction 6 (NP-290)"
+review_requirement = "Owner review on any change to how an outbound agent's TLS is built (connector, verifier, root store, client authentication), or to the pinned rustls, rustls-webpki or webpki-roots version."
+premise_class = "external-boundary"
+boundary_owner = """
+rustls with webpki path validation, across `RootedConnector::public()` as built in
+`mcp-re-proxy/src/outbound_fetch/public_roots.rs`, and the certificate authorities of the public
+Web PKI root set the pinned `webpki-roots` 1.x crate ships: a handshake completes only for a
+server certificate that chains to a shipped root, matches the destination host, is within its
+validity window, and is presented by a server holding its private key; and a shipped CA issues
+for a name only to the party that controls it.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"

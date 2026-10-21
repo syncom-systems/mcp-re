@@ -7,7 +7,7 @@
     "theorem_id": "THM-0043",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G8.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G8.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written. Read in verification/reviews/packets/epic-1201-assurance-closure-2026-10-21.md: verdict CLEAN, cause source movement.  Evidence class as registered; V0 units are tested and probed, not machine-checked proofs.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -24,7 +24,7 @@
         "mutation_probes": "sha256:1f9e8619445382d729d01f3b5ad5a73722aa089c3eaec916fda5cf77ea1c8a98",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:7d772297a8221510ddb0e60bf3b3ed8f12bd29dda8157102bb3eb6ce39c5f42b",
+        "source_inputs": "sha256:ed79d3d903ab8c6a6604f40a8369723357f363f459cc502eaf259f9c5cc9835f",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:0c84210bd4c0c8bec23c34f2fa3ded5a1b85bb17476725168815cb9984b18f6a",
         "test_selection": "sha256:c82e0e68dc6811542d2927db719061ae4b4201e2721fde45ac9504a484509415",
@@ -37,8 +37,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:afc75bb6c250990843c5d0a780080bd330255fe23e4e90025e3d51972f35f9a4",
+  "review_digest": "sha256:222a2c6551fd50b492b494adce680325e71ba93a332d469909f5432ee8dab8a2",
   "reviewed_fingerprint": "sha256:34353106aaab2d0426aca7c3dc87b7fd1051ad109112c70969dff6a1c976e993",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-opus-5-5 (exec #1201; prepared for owner ratification, not an owner signature)",
   "subject": "THM-0043"
 }

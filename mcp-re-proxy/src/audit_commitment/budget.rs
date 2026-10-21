@@ -14,8 +14,12 @@ pub(crate) const BUDGET_CEILING: usize = 1024;
 /// The commitment budget: permits that are TRIED, never waited for.
 ///
 /// A commitment that finds the budget spent is refused before its provider is asked, as
-/// `Unavailable`, and the exchange is refused before dispatch with the typed, retry-safe 503
-/// (§7.3, D12) — the same shape as a provider outage. It never degrades to observation.
+/// `Unavailable` — the same shape as a provider outage — and never degrades to observation.
+/// One budget serves every crossing of the established provider, so what the refusal means
+/// depends on the crossing (§7.3, D12): at G1 the exchange is refused before dispatch with
+/// the typed, retry-safe 503; at G2 the backend has already run, and the exchange is refused
+/// after dispatch with 500 and `PossiblyExecuted`; at the accounting cadence the interval is
+/// missed and no request is refused.
 ///
 /// Separate from the observer's queue and ceiling: an unauthenticated flood reaches only
 /// the observer (it never passes G1), so it cannot spend a permit, and a stalled provider

@@ -592,6 +592,48 @@ pub(crate) mod required {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// D7's ordering, read on disk: G1 runs before the retention commit, so an intent that
+    /// could not be committed leaves no `.pending` marker, however it failed and whichever
+    /// status it earned. A marker would tell a reconciler that the threshold was crossed for
+    /// an exchange that never dispatched.
+    #[test]
+    fn an_intent_refusal_leaves_no_pending_marker() {
+        let cases = [
+            (ScriptedAnswer::Unavailable, 503),
+            (ScriptedAnswer::Reject, 500),
+            (ScriptedAnswer::Hang, 503),
+        ];
+        for (case, (answer, status)) in cases.into_iter().enumerate() {
+            let root = scratch(&format!("no-pending-{case}"));
+            let evidence = root.join("evidence");
+            let retention = Arc::new(
+                mcp_re_proxy::transparency::EvidenceRetention::open(&evidence).expect("open"),
+            );
+            let reference = ReferenceCommitment::surviving_process_loss([answer]);
+            let calls = Arc::new(AtomicUsize::new(0));
+            let (server, _) = build_server_over(counting_inner(Arc::clone(&calls)), 300);
+            let server = server
+                .with_evidence_retention(retention)
+                .with_required_audit_commitment(&reference, BOUND)
+                .expect("eligible");
+            let d = deploy(server, calls, None);
+            let refused = d.call(&plain_request()).kind;
+            // The marker first: it is this test's own conjunct, and a refusal that also
+            // states the wrong disposition must not hide it.
+            assert!(
+                files_under(&evidence, ".pending").is_empty(),
+                "case {case}: a refused intent recorded an execution crossing"
+            );
+            assert_eq!(refused, refused_unavailable(), "case {case}");
+            assert_eq!(
+                (d.calls(), d.last_status()),
+                (0, Some(status)),
+                "case {case}"
+            );
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
     /// The signing window must survive the intent's bounded wait as well as the dispatch:
     /// a window that covers only the dispatch is refused BEFORE the reserve and before any
     /// intent is produced, where refusing is free; one that covers both serves.

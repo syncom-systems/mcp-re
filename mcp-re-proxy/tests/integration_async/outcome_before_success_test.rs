@@ -413,6 +413,86 @@ mod required {
         );
     }
 
+    /// A response signature window shorter than the delegated credential's remaining life, so
+    /// the window lapses first and is the only thing that has.
+    const SIG_TTL: i64 = 120;
+
+    /// The clock skew the client's route tolerates (`client_proxy_over`): a verifier admits a
+    /// response until `expires + CLIENT_SKEW`, so that is the first instant it has lapsed.
+    const CLIENT_SKEW: i64 = 60;
+
+    /// O5 (ADR-MCPRE-070 §14): the response is signed before G2, so an outcome that commits
+    /// only after the signature window closed is served under that closed window. The client
+    /// refuses it: the backend ran and the success is lost, but no success is accepted under
+    /// a lapsed signature, and the proxy neither re-signs it nor extends the window.
+    ///
+    /// The provider's answer moves the client's verification clock — read once, when the
+    /// response arrives — to the instant G2 completed. The mirror, a G2 that completes inside
+    /// the window, verifies as a success, so the refusal is the lapse and not the hook.
+    #[test]
+    fn a_window_that_lapses_during_g2_is_refused_by_the_client_never_accepted() {
+        use std::sync::atomic::AtomicI64;
+
+        use mcp_re_client_proxy::ProxyError;
+        use mcp_re_http_profile::HttpProfileError;
+
+        use crate::delegated_client_server_e2e_test::NOW;
+
+        let answered_at = |at: i64, body: &serde_json::Value| {
+            let clock = Arc::new(AtomicI64::new(NOW));
+            let moved = Arc::clone(&clock);
+            let late = ScriptedAnswer::CommitThen(Arc::new(move || {
+                moved.store(at, Ordering::SeqCst);
+            }));
+            let calls = Arc::new(AtomicUsize::new(0));
+            let (server, _) = build_server_over(counting_inner(Arc::clone(&calls)), SIG_TTL);
+            let r = serve(
+                server,
+                calls,
+                vec![ScriptedAnswer::Commit, late],
+                None,
+                false,
+            );
+            let read = || clock.load(Ordering::SeqCst);
+            let call = mcp_re_client_proxy::CallParams {
+                verification_clock: &read,
+                ..params(&mcp_re_test_paths::unique_test_nonce())
+            };
+            let verdict = r.d.client.handle("r1", body, &call);
+            assert_eq!(r.d.calls(), 1, "the backend ran");
+            assert_eq!(
+                r.reference.journaled().len(),
+                2,
+                "intent and outcome committed"
+            );
+            (verdict, r.d.last_status())
+        };
+
+        for (body, success, status) in [
+            (plain_request(), ResponseKind::Success, 200),
+            (
+                plain_notification(),
+                ResponseKind::AcceptedNotification,
+                202,
+            ),
+        ] {
+            let (inside, served) = answered_at(NOW + 1, &body);
+            assert_eq!(served, Some(status));
+            assert_eq!(inside.expect("inside the window").kind, success);
+
+            let (lapsed, served) = answered_at(NOW + SIG_TTL + CLIENT_SKEW, &body);
+            assert_eq!(served, Some(status), "the proxy served what it signed");
+            let refused = lapsed.expect_err("a lapsed signature is never a success");
+            assert!(
+                matches!(
+                    refused,
+                    ProxyError::FailedClosed(HttpProfileError::StaleWindow)
+                ),
+                "refused for the lapse: {refused:?}"
+            );
+        }
+    }
+
     /// An observer whose queue is full: every record it is offered is dropped and counted,
     /// as the stderr sink does past its ceiling.
     #[derive(Default)]

@@ -1,0 +1,10 @@
+{
+  "axis": "assumption",
+  "components": {
+    "assumption_entry": "sha256:c8c7dfe20dd7d1eb65e3d862d7a7f0222df67055e9eb8d9457e50a812e6ad8ff"
+  },
+  "notes": "Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written.  Read in the packet (ASM section): holds as the provider's persistence premise for THM-0135 and THM-0136, and by unit scope for THM-0077. Needs the owner's ENTRY approval at its exact text before the review axis counts it.",
+  "reviewed_fingerprint": "sha256:c8c7dfe20dd7d1eb65e3d862d7a7f0222df67055e9eb8d9457e50a812e6ad8ff",
+  "reviewer": "agent:claude-opus-5-5 (exec #1201; prepared for owner ratification, not an owner signature)",
+  "subject": "ASM-0089"
+}

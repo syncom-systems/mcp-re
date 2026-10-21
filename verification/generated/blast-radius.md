@@ -142,7 +142,7 @@ attestations this view cannot see.
 | unit://proxy.audit_intent_gate | source, contracts or evidence | THM-0135 | _no consumer_ |
 | unit://proxy.audit_intent_gate_sole_producer | source, contracts or evidence | THM-0135, THM-0136 | _no consumer_ |
 | unit://proxy.audit_outcome_gate | source, contracts or evidence | THM-0136 | _no consumer_ |
-| unit://proxy.audit_posture | source, contracts or evidence | THM-0135, THM-0136 | _no consumer_ |
+| unit://proxy.audit_posture | source, contracts or evidence | THM-0077, THM-0135, THM-0136 | _no consumer_ |
 | unit://proxy.audit_run_receipt_recording | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.audit_text_rendering | source, contracts or evidence | THM-0130 | _no consumer_ |
 | unit://proxy.audit_vocabulary_import | source, contracts or evidence | THM-0071 | _no consumer_ |
@@ -439,7 +439,7 @@ attestations this view cannot see.
 | THM-0098 | statement, consequence, scope or review requirement | specification review | THM-0074, THM-0099 |
 | THM-0099 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0100 | statement, consequence, scope or review requirement | specification review | THM-0074 |
-| THM-0101 | statement, consequence, scope or review requirement | specification review | THM-0074 |
+| THM-0101 | statement, consequence, scope or review requirement | specification review | THM-0074, THM-0136 |
 | THM-0102 | statement, consequence, scope or review requirement | specification review | THM-0077 |
 | THM-0103 | statement, consequence, scope or review requirement | specification review | THM-0048 |
 | THM-0104 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
@@ -473,7 +473,7 @@ attestations this view cannot see.
 | THM-0132 | statement, consequence, scope or review requirement | specification review | THM-0129 |
 | THM-0133 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0134 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
-| THM-0135 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0135 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0136 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
@@ -568,3 +568,4 @@ attestations this view cannot see.
 | ASM-0089 | description, justification, scope or mechanism | proxy.audit_commitment_witness, proxy.audit_intent_gate, proxy.audit_outcome_gate, proxy.audit_posture | assumption review |
 | ASM-0090 | description, justification, scope or mechanism | proxy.audit_commitment_witness, proxy.audit_intent_gate, proxy.audit_outcome_gate, proxy.audit_posture | assumption review |
 | ASM-0091 | description, justification, scope or mechanism | proxy.audit_intent_gate, proxy.audit_outcome_gate, proxy.audit_posture | assumption review |
+| ASM-0092 | description, justification, scope or mechanism | proxy.outbound_destination | assumption review |

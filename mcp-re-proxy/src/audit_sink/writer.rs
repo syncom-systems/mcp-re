@@ -183,7 +183,7 @@ fn report_drops(stderr: &mut impl std::io::Write, counter: &AtomicU64, failed: &
     let report = format!(
         "mcp-re-proxy: audit dropped={dropped}{run} (the hand-off queue was full, or past \
          the share unattributed records may take; that many decisions are missing from \
-         this stream, and their seq numbers are the gaps in it)",
+         this stream, among its seq gaps; a required posture's other gaps are named at startup)",
         run = super::stream::run_suffix()
     );
     if !write_record(stderr, &report) {

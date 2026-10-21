@@ -66,12 +66,10 @@ path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
 # (measured at a6f2091) -> 529. `baseline_sha` names that parent.
 # MCPRE-196: the proxy takes the admission enforcer whole; the four-part seam builds one and
 # delegates: 529 (measured at bff0cb9) -> 526.
-baseline_prod_loc = 526
-baseline_sha = "bff0cb9"
+baseline_prod_loc = 518
+baseline_sha = "d521a9f8"
 status = "reviewed-exception"
 review_ref = "EX-010 in docs/architecture/review-dispositions.md"
-growth_from_prod_loc = 523
-growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/tls_listener_state/mod.rs"
@@ -635,12 +633,10 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-core/src/error.rs"
-baseline_prod_loc = 472
-baseline_sha = "dc4c833"
+baseline_prod_loc = 443
+baseline_sha = "d521a9f8"
 status = "reviewed-exception"
 review_ref = "EX-013 in docs/architecture/review-dispositions.md"
-growth_from_prod_loc = 454
-growth_ref = "EX-013 growth authorization 2 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
@@ -665,8 +661,8 @@ status = "unreviewed"
 # changed, so the entry is pinned at what it now measures and may not grow back.
 [[debt]]
 path = "mcp-re-proxy/src/lib.rs"
-baseline_prod_loc = 407
-baseline_sha = "d1fc5fa"
+baseline_prod_loc = 403
+baseline_sha = "d521a9f8"
 status = "unreviewed"
 
 [[debt]]
