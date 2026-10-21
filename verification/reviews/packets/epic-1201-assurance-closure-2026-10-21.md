@@ -143,6 +143,8 @@ Both need an owner re-acknowledgement. The premise text still holds for both.
 
 ## Owner decisions this packet does not take
 
+Items 2–6 were decided by the owner on 2026-10-21 (Addendum 2). Item 1, the ratification itself, is still the owner's: no ledger line signs it.
+
 1. **Ratification of the 70 verdicts above**, and of ASM-0089-0091; re-acknowledgement of ASM-0070 and ASM-0082.
 2. **THM-0077 support (B5).** The required audit posture's no-downgrade controls are in `proxy.audit_posture`, which supports THM-0135 and THM-0136 but not THM-0077. Recommendation: add `unit://proxy.audit_posture` to THM-0077's `supported_by`. This moves THM-0077's claim.
 3. **Root attachment of THM-0135 and THM-0136 (B2).** Neither is in any declared root's dependency closure. D10 forbids revising THM-0071 only. Recommendation: THM-0135 into THM-0074's `depends_on` and THM-0136 into THM-0075's. This moves both roots' dependency claims, so decide it before the records are written.
@@ -151,6 +153,130 @@ Both need an owner re-acknowledgement. The premise text still holds for both.
 6. **ADR-070 O4 (D1 scope under the required posture) and O5 (signing window vs the G2 wait).** See `docs/architecture/audit-commitment.md` and the B3/B6 sections. No B3 theorem claims the window covers G2.
 
 Notes recorded for the permanent evidence: THM-0128 (the Lean model is predicted byte-identical, which only the extraction confirms), THM-0111, THM-0045, THM-0063, THM-0069, THM-0070, THM-0089, THM-0109 and THM-0074, each in its batch section below.
+
+## Addendum 2: the owner directions of 2026-10-21 applied
+
+The owner's directions are transcribed in
+[`rulings/epic-1201-authority-closure-2026-10-21.md`](../rulings/epic-1201-authority-closure-2026-10-21.md),
+which no ledger line signs. What changed in the tree:
+
+| direction | change | moves |
+|---|---|---|
+| 1 (O4) | ADR §15 "Owner rulings, 2026-10-21": best-effort stream contract preserved; required-commitment behaviour documented separately. Text only. | nothing fingerprinted |
+| 2 (O5) | ADR §14 item 11 recorded as an availability limitation; follow-up #1224; one end-to-end negative test, `outcome_before_success_test.rs::required::a_window_that_lapses_during_g2_is_refused_by_the_client_never_accepted` (bodied 200 and notification 202: a window that lapses during a successful G2 is served with its pre-G2 signature and the verifying client refuses it with `StaleWindow`; never a success). Poison pills: dropping the verifier's `now < expires + skew` bound, and opening the window 60 s later, each go red. integration_async 232/0/0, integration_async_ext 237/0/0. | test_sources of 18 theorems |
+| 3 | THM-0077 `supported_by` gains `unit://proxy.audit_posture`. | THM-0077 digest; ASM-0089..0091 become its premises |
+| 4 | THM-0074 `depends_on` gains THM-0135; `docs/spec/security-boundary.md` §7.1 row. Statement, consequence and scope unchanged. | THM-0074 fingerprint |
+| 5 | Not applied. Proposed edge: **THM-0078 `depends_on` += THM-0136**, below. | none |
+| 6 | ASM-0092 (public Web PKI), scope `unit://proxy.outbound_destination` + `boundary://boundary.tls_mechanism`; NP-290 `root_relationship` names it. | THM-0090 digest |
+| 7 | ASM-0070 and ASM-0082 re-reviewed; entry text unchanged; record notes appended. | nothing |
+| 8 | ASM-0090/0091 liveness split deferred. | nothing |
+
+### Re-read of the 21 identities that moved after the 11d940f9 inventory
+
+Measured at 7a950674 and at the final tree, component by component. Every movement is one of the
+causes in the table; nothing else moved.
+
+- **18 theorems, test_sources only.** One test was added to a shared async test file; none was
+  removed or weakened. Each reading above stands unchanged.
+- **THM-0074 (CLEAN).** Under the required posture the committed execution intent is a
+  pre-dispatch obligation the validated deployment selected, established by its owner (the
+  shared commitment owner) and consumed by `ReadyForDispatch` for the same exchange. That is
+  exactly this root's implication. The best-effort posture selects no such obligation, and
+  THM-0135 claims nothing there.
+- **THM-0077 (CLEAN).** `proxy.audit_posture`'s refusals are the statement's "cannot be
+  silently reinterpreted into a weaker posture". The claim rests on neither provider
+  persistence nor liveness; ASM-0089..0091 attach only because they are scoped to the unit.
+  Consequence: THM-0077's root completeness now waits on the owner's entry approvals of those
+  three, as THM-0074's does through THM-0135.
+- **THM-0090 (CLEAN).** "The endpoint its rule admitted" is a name. That the server holds the
+  name is server authentication by `RootedConnector::public()`, which ASM-0092 states, with
+  the root-set CAs as the external trust boundary. Revocation and CT are not claimed (they were
+  not before the RustSec remediation either).
+
+| theorem | cause after the inventory | fingerprint (final) | review digest (final) |
+|---|---|---|---|
+| THM-0032 | test_sources only (O5 test) | `sha256:91e09c858b7982304cf7a13aa75ba2827b6852348c2a4aa4d311dfcf3a644be4` | `sha256:7bb156c4b6dc49d11d3995cf6041fcd77e422673f0acd0721c77ccd20e22f5c4` |
+| THM-0040 | test_sources only (O5 test) | `sha256:4c5d90700148aa8e237985e63f5fef13b281746c45bbf1a33d51fafbab2f8fd3` | `sha256:5f148a57071766564146661e3fd8094ca44f9db2ab4602550f9f84bee704c3d3` |
+| THM-0045 | test_sources only (O5 test) | `sha256:a3677e05cf813f666f25d0febdbcedbf1982d1fad439344bec1aa977f0e27684` | `sha256:23ff18b2e2dcf09b4600e9d0e193356ded40364f3bf1084a67beb727d95a557f` |
+| THM-0051 | test_sources only (O5 test) | `sha256:cc371a5dbf05380e021b79d0b7d3017444e9d8916df2d8bce7c13747de4fe7ba` | `sha256:80726ebebf37d581b74b3a7325711bd18f4f875fec31f9422eaa18ac63db7520` |
+| THM-0052 | test_sources only (O5 test) | `sha256:597274da4b9339e7d1c77af527ef71b4aee5fa0742243dee1b85e2d4af2fbba8` | `sha256:94fd53453259dd99c8fd0bd86ab755a1f227cd825ae4a13e95afff4d22cab4a0` |
+| THM-0062 | test_sources only (O5 test) | `sha256:e87e43867b5c6882c43d636703e6d7cc860808cd62d2e4fb060a8a46b6a8f5b9` | `sha256:294d6a3642a466625bcb0c008d71072a9b8e07967b7fdfcc5b9910789f0a60e0` |
+| THM-0063 | test_sources only (O5 test) | `sha256:8871ed21a3b398b625c1c4b3f8674e8f0d93e34a2f56929456b3d43f87e126e7` | `sha256:f9406908ad82a66262b231489089d0b47503ec90c00fba2d216bfd25be17441e` |
+| THM-0069 | test_sources only (O5 test) | `sha256:0ce3b80720627213892793e307cc1ac56e91f4f0c310bdfc4049785deac38e0a` | `sha256:4913199e575fbe878d0a800557bdc2bf2fd34348f52c7880ec4854b01764c90b` |
+| THM-0070 | test_sources only (O5 test) | `sha256:dd38b842fb857af412fae0c08d241373fd6f7dcec05c3ac7802ca72b7e5269e1` | `sha256:1f4c8552fab43a96efb5204014d8faecc408210c4ee8b9470b7da14ee57902de` |
+| THM-0074 | dependency claim: THM-0135 joins the closure (direction 4); test_sources (O5 test) | `sha256:028d4960ba16858649fd3d1f96ce741d4cfa4cf3fdc0eb2af3617ce473c8188f` | `sha256:3db05b0123d2308d80a710802db69bcc8975a472ff59876846cc684d5e2a31eb` |
+| THM-0075 | test_sources only (O5 test) | `sha256:1403c470b204923e967695ee75692c0cc31e01df03d25d15cde7c60554f66724` | `sha256:2401bd584f7b7962e849365bb14f3fd11228eea9bcb2ba1ff5dab300b9253f3b` |
+| THM-0077 | support: unit://proxy.audit_posture (direction 3), premises ASM-0089..0091 by unit scope | `sha256:9412e9593b1981a0f89dba3de90cd81583948d38b5775185d3de2b7ce289316f` | `sha256:27c148db9d09ce9eea6bda009daa3b86d97a151ecdfc128f409779aa9240c254` |
+| THM-0088 | test_sources only (O5 test) | `sha256:4cd3913879e3417cf9ed65cb92ebb373685c2971c7617b6bb06d8c9d1cd21fe0` | `sha256:3ec5f3649c60f139042f977d92e16d3b7f49fe31f5ebc567297e25cda6555cd7` |
+| THM-0090 | premise: ASM-0092 (direction 6), via proxy.outbound_destination trusted_assumptions | `sha256:ce22a7ec651a2fbdc6bf3f8083a57b398a12164a06108086209e4099aad34d9d` | `sha256:6369b9318af63e58005354e659cc9790a66f0657c6a2fff8aa00d11a210c634c` |
+| THM-0101 | test_sources only (O5 test) | `sha256:4dc7e4a70e82dc5fd1ba9638b5d4ce1f2582494e736d3f700d9ba6e6f202a96c` | `sha256:cbc9452916f0101059532f0560f6c2e95bfbd28c88873570e2d1164055452306` |
+| THM-0112 | test_sources only (O5 test) | `sha256:29c9bb8d600e2fa44bd5d4ef34495a8a46f62b9b28e02bde575c1fa9a6b31b9e` | `sha256:89f36297a102773ccc8d08766fdaa5de9e5ccfb32e9b0290ff8a346af0e0dec6` |
+| THM-0113 | test_sources only (O5 test) | `sha256:95c28f72283a689eaeaf430a7942e8a483e6cb5231168fb6c568d562558f76f4` | `sha256:0e163d20c56026ca6e817bc22ddb2dc487c7f31d69f1cfaa5e8f3af2cd797e73` |
+| THM-0129 | test_sources only (O5 test) | `sha256:8531b9c45bd24aae09b1a08492798262574d3abe4a4f7a62ed1ca3aa725a681b` | `sha256:e8df3156bf8d70a9ccac218bc694df6176c969a841044b1cce149b4ecb847f6d` |
+| THM-0132 | test_sources only (O5 test) | `sha256:cedf63cdb0ad2b7fbbacc1c75c34b92657eaf35cfc7bc05f4ab85dc7148f1a68` | `sha256:946ed21dbf8cf815e2f94ddb9013ca758ebb259b3f5a9e0a0f41f1e37caacea2` |
+| THM-0135 | test_sources only (O5 test) | `sha256:df790c7b287331ca3f4924495e606485937e432de42f4e938d9eb58936bbeaae` | `sha256:432d90fc757de1d26b229be7300ad2301da7af6b93a86bcb69d01c7c8b8b2bd4` |
+| THM-0136 | test_sources only (O5 test) | `sha256:fe590f851402e2c61057a67d2c60a6534acebec3ffd406b3e73555c5a4f63e90` | `sha256:902aa798d0f5fe31601d6ca21a838ab26ebe717ac8b98a8f51176caacb24166f` |
+
+The other 49 identities equal the inventory above. Every record is written at the final measured
+identity, by `tools/verification/review --fingerprint`.
+
+### Direction 5: THM-0136's root edge (proposed, not taken)
+
+No declared root states a precondition on success being visible. The authority that decides
+whether a success may be published is `proxy.exchange_publication`, under THM-0101, which is
+below THM-0136. So no edge can make "SuccessVisible => OutcomeCommitted" a root conjunct;
+publishing it as a system promise would be a new §2 root, an ADR act not proposed here.
+
+**Proposed: `THM-0078.depends_on += "THM-0136"`** ("Refusal is terminal, and no refusal-side
+effect reads as success"). THM-0136 is THM-0078's post-dispatch case at the one refusal that sits
+between a dispatched exchange and its success, the G2 commitment refusal: retention completes
+with the refusal, the success bytes are never served, and nothing after dispatch states
+`NothingExecuted`. That is THM-0078's second paragraph at that site, and its contrapositive (a
+failed G2 cannot fall through into a success) is the post-dispatch form of the first paragraph,
+which is scoped to pre-dispatch obligations. Nothing else in THM-0078's closure states it:
+THM-0081 enumerates refusal sites, and THM-0088 says only when a marker is written. It mirrors
+direction 4 (G1 under THM-0074, G2 under THM-0078). Only THM-0136's refusal half becomes rooted.
+
+- Rejected: THM-0075 (signer and request binding, posture-independent, signed before G2; its
+  truth does not rest on THM-0136); THM-0074 (its scope ends at the invocation); THM-0042,
+  THM-0071 (ADR-070 forbids widening), the client-side roots.
+- Cycle: none. THM-0136's closure is {THM-0101, THM-0043}; THM-0078 has no dependents.
+- Impact if taken: THM-0078's fingerprint and digest move (two closure entries); nothing else.
+  THM-0078's root completeness then also needs THM-0136, THM-0101 and the entry approvals of
+  ASM-0089..0091.
+- **Owner note (residue, not a conflict).** In W5b the outcome is committed and then retention
+  fails, so a committed `response.signed` event exists for an exchange whose client got a
+  refusal. It precedes the refusal, so it is not a refusal-side effect and THM-0078 paragraph 2
+  holds; but an auditor reading that event alone could take it for a served success. THM-0136's
+  scope and ADR Q2 disclaim it. Read the two together before ratifying the edge.
+
+### ASM-0070 and ASM-0082 re-review (direction 7)
+
+- **ASM-0070: HOLDS, text unchanged.** `mcp-re-transport` has no diff from main.
+  `tls_config.rs` refuses an empty CA bundle and builds the root store from the configured
+  server CA only, with `WebPkiServerVerifier` on ring; the accept-any verifier compiles only
+  under the fault-injection feature. rustls-webpki 0.103.15 -> 0.103.16 (RUSTSEC-2026-0382)
+  rejects paths through the distrusted emSign intermediates: it accepts less, so the entry's
+  only-if still holds. The review trigger is tripped in wording only.
+- **ASM-0082: HOLDS, text unchanged.** url 2.5.8 and ureq 2.12.1 are unchanged, and
+  `binding.rs` still sets `redirects(0)`; the addition is
+  `.tls_connector(RootedConnector::public())`. ureq opens the connection to the parsed host
+  and port itself and hands the connected socket and host name to the connector, which never
+  opens or moves a connection. `binding.rs` is the one production `AgentBuilder`. Server
+  authentication is ASM-0092's premise, not this one.
+- Both entry approvals still sign the current bytes, so the axis stays REVIEWED. What the owner
+  owes is a re-acknowledgement (a ruling line), not a new entry signature.
+- Wording slip found, nothing in the tree repeats it: commit 37b522b2's message says
+  RUSTSEC-2026-0381 flags webpki-roots 0.26.11; the advisory lists 0.26.11 as unaffected itself.
+
+### ASM-0092: what is decided where
+
+| decided by | what |
+|---|---|
+| this repository (tested; NP-290 controls CD-20600..20603) | root set = the whole `webpki_roots::TLS_SERVER_ROOTS`; ring provider, safe default versions, no client auth; no safe version means every https refused; server name = the URL host, IPv6 brackets stripped, a non-name refused; the only production installer is `VettedDestination::agent`; ureq has no `tls` feature, so a bare agent refuses https |
+| rustls / rustls-webpki (external library) | chain to a shipped root, name match, validity window, CertificateVerify possession proof, rejection of the distrusted emSign keys (0.103.16) |
+| the root-program CAs (external trust boundary) | issue only to the controller of a name; not detectable in process |
+| nobody (not claimed) | revocation, Certificate Transparency, freshness of the root set between pins |
 
 ---
 

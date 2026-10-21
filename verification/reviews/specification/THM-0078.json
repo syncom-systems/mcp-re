@@ -18,7 +18,7 @@
     "theorem_id": "THM-0078",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-R2-REVIEW-4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 115b1e4b after the step 9 verification-platform repairs (work/security-audit-2026-09-22-r12/STEP9-REREVIEW.md): M283 weakening substitutes a valid notification envelope for a body that fails envelope validation; both declared controls red, so the pre-dispatch refusal is genuinely weakened. Claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-R2-REVIEW-4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 115b1e4b after the step 9 verification-platform repairs (work/security-audit-2026-09-22-r12/STEP9-REREVIEW.md): M283 weakening substitutes a valid notification envelope for a body that fails envelope validation; both declared controls red, so the pre-dispatch refusal is genuinely weakened. Claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded. Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written. Read in verification/reviews/packets/epic-1201-assurance-closure-2026-10-21.md: verdict CLEAN, cause implementation change.  Evidence class as registered; V0 units are tested and probed, not machine-checked proofs.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -35,7 +35,7 @@
         "mutation_probes": "sha256:1f9e8619445382d729d01f3b5ad5a73722aa089c3eaec916fda5cf77ea1c8a98",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:7d772297a8221510ddb0e60bf3b3ed8f12bd29dda8157102bb3eb6ce39c5f42b",
+        "source_inputs": "sha256:ed79d3d903ab8c6a6604f40a8369723357f363f459cc502eaf259f9c5cc9835f",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:0c84210bd4c0c8bec23c34f2fa3ded5a1b85bb17476725168815cb9984b18f6a",
         "test_selection": "sha256:c82e0e68dc6811542d2927db719061ae4b4201e2721fde45ac9504a484509415",
@@ -55,7 +55,7 @@
         "mutation_probes": "sha256:1774e2f53ecd2919b178a60cf5a647c7daee879cee3686f28072fc7c9ad85792",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:7afdf93ec713a23a3786cc663911725443f575e58d91c8e60a69223a3010a18d",
+        "source_inputs": "sha256:4717f219600c772f6cde00687db4e21e5326f1aaf13d3f0d465b09afb3c02053",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:e3913a52c352e6f4d000713e56ddf9d1ce02c23f92bb1c14c79152cd23376a78",
         "test_selection": "sha256:264e423717d3c9831aab2895b0b2d8b9a37ca4f1f247b265f403ecc9947f40b0",
@@ -99,8 +99,8 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:f218c497aadfa4a9146f4f034fe331727a912693a3a6c4b3a5b4332b8b2be0ce",
+  "review_digest": "sha256:dc3dd379ba0317c738281acffd27ae3454925d109588b7406fa574d1fb63d87d",
   "reviewed_fingerprint": "sha256:cff60d495309322415f35b64332c52faf3f9a416e58275230281f6c10ff6c6b4",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-opus-5-5 (exec #1201; prepared for owner ratification, not an owner signature)",
   "subject": "THM-0078"
 }
