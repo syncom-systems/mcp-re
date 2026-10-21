@@ -10,7 +10,7 @@ left to the owner.
 
 **What this file is not.** It is not an owner signature. No line in
 `docs/security/owner-approvals-*.jsonl` signs it, and nothing here may be read as one. The
-ledger lines the owner's ratification needs are listed in §3, prepared but not appended:
+ledger lines the owner's sign-off needs are listed in §3, prepared but not appended:
 appending them is the owner's act.
 
 ## 1. The binding directions (verbatim)
@@ -62,7 +62,7 @@ What the tooling does with them, stated so nobody reads more into it:
 - A theorem specification record is read as the review authority for that theorem
   (`_approvals.ledger_state`, `allow_ruling=True`). So these records make the 70 theorems read
   REVIEWED and the claim-surface gate pass **before** the owner has signed anything. That is a
-  property of the tooling, not an owner act: until the ratification line in §3 is in the
+  property of the tooling, not an owner act: until the adoption line in §3 is in the
   ledger, these records attest the agent's reading only.
 - An assumption record counts only with an ENTRY approval at the entry's current text. The four
   new ones read UNBACKED until the owner signs them, and every theorem whose premise closure
@@ -84,9 +84,33 @@ commit, and every `sha256` is `sha256(text)`.
 | `owner-signature:asm-0090-epic-1201-closure-2026-10-21` | ENTRY | ASM-0090, whole entry | `23f8ca3576ff9473fed712999323c39d32b151dc9e4132f0a7c8c6d468231b9c` | yes, as above |
 | `owner-signature:asm-0091-epic-1201-closure-2026-10-21` | ENTRY | ASM-0091, whole entry | `e7616a02d2d3363dc313d44f6c668003bc99b2d61739c309fbebae34a430d042` | yes, as above |
 | `owner-signature:asm-0092-epic-1201-closure-2026-10-21` | ENTRY | ASM-0092, whole entry | `a1b5488b3aaf012ac0a8b2193e46b10737fbac00904ae0a898ea5ce8e9a48ae5` | yes: until signed, THM-0090 is PREMISE_UNREVIEWED |
-| `owner-signature:epic-1201-assurance-closure-2026-10-21` | RULING | ratifies the 70 re-reviews and records; re-acknowledges ASM-0070 and ASM-0082 | over the drafted text; recompute if the owner edits it | not by the tooling (a theorem record is its own authority, and ASM-0070/0082 are still signed at their current text); required by the review process this repository uses, so that an owner act stands behind each record |
+| `owner-signature:epic-1201-assurance-closure-2026-10-21` | RULING | ratifies the 70 re-reviews and records; re-acknowledges ASM-0070 and ASM-0082 (original wording, signed in `owner-approvals-2026-10-21.jsonl`) | `4ad041b56782226aa807baa9b06768a15eee89c9bda9888ce6e26e2c1836dcc6` | not by the tooling (a theorem record is its own authority, and ASM-0070/0082 are still signed at their current text); required by the review process this repository uses, so that an owner act stands behind each record |
 
 An entry approval signs exact bytes: if any of the four entries is edited before signing, its
 digest changes and the line must be re-derived (`_approvals.entry_text`, then `text_digest`).
 The optional direction-5 edge, if the owner takes it, moves THM-0078 and needs its own record
 after the edit.
+
+## 4. The owner's second directive of 2026-10-21 (security sign-off and integration closure)
+
+Transcribed, as §1 is; not an owner signature.
+
+- **ASM-0092 and the outbound trust model.** "Retain the current public Web PKI model for MCP-RE
+  OSS v0.19." The owner accepts the architectural trust boundary ASM-0092 describes: the public
+  certificate-authority trust model, the dependence on correct chain and hostname verification,
+  the external trust placed in the public CA ecosystem, the non-claims on revocation, Certificate
+  Transparency and root-store freshness, and the need to revisit the assumption when the TLS
+  implementation or trust-root dependencies change. No new outbound trust architecture, trust-policy
+  abstraction or certificate pinning enters this campaign. "This decision approves the security
+  architecture and trust assumption. It is not permission to fabricate an authenticated owner
+  signature."
+- **Architectural acceptance of ASM-0089..0092.** Approved. The four entry approvals in §3 are
+  still the owner's personal act over the exact entry bytes.
+- **The fifth line's wording.** Corrected so that it records the owner adopting the documented
+  agent-prepared review rather than claiming to have repeated every source-level review, and so
+  that it names the V0 classes as tests, structural controls and mutation evidence. The counts,
+  the THM-0101/THM-0122 corrections and the ASM-0070/0082 re-acknowledgement are unchanged. The
+  owner signed the original wording first; a ledger line cannot be edited, so the corrected text is
+  a new line, `owner-signature:epic-1201-assurance-closure-adoption-2026-10-21`
+  (`sha256` `aaacb22d9199056eb291ec3d63d5fac2aff2f36db95b2100888b57cafe2562ab`), that names the
+  original in `supersedes`. Appending it is the owner's act, as §3 is.
