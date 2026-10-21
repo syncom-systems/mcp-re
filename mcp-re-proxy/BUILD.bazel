@@ -410,6 +410,7 @@ _PROXY_LIB_SRCS = [
     "src/audit_commitment/intent.rs",
     "src/audit_commitment/machine.rs",
     "src/audit_commitment/not_required.rs",
+    "src/audit_commitment/outcome.rs",
     "src/audit_commitment/posture.rs",
     "src/audit_commitment/provider_failure.rs",
     "src/audit_commitment/receipt.rs",
@@ -490,6 +491,8 @@ _PROXY_LIB_SRCS = [
     "src/http_profile_serve/dispatch_commitment.rs",
     "src/http_profile_serve/reply_assembly/mod.rs",
     "src/http_profile_serve/reply_assembly/notification.rs",
+    "src/http_profile_serve/reply_assembly/success_exit.rs",
+    "src/http_profile_serve/reply_assembly/dispatched.rs",
     "src/http_profile_serve/reply_assembly/accepted.rs",
     # ADR-MCPRE-052 §4 / ADR-MCPS-035 §9: what the proxy asserts under its own credential
     # when it refuses — the posture, the record it is, and how the artifact is built.
@@ -515,6 +518,7 @@ _PROXY_LIB_SRCS = [
     # obligation carried across it. Crate-internal.
     "src/request_stages.rs",
     "src/request_stages/intent_disposition.rs",
+    "src/request_stages/outcome_disposition.rs",
     "src/request_stages/retention_disposition.rs",
     # ADR-MCPRE-058 §7.2: the seven optional serving capabilities, each as one domain
     # operation producing what to attach and the posture line describing it.

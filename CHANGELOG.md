@@ -26,6 +26,18 @@ or wire-format compatibility while the design lines from
 - The required posture is reachable only through a test-only feature until the operator
   selector lands; every deployable build serves the best-effort posture unchanged.
 
+### Added — committed outcome before visible success (ADR-MCPRE-070 G2)
+
+- Under the required audit posture a success — a bodied reply or a notification's 202 (D4) —
+  is served only after its `response.signed` event is committed AND retention has completed
+  (Q2). An outcome that cannot be committed is refused with `mcp-re.audit_commitment_unavailable`
+  at 500, never 503, stating `possibly_executed`, and retention holds that refusal; a retention
+  failure after the commit is the existing `evidence_retention_indeterminate` refusal. The
+  observer's `response.signed` line is the committed event itself. Best-effort serving is
+  unchanged.
+- The notification's success terminal is entered only when its 202 is served, so a refusal
+  after the 202 was approved is served from a non-terminal state (ADR-MCPRE-070 §16 item 7).
+
 ## [0.18.1] — 2026-10-17
 
 v0.18.1 makes the Redis replay store's connection pool configurable and takes the rustls fix

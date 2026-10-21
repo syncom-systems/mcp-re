@@ -56,7 +56,7 @@ impl CommitmentFailure {
     /// Either way it is NOT committed for the prerequisite: no failure authorizes a
     /// crossing. `true` means it is possibly committed for IDENTITY, so its ID is never
     /// reused for other content and a retry resends the identical bytes (§3).
-    #[cfg_attr(not(test), allow(dead_code))] // read by the reconciliation of an uncertain intent (#1205); G1 refuses on every failure alike
+    #[cfg_attr(not(test), allow(dead_code))] // no crossing branches on it: G1 and G2 refuse on every failure alike; it states the identity rule a reconciler applies
     pub(crate) fn possibly_committed(&self) -> bool {
         matches!(self, CommitmentFailure::Uncertain(_))
     }

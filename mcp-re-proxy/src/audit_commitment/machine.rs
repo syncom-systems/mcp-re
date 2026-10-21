@@ -30,9 +30,9 @@ pub(super) enum AuditCommitmentState {
     IntentFailed,
     /// The intent may or may not be committed.
     IntentUncertain,
-    /// The outcome's witness was redeemed (#1205).
+    /// The outcome's witness was redeemed (G2).
     OutcomeCommitted,
-    /// The outcome commit failed, timed out or was cut short (#1205).
+    /// The outcome commit failed, timed out or was cut short (G2).
     OutcomeUncertain,
 }
 
@@ -76,12 +76,20 @@ pub(super) fn admits_dispatch(state: AuditCommitmentState) -> bool {
     )
 }
 
+/// Whether an exchange in `state` may make a completed success visible (S2, G2).
+pub(super) fn admits_success(state: AuditCommitmentState) -> bool {
+    matches!(
+        state,
+        AuditCommitmentState::NotRequired | AuditCommitmentState::OutcomeCommitted
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::audit_commitment::{CommitmentFailure, RejectReason, UncertainCause};
     use crate::exchange_state::{transition as r_transition, ExchangeEvent, ExchangeState};
-    use crate::request_stages::IntentDisposition;
+    use crate::request_stages::{IntentDisposition, OutcomeDisposition};
     use AuditCommitmentState as S;
 
     const ALL: [S; 7] = [
@@ -136,6 +144,28 @@ mod tests {
             AuditCommitmentEvent::IntentDefinitelyNotCommitted
         };
         transition(Some(S::IntentPending), event).expect("a failure leaves IntentPending")
+    }
+
+    /// S2: a success is visible only from `NotRequired` or `OutcomeCommitted`, and the
+    /// success exit's carrier has exactly those two arms. `OutcomeUncertain` — W5 — admits
+    /// neither a success nor a dispatch.
+    #[test]
+    fn machine_a_admits_success_only_from_outcome_committed_or_not_required() {
+        let admitted: Vec<S> = ALL.into_iter().filter(|s| admits_success(*s)).collect();
+        assert_eq!(admitted, [S::NotRequired, S::OutcomeCommitted]);
+        let of = |d: &OutcomeDisposition| match d {
+            OutcomeDisposition::NotRequired(_) => S::NotRequired,
+            OutcomeDisposition::Committed(_) => S::OutcomeCommitted,
+        };
+        let none = OutcomeDisposition::NotRequired(
+            crate::audit_commitment::NoCommitmentRequired::for_a_test(),
+        );
+        assert!(admits_success(of(&none)));
+        assert!(!admits_success(S::OutcomeUncertain) && !admits_dispatch(S::OutcomeUncertain));
+        assert!(
+            !admits_success(S::IntentCommitted),
+            "an intent alone is not an outcome"
+        );
     }
 
     #[test]

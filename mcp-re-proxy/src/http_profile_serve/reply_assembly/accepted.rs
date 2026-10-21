@@ -5,45 +5,42 @@
 //! The reservation was taken while refusing was still free; this is where it is completed
 //! with what was actually served. A deployment with retention on asserts it can account for
 //! what it served, and refusing when the evidence cannot be kept is the only thing that keeps
-//! that true — so retention runs BEFORE the response goes out and before its `response.signed`
-//! record.
+//! that true — so retention completes BEFORE the response goes out and before its
+//! `response.signed` record, and after its outcome is committed (ADR-MCPRE-070 Q2).
 //!
-//! Both success exits come through here, the bodied reply and the bodyless 202 alike. It is
+//! Both success exits retain through here, the bodied reply and the bodyless 202 alike. It is
 //! one function and not a block copied twice because retention wired onto only one of them is
 //! a client-selectable guarantee, not a weaker one.
 
 use std::sync::Arc;
 
-use mcp_re_http_profile::ExecutionDisposition;
-use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestRoleEvidence;
 
 use crate::async_serve::ServedHttpResponse;
-use crate::audit_record::ExchangeCoordinate;
 use crate::exchange_state::ExchangeProgress;
 use crate::exchange_state::ServedSuccess;
+use crate::request_stages::IntentDisposition;
 use crate::request_stages::RetentionDisposition;
 
 use super::super::receipt::Accepted;
 use super::super::reply::ReplyClass;
-use super::super::served;
 use super::super::HttpProfileProxy;
 use super::SignedReply;
 
 impl HttpProfileProxy {
-    /// Discharge the retention responsibility, record the served response, and reach the
-    /// terminal the classifier selected.
+    /// Decide the terminal the classifier selected, then leave through the success exit.
     ///
-    /// The `response.signed` record is emitted HERE, not at signing time: everything above
-    /// can still discard this response, and a record for bytes the client never received is
-    /// exactly the kind of contradiction that makes an audit stream unusable.
+    /// The `response.signed` record is emitted on the way out, not at signing time:
+    /// everything before it can still discard this response, and a record for bytes the
+    /// client never received is exactly the kind of contradiction that makes an audit stream
+    /// unusable.
     pub(in crate::http_profile_serve) async fn serve_retained(
         &self,
         acc: &Accepted<'_>,
         progress: &mut ExchangeProgress,
         reply: SignedReply,
         retention: &RetentionDisposition,
+        intent: IntentDisposition,
     ) -> ServedHttpResponse {
         // Two terminals, because the exchange makes a different claim in each: one says the
         // call is over, the other says the client may continue — and the second is only
@@ -52,10 +49,10 @@ impl HttpProfileProxy {
             ReplyClass::Terminal => ServedSuccess::Terminal,
             ReplyClass::Open(_) => ServedSuccess::OpenLeg,
         };
-        // BEFORE anything publishes the claim. Retention and the `response.signed` record
-        // are both assertions that this exchange succeeded, so a tuple the machine cannot
-        // vouch for has to be caught while a refusal is still reachable — which is why this
-        // is not a `debug_assert!` and not a check after the fact.
+        // BEFORE anything publishes the claim. The outcome commitment, retention and the
+        // `response.signed` record are all assertions that this exchange succeeded, so a
+        // tuple the machine cannot vouch for has to be caught while a refusal is still
+        // reachable — which is why this is not a `debug_assert!` and not a check after the fact.
         if progress.may_publish(success).is_err() {
             let refusal = crate::refusal::Refusal::new(
                 mcp_re_core::McpReError::ExchangeInvariantViolation,
@@ -65,52 +62,10 @@ impl HttpProfileProxy {
                 .refuse_retained(acc, refusal, progress, retention)
                 .await;
         }
-        if let Some(rejection) = self
-            .retain_accepted(
-                acc.exchange_coordinate(),
-                acc.exchange().http_req,
-                &reply.response,
-                acc.exchange().now,
-                Some(acc.exchange().verified.evidence()),
-                acc.exchange().actor_id.to_owned(),
-                retention,
-                Self::disposition(progress, None),
-                Some(Arc::clone(acc.key())),
-            )
+        self.publish_success(acc, progress, success, reply.response, retention, intent)
             .await
-        {
-            return rejection;
-        }
-        crate::audit_record::record_to(
-            self.audit.observer(),
-            acc.exchange_coordinate(),
-            crate::audit_record::AuditSubject::response_signed(),
-            Some(acc.exchange().actor_id.to_owned()),
-            reply.response.status,
-            acc.exchange().now,
-        );
-        progress.publish(success);
-        served(reply.response)
     }
 
-    /// Retain one ACCEPTED exchange (ADR-MCPRE-054), or produce the refusal.
-    ///
-    /// `Some(rejection)` means the evidence could not be kept and the exchange must be
-    /// refused; `None` means it is retained, or retention is not configured, and the
-    /// caller may serve.
-    ///
-    /// EVERY SUCCESS exit goes through here — the bodied reply and the bodyless 202 alike,
-    /// which is why it is one function and not a block copied twice. A REFUSAL exit cannot
-    /// use it: refusing a refusal has no exit to fall through to, so those go through
-    /// [`retain_terminal_refusal`](Self::retain_terminal_refusal), which retains best-effort
-    /// and serves the refusal whatever the outcome.
-    ///
-    /// Retention runs BEFORE the response goes out and before its `response.signed`
-    /// record: everything above can still discard this response, and retaining an exchange
-    /// the client never received would put a record in the store that no receipt should be
-    /// issued about. A deployment with retention on asserts it can account for what it
-    /// served, and refusing when the evidence cannot be kept is the only thing that keeps
-    /// that true.
     /// Retain a POST-DISPATCH REFUSAL as the terminal this exchange actually served, and
     /// serve it whatever the retention outcome.
     ///
@@ -156,18 +111,24 @@ impl HttpProfileProxy {
         rejection
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Retain one ACCEPTED exchange (ADR-MCPRE-054), or produce the refusal.
+    ///
+    /// `Some(rejection)` means the evidence could not be kept and the exchange must be
+    /// refused; `None` means it is retained, or retention is not configured, and the
+    /// caller may serve.
+    ///
+    /// EVERY SUCCESS exit reaches it through
+    /// [`publish_success`](Self::publish_success), after the outcome is committed and before
+    /// the response goes out or its `response.signed` record is offered: retaining an
+    /// exchange the client never received would put a record in the store that no receipt
+    /// should be issued about. A REFUSAL exit cannot use it — refusing a refusal has no exit
+    /// to fall through to — so those go through [`refuse_retained`](Self::refuse_retained).
     pub(super) async fn retain_accepted(
         &self,
-        exchange: Option<ExchangeCoordinate>,
-        request: &HttpRequest,
+        acc: &Accepted<'_>,
         response: &HttpResponse,
-        now: i64,
-        bound: Option<&RequestRoleEvidence>,
-        actor_id: String,
         retention_owed: &RetentionDisposition,
-        execution: ExecutionDisposition,
-        snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
+        progress: &ExchangeProgress,
     ) -> Option<ServedHttpResponse> {
         if self
             .retention
@@ -183,17 +144,18 @@ impl HttpProfileProxy {
             mcp_re_core::McpReError::EvidenceRetentionIndeterminate,
             500,
         );
+        let ex = acc.exchange();
         Some(self.responses.response_rejection(
             self.audit.observer(),
-            exchange,
-            request,
+            acc.exchange_coordinate(),
+            ex.http_req,
             &refusal.cause,
             refusal.status,
-            now,
-            bound,
-            Some(actor_id),
-            execution,
-            snapshot,
+            ex.now,
+            Some(ex.verified.evidence()),
+            Some(ex.actor_id.to_owned()),
+            Self::disposition(progress, None),
+            Some(Arc::clone(acc.key())),
         ))
     }
 }
@@ -225,14 +187,15 @@ mod tests {
 
     /// The decision is taken BEFORE anything publishes the success claim.
     ///
-    /// Retention and the `response.signed` record are both assertions that this exchange
-    /// succeeded, so `may_publish` refusing after either would leave a retained hop and an
-    /// audit record for a success that was then refused — the contradiction that makes an
-    /// audit stream unusable, arriving through the control meant to prevent one.
+    /// The outcome commitment, retention and the `response.signed` record are all assertions
+    /// that this exchange succeeded, and all three happen inside the success exit — so
+    /// `may_publish` refusing after the exit was entered would leave a committed outcome, a
+    /// retained hop and an audit record for a success that was then refused. The exit's own
+    /// order is asserted next to it, in `success_exit.rs`.
     ///
-    /// Asserted over the source because the fact is an ORDER between three statements, and
-    /// no value-level test can reach it: the incoherent tuple is unconstructible through
-    /// the public serving path, which is exactly why the enforcement is needed at all.
+    /// Asserted over the source because the fact is an ORDER between statements, and no
+    /// value-level test can reach it: the incoherent tuple is unconstructible through the
+    /// public serving path, which is exactly why the enforcement is needed at all.
     #[test]
     fn the_publication_decision_precedes_retention_and_the_response_signed_record() {
         let source = include_str!("accepted.rs");
@@ -244,26 +207,20 @@ mod tests {
         let decision = body
             .find("progress.may_publish(success).is_err()")
             .expect("the publication decision is branched on");
-        let retention = body
-            .find(".retain_accepted(")
-            .expect("retention is discharged");
-        let record = body
-            .find("AuditSubject::response_signed()")
-            .expect("the response.signed record is emitted");
-        let commit = body
-            .find("progress.publish(")
-            .expect("the terminal is committed");
+        let exit = body
+            .find("self.publish_success(")
+            .expect("the success leaves through the success exit");
         assert!(
-            decision < retention && decision < record && decision < commit,
+            decision < exit,
             "a success claim must not be published before it is decided: \
-             decision {decision}, retention {retention}, record {record}, commit {commit}"
+             decision {decision}, exit {exit}"
         );
         assert!(
-            body[decision..retention]
+            body[decision..exit]
                 .split_whitespace()
                 .collect::<String>()
                 .contains("returnself.refuse_retained("),
-            "the refusing arm must exit before retention discharges"
+            "the refusing arm must exit before the success exit is entered"
         );
     }
 }

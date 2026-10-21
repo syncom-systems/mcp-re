@@ -8,8 +8,6 @@ pub(crate) enum CrossingKind {
     /// The execution intent, committed before dispatch (G1).
     Intent,
     /// The outcome, committed before success is visible (G2).
-    #[cfg_attr(not(test), allow(dead_code))]
-    // built only by `Outcome::KIND`; the outcome crossing is #1205's
     Outcome,
 }
 
@@ -33,7 +31,6 @@ pub(crate) enum Intent {}
 
 /// The outcome crossing (G2). Uninhabited: it exists only as a type parameter.
 #[derive(Debug)]
-#[cfg_attr(not(test), allow(dead_code))] // named by the outcome crossing, which is #1205's
 pub(crate) enum Outcome {}
 
 impl Crossing for Intent {

@@ -120,7 +120,7 @@ impl<K: Crossing> CommitmentWitness<K> {
 
 impl<K: Crossing> Redeemed<K> {
     /// The event that was committed.
-    #[cfg_attr(not(test), allow(dead_code))] // read by the outcome crossing (#1205), which binds the intent it follows
+    #[cfg_attr(not(test), allow(dead_code))] // read by tests only: both crossings bind the exchange by its coordinate (D9), never by comparing witnesses
     pub(crate) fn binding(&self) -> EventBinding {
         self.binding
     }

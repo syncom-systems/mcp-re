@@ -141,6 +141,7 @@ attestations this view cannot see.
 | unit://proxy.audit_delivery | source, contracts or evidence | THM-0070 | _no consumer_ |
 | unit://proxy.audit_intent_gate | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.audit_intent_gate_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://proxy.audit_outcome_gate | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.audit_run_receipt_recording | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.audit_text_rendering | source, contracts or evidence | THM-0130 | _no consumer_ |
 | unit://proxy.audit_vocabulary_import | source, contracts or evidence | THM-0071 | _no consumer_ |

@@ -70,9 +70,11 @@ pub use envelope::{
     AuditEnvelope, CanonicalEvent, ContentDigest, EventBinding, EventId, EventIdentityFailure,
     EventScope, ExchangeCoordinate, IntegrityConflict, Recurrence, RunId, CANONICAL_VERSION,
 };
+// Crate-wide because every emitter records through the one funnel, and because the outcome
+// crossing (ADR-MCPRE-070 G2) commits a produced event before it is offered.
+pub(crate) use emission::{offer_produced, produce, record_to};
 // Crate-wide because the stderr stream, in `audit_sink`, opens this process's run at startup
 // so the start line names it before any record is produced.
-pub(crate) use emission::record_to;
 pub(crate) use envelope::open_process_run;
 // Crate-wide because the intent is committed by the serving path's G1 (ADR-MCPRE-070).
 #[cfg(test)]

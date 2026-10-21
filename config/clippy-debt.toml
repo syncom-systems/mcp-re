@@ -193,10 +193,12 @@ count = 31
 # 83 -> 79: measured at e4faa23c, after the r12 fixes and the retired sync replay stores.
 # 79 -> 78: `RequestHeaders::parse` ends its iterator at the header terminator, so the
 # skip branch inside its loop is gone.
+# 78 -> 77: #1205 (ADR-MCPRE-070 G2) — the reply tail moved into the one success exit;
+# count measured by this gate.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 78
+count = 77
 
 # 0 -> 4: the same measurement correction as `arithmetic_side_effects` above; 1 -> 0 when
 # the trust-epoch reader's second, GET-based read path was folded into the one MGET read.

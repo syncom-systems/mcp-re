@@ -45,10 +45,13 @@
 
 /// The intent crossing's product (ADR-MCPRE-070 G1).
 mod intent_disposition;
+/// The outcome crossing's product, consumed by the success exit.
+mod outcome_disposition;
 /// The retention owner's two lifecycle products.
 mod retention_disposition;
 
 pub(crate) use intent_disposition::IntentDisposition;
+pub(crate) use outcome_disposition::OutcomeDisposition;
 pub(crate) use retention_disposition::{PreDispatchRetention, RetentionDisposition};
 
 use crate::async_inner::DispatchedOutcome;

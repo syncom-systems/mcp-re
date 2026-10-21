@@ -360,7 +360,9 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/exchange_state.rs"
-baseline_prod_loc = 892
+# #1205: the 202 terminal is published through `may_publish`/`publish` like the bodied
+# terminals, so `establish_terminal` lost its only caller and was deleted: 892 -> 874.
+baseline_prod_loc = 874
 baseline_sha = "a15fc1e"
 status = "reviewed-exception"
 review_ref = "EX-001 in docs/architecture/review-dispositions.md"

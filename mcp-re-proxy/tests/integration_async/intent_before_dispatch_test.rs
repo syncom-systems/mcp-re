@@ -33,10 +33,12 @@ use super::delegated_client_server_e2e_test::{
 
 const INTENT: &str = "mcp-re.execution.intent";
 const UNAVAILABLE: &str = "mcp-re.audit_commitment_unavailable";
-const REPLY: &[u8] = br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#;
+pub(super) const REPLY: &[u8] = br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#;
 
 /// An in-process backend that counts every dispatch it receives.
-fn counting_inner(calls: Arc<AtomicUsize>) -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
+pub(super) fn counting_inner(
+    calls: Arc<AtomicUsize>,
+) -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
     Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
         move |_forwarded: &[u8]| -> Vec<u8> {
             calls.fetch_add(1, Ordering::SeqCst);
@@ -54,6 +56,9 @@ struct Hop {
     rt: tokio::runtime::Runtime,
     deadline: Option<Duration>,
     statuses: Arc<Mutex<Vec<u16>>>,
+    /// Lose the response after the proxy produced it, as a connection dropped before the
+    /// write does (ADR-MCPRE-070 W6).
+    discard: bool,
 }
 
 impl RemoteTransport for Hop {
@@ -76,6 +81,11 @@ impl RemoteTransport for Hop {
                 .map_err(|_| TransportError::new("the request future was dropped"))?,
         };
         self.statuses.lock().expect("statuses").push(resp.status);
+        if self.discard {
+            return Err(TransportError::new(
+                "the connection dropped before the write",
+            ));
+        }
         Ok(HttpResponse {
             status: resp.status,
             headers: resp.headers,
@@ -85,32 +95,42 @@ impl RemoteTransport for Hop {
 }
 
 /// A served deployment: the client proxy, the backend counter and what the hop saw.
-struct Deployment {
-    client: mcp_re_client_proxy::ClientProxy,
+pub(super) struct Deployment {
+    pub(super) client: mcp_re_client_proxy::ClientProxy,
     calls: Arc<AtomicUsize>,
     statuses: Arc<Mutex<Vec<u16>>>,
 }
 
 impl Deployment {
-    fn calls(&self) -> usize {
+    pub(super) fn calls(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
     }
 
-    fn last_status(&self) -> Option<u16> {
+    pub(super) fn last_status(&self) -> Option<u16> {
         self.statuses.lock().expect("statuses").last().copied()
     }
 
-    fn call(&self, body: &serde_json::Value) -> mcp_re_client_proxy::ProxyResponse {
+    pub(super) fn call(&self, body: &serde_json::Value) -> mcp_re_client_proxy::ProxyResponse {
         self.client
             .handle("r1", body, &params(&mcp_re_test_paths::unique_test_nonce()))
             .expect("the server's answer verifies")
     }
 }
 
-fn deploy(
+pub(super) fn deploy(
     server: HttpProfileProxy,
     calls: Arc<AtomicUsize>,
     deadline: Option<Duration>,
+) -> Deployment {
+    deploy_with(server, calls, deadline, false)
+}
+
+/// [`deploy`], with a transport that loses every response after the proxy produced it.
+pub(super) fn deploy_with(
+    server: HttpProfileProxy,
+    calls: Arc<AtomicUsize>,
+    deadline: Option<Duration>,
+    discard: bool,
 ) -> Deployment {
     let statuses = Arc::new(Mutex::new(Vec::new()));
     let hop = Hop {
@@ -121,6 +141,7 @@ fn deploy(
             .expect("runtime"),
         deadline,
         statuses: Arc::clone(&statuses),
+        discard,
     };
     Deployment {
         client: client_proxy_over(Box::new(hop)),
@@ -191,7 +212,7 @@ fn best_effort_dispatch_and_refusals_are_unchanged() {
 }
 
 #[cfg(feature = "audit_commitment_reference")]
-mod required {
+pub(crate) mod required {
     use super::*;
     use mcp_re_proxy::{ReferenceCommitment, ScriptedAnswer};
 
@@ -230,7 +251,11 @@ mod required {
         assert_eq!((d.calls(), d.last_status()), (1, Some(200)));
 
         let journaled = reference.journaled();
-        assert_eq!(journaled.len(), 1, "one intent per dispatched exchange");
+        assert_eq!(
+            journaled.len(),
+            2,
+            "one intent, then one outcome, per exchange"
+        );
         let envelopes = sink.envelopes();
         assert_eq!(
             envelopes.len(),
@@ -298,6 +323,7 @@ mod required {
     fn a_stale_receipt_reaches_no_backend() {
         let reference = ReferenceCommitment::surviving_process_loss([
             ScriptedAnswer::Commit,
+            ScriptedAnswer::Commit,
             ScriptedAnswer::ReplayPrevious,
         ]);
         let (d, _) = required(&reference, BOUND);
@@ -328,7 +354,7 @@ mod required {
             d.call(&plain_notification()).kind,
             ResponseKind::AcceptedNotification
         );
-        assert_eq!((d.calls(), committing.journaled().len()), (1, 1));
+        assert_eq!((d.calls(), committing.journaled().len()), (1, 2));
     }
 
     fn cancelled(answer: ScriptedAnswer) -> (Deployment, ReferenceCommitment) {
@@ -374,7 +400,7 @@ mod required {
         assert_eq!(reference.journaled().len(), 1, "the intent is in the store");
     }
 
-    fn files_under(dir: &std::path::Path, suffix: &str) -> Vec<std::path::PathBuf> {
+    pub(crate) fn files_under(dir: &std::path::Path, suffix: &str) -> Vec<std::path::PathBuf> {
         let mut found = Vec::new();
         let mut stack = vec![dir.to_path_buf()];
         while let Some(d) = stack.pop() {
@@ -393,7 +419,7 @@ mod required {
         found
     }
 
-    fn scratch(name: &str) -> std::path::PathBuf {
+    pub(crate) fn scratch(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("mcp-re-intent-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch");
@@ -523,7 +549,7 @@ mod required {
             "refused before any intent was produced"
         );
         let (kind, calls, asked) = serve_with(Duration::from_secs(10));
-        assert_eq!((kind, calls, asked), (ResponseKind::Success, 1, 1));
+        assert_eq!((kind, calls, asked), (ResponseKind::Success, 1, 2));
     }
 
     /// D3 and the bound hold at the installer: not even a test serves the required posture
