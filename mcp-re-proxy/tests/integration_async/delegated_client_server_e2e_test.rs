@@ -66,7 +66,7 @@ use serde_json::json;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const ROOT_SEED: [u8; 32] = [55u8; 32];
-const NOW: i64 = 1_700_000_100;
+pub(super) const NOW: i64 = 1_700_000_100;
 const TARGET: &str = "https://mcp.example.com/mcp?route=a";
 const CLIENT_KEY_ID: &str = "client-key-1";
 const ROOT_KID: &str = "root-kid";
@@ -192,6 +192,16 @@ fn build_server() -> HttpProfileProxy {
 /// the server's key — revocation, for instance — must ask which key was minted rather
 /// than assume a kid it can spell.
 fn build_server_with_kid() -> (HttpProfileProxy, String) {
+    build_server_over(canned_inner(), 300)
+}
+
+/// The real delegated-required server over `inner`, signing responses valid for
+/// `sig_ttl_secs`, and the delegated kid it issued. Shared with
+/// `intent_before_dispatch_test`, which needs to count and to fail the backend.
+pub(super) fn build_server_over(
+    inner: Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer>,
+    sig_ttl_secs: i64,
+) -> (HttpProfileProxy, String) {
     let config = server_config();
     let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
         .expect("the root states its key");
@@ -220,8 +230,8 @@ fn build_server_with_kid() -> (HttpProfileProxy, String) {
             ),
             ReplayPosture::SingleProcess,
         ),
-        canned_inner(),
-        300,
+        inner,
+        sig_ttl_secs,
         Arc::clone(&wiring.signer),
     );
     (proxy, issued_kid.to_owned())
@@ -330,6 +340,19 @@ fn client_proxy_with_revocation(
     server: HttpProfileProxy,
     revocation: Box<dyn RevocationSource>,
 ) -> ClientProxy {
+    client_proxy_over_with(Box::new(InProcessServer::new(server, NOW)), revocation)
+}
+
+/// The delegated-required client over any in-process `transport`. Shared with
+/// `intent_before_dispatch_test`, whose transport counts statuses and cancels.
+pub(super) fn client_proxy_over(transport: Box<dyn RemoteTransport>) -> ClientProxy {
+    client_proxy_over_with(transport, Box::new(StaticRevocationList::new()))
+}
+
+fn client_proxy_over_with(
+    transport: Box<dyn RemoteTransport>,
+    revocation: Box<dyn RevocationSource>,
+) -> ClientProxy {
     let route = Route {
         route_id: "r1".into(),
         target_uri: TARGET.into(),
@@ -349,12 +372,7 @@ fn client_proxy_with_revocation(
         ),
     };
     let registry = RouteRegistry::new().register(route);
-    ClientProxy::new(
-        registry,
-        client_key(),
-        CLIENT_KEY_ID,
-        Box::new(InProcessServer::new(server, NOW)),
-    )
+    ClientProxy::new(registry, client_key(), CLIENT_KEY_ID, transport)
 }
 
 /// The same client, but with its trust anchors loaded from a SIGNED trust-anchor
@@ -455,14 +473,14 @@ impl Drop for FloorPath {
 
 /// A one-way JSON-RPC NOTIFICATION: the ABSENT `id` is what makes it one, and both the
 /// signer and the serving path classify on exactly that key's absence.
-fn plain_notification() -> serde_json::Value {
+pub(super) fn plain_notification() -> serde_json::Value {
     json!({
         "jsonrpc": "2.0",
         "method": "notifications/initialized",
     })
 }
 
-fn plain_request() -> serde_json::Value {
+pub(super) fn plain_request() -> serde_json::Value {
     json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -477,7 +495,7 @@ fn fixed_now() -> i64 {
     NOW
 }
 
-fn params(nonce: &str) -> CallParams<'static> {
+pub(super) fn params(nonce: &str) -> CallParams<'static> {
     CallParams {
         nonce: format!("{nonce}-padded-to-the-128-bit-floor"),
         created: NOW - 100,

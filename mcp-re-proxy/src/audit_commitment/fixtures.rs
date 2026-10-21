@@ -3,7 +3,9 @@
 //! module is declared `#[cfg(test)]`.
 
 use crate::admission_enforcer::AdmissionFacet;
-use crate::audit_record::{AuditEnvelope, AuditRecord, AuditSubject, EventAllocator, RunId};
+use crate::audit_record::{
+    AuditEnvelope, AuditRecord, AuditSubject, CanonicalEvent, EventAllocator, RunId,
+};
 use crate::authorization::AuthorizationPosture;
 
 /// The run every fixture is numbered in unless it names another.
@@ -24,22 +26,24 @@ fn accepted(actor: &str) -> AuditRecord {
 }
 
 /// The `seq`-th event of `run`, accepting `actor`'s request.
-pub(crate) fn envelope_in(run: RunId, seq: i64, actor: &str) -> AuditEnvelope {
+pub(crate) fn envelope_in(run: RunId, seq: i64, actor: &str) -> CanonicalEvent {
     AuditEnvelope::produce_for_test(
         &EventAllocator::starting_at(run, seq),
         None,
         accepted(actor),
     )
     .expect("produced")
+    .event()
+    .clone()
 }
 
 /// The `seq`-th event of [`RUN`], accepting `actor`'s request.
-pub(crate) fn envelope(seq: i64, actor: &str) -> AuditEnvelope {
+pub(crate) fn envelope(seq: i64, actor: &str) -> CanonicalEvent {
     envelope_in(RUN, seq, actor)
 }
 
 /// One identity carrying two contents: the reused-run hazard.
-pub(crate) fn same_id_other_content() -> (AuditEnvelope, AuditEnvelope) {
+pub(crate) fn same_id_other_content() -> (CanonicalEvent, CanonicalEvent) {
     (envelope(0, "actor-a"), envelope(0, "actor-b"))
 }
 

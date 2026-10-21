@@ -82,7 +82,7 @@ impl HttpProfileProxy {
             return rejection;
         }
         crate::audit_record::record_to(
-            &self.audit,
+            self.audit.observer(),
             acc.exchange_coordinate(),
             crate::audit_record::AuditSubject::response_signed(),
             Some(acc.exchange().actor_id.to_owned()),
@@ -184,7 +184,7 @@ impl HttpProfileProxy {
             500,
         );
         Some(self.responses.response_rejection(
-            &self.audit,
+            self.audit.observer(),
             exchange,
             request,
             &refusal.cause,

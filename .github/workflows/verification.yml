@@ -168,6 +168,8 @@ on:
       # remaining members belong to other owners.
       - "mcp-re-proxy/src/exchange_state.rs"
       - "mcp-re-proxy/src/request_stages.rs"
+      # The dispositions the ready state carries, a file each (ADR-MCPRE-070 G1).
+      - "mcp-re-proxy/src/request_stages/**"
       # v0.17 trust-plane ownership slice: the runtime trust plane, `proxy.trust_plane_runtime`.
       # The subtree pattern also matches `window_policy.rs`, which the unit excludes; a
       # filter that over-triggers is the safe direction, one that under-triggers is the
@@ -595,6 +597,8 @@ on:
       # remaining members belong to other owners.
       - "mcp-re-proxy/src/exchange_state.rs"
       - "mcp-re-proxy/src/request_stages.rs"
+      # The dispositions the ready state carries, a file each (ADR-MCPRE-070 G1).
+      - "mcp-re-proxy/src/request_stages/**"
       # v0.17 trust-plane ownership slice: the runtime trust plane, `proxy.trust_plane_runtime`.
       # The subtree pattern also matches `window_policy.rs`, which the unit excludes; a
       # filter that over-triggers is the safe direction, one that under-triggers is the

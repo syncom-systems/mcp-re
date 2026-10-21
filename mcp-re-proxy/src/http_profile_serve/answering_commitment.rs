@@ -90,7 +90,7 @@ impl HttpProfileProxy {
     ) -> ServedHttpResponse {
         let owed = Self::disposition(progress, refusal.execution_refinement);
         self.responses.refuse(
-            &self.audit,
+            self.audit.observer(),
             RefusalPoint::Request(&mut ans.ex, Some(std::sync::Arc::clone(&ans.key))),
             refusal,
             owed,

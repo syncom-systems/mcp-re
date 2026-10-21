@@ -71,7 +71,7 @@ impl HttpProfileProxy {
                 // and it is returned on this line — so the record describes bytes the
                 // client actually receives.
                 crate::audit_record::record_to(
-                    &self.audit,
+                    self.audit.observer(),
                     exchange,
                     crate::audit_record::AuditSubject::response_signed(),
                     Some(actor_id),
@@ -81,7 +81,7 @@ impl HttpProfileProxy {
                 served(ack)
             }
             Err(e) => self.responses.response_rejection(
-                &self.audit,
+                self.audit.observer(),
                 exchange,
                 http_req,
                 &RefusalCause::from(e),

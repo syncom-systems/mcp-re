@@ -23,6 +23,7 @@ mod delegated_production_wiring_test;
 mod delegated_serving_test;
 mod forwarded_body_fidelity_test;
 mod http_inner_test;
+mod intent_before_dispatch_test;
 mod mrt_continuation_serving_test;
 mod mtls_client_leg_e2e_test;
 mod pdp_authorization_serving_test;

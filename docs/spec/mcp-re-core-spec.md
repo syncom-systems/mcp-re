@@ -200,6 +200,7 @@ mcp-re.unknown_envelope_field
 mcp-re.trust_resolver_unavailable    # ADR-MCPS-007 addition
 mcp-re.replay_cache_unavailable      # ADR-MCPS-006: cache failure fails closed, distinct from replay
 mcp-re.evidence_retention_unavailable # ADR-MCPRE-054: retention enabled and the store failed; fails closed
+mcp-re.audit_commitment_unavailable  # ADR-MCPRE-070 D12: a required audit commitment could not be established; states nothing about execution
 ```
 
 JSON-RPC error object shape (when surfaced on the wire):

@@ -11,7 +11,7 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::audit_record::{AuditEnvelope, EventBinding};
+use crate::audit_record::{CanonicalEvent, EventBinding};
 
 use super::super::{
     BindingField, CommitmentFailure, CommitmentReceipt, Crossing, DurabilityTier, UncertainCause,
@@ -60,7 +60,7 @@ pub(crate) struct Redeemed<K: Crossing> {
 /// to something, and what it committed cannot be known from a receipt that disagrees.
 pub(super) fn mint<K: Crossing>(
     provider: &Arc<EstablishedProvider>,
-    sent: &AuditEnvelope,
+    sent: &CanonicalEvent,
     receipt: CommitmentReceipt,
 ) -> Result<CommitmentWitness<K>, CommitmentFailure> {
     let mismatch = |field| CommitmentFailure::Uncertain(UncertainCause::ReceiptMismatch(field));
@@ -95,10 +95,9 @@ fn binding_field(got: EventBinding, expected: EventBinding) -> BindingField {
 impl<K: Crossing> CommitmentWitness<K> {
     /// Spend this witness at its crossing for `expected`, the event the crossing is about,
     /// against `current`, the provider the crossing holds now.
-    #[cfg_attr(not(test), allow(dead_code))] // no production crossing redeems yet
     pub(crate) fn redeem(
         self,
-        expected: &AuditEnvelope,
+        expected: &CanonicalEvent,
         current: &Arc<EstablishedProvider>,
     ) -> Result<Redeemed<K>, WitnessRefusal> {
         let binding = expected.binding();
@@ -121,13 +120,13 @@ impl<K: Crossing> CommitmentWitness<K> {
 
 impl<K: Crossing> Redeemed<K> {
     /// The event that was committed.
-    #[cfg_attr(not(test), allow(dead_code))] // read by the crossing's disposition; none is wired yet
+    #[cfg_attr(not(test), allow(dead_code))] // read by the outcome crossing (#1205), which binds the intent it follows
     pub(crate) fn binding(&self) -> EventBinding {
         self.binding
     }
 
     /// The tier it was committed at.
-    #[cfg_attr(not(test), allow(dead_code))] // read by the crossing's disposition; none is wired yet
+    #[cfg_attr(not(test), allow(dead_code))] // read by the posture line (#1206); no emitter reads it yet
     pub(crate) fn tier(&self) -> DurabilityTier {
         self.tier
     }
@@ -160,7 +159,7 @@ mod tests {
 
     async fn minted(
         provider: &Arc<EstablishedProvider>,
-        sent: &AuditEnvelope,
+        sent: &CanonicalEvent,
     ) -> Result<(), CommitmentFailure> {
         provider.commit::<Intent>(sent, bound()).await.map(|_| ())
     }

@@ -4308,7 +4308,7 @@ conjunct = "a signing window snapshotted before the backend runs and shown to su
 # twice. Deleting the question is the defect, and the battery must go red on it.
 path = "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
 anchor = """
-        if !signing_window::covers(window, prepared.completion_bound()) {
+        if !signing_window::covers(&window, completion) {
 """
 weakening = """
         if false {
@@ -13951,4 +13951,157 @@ weakening = """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::tier::tests::only_survives_proxy_process_loss_meets_the_required_minimum",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::established::tests::an_ineligible_tier_is_reported_by_meets_required_minimum",
+]
+
+[[probe]]
+id = "M608-proxy-the-required-posture-asks-the-provider"
+unit = "proxy.audit_intent_gate"
+conjunct = "the required posture commits the intent and never hands out the best-effort statement"
+path = "mcp-re-proxy/src/audit_commitment/posture.rs"
+anchor = """
+            Commitment::Required(crossing) => crossing
+                .commit(coordinate, intent)
+                .await
+                .map(IntentDisposition::Committed),
+"""
+weakening = """
+            Commitment::Required(_) => Ok(IntentDisposition::NotRequired(
+                NoCommitmentRequired::minted_by_posture(),
+            )),
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_required_posture_never_yields_not_required",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_failures_reach_no_backend",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_notification_without_commitment_gets_no_202",
+]
+
+[[probe]]
+id = "M609-proxy-a-failed-intent-commit-does-not-proceed"
+unit = "proxy.audit_intent_gate"
+conjunct = "a failed intent commitment refuses; it never proceeds as though no commitment were owed"
+path = "mcp-re-proxy/src/audit_commitment/posture.rs"
+anchor = """
+            Commitment::Required(crossing) => crossing
+                .commit(coordinate, intent)
+                .await
+                .map(IntentDisposition::Committed),
+"""
+weakening = """
+            Commitment::Required(crossing) => Ok(crossing
+                .commit(coordinate, intent)
+                .await
+                .map_or_else(
+                    |_| IntentDisposition::NotRequired(NoCommitmentRequired::minted_by_posture()),
+                    IntentDisposition::Committed,
+                )),
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_required_posture_never_yields_not_required",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_failures_reach_no_backend",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::a_stale_receipt_reaches_no_backend",
+]
+
+[[probe]]
+id = "M610-proxy-the-intent-is-committed-before-the-crossing-is-recorded"
+unit = "proxy.audit_intent_gate"
+conjunct = "G1 runs before the retention commit, so no .pending marker exists for an exchange whose intent was not committed (D7)"
+path = "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
+anchor = """
+        let intent = ExecutionIntent::new(acc.exchange().actor_id, acc.exchange().now);
+        let intent = match self.audit.intent(acc.exchange_coordinate(), intent).await {
+            Ok(intent) => intent,
+            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
+        };
+        let retention = match self.retention.commit(accepted).await {
+            Ok(disposition) => progress.establish(disposition),
+            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
+        };
+"""
+weakening = """
+        let retention = match self.retention.commit(accepted).await {
+            Ok(disposition) => progress.establish(disposition),
+            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
+        };
+        let intent = ExecutionIntent::new(acc.exchange().actor_id, acc.exchange().now);
+        let intent = match self.audit.intent(acc.exchange_coordinate(), intent).await {
+            Ok(intent) => intent,
+            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
+        };
+"""
+expect_red = [
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::w3_retention_commit_failure_after_intent_leaves_no_pending_and_no_dispatch",
+]
+
+[[probe]]
+id = "M611-proxy-the-signing-window-survives-the-intent-wait"
+unit = "proxy.audit_intent_gate"
+conjunct = "the signing window is asked to survive the intent crossing's bounded wait as well as the dispatch"
+path = "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
+anchor = """
+        let completion = prepared
+            .completion_bound()
+            .after(self.audit.pre_dispatch_wait());
+"""
+weakening = """
+        let completion = prepared.completion_bound();
+"""
+expect_red = [
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::the_window_must_survive_the_commitment_wait",
+]
+
+[[probe]]
+id = "M612-proxy-a-commitment-failure-earns-the-status-of-its-class"
+unit = "proxy.audit_intent_gate"
+conjunct = "an unavailable or uncertain provider earns a retryable 503 and a rejecting one a 500"
+path = "mcp-re-proxy/src/audit_commitment/intent.rs"
+anchor = """
+        CommitmentFailure::Rejected(_) => cannot_commit(),
+        CommitmentFailure::Unavailable | CommitmentFailure::Uncertain(_) => {
+            Refusal::new(McpReError::AuditCommitmentUnavailable, 503)
+        }
+"""
+weakening = """
+        CommitmentFailure::Rejected(_) | CommitmentFailure::Unavailable => cannot_commit(),
+        CommitmentFailure::Uncertain(_) => {
+            Refusal::new(McpReError::AuditCommitmentUnavailable, 503)
+        }
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::each_failure_class_earns_its_own_status",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::an_unavailable_provider_is_503",
+]
+
+[[probe]]
+id = "M613-proxy-an-unrepresentable-completion-bound-states-none"
+unit = "proxy.audit_intent_gate"
+conjunct = "a completion bound extended past what a Duration holds is Unstated, never a shorter bound"
+path = "mcp-re-proxy/src/async_inner/completion_bound.rs"
+anchor = """
+            DispatchCompletionBound::Within(d) => d.checked_add(wait).map_or(
+                DispatchCompletionBound::Unstated,
+"""
+weakening = """
+            DispatchCompletionBound::Within(d) => d.checked_add(wait).map_or(
+                DispatchCompletionBound::Within(d),
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#async_inner::completion_bound::tests::completion_bound_after_is_checked",
+]
+
+[[probe]]
+id = "M614-proxy-an-exchange-with-no-accepted-event-is-not-told-to-retry"
+unit = "proxy.audit_intent_gate"
+conjunct = "with no accepted event to name, no intent is produced and the refusal is 500: no retry on this replica can number one (D9)"
+path = "mcp-re-proxy/src/audit_commitment/intent.rs"
+anchor = """
+        let coordinate = coordinate.ok_or_else(cannot_commit)?;
+"""
+weakening = """
+        let coordinate = match coordinate {
+            Some(coordinate) => coordinate,
+            None => return Err(Refusal::new(McpReError::AuditCommitmentUnavailable, 503)),
+        };
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::an_absent_coordinate_is_500_and_asks_nothing",
 ]

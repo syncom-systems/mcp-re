@@ -52,6 +52,8 @@
 mod emission;
 /// The produced event: identity, scope, canonical bytes and digest (ADR-MCPRE-070 §8).
 mod envelope;
+/// The execution-intent fact: committed before dispatch, never observed (ADR-MCPRE-070 D1).
+mod intent;
 pub(crate) mod scalar;
 pub(crate) mod subject;
 pub(crate) mod text;
@@ -65,15 +67,17 @@ use crate::audit_record::text::AuditField;
 // deduplicating on `EventBinding` and refusing an `IntegrityConflict` is a contract every
 // sink and consumer applies (ADR-MCPRE-070 §8, §12). No constructor among them is public.
 pub use envelope::{
-    AuditEnvelope, ContentDigest, EventBinding, EventId, EventIdentityFailure, EventScope,
-    ExchangeCoordinate, IntegrityConflict, Recurrence, RunId, CANONICAL_VERSION,
+    AuditEnvelope, CanonicalEvent, ContentDigest, EventBinding, EventId, EventIdentityFailure,
+    EventScope, ExchangeCoordinate, IntegrityConflict, Recurrence, RunId, CANONICAL_VERSION,
 };
 // Crate-wide because the stderr stream, in `audit_sink`, opens this process's run at startup
 // so the start line names it before any record is produced.
 pub(crate) use emission::record_to;
 pub(crate) use envelope::open_process_run;
+// Crate-wide because the intent is committed by the serving path's G1 (ADR-MCPRE-070).
 #[cfg(test)]
 pub(crate) use envelope::EventAllocator;
+pub(crate) use intent::ExecutionIntent;
 pub use subject::AuditSubject;
 
 /// One audit record: what happened, to whom, and when.

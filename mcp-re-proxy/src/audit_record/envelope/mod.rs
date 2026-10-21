@@ -36,6 +36,7 @@ mod allocator;
 mod binding;
 mod canonical;
 mod digest;
+mod event;
 mod event_id;
 mod identity_failure;
 mod run_id;
@@ -47,6 +48,7 @@ pub(crate) use allocator::EventAllocator;
 pub use binding::{EventBinding, IntegrityConflict, Recurrence};
 pub use canonical::CANONICAL_VERSION;
 pub use digest::ContentDigest;
+pub use event::CanonicalEvent;
 pub use event_id::EventId;
 pub use identity_failure::EventIdentityFailure;
 pub use run_id::RunId;
@@ -54,43 +56,31 @@ pub use scope::{EventScope, ExchangeCoordinate};
 
 use crate::audit_record::AuditRecord;
 
-/// One produced audit event: its identity, its scope, the record, and the record's canonical
-/// bytes and their digest, all fixed at production.
+/// One produced audit event of a decision: its [`CanonicalEvent`] and the record it encodes.
 ///
 /// The fields are private and the only constructor is [`AuditEnvelope::produce`], so every
-/// envelope's identity came from its run's allocator, its scope was derived rather than
-/// supplied, and its bytes and digest are the encoding of exactly the record it carries.
+/// envelope's event was produced from exactly the record it carries, and its scope was
+/// derived from that record rather than supplied.
 #[derive(Debug, Clone)]
 pub struct AuditEnvelope {
-    id: EventId,
-    scope: EventScope,
+    event: CanonicalEvent,
     record: AuditRecord,
-    canonical: Box<[u8]>,
-    digest: ContentDigest,
 }
 
 impl AuditEnvelope {
     /// Produce the event `record` from `allocator`, in the exchange `link` names when it is a
     /// response.
-    ///
-    /// The identity is allocated first, so a record refused afterwards still leaves a hole
-    /// in its run rather than vanishing without a number.
     pub(in crate::audit_record) fn produce(
         allocator: &allocator::EventAllocator,
         link: Option<ExchangeCoordinate>,
         record: AuditRecord,
     ) -> Result<AuditEnvelope, EventIdentityFailure> {
-        let id = allocator.next()?;
-        let scope = EventScope::derive(&record, &id, link)?;
-        let canonical = canonical::encode(&id, &scope, &record.audit_fields())?;
-        let digest = ContentDigest::of(&canonical);
-        Ok(AuditEnvelope {
-            id,
-            scope,
-            record,
-            canonical: canonical.into_boxed_slice(),
-            digest,
-        })
+        let event = CanonicalEvent::produce(
+            allocator,
+            |id| EventScope::derive(&record, id, link),
+            &record.audit_fields(),
+        )?;
+        Ok(AuditEnvelope { event, record })
     }
 
     /// [`AuditEnvelope::produce`] for a test outside this subtree that needs envelopes
@@ -104,25 +94,25 @@ impl AuditEnvelope {
         Self::produce(allocator, link, record)
     }
 
+    /// The produced event: what a commitment authority is asked to commit.
+    pub fn event(&self) -> &CanonicalEvent {
+        &self.event
+    }
+
     /// The event's identity.
     pub fn id(&self) -> EventId {
-        self.id
+        self.event.id()
     }
 
     /// Which exchange the event belongs to.
     pub fn scope(&self) -> EventScope {
-        self.scope
+        self.event.scope()
     }
 
-    /// The coordinate of the exchange this event belongs to: its own identity for an
-    /// accepted request, the accepted event's for a response, and `None` for a request
-    /// refused before any exchange was accepted.
+    /// The coordinate of the exchange this event belongs to; see
+    /// [`CanonicalEvent::exchange_coordinate`].
     pub fn exchange_coordinate(&self) -> Option<ExchangeCoordinate> {
-        match self.scope {
-            EventScope::Origin => Some(ExchangeCoordinate::of_accepted(self.id)),
-            EventScope::Exchange(coordinate) => Some(coordinate),
-            EventScope::PreAcceptance => None,
-        }
+        self.event.exchange_coordinate()
     }
 
     /// The record, exactly as it was produced.
@@ -132,17 +122,17 @@ impl AuditEnvelope {
 
     /// The canonical v[`CANONICAL_VERSION`] bytes, fixed at production.
     pub fn canonical_bytes(&self) -> &[u8] {
-        &self.canonical
+        self.event.canonical_bytes()
     }
 
     /// The digest of [`AuditEnvelope::canonical_bytes`].
     pub fn digest(&self) -> ContentDigest {
-        self.digest
+        self.event.digest()
     }
 
     /// The identity and digest a consumer deduplicates on.
     pub fn binding(&self) -> EventBinding {
-        EventBinding::new(self.id, self.digest)
+        self.event.binding()
     }
 }
 

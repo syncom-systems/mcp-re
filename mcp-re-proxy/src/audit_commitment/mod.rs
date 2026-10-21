@@ -35,8 +35,16 @@
 //! Whether the provider persisted anything. A witness proves the shared code's handling and
 //! binding of the provider's answer; the provider's declared [`DurabilityTier`] is an
 //! assumption that needs external evidence per provider, and is never a property a Rust
-//! type establishes (D3). The reference authority in `reference` exists only in this
-//! crate's unit tests.
+//! type establishes (D3). The reference authority in `reference` exists only in test builds
+//! and the test-only `audit_commitment_reference` flavor.
+//!
+//! # The crossing and the posture
+//!
+//! [`AuditPosture`] is what the serving path holds: the observer, and whether G1 is a
+//! prerequisite. Under the required posture its intent crossing (`intent`) commits the
+//! exchange's [`ExecutionIntent`](crate::audit_record::ExecutionIntent) and redeems the
+//! witness, and the ready state cannot be built without the result. Under the best-effort
+//! posture it hands out [`NoCommitmentRequired`] instead, and commits nothing.
 
 /// The provider seam.
 mod authority;
@@ -48,6 +56,12 @@ mod crossing;
 mod established;
 /// The owner's typed failure.
 mod failure;
+/// G1: the intent crossing's procedure.
+mod intent;
+/// The best-effort posture's statement that nothing is owed.
+mod not_required;
+/// The deployment's audit posture: observer and commitment.
+mod posture;
 /// The provider's typed failure.
 mod provider_failure;
 /// What a provider says it committed.
@@ -60,24 +74,33 @@ mod tier;
 /// Envelopes the commitment tests commit. Test-only.
 #[cfg(test)]
 pub(crate) mod fixtures;
-/// The deterministic, scripted reference authority. Test-only.
+/// The reference authority as the serving integration tests drive it. Test-only flavors.
+#[cfg(any(test, feature = "audit_commitment_reference"))]
+mod harness;
+/// The model of the audit-commitment machine A, checked against R and the G1 types.
 #[cfg(test)]
+mod machine;
+/// The deterministic, scripted reference authority. Test-only flavors.
+#[cfg(any(test, feature = "audit_commitment_reference"))]
 pub(crate) mod reference;
 
 pub(crate) use authority::{CommitFuture, CommitmentAuthority};
 pub(crate) use bound::CommitmentBound;
-pub(crate) use crossing::{Crossing, CrossingKind};
-// The names a crossing holds. No production crossing commits yet, so outside the crate's
-// unit tests nothing imports them.
+pub(crate) use crossing::{Crossing, CrossingKind, Intent};
+// The outcome crossing's marker; its crossing is #1205's.
 #[cfg_attr(not(test), allow(unused_imports))]
-pub(crate) use crossing::{Intent, Outcome};
-#[cfg_attr(not(test), allow(unused_imports))]
+pub(crate) use crossing::Outcome;
 pub(crate) use established::EstablishedProvider;
-// What a crossing spends and what it keeps: no code outside `established` names these yet,
-// in any build.
+pub(crate) use established::Redeemed;
+// What a crossing spends and why it may refuse: no code outside `established` names these
+// yet, in any build.
 #[allow(unused_imports)]
-pub(crate) use established::{CommitmentWitness, Redeemed, WitnessRefusal};
+pub(crate) use established::{CommitmentWitness, WitnessRefusal};
 pub(crate) use failure::{BindingField, CommitmentFailure, UncertainCause};
+#[cfg(any(test, feature = "audit_commitment_reference"))]
+pub use harness::{ReferenceCommitment, ScriptedAnswer};
+pub(crate) use not_required::NoCommitmentRequired;
+pub(crate) use posture::AuditPosture;
 pub(crate) use provider_failure::{ProviderFailure, RejectReason};
 pub(crate) use receipt::CommitmentReceipt;
 pub(crate) use request::CommitRequest;

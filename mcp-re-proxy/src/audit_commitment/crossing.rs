@@ -4,11 +4,12 @@
 
 /// Which crossing, as a value: what a provider echoes in its receipt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))] // built only by `Crossing::KIND`, whose crossings are not wired yet
 pub(crate) enum CrossingKind {
     /// The execution intent, committed before dispatch (G1).
     Intent,
     /// The outcome, committed before success is visible (G2).
+    #[cfg_attr(not(test), allow(dead_code))]
+    // built only by `Outcome::KIND`; the outcome crossing is #1205's
     Outcome,
 }
 
@@ -28,12 +29,11 @@ pub(crate) trait Crossing: sealed::Sealed {
 
 /// The intent crossing (G1). Uninhabited: it exists only as a type parameter.
 #[derive(Debug)]
-#[cfg_attr(not(test), allow(dead_code))] // named by the crossing that commits an intent; none is wired yet
 pub(crate) enum Intent {}
 
 /// The outcome crossing (G2). Uninhabited: it exists only as a type parameter.
 #[derive(Debug)]
-#[cfg_attr(not(test), allow(dead_code))] // named by the crossing that commits an outcome; none is wired yet
+#[cfg_attr(not(test), allow(dead_code))] // named by the outcome crossing, which is #1205's
 pub(crate) enum Outcome {}
 
 impl Crossing for Intent {

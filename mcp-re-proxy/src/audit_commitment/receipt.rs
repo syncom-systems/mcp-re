@@ -26,7 +26,10 @@ impl CommitmentReceipt {
     /// A provider's receipt. Crate-wide because `CommitmentAuthority` is, and a receipt is
     /// the only thing a provider may answer with besides a failure: constructing one grants
     /// nothing until the owner has checked it.
-    #[cfg_attr(not(test), allow(dead_code))] // built by providers; none is compiled outside tests
+    #[cfg_attr(
+        not(any(test, feature = "audit_commitment_reference")),
+        allow(dead_code)
+    )] // built by providers; none is compiled into a deployable build
     pub(crate) fn new(binding: EventBinding, crossing: CrossingKind, tier: DurabilityTier) -> Self {
         CommitmentReceipt {
             binding,

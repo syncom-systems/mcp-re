@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! off  size  field
-//! 0    1     version = 0x01
+//! 0    1     version = 0x02
 //! 1    16    id.run
 //! 17   8     id.seq            i64 BE, 0 <= seq < i64::MAX
 //! 25   1     scope             0x01 Origin | 0x02 Exchange | 0x03 PreAcceptance
@@ -18,8 +18,10 @@
 //!              0x03 Text     u32 BE length || UTF-8
 //! ```
 //!
-//! The field sequence is exactly the record's own `audit_fields()`: the owners' facets are
-//! projected, never re-derived (ADR-MCPRE-066 invariant 5). Names are not encoded, because
+//! The field sequence is exactly the event's own `audit_fields()`: the owners' facets are
+//! projected, never re-derived (ADR-MCPRE-066 invariant 5). The event set has three arms: a
+//! request record (Origin or PreAcceptance), a response record (Exchange), and an execution
+//! intent (Exchange only; `event`, `actor`, `at` — ADR-MCPRE-070 D1). Names are not encoded, because
 //! position is schema; the class byte is, because `Token("none")` and `Text("none")` are
 //! different facts. There are no varints, no optional padding and no alternative forms, so
 //! two encodings of one event are equal byte for byte.
@@ -30,7 +32,7 @@
 //! - An event's bytes are fixed when it is produced and are never re-encoded: a retry
 //!   resends the same bytes.
 //! - Any change to the header, the class set, the event set or any arm's field sequence is a
-//!   new version. `every_enumerable_record_matches_the_v1_schema_table` fails on such a
+//!   new version. `every_enumerable_record_matches_the_v2_schema_table` fails on such a
 //!   change until the version moves with it.
 //! - While no commitment provider exists, no canonical bytes leave the process, so a version
 //!   change replaces its predecessor whole. From the first provider on, each prior version's
@@ -40,7 +42,7 @@ use super::{EventId, EventIdentityFailure, EventScope};
 use crate::audit_record::text::{AuditField, AuditValue};
 
 /// The one version this writer emits.
-pub const CANONICAL_VERSION: u8 = 1;
+pub const CANONICAL_VERSION: u8 = 2;
 
 const SCOPE_ORIGIN: u8 = 0x01;
 const SCOPE_EXCHANGE: u8 = 0x02;
@@ -193,9 +195,9 @@ mod tests {
         encode(&id(seq), scope, &record.audit_fields()).expect("a record encodes")
     }
 
-    /// The header every vector shares: version 1, run 0x11 x 16, seq 7.
+    /// The header every vector shares: version 2, run 0x11 x 16, seq 7.
     const HEADER: [u8; 25] = [
-        0x01, // version
+        0x02, // version
         0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, // run
         0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, //
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, // seq = 7
@@ -321,6 +323,27 @@ mod tests {
         .concat()
     }
 
+    /// (g) execution.intent, in the exchange whose accepted event is (run, 3).
+    fn golden_intent() -> Vec<u8> {
+        [
+            &HEADER[..],
+            &EXCHANGE_SCOPE,
+            &[0x00, 0x03], // 3 fields
+            &[0x01, 0x00, 0x00, 0x00, 0x17],
+            b"mcp-re.execution.intent", // event Token(23)
+            &[0x03, 0x00, 0x00, 0x00, 0x07],
+            b"actor-a",                                              // actor Text(7)
+            &[0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a], // at 10
+        ]
+        .concat()
+    }
+
+    fn intent_fields() -> Vec<AuditField<'static>> {
+        crate::audit_record::ExecutionIntent::new("actor-a", 10)
+            .audit_fields()
+            .to_vec()
+    }
+
     /// (f) The authorized arm's field shape, with a client-named target holding the spelling
     /// of a token, a NUL, a LF and a non-ASCII character. Built as fields rather than through
     /// the authority because a real grant's `authz_evidence` is a digest over a request
@@ -365,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn the_v1_golden_vectors_are_byte_exact() {
+    fn the_v2_golden_vectors_are_byte_exact() {
         assert_eq!(
             encoded(&accepted(), 7, &EventScope::Origin),
             golden_accepted()
@@ -391,19 +414,27 @@ mod tests {
             encode(&id(7), &EventScope::Origin, &authorized_fields()).expect("encodes"),
             golden_authorized_fields()
         );
+        assert_eq!(
+            encode(&id(7), &exchange(), &intent_fields()).expect("encodes"),
+            golden_intent()
+        );
     }
 
-    /// The content identity of two vectors, computed independently of this crate:
+    /// The content identity of three vectors, computed independently of this crate:
     /// `xxd -r -p | (printf 'mcp-re-audit-v1/envelope\0'; cat) | shasum -a 256`.
     #[test]
-    fn the_v1_golden_digests_are_pinned() {
+    fn the_v2_golden_digests_are_pinned() {
         assert_eq!(
             ContentDigest::of(&golden_accepted()).to_string(),
-            "7100f871fdd6afd939773491eeaff79d98ee64fddf225e6fe132042181791788"
+            "3cc2feec73ed9be18ce1f3a9bf5e5fabfce7486fb3644dab3c1c98a6d6771f17"
         );
         assert_eq!(
             ContentDigest::of(&golden_signed()).to_string(),
-            "5b2bfb624cffed65c92ccc47cbb921d41dc1c18c14a507bfa868c901e39a3d70"
+            "042dbf823c1d6eb1e2b439c8d2eab2b195fef67cfff06898ebfbf5c6e56552e2"
+        );
+        assert_eq!(
+            ContentDigest::of(&golden_intent()).to_string(),
+            "8e38b34bec77dbee94f92ab5deb94a958c87e83e74fc40179583c21a11060ab3"
         );
     }
 
@@ -551,11 +582,11 @@ mod tests {
         }
     }
 
-    /// Reads exactly one canonical v1 event and refuses everything else.
+    /// Reads exactly one canonical v2 event and refuses everything else.
     fn read(bytes: &[u8]) -> Result<Decoded, String> {
         let mut c = Cursor(bytes);
         let version = c.byte()?;
-        if version != 0x01 {
+        if version != 0x02 {
             return Err(format!("version {version}"));
         }
         let (run, seq) = (c.run()?, c.i64()?);
@@ -604,9 +635,18 @@ mod tests {
         }
     }
 
-    /// The v1 schema, by position: the six exchange-wide fields, and for a request the
-    /// authorization group and the admission group.
+    /// The v2 schema, by position: an intent's three fields, or the six exchange-wide
+    /// fields and, for a request, the authorization group and the admission group.
     fn check_schema(scope: &Scope, values: &[Value]) -> Result<(), String> {
+        if token(values, 0)? == "mcp-re.execution.intent" {
+            return match (scope, values) {
+                (Scope::Exchange(..), [Value::Token(_), Value::Text(_), Value::Number(_)]) => {
+                    Ok(())
+                }
+                (Scope::Exchange(..), _) => Err("the intent's fields are malformed".into()),
+                _ => Err("an intent belongs to an exchange".into()),
+            };
+        }
         let (event, decision) = (token(values, 0)?, token(values, 1)?);
         let request = match (event, decision, scope) {
             ("mcp-re.request.accepted", "Accepted", Scope::Origin)
@@ -661,6 +701,7 @@ mod tests {
             golden_policy_refused_at_admission(),
             golden_signed(),
             golden_response_rejected_elsewhere(),
+            golden_intent(),
         ]
     }
 
@@ -707,7 +748,8 @@ mod tests {
                 read(&[&vector[..], &[0x00]].concat()).is_err(),
                 "a trailing byte"
             );
-            assert!(read(&with(vector.clone(), 0, 0x02)).is_err(), "version 2");
+            assert!(read(&with(vector.clone(), 0, 0x01)).is_err(), "version 1");
+            assert!(read(&with(vector.clone(), 0, 0x03)).is_err(), "version 3");
             assert!(
                 read(&with_seq(vector.clone(), -1)).is_err(),
                 "a negative seq"
@@ -749,19 +791,30 @@ mod tests {
             read(&encoded(&signed(), 3, &exchange())).is_err(),
             "a coordinate that is not earlier than its event"
         );
+        for scope in [EventScope::Origin, EventScope::PreAcceptance] {
+            let intent = encode(&id(7), &scope, &intent_fields()).expect("encodes");
+            assert!(read(&intent).is_err(), "an intent under {scope:?}");
+        }
+        let decided = encoded(&signed(), 7, &exchange());
+        let mut relabelled = golden_intent();
+        relabelled.truncate(52);
+        assert!(
+            read(&[&relabelled[..], &decided[52..]].concat()).is_err(),
+            "an intent's event token over a decision's fields"
+        );
     }
 
-    // ---- the v1 schema table --------------------------------------------------------------
+    // ---- the v2 schema table --------------------------------------------------------------
 
     const T: u8 = CLASS_TOKEN;
     const N: u8 = CLASS_NUMBER;
     const X: u8 = CLASS_TEXT;
     const A: u8 = CLASS_ABSENT;
 
-    /// One position of the schema: the field's name and the classes v1 admits there.
+    /// One position of the schema: the field's name and the classes v2 admits there.
     type Slot = (&'static str, &'static [u8]);
 
-    /// Every field, by position, and the classes v1 admits there.
+    /// Every field, by position, and the classes v2 admits there.
     const EXCHANGE_WIDE: &[Slot] = &[
         ("event", &[T]),
         ("decision", &[T]),
@@ -791,6 +844,7 @@ mod tests {
             ],
         ),
     ];
+    const INTENT: &[Slot] = &[("event", &[T]), ("actor", &[X]), ("at", &[N])];
     const ADMISSION: &[Slot] = &[("admission", &[T])];
     const ADMISSION_REFUSED: &[Slot] = &[("admission", &[T]), ("admission_refusal", &[T])];
 
@@ -803,7 +857,7 @@ mod tests {
         }
     }
 
-    /// The v1 field sequence `record` must have, from the table.
+    /// The v2 field sequence `record` must have, from the table.
     fn schema_of(record: &AuditRecord) -> Vec<Slot> {
         let mut schema = EXCHANGE_WIDE.to_vec();
         if record.subject.authorization().is_none() {
@@ -816,7 +870,7 @@ mod tests {
         let arm = AUTHZ_ARMS
             .iter()
             .find(|(name, _)| name == authz)
-            .unwrap_or_else(|| panic!("authz arm {authz} is not in the v1 table"));
+            .unwrap_or_else(|| panic!("authz arm {authz} is not in the v2 table"));
         schema.extend_from_slice(arm.1);
         schema.extend_from_slice(match record.subject.admission_refusal() {
             Some(_) => ADMISSION_REFUSED,
@@ -853,10 +907,10 @@ mod tests {
             .expect("the evaluator grants")
     }
 
-    /// Every record this proxy can produce has exactly the v1 field sequence. A change to any
+    /// Every record this proxy can produce has exactly the v2 field sequence. A change to any
     /// arm — a field added, dropped, moved or reclassified — is a new canonical version.
     #[test]
-    fn every_enumerable_record_matches_the_v1_schema_table() {
+    fn every_enumerable_record_matches_the_v2_schema_table() {
         let admissions = [
             AdmissionFacet::NotReached,
             AdmissionFacet::NotConfigured,
@@ -924,9 +978,9 @@ mod tests {
                         .all(|((name, c), (want, classes))| name == want && classes.contains(c));
                 assert!(
                     matches,
-                    "the field sequence of {record:?} is not the v1 schema — a change to it \
-                     is a new canonical version: bump CANONICAL_VERSION and keep the v1 \
-                     vectors.\nactual: {actual:?}\nv1:     {schema:?}"
+                    "the field sequence of {record:?} is not the v2 schema — a change to it \
+                     is a new canonical version: bump CANONICAL_VERSION and keep the v2 \
+                     vectors.\nactual: {actual:?}\nv2:     {schema:?}"
                 );
                 if let Some(AuditValue::Token(authz)) =
                     record.audit_fields().get(6).map(|f| f.value.clone())
@@ -935,6 +989,16 @@ mod tests {
                 }
             }
         }
+        let intent: Vec<(&str, u8)> = intent_fields()
+            .iter()
+            .map(|f| (f.name, class(&f.value)))
+            .collect();
+        assert_eq!(
+            intent,
+            INTENT.iter().map(|(n, c)| (*n, c[0])).collect::<Vec<_>>(),
+            "the intent's field sequence is not the v2 intent arm — a change to it is a new \
+             canonical version"
+        );
         assert_eq!(
             arms_seen.len(),
             AUTHZ_ARMS.len(),

@@ -380,10 +380,12 @@ _PROXY_LIB_SRCS = [
     "src/audit_record/envelope/binding.rs",
     "src/audit_record/envelope/canonical.rs",
     "src/audit_record/envelope/digest.rs",
+    "src/audit_record/envelope/event.rs",
     "src/audit_record/envelope/event_id.rs",
     "src/audit_record/envelope/identity_failure.rs",
     "src/audit_record/envelope/run_id.rs",
     "src/audit_record/envelope/scope.rs",
+    "src/audit_record/intent.rs",
     "src/audit_record/scalar.rs",
     "src/audit_record/subject.rs",
     "src/audit_record/text.rs",
@@ -404,6 +406,11 @@ _PROXY_LIB_SRCS = [
     "src/audit_commitment/established/witness.rs",
     "src/audit_commitment/failure.rs",
     "src/audit_commitment/fixtures.rs",
+    "src/audit_commitment/harness.rs",
+    "src/audit_commitment/intent.rs",
+    "src/audit_commitment/machine.rs",
+    "src/audit_commitment/not_required.rs",
+    "src/audit_commitment/posture.rs",
     "src/audit_commitment/provider_failure.rs",
     "src/audit_commitment/receipt.rs",
     "src/audit_commitment/reference.rs",
@@ -507,6 +514,8 @@ _PROXY_LIB_SRCS = [
     # irreversible effect — the typed pre-dispatch boundary and the retention
     # obligation carried across it. Crate-internal.
     "src/request_stages.rs",
+    "src/request_stages/intent_disposition.rs",
+    "src/request_stages/retention_disposition.rs",
     # ADR-MCPRE-058 §7.2: the seven optional serving capabilities, each as one domain
     # operation producing what to attach and the posture line describing it.
     # Crate-internal.
@@ -823,7 +832,10 @@ nt_rust_library(
     name = "mcp_re_proxy_async_pre052",
     testonly = True,
     srcs = _PROXY_LIB_SRCS,
-    crate_features = ["async_serve"],
+    # `audit_commitment_reference` (test-only, `scripts/fixture_feature_gate.py`): the scripted
+    # reference commitment authority and the installer that makes it the required posture's
+    # provider, for the ADR-MCPRE-070 G1 serving suites.
+    crate_features = ["async_serve", "audit_commitment_reference"],
     crate_name = "mcp_re_proxy",
     edition = "2021",
     deps = _PROXY_LIB_DEPS_PRE052,
@@ -1335,7 +1347,7 @@ nt_rust_test(
         "tests/common/mod.rs",
     ],
     crate_root = "tests/integration_async/main.rs",
-    crate_features = ["async_serve"],
+    crate_features = ["async_serve", "audit_commitment_reference"],
     # The transparency suite runs the SHIPPED auditor as a child process. A composition
     # root proved only in-process is a composition root nobody can run, so the lane needs
     # the executable itself rather than the library behind it.
@@ -1390,7 +1402,7 @@ nt_rust_test(
         "tests/common/mod.rs",
     ],
     crate_root = "tests/integration_async/main.rs",
-    crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
+    crate_features = ["async_serve", "audit_commitment_reference"] + _PROXY_EXT_FEATURES,
     env_inherit = [
         "MCP_RE_TEST_REDIS_URL",
         "MCP_RE_TEST_ETCD_URL",
@@ -1522,7 +1534,7 @@ nt_rust_library(
     name = "mcp_re_proxy_ext_pre052",
     testonly = True,
     srcs = _PROXY_LIB_SRCS,
-    crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
+    crate_features = ["async_serve", "audit_commitment_reference"] + _PROXY_EXT_FEATURES,
     crate_name = "mcp_re_proxy",
     edition = "2021",
     deps = _PROXY_LIB_DEPS_PRE052 + _PROXY_EXT_CRATES,

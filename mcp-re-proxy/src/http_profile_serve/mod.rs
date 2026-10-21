@@ -129,7 +129,6 @@ use crate::exchange_state::ExchangeEvent;
 use crate::exchange_state::ExchangeProgress;
 use crate::exchange_state::RetrySemantics;
 use crate::http_profile_dispatch::ReplayAdmission;
-use crate::request_stages::ReadyForDispatch;
 use crate::transport::TransportBinding;
 use authority_verdicts::AuthorityVerdicts;
 
@@ -202,9 +201,9 @@ pub struct HttpProfileProxy {
     /// design, so it is only meaningful over a channel the PEP alone can write to
     /// — an operator asserts that, and nothing here can check it.
     verified_context_policy: VerifiedContextPolicy,
-    /// The ADR-MCPS-035 security-audit sink. `None` is the explicit no-emission
-    /// posture; a sink failure never fails a request (see [`crate::audit_sink`]).
-    audit: crate::audit_sink::MaybeAuditSink,
+    /// The audit posture (ADR-MCPRE-070 §2): the ADR-MCPS-035 observer, whose failure never
+    /// fails a request, and whether a committed intent is a prerequisite of dispatch.
+    audit: crate::audit_commitment::AuditPosture,
     /// The §7 admission-currency gate (ADR-MCPRE-053). `None` disables admission
     /// entirely: the binding, if a call carries one, is verified evidence that
     /// decides nothing.
@@ -225,7 +224,7 @@ impl HttpProfileProxy {
         mut self,
         sink: std::sync::Arc<dyn crate::audit_sink::AuditSink>,
     ) -> Self {
-        self.audit = Some(sink);
+        self.audit.observe_with(Some(sink));
         self
     }
 
@@ -266,7 +265,7 @@ impl HttpProfileProxy {
             continuations: continuation::ContinuationPlane::disabled(),
             verified_context_policy: VerifiedContextPolicy::default(),
             authorization: AuthorizationStage::default(),
-            audit: None,
+            audit: crate::audit_commitment::AuditPosture::best_effort(None),
             admission: None,
             retention: retention::Retention::none(),
         }
@@ -380,7 +379,7 @@ impl HttpProfileProxy {
     ) -> ServedHttpResponse {
         let owed = Self::disposition(progress, refusal.execution_refinement);
         self.responses.refuse(
-            &self.audit,
+            self.audit.observer(),
             receipt::RefusalPoint::Request(ex, None),
             refusal,
             owed,
@@ -468,16 +467,16 @@ impl HttpProfileProxy {
             Ok(answered) => answered,
             Err(rejection) => return rejection,
         };
-        let acc = receipt::Accepted::record(&self.audit, &admitted, ans);
+        let acc = receipt::Accepted::record(self.audit.observer(), &admitted, ans);
         let commitment = self.commit_to_dispatch(
             &acc,
             &admitted.envelope,
             admitted.authorized,
-            &window,
+            window,
             &mut progress,
         );
-        let (prepared, retention) = match commitment.await {
-            Ok(committed) => committed,
+        let ready = match commitment.await {
+            Ok(ready) => ready,
             Err(rejection) => return rejection,
         };
 
@@ -487,13 +486,13 @@ impl HttpProfileProxy {
         // says so: it cannot be built without them, and transmitting consumes it. Past this
         // line no exit can claim nothing happened — which is why every one of them is a
         // `response_rejection` rather than a `rejection`.
-        let ready = ReadyForDispatch::new(prepared, window, retention);
+        //
         // BEFORE the await, not after it. Once the request is committed to the backend the
         // exchange must read as possibly-executed, whatever the dispatch goes on to return:
         // a state entered only on the way out would leave a cancelled or panicking dispatch
         // claiming nothing happened.
         progress.advance(ExchangeEvent::BackendDispatched);
-        let (outcome, window, owed) = ready.dispatch().await.into_parts();
+        let (outcome, window, owed, _intent) = ready.dispatch().await.into_parts();
 
         // NOTIFICATION — a one-way message with no JSON-RPC `id` is its own terminal: it
         // says the boundary accepted the message, never that anything completed. Decided

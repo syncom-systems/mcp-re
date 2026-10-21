@@ -36,24 +36,39 @@ import _rust_targets  # noqa: E402
 
 #: Features no production target may compile, keyed by the Bazel package of the crate that
 #: declares them. Adding one here is a decision; the gate does not infer membership.
-TEST_ONLY_FEATURES: dict[str, str] = {
-    "mcp-re-host": "test-fixtures",
+TEST_ONLY_FEATURES: dict[str, tuple[str, ...]] = {
+    "mcp-re-host": ("test-fixtures",),
     # ADR-MCPRE-052: the pre-052 direct-root response emitters. A production target
     # compiling them would put a removed signing mode back into the build.
-    "mcp-re-http-profile": "pre_052_fixtures",
-    # MCPS-079 fault injection: a client-certificate verifier that accepts any client. A
-    # production target compiling it would ship mTLS with client authentication switched off.
-    "mcp-re-proxy": "fault_accept_any_client",
+    "mcp-re-http-profile": ("pre_052_fixtures",),
+    "mcp-re-proxy": (
+        # MCPS-079 fault injection: a client-certificate verifier that accepts any client. A
+        # production target compiling it would ship mTLS with client authentication off.
+        "fault_accept_any_client",
+        # ADR-MCPRE-070 G1: the scripted reference commitment authority and the installer
+        # that makes it the required posture's provider. A production target compiling it
+        # would let a deployment "commit" its execution intents to an in-memory script.
+        "audit_commitment_reference",
+    ),
     # The transport's mirror: a server-certificate verifier that accepts any server.
-    "mcp-re-transport": "fault_accept_any_server",
+    "mcp-re-transport": ("fault_accept_any_server",),
 }
+
+
+def _registered() -> list[tuple[str, str]]:
+    """Every (package, feature) pair the registry names, in a stable order."""
+    return sorted(
+        (package, feature)
+        for package, features in TEST_ONLY_FEATURES.items()
+        for feature in features
+    )
 
 
 def problems(rows: dict[str, dict]) -> list[str]:
     """Every target compiling a test-only feature without being test-only, and every
     registered feature with no production library or no flavor to measure."""
     found: list[str] = []
-    for package, feature in sorted(TEST_ONLY_FEATURES.items()):
+    for package, feature in _registered():
         compiled = {
             label: row
             for label, row in rows.items()
@@ -97,13 +112,17 @@ def selftest() -> int:
     pre_flavor = _row("mcp-re-http-profile/src/lib.rs", "rust_library", ["pre_052_fixtures"], True)
     proxy = _row("mcp-re-proxy/src/lib.rs", "rust_library", [], False)
     proxy_fault = _row("mcp-re-proxy/src/lib.rs", "rust_library", ["fault_accept_any_client"], True)
+    proxy_reference = _row(
+        "mcp-re-proxy/src/lib.rs", "rust_library", ["async_serve", "audit_commitment_reference"], True
+    )
     transport = _row("mcp-re-transport/src/lib.rs", "rust_library", [], False)
     transport_fault = _row(
         "mcp-re-transport/src/lib.rs", "rust_library", ["fault_accept_any_server"], True
     )
     green = {
         "//h:lib": lib, "//h:fx": flavor, "//p:lib": pre, "//p:fx": pre_flavor,
-        "//x:lib": proxy, "//x:fault": proxy_fault, "//t:lib": transport, "//t:fault": transport_fault,
+        "//x:lib": proxy, "//x:fault": proxy_fault, "//x:ref": proxy_reference,
+        "//t:lib": transport, "//t:fault": transport_fault,
     }
     cases = {
         "a flavor that is not testonly": {**green, "//h:fx": {**flavor, "testonly": False}},
@@ -114,6 +133,12 @@ def selftest() -> int:
             **green, "//h:lib": {**lib, "features": ["test-fixtures"]},
         },
         "a registered feature no target compiles": {k: v for k, v in green.items() if k != "//p:fx"},
+        "a package's second feature in a flavor that is not testonly": {
+            **green, "//x:ref": {**proxy_reference, "testonly": False},
+        },
+        "a package's second feature with no flavor": {
+            k: v for k, v in green.items() if k != "//x:ref"
+        },
         "a flavor declared in another package": {
             **green, "//elsewhere:fx": _row("mcp-re-host/src/lib.rs", "rust_library", ["test-fixtures"], False),
         },
@@ -141,10 +166,10 @@ def main() -> int:
             print(f"  - {problem}")
         return 1
 
-    registry = ", ".join(f"{p}/{f}" for p, f in sorted(TEST_ONLY_FEATURES.items()))
+    registry = ", ".join(f"{p}/{f}" for p, f in _registered())
     flavors = sum(
         1
-        for package, feature in TEST_ONLY_FEATURES.items()
+        for package, feature in _registered()
         for row in rows.values()
         if row["root"].startswith(f"{package}/") and feature in row["features"]
     )

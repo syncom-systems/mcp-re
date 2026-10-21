@@ -10,7 +10,7 @@ mod witness;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-use crate::audit_record::AuditEnvelope;
+use crate::audit_record::CanonicalEvent;
 
 use super::{
     CommitRequest, CommitmentAuthority, CommitmentBound, CommitmentFailure, Crossing,
@@ -39,14 +39,20 @@ impl std::fmt::Debug for EstablishedProvider {
 
 impl EstablishedProvider {
     /// Establish `authority`, reading its declared tier once.
-    #[cfg_attr(not(test), allow(dead_code))] // no production composition installs an authority yet
+    #[cfg_attr(
+        not(any(test, feature = "audit_commitment_reference")),
+        allow(dead_code)
+    )] // only the test-only installer establishes an authority until #1206
     pub(crate) fn establish(authority: Arc<dyn CommitmentAuthority>) -> Arc<Self> {
         let tier = authority.declared_tier();
         Arc::new(EstablishedProvider { authority, tier })
     }
 
     /// Whether this provider's declared tier may serve the required posture (D3).
-    #[cfg_attr(not(test), allow(dead_code))] // read by the startup refusal of an ineligible provider; none is wired yet
+    #[cfg_attr(
+        not(any(test, feature = "audit_commitment_reference")),
+        allow(dead_code)
+    )] // read by the test-only installer's refusal until #1206's startup refusal
     pub(crate) fn meets_required_minimum(&self) -> bool {
         self.tier.meets_required_minimum()
     }
@@ -60,10 +66,9 @@ impl EstablishedProvider {
     /// authorized lives in the same dropped future. Every answer that DOES return is typed:
     /// a provider failure, a timeout, a panic, or a receipt that does not match what was
     /// sent all become [`CommitmentFailure`], and none of them is absorbed.
-    #[cfg_attr(not(test), allow(dead_code))] // no production crossing commits yet
     pub(crate) async fn commit<K: Crossing>(
         self: &Arc<Self>,
-        envelope: &AuditEnvelope,
+        envelope: &CanonicalEvent,
         bound: CommitmentBound,
     ) -> Result<CommitmentWitness<K>, CommitmentFailure> {
         let request = CommitRequest::new(envelope, K::KIND, self.tier);

@@ -46,6 +46,23 @@ impl DispatchCompletionBound {
         Some(started.saturating_add(Self::whole_seconds(d)))
     }
 
+    /// This bound, for a dispatch that may begin up to `wait` later than the instant it is
+    /// measured from: the plane's own bound plus a pre-dispatch wait (ADR-MCPRE-070 G1).
+    ///
+    /// `Unstated` stays `Unstated`. A sum that does not fit a `Duration` is `Unstated` too:
+    /// no completion instant can be stated for it, so the window question it feeds refuses
+    /// rather than wrapping into a bound that looks short.
+    #[must_use]
+    pub(crate) fn after(self, wait: Duration) -> Self {
+        match self {
+            DispatchCompletionBound::Within(d) => d.checked_add(wait).map_or(
+                DispatchCompletionBound::Unstated,
+                DispatchCompletionBound::Within,
+            ),
+            DispatchCompletionBound::Unstated => DispatchCompletionBound::Unstated,
+        }
+    }
+
     /// `d` as whole unix seconds, ROUNDED UP.
     ///
     /// The question downstream is asked in whole seconds, so a sub-second remainder still
@@ -67,6 +84,30 @@ impl DispatchCompletionBound {
 mod tests {
     use super::DispatchCompletionBound;
     use std::time::Duration;
+
+    /// A pre-dispatch wait extends the bound; a sum that cannot be represented states no
+    /// bound at all; and nothing extends an unstated bound into a stated one.
+    #[test]
+    fn completion_bound_after_is_checked() {
+        let five = DispatchCompletionBound::Within(Duration::from_secs(5));
+        assert_eq!(
+            five.after(Duration::from_millis(1500)),
+            DispatchCompletionBound::Within(Duration::from_millis(6500))
+        );
+        assert_eq!(
+            five.after(Duration::ZERO),
+            five,
+            "a zero wait changes nothing"
+        );
+        assert_eq!(
+            DispatchCompletionBound::Within(Duration::MAX).after(Duration::from_nanos(1)),
+            DispatchCompletionBound::Unstated
+        );
+        assert_eq!(
+            DispatchCompletionBound::Unstated.after(Duration::ZERO),
+            DispatchCompletionBound::Unstated
+        );
+    }
 
     #[test]
     fn an_unstated_bound_has_no_completion_instant() {

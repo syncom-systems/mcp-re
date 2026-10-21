@@ -168,6 +168,13 @@ online_ocsp = []
 # cannot carry a revocation across replicas and so is no part of the library a deployment
 # links.
 async_serve = []
+# ADR-MCPRE-070 G1, TEST-ONLY (registered in `scripts/fixture_feature_gate.py`): compiles the
+# scripted reference commitment authority and `HttpProfileProxy::with_required_audit_commitment`,
+# the only route into the required audit posture until the operator selector (#1206). Set only
+# by the `testonly` flavors `:mcp_re_proxy_async_pre052` and `:mcp_re_proxy_ext_pre052` and the
+# async integration suites; no deployed flavor sets it, so no deployment can select the
+# reference authority.
+audit_commitment_reference = []
 
 [dev-dependencies]
 # ADR-MCPRE-052: the pre-052 direct-root emitters compile only for negative tests. A
