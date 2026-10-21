@@ -127,6 +127,7 @@ graph BT
     THM_0129["THM-0129<br/>Authoritative admission state is authenticated and bounded-current"]
     THM_0131["THM-0131<br/>The client-revocation posture states what this replica is enforcing now"]
     THM_0132["THM-0132<br/>A replica serves on last-known admission state for at most P after the authority last answered"]
+    THM_0135["THM-0135<br/>Under the required audit posture, no backend dispatch happens without the exchange's execution intent committed and its witness redeemed"]
     THM_0136["THM-0136<br/>Under the required audit posture, no completed success is visible without the exchange's outcome committed and its witness redeemed"]
     THM_0007 --> THM_0008
     THM_0010 --> THM_0009
@@ -214,6 +215,7 @@ graph BT
     THM_0099 --> THM_0074
     THM_0100 --> THM_0074
     THM_0101 --> THM_0074
+    THM_0135 --> THM_0074
     THM_0022 --> THM_0075
     THM_0062 --> THM_0075
     THM_0063 --> THM_0075
@@ -468,11 +470,4 @@ graph BT
 ```mermaid
 graph BT
     THM_0134["THM-0134<br/>The RFC 9421 wire surface is closed, and refuses rather than normalises"]
-```
-
-## Component 25
-
-```mermaid
-graph BT
-    THM_0135["THM-0135<br/>Under the required audit posture, no backend dispatch happens without the exchange's execution intent committed and its witness redeemed"]
 ```

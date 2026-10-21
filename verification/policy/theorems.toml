@@ -3885,6 +3885,12 @@ depends_on = [
   # ADEQUACY — whether the operator chose enough. This is IDENTITY — whether the set being
   # served is the one validated. The scope disclaims the first and is silent on the second.
   "THM-0077",
+  # ADR-MCPRE-070 G1. Under the required audit posture a committed execution intent is a
+  # pre-dispatch obligation the validated deployment selected, and THM-0135 is the leaf that
+  # says it is established by its owner (the shared commitment owner, against this exchange's
+  # intent event) before the backend is reached. Refusal-direction, the shape of this root;
+  # its statement and scope are unchanged.
+  "THM-0135",
 ]
 
 [[theorem]]
@@ -4053,6 +4059,12 @@ supported_by = [
   # in terms: "an unavailable tier failing closed is inside the claim". `supported_by` is
   # the only field this change touches.
   "unit://proxy.unestablishable_capability_refusal",
+  # ADR-MCPRE-070 §2, D3. The audit posture is one the operator selects, and this unit's
+  # refusals are this statement's "cannot be silently reinterpreted into a weaker posture":
+  # `--audit-commitment required` is never served as best-effort and refuses startup without
+  # an established provider at the minimum tier, a passing probe, and an observer.
+  # `supported_by` is the only field this change touches.
+  "unit://proxy.audit_posture",
 ]
 depends_on = [
   "THM-0067",

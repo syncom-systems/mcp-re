@@ -3400,3 +3400,64 @@ answers Unavailable, rather than holding a commitment past the bound, when it is
 """
 affected_contracts = []
 tool_specific_mechanism = "none"
+
+[[assumption]]
+id = "ASM-0092"
+description = "rustls, over the whole public Web PKI root set the pinned `webpki-roots` 1.x crate ships, completes an outbound agent's handshake only for a server certificate that chains to one of those roots, names the destination host the agent connected to, and is inside its validity window at the handshake, presented by a server that proved possession of that certificate's private key; and the certificate authorities in that root set issue a certificate for a name only to the party that controls it."
+justification = """
+THM-0090 says a credential leaves this proxy only to the endpoint its rule admitted. The rule
+admits a NAME. That the server answering on the socket is the holder of that name is decided
+by TLS server authentication, and since RUSTSEC-2026-0381/-0382 the proxy installs that
+authentication itself: `VettedDestination::agent` builds every outbound agent with
+`RootedConnector::public()` (`mcp-re-proxy/src/outbound_fetch/public_roots.rs`), a rustls
+client on the ring provider, safe default protocol versions, no client certificate, over a
+`RootCertStore` holding exactly `webpki_roots::TLS_SERVER_ROOTS`, with the URL host ureq
+connected to as the server name. Those choices are this repository's and are tested (NP-290's
+controls CD-20600..20603): a server under a trusted root completes the handshake and carries
+bytes; a server under a private CA is refused as `UnknownIssuer` before any request byte; the
+store is the whole shipped set; a host that is not a server name is refused. ureq is built
+without its `tls` feature, so an agent without this connector refuses https rather than
+authenticating under another root set.
+
+Two facts are not this repository's, and this entry is both of them. First, that rustls and
+webpki check what the handshake reports: path building to a shipped root, the name match, the
+validity window, the CertificateVerify proof of key possession. That is the same mechanism
+premise ASM-0070 states for the client transport, but over a different root set and for a
+different unit. Second, and only here: the trust boundary is EXTERNAL. Every certificate
+authority in the shipped set, the Mozilla root program as `webpki-roots` packages it, is
+trusted to issue for any name. A mis-issued certificate under any one of them authenticates a
+server this proxy then sends a credential to. Nothing in the process can detect that.
+
+This is distinct from ASM-0070 and does not widen it. ASM-0070's roots are the ones an
+operator configured for one proxy. These are a public set the operator never named, chosen
+when the crate version is pinned. A change to one says nothing about the other.
+
+Not claimed: revocation (`with_root_certificates` builds the verifier without revocation, so
+a revoked, unexpired certificate under a shipped root is accepted); Certificate Transparency;
+that the shipped set is current (a CA distrusted after the pinned release is trusted until the
+pin moves, as RUSTSEC-2026-0381 was); pinning to any particular CA or key; and any property of
+the destination beyond holding a certificate for its name.
+
+It stops being acceptable if an outbound agent installs any connector or verifier other than
+`RootedConnector::public()` in a production build, if its root store is populated from anything
+but the whole `webpki-roots` set, if a client certificate or a custom verifier is added, or on
+any change to the pinned rustls, rustls-webpki or webpki-roots version.
+"""
+scope = [
+  "unit://proxy.outbound_destination",
+  "boundary://boundary.tls_mechanism",
+]
+owner = "mats@sundvall.name"
+introduced_by = "Owner ruling 2026-10-21, epic #1201 final authority closure, direction 6 (NP-290)"
+review_requirement = "Owner review on any change to how an outbound agent's TLS is built (connector, verifier, root store, client authentication), or to the pinned rustls, rustls-webpki or webpki-roots version."
+premise_class = "external-boundary"
+boundary_owner = """
+rustls with webpki path validation, across `RootedConnector::public()` as built in
+`mcp-re-proxy/src/outbound_fetch/public_roots.rs`, and the certificate authorities of the public
+Web PKI root set the pinned `webpki-roots` 1.x crate ships: a handshake completes only for a
+server certificate that chains to a shipped root, matches the destination host, is within its
+validity window, and is presented by a server holding its private key; and a shipped CA issues
+for a name only to the party that controls it.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"

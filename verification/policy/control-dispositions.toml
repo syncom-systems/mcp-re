@@ -15111,7 +15111,7 @@ title = "An outbound agent's TLS authenticates a server against the public Web P
 carrier = "mcp-re-proxy/src/outbound_fetch/public_roots.rs (RootedConnector, installed by VettedDestination::agent)"
 likely_owner = "none. proxy.outbound_destination holds the carrier in its paths but states admissibility of a destination, which a server-authentication test does not falsify."
 consequence = "critical"
-root_relationship = "Server authentication for every credential-bearing outbound request (KMS, STS, metadata, SCITT registration): the roots that request is authenticated against, after ureq's own `tls` feature and its webpki-roots 0.26 shim left the graph (RUSTSEC-2026-0381)."
+root_relationship = "under THM-0090: server authentication for every credential-bearing outbound request (KMS, STS, metadata, SCITT registration), resting on ASM-0092 (rustls over the shipped webpki-roots 1.x set; its certificate authorities are the external trust boundary); recorded when ureq's own `tls` feature and its webpki-roots 0.26 shim left the graph (RUSTSEC-2026-0381)."
 record = "docs/architecture/control-dispositions.md#np-290"
 
 [[disposition]]

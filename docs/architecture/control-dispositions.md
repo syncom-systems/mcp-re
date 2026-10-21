@@ -5036,5 +5036,5 @@ this one covers request signers too. No theorem depends on it.
 **If false.** A credential-bearing request (a KMS signature, an STS exchange, a bearer token) is sent to a server nobody authenticated, or to one authenticated under a root set the proxy never named, such as a distrusted one.
 **Likely owner:** none. proxy.outbound_destination holds the carrier in its paths but states admissibility of a destination, which a server-authentication test does not falsify.
 **Severity:** `critical`.
-**Root relationship.** Server authentication for every credential-bearing outbound request; recorded when ureq's own `tls` feature and its webpki-roots 0.26 shim left the graph (RUSTSEC-2026-0381, -0382).
+**Root relationship.** Under THM-0090: server authentication for every credential-bearing outbound request, resting on ASM-0092 (rustls over the shipped `webpki-roots` 1.x set; its certificate authorities are the external trust boundary, and revocation is not checked). Recorded when ureq's own `tls` feature and its webpki-roots 0.26 shim left the graph (RUSTSEC-2026-0381, -0382).
 **Recorded:** 2026-10-21, RUSTSEC-2026-0381/-0382 dependency remediation.
