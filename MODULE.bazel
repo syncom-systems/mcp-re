@@ -160,6 +160,9 @@ use_repo(zig_toolchains, "zig_sdk")
 #
 # To change a crate: edit its spec, then re-resolve the lock with
 #     CARGO_BAZEL_REPIN=1 bazel mod show_extension @rules_rust//crate_universe:extension.bzl%crate
+# then run ONE plain `bazel mod show_extension` (no variable) so MODULE.bazel.lock records the
+# repin inputs unset: a lock that records `CARGO_BAZEL_REPIN 1` is rewritten by the next plain
+# build, and `scripts/crate_spec_parity_gate.py` refuses it.
 # A spec change takes effect without that (the lock only pins versions), but the
 # lock must be re-resolved to record what the change pulled in.
 # The hub MUST stay named `crates_mcp_re`: every BUILD file refers to it.
