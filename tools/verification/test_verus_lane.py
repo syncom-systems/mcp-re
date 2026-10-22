@@ -24,7 +24,7 @@ from _verus_results import evaluate_unit, parse_reports  # noqa: E402
 
 LANE = load_tool("verify-verus")
 
-PIN = "92f466f247f45128c630d1c843fd6e27d2115587"
+PIN = "7d829946231d6413a398f6e4160cdfe951261dad"
 
 
 def report(
@@ -47,7 +47,7 @@ def report(
                 "errors": errors,
                 "is-verifying-entire-crate": entire,
             },
-            "verus": {"version": "0.2026.08.09.92f466f", "commit": commit},
+            "verus": {"version": "0.2026.10.18.7d82994", "commit": commit},
         }
     )
 

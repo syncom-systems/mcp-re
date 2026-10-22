@@ -511,10 +511,10 @@ def test_a_registered_nightly_charon_does_not_pin_is_refused():
 
     with tempfile.TemporaryDirectory() as tmp:
         module = Path(tmp) / "MODULE.bazel"
-        module.write_text('rust.toolchain(versions = ["1.97.1", "nightly/2026-06-02"])\n')
+        module.write_text('rust.toolchain(versions = ["1.99.1", "nightly/2026-06-02"])\n')
         drift = _lean_model.build_nightly_drift({"charon": {"rust_toolchain": "nightly-2026-06-01"}}, module)
         assert drift and "2026-06-02" in drift, drift
-        module.write_text('rust.toolchain(versions = ["1.97.1"])\n')
+        module.write_text('rust.toolchain(versions = ["1.99.1"])\n')
         assert _lean_model.build_nightly_drift({"charon": {"rust_toolchain": "nightly-2026-06-01"}}, module)
 
 

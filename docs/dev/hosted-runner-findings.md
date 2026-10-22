@@ -34,7 +34,7 @@ to 1.5 times slower on the mutation lane and otherwise equivalent in verdict.
 
 ## Verus
 
-Release 0.2026.08.09.92f466f ships `x86-linux` and no arm64-linux build. The lock pins it as
+Release 0.2026.10.18.7d82994 ships `x86-linux` and no arm64-linux build. The lock pins it as
 `[verus_linux_x86_64]` (zip digest, `verus`, `rust_verify`, `z3`, `vstd.vir`, `libvstd.rlib`),
 read by `verify-verus` and `bazel/verus/repo.bzl` by host. The Linux prover is part of every unit
 fingerprint, as the macOS one is, so unit proof evidence is re-established on the new

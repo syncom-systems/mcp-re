@@ -41,7 +41,7 @@ permissions:
 
 jobs:
   rust:
-    name: Bazel build + test (Rust 1.97.1)
+    name: Bazel build + test (Rust 1.99.1)
     runs-on: ubuntu-latest
     steps:
       # Full history: the module-size ratchet checks DISPOSITION TRANSITIONS against
@@ -860,7 +860,7 @@ jobs:
           //mcp-re-conformance:scitt_interop_test
 
   release-gates:
-    name: feature-gated backend tests (Bazel, 1.97.1)
+    name: feature-gated backend tests (Bazel, 1.99.1)
     runs-on: ubuntu-latest
     # The ADR-MCPRE-051 §7 release gates as NAMED, attributable lanes (MCPRE-123). Their
     # tests also run inside the bazel job's `bazel test //...`; naming them makes each a
