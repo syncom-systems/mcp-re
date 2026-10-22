@@ -96,9 +96,8 @@ pub(crate) fn check_params(
     now: i64,
     require_nonce: bool,
 ) -> Result<(i64, i64, String, String, ProfileAlgorithm), HttpProfileError> {
-    match params.tag.as_deref() {
-        Some(PROFILE_TAG) => {}
-        _ => return Err(HttpProfileError::UnknownProfileTag),
+    if params.tag.as_deref() != Some(PROFILE_TAG) {
+        return Err(HttpProfileError::UnknownProfileTag);
     }
     // Resolve the DECLARED algorithm to one this verifier both accepts and can
     // check. The resolved value is returned, not discarded, so every caller must
