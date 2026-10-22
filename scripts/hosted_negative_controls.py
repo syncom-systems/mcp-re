@@ -57,10 +57,10 @@ def tamper_linux_prover(text: str) -> str | None:
     if text.count(marker) != 1:
         return None
     head, tail = text.split(marker)
-    old = 'rust_verify = "sha256:4'
+    old = 'rust_verify = "sha256:e'
     if old not in tail:
         return None
-    return head + marker + tail.replace(old, 'rust_verify = "sha256:5', 1)
+    return head + marker + tail.replace(old, 'rust_verify = "sha256:f', 1)
 
 
 def falsify_proof(text: str) -> str | None:
@@ -134,11 +134,11 @@ def selftest() -> int:
          expect_refusal("selftest: named reason", 1, "rust_verify identity mismatch\nVERDICT: FAIL",
                         ["rust_verify identity mismatch", "VERDICT: FAIL"]))
 
-    lock = '[verus_linux_x86_64.binaries]\nrust_verify = "sha256:4abc"\n'
+    lock = '[verus_linux_x86_64.binaries]\nrust_verify = "sha256:eabc"\n'
     tampered = tamper_linux_prover(lock)
-    case("the prover edit changes the Linux digest", tampered is not None and "sha256:5abc" in tampered)
+    case("the prover edit changes the Linux digest", tampered is not None and "sha256:fabc" in tampered)
     case("the prover edit refuses a lock it does not recognise",
-         tamper_linux_prover(lock.replace("sha256:4", "sha256:7")) is None)
+         tamper_linux_prover(lock.replace("sha256:e", "sha256:7")) is None)
     case("the prover edit applies to today's lock", tamper_linux_prover(LOCK.read_text()) is not None)
     case("the proof edit makes the bound false",
          falsify_proof("DAYS_IN_MONTH@[i] <= 31,") == "DAYS_IN_MONTH@[i] <= 30,")
