@@ -191,7 +191,10 @@ specs and the Bazel lock equal to them — its failure mode is a dependency chan
 in a manifest the build does not read), `test_inventory_gate.py` (added 2026-09-29: every
 `#[test]` in the tree is compiled into a binary `bazel test //...` runs, or into a named
 lane's `manual` target — its failure mode is a lane that is green because it never compiled
-the test).
+the test), `toolchain_consistency_gate.py` (added 2026-10-22: the production Rust version in
+`MODULE.bazel`, the toolchain lock and both Verus pins are one value, and no job or required-check
+name carries a version — its failure mode is a compiler bump that moves the build and leaves a pin
+or a ruleset name describing the old one).
 **Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 2.
 
 These keep the machinery that RUNS the batteries able to run them: a Bazel target list that

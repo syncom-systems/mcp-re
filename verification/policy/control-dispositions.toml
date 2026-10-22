@@ -15523,3 +15523,11 @@ control = "tests/integration_async/main.rs#outcome_before_success_test::required
 decision = "new-proposition"
 proposition = "NP-291"
 recorded = "2026-10-21"
+
+[[disposition]]
+id = "CD-20605"
+project = ""
+control = "gate#scripts/toolchain_consistency_gate.py"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-10-22"
