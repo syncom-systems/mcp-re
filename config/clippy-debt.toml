@@ -211,7 +211,7 @@ count = 0
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "indexing_slicing"
-count = 19
+count = 13
 
 # 0 -> 3: the same measurement correction as `arithmetic_side_effects` above.
 # 3 -> 2: MCPRE-196 — the admission owner projects its enforcer, so the capability no longer

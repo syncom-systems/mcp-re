@@ -83,7 +83,7 @@ pub(super) async fn handle_request<H: AsyncRequestHandler>(
     };
     let (body_bytes, _body_charge) = match read_body(req, &options, &admission.body_budget).await {
         Ok(read) => read,
-        Err(refusal) => return Ok(refusal),
+        Err(refusal) => return Ok(*refusal),
     };
 
     // ADR-MCPRE-064 (#623). ONE question: who authenticated, and what the controls said.

@@ -186,7 +186,7 @@ impl Backend {
     /// is compared only against `failure_threshold`, so the ceiling is the most-ejected end.
     fn count_failure(&self) -> u32 {
         self.consecutive_failures
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 Some(n.saturating_add(1))
             })
             .unwrap_or_else(|n| n)

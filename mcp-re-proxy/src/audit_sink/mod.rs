@@ -108,7 +108,7 @@ fn admission_ceiling(record: &AuditRecord) -> usize {
 /// nothing but a single-threaded run.
 fn reserve_slot(queued: &std::sync::atomic::AtomicUsize, ceiling: usize) -> bool {
     queued
-        .fetch_update(
+        .try_update(
             std::sync::atomic::Ordering::Relaxed,
             std::sync::atomic::Ordering::Relaxed,
             |current| (current < ceiling).then(|| current.saturating_add(1)),
