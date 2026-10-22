@@ -105,6 +105,12 @@ charon_install = use_repo_rule("//bazel/charon:repo.bzl", "charon_install")
 
 charon_install(name = "charon")
 
+# The same container's Aeneas, which turns Charon's LLBC into the Lean model; only the
+# `manual` `aeneas_lean` targets use it.
+aeneas_install = use_repo_rule("//bazel/charon:repo.bzl", "aeneas_install")
+
+aeneas_install(name = "aeneas")
+
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
     edition = "2021",

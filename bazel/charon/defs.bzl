@@ -1,4 +1,4 @@
-"""The Lean extraction's first half, as a Bazel rule — ADR-MCPRE-059 §8.
+"""The Lean extraction, as Bazel rules — ADR-MCPRE-059 §8.
 
 `charon_llbc` runs Charon over one library crate and writes its LLBC. The crate is the
 ordinary Bazel target — its sources, crate root, edition and dependencies are read from its
@@ -8,7 +8,11 @@ driver can load. WHAT is extracted is the manifest's: the lane passes each unit'
 `extracted_symbols` as `--//bazel/charon:start_from`, so the action is keyed by it and no
 second list decides it.
 
-Runs only inside the pinned extraction container (`@charon`).
+`aeneas_lean` is the second half: it runs the pinned Aeneas over one LLBC and writes the Lean
+model. The LLBC is the only input that varies, so a model is rebuilt exactly when Charon's
+output for the crate changed and is otherwise the cached one.
+
+Both run only inside the pinned extraction container (`@charon`, `@aeneas`).
 """
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
@@ -69,4 +73,32 @@ charon_llbc = rule(
         "_start_from": attr.label(default = "//bazel/charon:start_from"),
     },
     doc = "Charon's LLBC for one crate, from the items `--//bazel/charon:start_from` names.",
+)
+
+def _aeneas_lean_impl(ctx):
+    aeneas = [f for f in ctx.files._aeneas if f.basename == "aeneas"]
+    if not aeneas:
+        fail("the extraction lane cannot run here: " + " ".join([f.path for f in ctx.files._aeneas]))
+    llbc = ctx.file.llbc
+    # The LLBC's basename decides the Lean module name, so the model is a directory: the
+    # files Aeneas writes are its to name.
+    model = ctx.actions.declare_directory(ctx.label.name)
+    ctx.actions.run(
+        executable = aeneas[0],
+        arguments = ["-backend", "lean", "-dest", model.path, llbc.path],
+        inputs = [llbc] + ctx.files._aeneas,
+        outputs = [model],
+        env = CHARON_ENV,
+        mnemonic = "Aeneas",
+        progress_message = "Extracting the Lean model of %{label} with the pinned Aeneas",
+    )
+    return [DefaultInfo(files = depset([model]))]
+
+aeneas_lean = rule(
+    implementation = _aeneas_lean_impl,
+    attrs = {
+        "llbc": attr.label(mandatory = True, allow_single_file = [".llbc"]),
+        "_aeneas": attr.label(default = "@aeneas//:files"),
+    },
+    doc = "The Lean model Aeneas writes for one `charon_llbc` output.",
 )

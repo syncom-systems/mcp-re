@@ -37,3 +37,25 @@ charon_install = repository_rule(
     local = True,
     doc = "Links the extraction container's Charon into a repository.",
 )
+
+def _aeneas_install_impl(rctx):
+    exe = rctx.os.environ.get("AENEAS_EXE", "")
+    path = rctx.path(exe) if exe else None
+    if not exe or not path.exists:
+        rctx.file("UNAVAILABLE", "no Aeneas here: AENEAS_EXE is {}\n".format(exe or "unset"))
+        rctx.file("BUILD.bazel", 'filegroup(name = "files", srcs = ["UNAVAILABLE"], visibility = ["//visibility:public"])\n')
+        return
+    rctx.symlink(path, "bin/aeneas")
+    rctx.file("BUILD.bazel", """filegroup(
+    name = "files",
+    srcs = ["bin/aeneas"],
+    visibility = ["//visibility:public"],
+)
+""")
+
+aeneas_install = repository_rule(
+    implementation = _aeneas_install_impl,
+    environ = ["AENEAS_EXE"],
+    local = True,
+    doc = "Links the extraction container's Aeneas into a repository.",
+)
