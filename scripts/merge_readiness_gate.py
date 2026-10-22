@@ -655,7 +655,7 @@ def selftest() -> int:
     # PRE-MERGE REQUIREMENTS ARE WHAT A PULL REQUEST STARTS. The complete run starts on schedule
     # and dispatch only, so a lane that only it executes is deferred, never "missing" (which
     # would block every merge) and never "satisfied" (which would claim a measurement).
-    for changed in ({"MODULE.bazel", "MODULE.bazel.lock", "verification/policy/toolchains.lock.toml"},
+    for changed in ({"MODULE.bazel", "MODULE.bazel.lock", _registries.relative("toolchains")},
                     {"tools/verification/verify"}, {"mcp-re-core/src/lib.rs"}):
         started = pull_request_workflows(changed)
         if "verification.yml" in started or "pre-merge.yml" not in started:
