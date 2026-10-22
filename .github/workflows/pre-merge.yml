@@ -432,15 +432,14 @@ jobs:
           python3 tools/cloud/render_cloud_config.py --selftest
           python3 tools/perf/lightsail/ceiling.py selftest
 
-      # ADR-MCPRE-059. The verification workflow is `paths:`-filtered, and its filter list
-      # and the units' fingerprint closures are ONE dependency set written down twice. When
-      # the closure grows past the filter, the workflow does not go red — it stops running,
-      # and every check on the PR stays green while nothing measures the changed unit.
-      # `verification_trigger_gate.py` is what refuses that, so it must not live only inside
-      # the workflow whose trigger it polices: a PR narrowing the filter would also stop the
-      # policeman. It runs here, in the unconditional job, for the same reason the two
-      # ratchets above do — the merge path is what has to enforce it.
-      - name: Verification trigger gate (fingerprint closure ⊆ workflow trigger set)
+      # ADR-MCPRE-059. What starts exhaustive verification is a contract: the complete run
+      # (`verification.yml`) starts only on its schedule or a dispatch, never on a pull
+      # request or a push, and the bounded mutation probe is capped and timed.
+      # `verification_trigger_gate.py` holds the workflows to that, with negative controls for
+      # a MODULE.bazel change, a toolchain update and a platform change. It must not live only
+      # inside a workflow it polices, so it runs here, in the unconditional job, for the same
+      # reason the two ratchets above do — the merge path is what has to enforce it.
+      - name: Verification trigger gate (only schedule or dispatch starts a complete run)
         run: |
           # The one reader every workflow gate reads through: its syntax cases first, then
           # every workflow in the tree, so a construct it cannot read fails here by name

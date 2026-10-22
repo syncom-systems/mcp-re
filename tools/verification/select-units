@@ -15,9 +15,9 @@ over a producer whose evidence is unknown; it is not narrowed by sealed edges, w
 the conservative direction.
 
 A MERGE CHECK NEVER RUNS EVERYTHING. It answers inside the CI time budget, and the
-complete verification runs weekly, at release and on dispatch (the workflows call it
-without `--units-file`). So when a scope cannot be trusted or cannot fit the budget, the
-check is DEFERRED to that complete run, and says so, rather than widened to it:
+complete verification runs weekly and on dispatch (`verification.yml`, which does not call
+this tool). So when a scope cannot be trusted or cannot fit the budget, the check is
+DEFERRED to that complete run, and says so, rather than widened to it:
 
   * the change touches the verification platform itself (`tools/verification/`) or the
     workflows that run it — a scope computed by a changed instrument is not trusted, and

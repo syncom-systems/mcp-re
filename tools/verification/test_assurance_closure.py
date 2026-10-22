@@ -371,10 +371,11 @@ def test_scope_sets_complete_true_only_for_dispatch_and_schedule():
     assert len(true_lines) == 1
     arm = body[: body.index(true_lines[0])].rsplit("\n", 3)
     assert "schedule|workflow_dispatch)" in "\n".join(arm[-3:])
-    # The complete arm exits before the scoped path, which writes false.
-    after = body[body.index(true_lines[0]):]
-    assert "exit 0" in after.split("\n", 2)[1]
-    assert 'echo "complete=false" >> "$GITHUB_OUTPUT"' in after
+    # Every other event exits non-zero before it writes any output: no run of this workflow
+    # is scoped, so `complete` is never false, it is either true or the run has failed.
+    foreign = body[body.index("*)"):]
+    assert "exit 1" in foreign and "GITHUB_OUTPUT" not in foreign
+    assert "complete=false" not in body
     assert set(closure.COMPLETE_EVENTS) == {"workflow_dispatch", "schedule"}
 
 

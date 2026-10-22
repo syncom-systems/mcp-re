@@ -23,10 +23,14 @@
 # is not.
 #
 # `tools/verification/verify` ALSO runs this lane, and the duplication is deliberate. There
-# it is one step of the run whose records `attest` consumes, so the attestation closure can
-# be produced in a single invocation; here it is a fast, narrowly-filtered signal on the
-# pull requests that can actually invalidate it. Neither makes the other redundant: the
-# umbrella run is not path-filtered, and this job writes no attestation.
+# it is one step of the complete run whose records `attest` consumes; here it is a bounded,
+# narrowly-filtered signal on the pull requests that can actually invalidate it. Neither makes
+# the other redundant: this job writes no attestation.
+#
+# BOUNDED: a pull request applies only the probes of the units it moves, at most 20 units,
+# inside a 30 minute timeout. A platform change, a larger scope, or a scope that cannot be
+# computed applies NO probe here and is deferred to the complete run (weekly, or dispatch).
+# `scripts/verification_trigger_gate.py` enforces the triggers, the cap and the timeout.
 
 name: mutation probe
 
@@ -52,30 +56,9 @@ on:
       # nothing fails nothing.
       - "mcp-re-proxy/src/tls_plane/**"
       - "mcp-re-proxy/src/delegated_tls.rs"
-  push:
-    branches: [main]
-    paths:
-      - "verification/policy/mutation-probes.toml"
-      - "verification/policy/verification.toml"
-      - "tools/verification/verify-mutations"
-      - "tools/verification/test_mutation_lane.py"
-      - "tools/verification/_manifest.py"
-      - ".github/workflows/mutation-probe.yml"
-      - "docs/architecture/components/evidence-verification.md"
-      - "mcp-re-http-profile/src/**"
-      - "mcp-re-http-profile/tests/**"
-      - "mcp-re-core/src/**"
-      - "mcp-re-proxy/src/tls_listener_state/**"
-      - "mcp-re-proxy/src/tls.rs"
-      # MCPRE-175 split this into an owner subtree (`client_revocation_posture.rs`,
-      # `crl_reload_worker.rs`). A SUBTREE pattern rather than today's children: the
-      # authority is the plane, and a filter enumerating its current members would go
-      # stale the next time one is added — silently, because a filter that matches
-      # nothing fails nothing.
-      - "mcp-re-proxy/src/tls_plane/**"
-      - "mcp-re-proxy/src/delegated_tls.rs"
 
-  # THE COMPLETE RUN: every probe. Weekly, and by dispatch for a release.
+  # THE COMPLETE RUN: every probe. Weekly, and by dispatch. Never a push to main: what runs
+  # after a merge is `post-merge.yml`.
   schedule:
     - cron: "0 4 * * 0"
   workflow_dispatch:
@@ -91,6 +74,10 @@ jobs:
   probe:
     name: V0 evidence self-test (mutation probes)
     runs-on: ubuntu-latest
+    # The wall-clock bound. A pull request scoped to at most `--max-units` units fits well
+    # inside it; a run that does not is cancelled, never extended, and the complete run covers
+    # what it did not.
+    timeout-minutes: 30
     steps:
       # Depth 2: a pull request checks out its MERGE commit, and `select-units` measures the
       # change against that commit's first parent.
@@ -112,8 +99,6 @@ jobs:
               echo "complete run: a ${{ github.event_name }} event applies every probe"
               { echo "args="; echo "measure=true"; } >> "$GITHUB_OUTPUT"
               exit 0 ;;
-            push)
-              base='${{ github.event.before }}' ;;
             *)
               if git rev-parse -q --verify HEAD^2 >/dev/null; then
                 base=HEAD^1
@@ -123,8 +108,14 @@ jobs:
           esac
           case "$base" in HEAD^1) ;; *) git fetch -q --no-tags --depth=1 origin "$base" || true ;; esac
           units="$RUNNER_TEMP/mutation-units"
-          python3 tools/verification/select-units --base "$base" --out "$units" \
-            --lane mutation --github-output | tee "$RUNNER_TEMP/why"
+          # A scope that cannot be computed is DEFERRED to the complete run, never widened to it.
+          if ! python3 tools/verification/select-units --base "$base" --out "$units" \
+              --lane mutation --max-units 20 --github-output > "$RUNNER_TEMP/why"; then
+            echo "select-units: deferred - the scope could not be computed; verified by the weekly run instead" > "$RUNNER_TEMP/why"
+            : > "$units"
+            { echo "mode=deferred"; echo "count=0"; } >> "$GITHUB_OUTPUT"
+          fi
+          cat "$RUNNER_TEMP/why"
           mode=$(sed -n 's/^mode=//p' "$GITHUB_OUTPUT" | tail -1)
           count=$(sed -n 's/^count=//p' "$GITHUB_OUTPUT" | tail -1)
           echo "args=$(sed 's/^/--unit /' "$units" | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
@@ -140,8 +131,8 @@ jobs:
           head -1 "$RUNNER_TEMP/why"
           echo "The complete run (weekly, or dispatched) applies every probe."
 
-      - name: Rust toolchain
-        run: rustup show active-toolchain || rustup toolchain install stable --profile minimal
+      # No host Rust toolchain is installed or consulted: every Rust member of a probe's
+      # battery is a Bazel test target, compiled by the compiler MODULE.bazel pins.
 
       # The lane's own false-green catalogue, first: it is python-only and fails in
       # seconds, before ~26 cargo runs discover the same defect slowly.

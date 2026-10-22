@@ -9,8 +9,9 @@ green complete run while REVIEW_CURRENT fell from 133 to 41 (#1171).
 
 | when | what runs | what it decides |
 |---|---|---|
-| every pull request | the required fast pre-merge checks | whether the PR may merge |
-| epic end | one complete `verification.yml` run on the final `main` | whether the epic may close |
+| every pull request | the required fast pre-merge checks, and the bounded mutation probe where a probed unit moved | whether the PR may merge |
+| every merge to `main` | `post-merge.yml`: the pre-merge jobs on the merged result | whether `main` is sound |
+| epic end | one complete `verification.yml` run on the final `main`, dispatched | whether the epic may close |
 
 Nothing about assurance closure is added to the pull-request path.
 

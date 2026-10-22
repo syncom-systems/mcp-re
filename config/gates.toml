@@ -649,17 +649,17 @@ selftest = false
 selftest_exempt = "a derived review packet; a document, not a decision"
 off_merge_path = "a derived review packet; a document, not a decision"
 
-# It decides a pull request's SCOPE, never a verdict; on any doubt it widens to a full run.
+# It decides a pull request's SCOPE, never a verdict; on any doubt it DEFERS to the complete run.
 [[script]]
 path = "tools/verification/select-units"
 stages = []
-ci = ["mutation-probe.yml:probe", "verification.yml:scope"]
+ci = ["mutation-probe.yml:probe"]
 selftest = false
 selftest_exempt = "pinned by test_scoped_verification.py in ci.yml"
-off_merge_path = "scopes the filtered verification workflows; pinned by test_scoped_verification.py in ci.yml"
+off_merge_path = "scopes the bounded mutation probe; pinned by test_scoped_verification.py in ci.yml"
 
-# verification_trigger_gate.py, which is unconditional, holds verification.yml's filter to
-# every unit's fingerprint read set, so the dispatcher runs on exactly the changes that move a unit.
+# verification_trigger_gate.py, which is unconditional, holds verification.yml to the schedule
+# and dispatch triggers, so the dispatcher runs only when a complete run is asked for.
 [[script]]
 path = "tools/verification/verify"
 stages = [1, 2]
@@ -670,4 +670,4 @@ ci = [
 ]
 selftest = false
 selftest_exempt = "the lane dispatcher; its lanes and verdict composition are pinned by the verification suites in ci.yml"
-off_merge_path = "the lane dispatcher; runs in verification.yml, whose filter verification_trigger_gate.py holds to every fingerprint input"
+off_merge_path = "the lane dispatcher; runs in verification.yml, which verification_trigger_gate.py holds to the schedule and dispatch triggers"
