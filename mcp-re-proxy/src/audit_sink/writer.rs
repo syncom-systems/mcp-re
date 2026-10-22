@@ -139,7 +139,7 @@ fn write_until_disconnected<W: std::io::Write>(
         let line = match message {
             Some(AuditMessage::Line(line)) => {
                 let _ =
-                    queued.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
+                    queued.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
                 Some(line)
             }
             Some(AuditMessage::Flush(ack)) => {

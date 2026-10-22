@@ -510,6 +510,12 @@ ci = ["pre-merge.yml:rust"]
 selftest = true
 
 [[script]]
+path = "scripts/toolchain_consistency_gate.py"
+stages = []
+ci = ["pre-merge.yml:rust"]
+selftest = true
+
+[[script]]
 path = "scripts/tracked_secrets_gate.py"
 stages = [1]
 ci = ["pre-merge.yml:rust"]

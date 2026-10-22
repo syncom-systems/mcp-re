@@ -120,12 +120,12 @@ pub(super) async fn read_body(
     req: Request<Incoming>,
     options: &ServerOptions,
     budget: &Arc<BodyByteBudget>,
-) -> Result<(Bytes, BodyBytes), Response<Full<Bytes>>> {
+) -> Result<(Bytes, BodyBytes), Box<Response<Full<Bytes>>>> {
     let max_body = options.limits.max_body_bytes;
     let collect = collect_body(req.into_body(), max_body, budget);
     match tokio::time::timeout(options.connection_bounds.request_deadline(), collect).await {
         Ok(Ok(collected)) => Ok(collected),
-        Ok(Err(BodyReadError::BudgetExhausted)) => Err(overloaded_response()),
-        _ => Err(fail_closed_response()),
+        Ok(Err(BodyReadError::BudgetExhausted)) => Err(Box::new(overloaded_response())),
+        _ => Err(Box::new(fail_closed_response())),
     }
 }

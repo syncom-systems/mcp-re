@@ -53,7 +53,7 @@ impl EventAllocator {
     /// [`EventIdentityFailure::SequenceExhausted`], permanently.
     pub(in crate::audit_record) fn next(&self) -> Result<EventId, EventIdentityFailure> {
         self.next
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
             .map(|seq| EventId::new(self.run, seq))
             .map_err(|_| EventIdentityFailure::SequenceExhausted { run: self.run })
     }

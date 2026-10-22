@@ -7,7 +7,7 @@
     "theorem_id": "THM-0106",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G3_G4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read for v0.18.1 against the semantic changes to its supporting units over 9dab7082..60a2257f, recorded in verification/reviews/packets/v0181-assurance-closure-2026-10-17.md, and ratified in the owner's ruling of 2026-10-17 (verification/reviews/rulings/v0181-assurance-closure-2026-10-17.md, ledger owner-signature:v0181-assurance-closure-2026-10-17). Claim, premises and dependencies unchanged; the review digest is re-recorded. Verdict CLEAN.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G3_G4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read for v0.18.1 against the semantic changes to its supporting units over 9dab7082..60a2257f, recorded in verification/reviews/packets/v0181-assurance-closure-2026-10-17.md, and ratified in the owner's ruling of 2026-10-17 (verification/reviews/rulings/v0181-assurance-closure-2026-10-17.md, ledger owner-signature:v0181-assurance-closure-2026-10-17). Claim, premises and dependencies unchanged; the review digest is re-recorded. Verdict CLEAN.\n\nAgent re-review for the tokio 1.54.1 / Rust 1.99.1 modernization (work/modernization-2026-10-22/security-triage.md), recorded at the clippy-lint commit 'fix(proxy): clear the clippy 1.99 lints behind the toolchain bump'. This record is NOT an owner signature: it attests the agent's substantive reading only, and owner adoption is a ledger line the owner appends. Reading: the unit's source_inputs moved through async_redis_store/retention_promise.rs only: `chunks_exact(2)` became `as_chunks::<2>().0.iter()`, the same exact two-element chunks with the odd remainder ignored, pairing the CONFIG reply as before; the refusal of a server that may drop a nonce and the non-answer-to-outage mapping are unchanged. Claim, premises and dependencies are unchanged; the semantic input moved, and the tests the unit selects pass at this revision (40/40 Bazel tests, rustfmt and lint lanes clean on Rust 1.99.1). Evidence class as registered.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -28,7 +28,7 @@
         "mutation_probes": "sha256:6a5d7f8aeab38e6a0c0610bf58acb188f3a8004c9b555dd51c9d4fdd1e082a0e",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:a7f73b8c0ece7114999cbd2007475ce029ec59f29ed6b75d11a7e734227ecc01",
+        "source_inputs": "sha256:a3e90bfb133ceebbd979777f0302701399f7948e2767481c767aec2ad75097d9",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:9714c59701d709ce94675efdc39affd20ba91abf550d0dc2e1951bca5b7f1156",
         "test_selection": "sha256:545d2d3bfe63cb5e0134655aad5877bd849d2fc602feccfbdc9f17e27b9dce82",
@@ -41,8 +41,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:0a11a3e57e9cb95c2f83631990ed9debdc23cac8f190e8961e972a54510373bf",
+  "review_digest": "sha256:02eae23928f1ce6f5e9f68eba326f7ac120d5a8aedb00a16ac81eec8f30ab0b6",
   "reviewed_fingerprint": "sha256:6f9c2db935e10844da0dd25e7d41c1617f0541c5003bbf92d76e7f5c6e93c196",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (modernization 2026-10-22; prepared for owner ratification, not an owner signature)",
   "subject": "THM-0106"
 }

@@ -1,10 +1,10 @@
 {
   "axis": "assumption",
   "components": {
-    "assumption_entry": "sha256:5e8ad6939e343f95dba3c32bece77706a3f93f52584f3c470d1d866c2fac5925"
+    "assumption_entry": "sha256:117d41d9806d890f780f106d69835f9a05e7af3b21dad77eee3f7246a3289723"
   },
-  "notes": "Recorded on the assumption review axis from the owner's entry approval owner-signature:asm-0021-ruling-36-s1-step-7 (docs/security/owner-approvals-2026-10-08.jsonl, entry-text sha256 2f3530398ec45bfdb230f947ee0c71517dba9376f1b393c1dda9f9c41c4c795a), which signs this entry's current text. Authority: Ruling 36 §1 (owner 2026-10-07): groups 1–4 signed off; text byte-identical to the Ruling 35 assumption-closure packet at 5867a864 (entry-text sha256 2f3530398ec45bfdb230f947ee0c71517dba9376f1b393c1dda9f9c41c4c795a equals the entry at that commit); record written at Ruling 40 step 7",
-  "reviewed_fingerprint": "sha256:5e8ad6939e343f95dba3c32bece77706a3f93f52584f3c470d1d866c2fac5925",
-  "reviewer": "mats@sundvall.name",
+  "notes": "Recorded on the assumption review axis from the owner's entry approval owner-signature:asm-0021-ruling-36-s1-step-7 (docs/security/owner-approvals-2026-10-08.jsonl, entry-text sha256 2f3530398ec45bfdb230f947ee0c71517dba9376f1b393c1dda9f9c41c4c795a), which signs this entry's current text. Authority: Ruling 36 §1 (owner 2026-10-07): groups 1–4 signed off; text byte-identical to the Ruling 35 assumption-closure packet at 5867a864 (entry-text sha256 2f3530398ec45bfdb230f947ee0c71517dba9376f1b393c1dda9f9c41c4c795a equals the entry at that commit); record written at Ruling 40 step 7\n\nAgent re-review for the Verus 0.2026.10.18.7d82994 / Rust 1.99.1 modernization (the `toolchain-version-differs` discharging event fired). This record is NOT an owner signature: it attests the agent's substantive reading only, and it needs the owner's ENTRY approval at its exact text (entry-text sha256 3391c4ae5e59cf69c71294be9877acbc6ca5afbbccc0196175bc27c188585569) before the review axis counts it. Reading: the same probe files were run under both releases, each against its own pinned sysroot. A four-argument `format!` join verifies under 0.2026.10.18.7d82994 and is rejected by 0.2026.08.09.92f466f (`alloc::fmt::format`, `core::hint::must_use`), so ceiling 2 no longer holds; `str::replace` is rejected by both (`alloc::str::impl&%5::replace is not supported`), so ceiling 9 stands. The assumption's claim (`actor_id` is opaque to the prover and contributes no ensures) is unchanged and still true; only the stated reason for not discharging it narrowed. Discharge needs a specification of `str::replace`, which is an owner decision.",
+  "reviewed_fingerprint": "sha256:117d41d9806d890f780f106d69835f9a05e7af3b21dad77eee3f7246a3289723",
+  "reviewer": "agent:claude-sonnet-5-5 (modernization 2026-10-22; prepared for owner ratification, not an owner signature)",
   "subject": "ASM-0021"
 }

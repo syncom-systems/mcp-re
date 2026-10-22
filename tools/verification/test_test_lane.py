@@ -500,7 +500,7 @@ def test_the_compiler_pin_is_not_a_runtime_pin():
     """`[rust]` pins the COMPILER, and it shares its name with the ecosystem. Read as a
     runtime pin it names no interpreter, and the lane refused every Rust battery as
     measured on an empty runtime set — the first run after the ecosystem was renamed."""
-    toolchains = {"rust": {"state": "resolved", "channel": "1.97.1"}}
+    toolchains = {"rust": {"state": "resolved", "channel": "1.99.1"}}
     runtimes, refusal = lane.pinned_runtimes(RUST, toolchains)
     assert refusal is None, refusal
     assert runtimes == [None], runtimes

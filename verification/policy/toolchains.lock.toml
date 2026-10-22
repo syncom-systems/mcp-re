@@ -33,7 +33,7 @@ schema_version = 1
 
 [rust]
 state = "resolved"
-channel = "1.97.1"
+channel = "1.99.1"
 components = ["rustfmt", "clippy"]
 source = "MODULE.bazel rust.toolchain versions"
 note = """
@@ -48,18 +48,18 @@ record here rather than to resolve silently by letting two Rust toolchains float
 
 [verus]
 state = "resolved"
-release = "0.2026.08.09.92f466f"
-commit = "92f466f247f45128c630d1c843fd6e27d2115587"
-source_url = "https://github.com/verus-lang/verus/releases/download/release/0.2026.08.09.92f466f/verus-0.2026.08.09.92f466f-arm64-macos.zip"
-sha256 = "3c8d2c8fad99e850d0195ff4bbbd642fae063d15f53c278de07c6153c15fd8eb"
+release = "0.2026.10.18.7d82994"
+commit = "7d829946231d6413a398f6e4160cdfe951261dad"
+source_url = "https://github.com/verus-lang/verus/releases/download/release/0.2026.10.18.7d82994/verus-0.2026.10.18.7d82994-arm64-macos.zip"
+sha256 = "3fc56c58277b5f0999368f7b3a2b07ba4eb9ec2965454ce7a9f2769c0464d32b"
 platform = "macos_aarch64"
-install_root = "/opt/verification/verus/0.2026.08.09.92f466f"
-rust_toolchain = "1.97.1-aarch64-apple-darwin"
+install_root = "/opt/verification/verus/0.2026.10.18.7d82994"
+rust_toolchain = "1.99.1-aarch64-apple-darwin"
 note = """
 The release's own rustc requirement equals the [rust] channel pinned above, and the lane
 depends on that equality: the prover runs on the registered Bazel Rust toolchain's own
 compiler driver, which is the `librustc_driver` build `rust_verify` links. A Verus bump that
-moves this off 1.97.1 needs MODULE.bazel's toolchain to move with it, and `verify-verus`
+moves this off 1.99.1 needs MODULE.bazel's toolchain to move with it, and `verify-verus`
 refuses the mismatch by name rather than letting two Rust toolchains float.
 
 install_root is platform-specific and is the only host-dependent value here; a Linux CI
@@ -69,8 +69,8 @@ identity must be recorded separately before it may report a PASS.
 
 [verus.binaries]
 state = "resolved"
-verus = "sha256:72b8b03b8341580500306e9b422360a7361c5a61ffde282874f960e58ed99550"
-rust_verify = "sha256:51b413e6160f06d44d6b1fcb05e1f36386f9d0e30c57e2af16d4eff0954e4966"
+verus = "sha256:483703c79cf57530a9864de2e69326740ee69162dd98b853aedb8273c74a06f6"
+rust_verify = "sha256:261789c83d4f9949f2db4e6aa205987a22a5ed6f576b1f3663ca52b246a4bc7a"
 note = """
 R9-C083. Every key is a file name under `verus.install_root`, digested. Nothing identified
 these before: the lane checked `vstd.vir` and the commit `version.json` DECLARES, and a
@@ -91,8 +91,8 @@ note already anticipates, now with a second host-dependent value rather than one
 
 [verus.vstd]
 state = "resolved"
-identity = "sha256:0970f728e2f537def9a465410df665ea7071c7de0f66d86022390d2876c6df22"
-rlib_identity = "sha256:0221751f5a0d2fa91a31a580eea35282b59bff970a6be0eeb19836c716aab3a0"
+identity = "sha256:3f5618deeedb04faa1042deffcc0a13eaa2b3300de3ef3cb2fa114ec806c0010"
+rlib_identity = "sha256:b837a0e92ac000c0e9763340c223a77243a047de1f68d7b7208baf071d342f3e"
 note = """
 `identity` is vstd.vir — the specification library the proofs are STATED against.
 `rlib_identity` is libvstd.rlib, the compiled library they LINK against, and the two can
@@ -136,33 +136,34 @@ named while the lock read as fully pinned.
 
 [verus_linux_x86_64]
 state = "resolved"
-release = "0.2026.08.09.92f466f"
-commit = "92f466f247f45128c630d1c843fd6e27d2115587"
-source_url = "https://github.com/verus-lang/verus/releases/download/release/0.2026.08.09.92f466f/verus-0.2026.08.09.92f466f-x86-linux.zip"
-sha256 = "2f5a41c553f424aacdd732339e9d125563716a0b003c27730f75d6f81a282cef"
+release = "0.2026.10.18.7d82994"
+commit = "7d829946231d6413a398f6e4160cdfe951261dad"
+source_url = "https://github.com/verus-lang/verus/releases/download/release/0.2026.10.18.7d82994/verus-0.2026.10.18.7d82994-x86-linux.zip"
+sha256 = "e9af03732d4bdd32b93a8fcf471706739c24c1473fa5086618d96c47237845dd"
 platform = "linux_x86_64"
-install_root = "/opt/verification/verus/0.2026.08.09.92f466f"
-rust_toolchain = "1.97.1-x86_64-unknown-linux-gnu"
+install_root = "/opt/verification/verus/0.2026.10.18.7d82994"
+rust_toolchain = "1.99.1-x86_64-unknown-linux-gnu"
 note = """
 The same release as `[verus]`, for the Linux x86-64 host (GitHub-hosted `ubuntu-24.04`).
 Verus publishes no arm64-linux build of this release. `verify-verus` selects `[verus]` on
 macOS arm64 and this table on Linux x86-64, and reports UNAVAILABLE on any other host. The
 shape mirrors `[verus]` exactly, so the lane reads one pin through one code path.
 
-Every digest below was measured on a hosted runner (`hosted-probe` run 38144113537) after
-the release zip itself matched `sha256` above, which is the digest GitHub publishes for the
-release asset.
+Every digest below was measured by extracting the release zip after it matched `sha256`
+above, which is the digest GitHub publishes for the release asset. The files are the archive's
+own bytes, so the measurement does not depend on the host that unpacked them; the first
+hosted-runner install of this release re-checks them.
 """
 
 [verus_linux_x86_64.binaries]
 state = "resolved"
-verus = "sha256:d97501a883931d1d173b1bf4b6cf4d973f16d105dbcb468e177b52b2331612d2"
-rust_verify = "sha256:433399ab278ec9dddb6499ec7cb670077819c828d07431528b5faf6f2ba56c62"
+verus = "sha256:1208c995c8e5244577693eba311d34bc2050c4acf984e10c4c7baf2003abff14"
+rust_verify = "sha256:e2342d0af6cb8ebd538c729b2e4246354c2d791c215c1348a8fc3f8a32c727dc"
 
 [verus_linux_x86_64.vstd]
 state = "resolved"
-identity = "sha256:214c4167cb3ddea717aa640872e847c8b4f583f69267c031102a0ebb9345ad68"
-rlib_identity = "sha256:47eb820579f4d1aa41af1e00c91a7f87d803ff16f32926d53751d82c74fc7a26"
+identity = "sha256:6d80fc68c876099b6075e8a58d4b01da4cf1a289afb450bae1096ab78083a97e"
+rlib_identity = "sha256:5377d2a76c3a731c9a123e454ebf28f08a317a4203cc89e68930242a17e5907a"
 
 [verus_linux_x86_64.z3]
 state = "resolved"

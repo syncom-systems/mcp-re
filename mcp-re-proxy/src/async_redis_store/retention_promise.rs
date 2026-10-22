@@ -89,7 +89,9 @@ pub(crate) fn config_get_value(reply: &redis::Value, param: &str) -> Option<Stri
             .find(|(name, _)| as_text(name).as_deref() == Some(param))
             .and_then(|(_, value)| as_text(value)),
         redis::Value::Array(items) => items
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .find(|pair| as_text(&pair[0]).as_deref() == Some(param))
             .and_then(|pair| as_text(&pair[1])),
         _ => None,
