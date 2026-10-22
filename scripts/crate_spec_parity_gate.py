@@ -34,6 +34,7 @@ Delete this gate together with the last Cargo manifest.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 import tomllib
@@ -43,12 +44,20 @@ REPO = Path(__file__).resolve().parent.parent
 MODULE = REPO / "MODULE.bazel"
 BAZEL_LOCK = REPO / "bazel" / "crates.lock"
 CARGO_LOCK = REPO / "Cargo.lock"
+MODULE_LOCK = REPO / "MODULE.bazel.lock"
 # The synthetic package crate_universe writes into the lock to hold the specs.
 SPLICE_ROOT = "direct-cargo-bazel-deps"
 FIX = ("declare the change in MODULE.bazel's crate.spec, then seed bazel/crates.lock with the "
        "Cargo locks' packages (the root lock and each EXTRA_WORKSPACES lock, merged) and "
        "re-pin:\n    CARGO_BAZEL_REPIN=1 bazel mod show_extension "
-       "@rules_rust//crate_universe:extension.bzl%crate")
+       "@rules_rust//crate_universe:extension.bzl%crate\n"
+       "then run one plain `bazel mod show_extension` so MODULE.bazel.lock records the repin "
+       "inputs unset")
+
+#: The crate extension's entry in MODULE.bazel.lock, and the repin-only inputs it records.
+CRATE_EXTENSION = "@@rules_rust+//crate_universe:extension.bzl%crate"
+REPIN_INPUTS = ("CARGO_BAZEL_REPIN", "CARGO_BAZEL_REPIN_ONLY", "REPIN")
+UNSET = "\\0"
 
 SPEC_BLOCK = re.compile(r"^crate\.spec\((.*?)^\)", re.M | re.S)
 
@@ -199,9 +208,36 @@ def compare(meta: dict, module_text: str, bazel_lock: str, cargo_lock: str) -> t
     return problems, len(have), compared
 
 
+def repin_inputs(module_lock: str) -> list[str]:
+    """Problems with the repin-only environment inputs MODULE.bazel.lock records.
+
+    `CARGO_BAZEL_REPIN=1 bazel mod show_extension ...` writes `ENV:CARGO_BAZEL_REPIN 1` into the
+    extension's recorded inputs. CI runs with the variable unset, so Bazel re-evaluates the
+    extension and rewrites the tracked lockfile mid-job, and every fingerprint taken afterwards
+    describes a tree that is not the commit. A build does not notice the rewrite, so only this
+    check does. Repin, then run one plain invocation so the lock records the inputs unset."""
+    try:
+        recorded = (json.loads(module_lock)["moduleExtensions"][CRATE_EXTENSION]
+                    ["general"]["recordedInputs"])
+    except (KeyError, TypeError, ValueError):
+        return [f"REPIN: MODULE.bazel.lock records no inputs for {CRATE_EXTENSION} — "
+                "comparing nothing is not a pass"]
+    values = {r[4:].rsplit(" ", 1)[0]: r.rsplit(" ", 1)[1] for r in recorded if r.startswith("ENV:")}
+    problems = []
+    for name in REPIN_INPUTS:
+        if name not in values:
+            problems.append(f"REPIN: MODULE.bazel.lock does not record ENV:{name}")
+        elif values[name] != UNSET:
+            problems.append(f"REPIN: MODULE.bazel.lock records ENV:{name} = {values[name]!r}; "
+                            "a plain build would rewrite it (run one plain bazel invocation "
+                            "after the repin)")
+    return problems
+
+
 def verdict() -> int:
     problems, specs, packages = compare(workspace_meta(REPO), MODULE.read_text(),
                                         BAZEL_LOCK.read_text(), cargo_locks(REPO))
+    problems += repin_inputs(MODULE_LOCK.read_text())
     if problems:
         print(f"crate-spec parity gate: FAIL — {len(problems)} problem(s)")
         for p in problems:
@@ -264,7 +300,23 @@ def selftest() -> int:
         if expect is not None and expect not in text:
             print(f"SELFTEST FAILED: {label}: expected a problem naming {expect!r}, got {problems}")
             return 1
-    print(f"crate-spec parity gate selftest: PASS ({len(cases)} cases)")
+    def module_lock(repin: str, drop: bool = False) -> str:
+        inputs = [f"ENV:{n} {repin if n == 'CARGO_BAZEL_REPIN' else UNSET}" for n in REPIN_INPUTS]
+        return json.dumps({"moduleExtensions": {CRATE_EXTENSION: {"general": {
+            "recordedInputs": [] if drop else inputs}}}})
+
+    repin_cases = [
+        ("repin inputs recorded unset", module_lock(UNSET), None),
+        ("CARGO_BAZEL_REPIN recorded as 1", module_lock("1"), "ENV:CARGO_BAZEL_REPIN = '1'"),
+        ("repin inputs not recorded", module_lock(UNSET, drop=True), "does not record"),
+        ("not a lockfile", "{}", "comparing nothing"),
+    ]
+    for label, text, expect in repin_cases:
+        text = "\n".join(repin_inputs(text))
+        if (expect is None) != (not text) or (expect and expect not in text):
+            print(f"SELFTEST FAILED: {label}: reported {text!r}")
+            return 1
+    print(f"crate-spec parity gate selftest: PASS ({len(cases) + len(repin_cases)} cases)")
     return 0
 
 
