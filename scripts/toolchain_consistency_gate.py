@@ -10,8 +10,9 @@ other place that names a production Rust version must equal it:
     fingerprints;
   * the `rust_toolchain` of each resolved Verus pin (`[verus]`, `[verus_linux_x86_64]`), because
     the prover runs on the registered toolchain's own `librustc_driver`;
-  * every workflow job name that states a Rust version, and the merge-readiness fallback that
-    names the required check.
+  * the workflow job names, which state NO version: a required-check identifier that carried
+    one would need a ruleset change with every compiler bump. The version is reported inside
+    the job instead, by this gate's own pre-merge step.
 
 The extraction lane's nightly is a separate compiler on purpose and is checked only for being
 the nightly `[charon].rust_toolchain` pins.
@@ -29,7 +30,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 VERSION = re.compile(r"\d+\.\d+\.\d+")
-NAMED_VERSION = re.compile(r"name:.*\((?:Rust |Bazel, )?(\d+\.\d+\.\d+)\)")
+JOB_NAME_VERSION = re.compile(r"^    name:.*\d+\.\d+\.\d+", re.M)
 WORKFLOW_FILES = ("pre-merge.yml", "live-infra-e2e.yml")
 
 
@@ -57,17 +58,13 @@ def check(module_text: str, lock: dict, workflows: dict[str, str], merge_gate: s
         if pin.get("state") == "resolved" and not str(pin.get("rust_toolchain", "")).startswith(f"{want}-"):
             problems.append(f"toolchains.lock.toml [{table}].rust_toolchain is "
                             f"{pin.get('rust_toolchain')!r}, not {want}-<target>")
-    named = 0
     for path, text in workflows.items():
-        for found in NAMED_VERSION.findall(text):
-            named += 1
-            if found != want:
-                problems.append(f"{path}: a job name states Rust {found}, MODULE.bazel builds with {want}")
-    if not named:
-        problems.append("no workflow job name states a Rust version — comparing nothing is not a pass")
-    for found in VERSION.findall(merge_gate):
-        if found != want:
-            problems.append(f"scripts/merge_readiness_gate.py names Rust {found}, MODULE.bazel builds with {want}")
+        problems += [f"{path}: a job name states a version ({m.group(0).strip()!r}); a check name is stable"
+                     for m in JOB_NAME_VERSION.finditer(text)]
+    if not workflows or not any(text.strip() for text in workflows.values()):
+        problems.append("no workflow was read — comparing nothing is not a pass")
+    if VERSION.search(merge_gate):
+        problems.append("scripts/merge_readiness_gate.py names a version in the required check")
     nightly = nightly_version(module_text)
     pinned = lock.get("charon", {}).get("rust_toolchain")
     if nightly != pinned:
@@ -91,8 +88,8 @@ def verdict() -> int:
             print(f"  - {p}")
         return 1
     print(f"toolchain consistency gate: OK — one production Rust {production_version(module)} across "
-          "MODULE.bazel, the toolchain lock, both Verus pins, the workflow job names and the "
-          "merge-readiness fallback")
+          "MODULE.bazel, the toolchain lock and both Verus pins; no job name or required check "
+          "carries a version")
     return 0
 
 
@@ -102,8 +99,8 @@ def selftest() -> int:
             "verus": {"state": "resolved", "rust_toolchain": "1.2.3-aarch64-apple-darwin"},
             "verus_linux_x86_64": {"state": "resolved", "rust_toolchain": "1.2.3-x86_64-unknown-linux-gnu"},
             "charon": {"rust_toolchain": "nightly-2026-01-02"}}
-    flows = {"a.yml": "    name: Bazel build + test (Rust 1.2.3)\n    name: tests (Bazel, 1.2.3)\n"}
-    gate = 'names = ("Bazel build + test (Rust 1.2.3)",)'
+    flows = {"a.yml": "    name: Bazel build + test\n        name: step 1.2.3 is a step, not a check\n"}
+    gate = 'names = ("Bazel build + test",)'
 
     def mutated(**kw):
         args = {"module_text": module, "lock": lock, "workflows": flows, "merge_gate": gate}
@@ -121,11 +118,13 @@ def selftest() -> int:
         ("the Linux Verus pin names another rustc",
          mutated(lock=with_lock("verus_linux_x86_64", "rust_toolchain", "1.2.2-x86_64-unknown-linux-gnu")),
          "[verus_linux_x86_64]"),
+        ("a job name states the right version",
+         mutated(workflows={"a.yml": "    name: Bazel build + test (Rust 1.2.3)\n"}), "a job name states a version"),
         ("a job name states another version",
-         mutated(workflows={"a.yml": "    name: Bazel build + test (Rust 1.2.2)\n"}), "job name states Rust 1.2.2"),
-        ("no job name states a version", mutated(workflows={"a.yml": "name: x\n"}), "comparing nothing"),
-        ("the merge fallback names another version",
-         mutated(merge_gate='names = ("Bazel build + test (Rust 1.2.2)",)'), "merge_readiness_gate"),
+         mutated(workflows={"a.yml": "    name: tests (Bazel, 1.2.2)\n"}), "a job name states a version"),
+        ("no workflow was read", mutated(workflows={}), "comparing nothing"),
+        ("the merge fallback names a version",
+         mutated(merge_gate='names = ("Bazel build + test (Rust 1.2.3)",)'), "merge_readiness_gate"),
         ("the extraction nightly moved in one place", mutated(module_text=module.replace("01-02", "01-03")),
          "extraction nightly"),
         ("no production version", mutated(module_text="rust.toolchain()\n"), "comparing nothing"),

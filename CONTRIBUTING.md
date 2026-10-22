@@ -78,8 +78,14 @@ Two other compilers exist on purpose. The Verus prover runs on that same toolcha
 the same Rust channel. The Charon/Aeneas extraction lane uses one pinned nightly
 (`nightly/…` in `MODULE.bazel`, `[charon].rust_toolchain` in the lock), selected only by
 `--@rules_rust//rust/toolchain/channel=nightly`. `scripts/toolchain_consistency_gate.py`
-fails when the production version, the lock, the Verus pins, the workflow job names or the
-merge-readiness fallback disagree.
+fails when the production version, the lock or the Verus pins disagree, or when a job name
+or the required check carries a version: the version is printed inside the pre-merge job by
+that gate, so a compiler bump never renames a required check.
+
+Python gates that pin a Unicode or stdlib version (`scripts/format_control_table_gate.py`)
+run under the CI interpreter, Python 3.14: invoke them as `python3.14 scripts/…` when the
+default `python3` is newer. A failure under another interpreter is the pin working, not a
+reason to relax it.
 
 Moving the production compiler or the Verus release changes every unit fingerprint. That is
 the intended invalidation: proof, test and mutation evidence is re-established on the new
