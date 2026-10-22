@@ -86,16 +86,25 @@ conclusion, cancelled, skipped, timed_out, neutral. `failure` and `timed_out` ar
 as FAILED rather than NOT_READY because they are verdicts about the code and the next
 action differs: NOT_READY means wait or re-run, FAILED means fix.
 
-WHEN THE CLOSURE IS EMPTY. A change can touch no declared unit at all — a gate script, a
-workflow, a document. The manifest then asks for nothing, and answering READY on that basis
-would be the emptiest false green available: "no lane was required" and "every required lane
-passed" are different facts. So the gate falls back to the authority that DOES govern such a
-change, and reads it from where it actually lives — the repository's own branch ruleset, via
-the API. That is not a second list: it is not maintained here, and a required check added or
-renamed in the ruleset is picked up on the next run.
+WHAT A PULL REQUEST CAN BE ASKED FOR. Only what a pull request starts. The complete
+verification run starts on schedule and dispatch alone (`docs/dev/ci-scheduling.md`), so a lane
+that only it executes has no pre-merge check: the gate lists it as DEFERRED and neither
+requires it (that would block every merge on a run nobody started) nor counts it satisfied
+(that would claim a measurement). A change that moved every fingerprint therefore reads READY
+once the bounded checks pass, and the report says plainly that the evidence is stale until the
+complete run. A lane served by a path-filtered pull-request workflow is required only when
+the filter matches a changed file.
 
-Both paths answer the same four conditions and the same three states. What differs is only
-which checks are required, and the report says which authority it used.
+THE BRANCH RULESET IS ALWAYS REQUIRED. A change can touch no declared unit at all — a gate
+script, a workflow, a document — and answering READY on an empty closure would be the
+emptiest false green available: "no lane was required" and "every required lane passed" are
+different facts. The ruleset is read from where it actually lives, the repository's own branch
+ruleset via the API. That is not a second list: it is not maintained here, and a required
+check added or renamed in the ruleset is picked up on the next run. The closure's pre-merge
+lane checks are added to it.
+
+Every check answers the same four conditions and the same three states, and the report says
+which authority it used.
 
 WHAT THIS DOES NOT PROVE: that the required lanes are the right ones (that is the manifest's
 claim), that a passing lane measured what it says (that is the lane's), or that the lane
@@ -123,7 +132,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 WORKFLOWS = REPO / ".github" / "workflows"
 
-from workflow_reader import named_paths, read  # noqa: E402
+from workflow_reader import glob_matches, named_paths, read  # noqa: E402
 
 sys.path.insert(0, str(REPO / "tools" / "verification"))
 
@@ -183,6 +192,23 @@ def workflow_jobs() -> list[tuple[str, str, set[str]]]:
     return jobs
 
 
+def pull_request_workflows(changed: set[str]) -> set[str]:
+    """The workflow files a pull request changing `changed` starts, by GitHub's rule: a
+    `pull_request` trigger with no path filter, or a filter matching a changed file.
+
+    The complete verification run is not among them (it starts only on schedule and dispatch),
+    so a lane only that run executes is never a pre-merge requirement.
+    """
+    started: set[str] = set()
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        trigger = read(path).triggers.get("pull_request")
+        if trigger is None:
+            continue
+        if trigger.paths is None or any(glob_matches(p, c) for p in trigger.paths for c in changed):
+            started.add(path.name)
+    return started
+
+
 def umbrella_checks() -> set[str]:
     """The check names that run the umbrella, and therefore several lanes at once.
 
@@ -194,8 +220,15 @@ def umbrella_checks() -> set[str]:
     return {name for _wf, name, invoked in workflow_jobs() if UMBRELLA in invoked}
 
 
-def checks_for_lanes(lanes: set[str], scripts: dict[str, str]) -> dict[str, list[str]]:
+def checks_for_lanes(
+    lanes: set[str], scripts: dict[str, str], started: set[str] | None = None
+) -> dict[str, list[str]]:
     """`{lane: [check names]}` — every job that executes each lane, from the workflows.
+
+    `started` is the set of workflow files the change's pull request starts. A lane whose jobs
+    all live in workflows that do not start has NO pre-merge check: it maps to `[]`, and the
+    caller reports it as deferred to the complete run rather than as satisfied or missing.
+    `None` means every workflow counts.
 
     A lane is run by a job invoking its own script OR the umbrella that contains it, and
     BOTH shapes exist here: `mutation` has a dedicated path-filtered job and is also inside
@@ -221,8 +254,9 @@ def checks_for_lanes(lanes: set[str], scripts: dict[str, str]) -> dict[str, list
                 f"no script and no job can be derived for it"
             )
         wanted = {f"tools/verification/{script}", UMBRELLA}
-        found = sorted({name for _wf, name, invoked in jobs if invoked & wanted})
-        if not found:
+        runners = [(wf, name) for wf, name, invoked in jobs if invoked & wanted]
+        found = sorted({name for wf, name in runners if started is None or wf in started})
+        if not runners:
             raise Undecidable(
                 f"lane '{lane}' (tools/verification/{script}) is required but no workflow "
                 f"job invokes it or the umbrella; nothing would ever measure it"
@@ -470,7 +504,8 @@ def changed_files(sha: str, base: str) -> set[str]:
 
 
 def report(
-    sha: str, units: set[str], rows: list[tuple], state: str, authority: str, declared: int
+    sha: str, units: set[str], rows: list[tuple], state: str, authority: str, declared: int,
+    deferred: list[str] | None = None,
 ) -> None:
     print(f"candidate      {sha}")
     print(f"authority      {authority}")
@@ -483,6 +518,10 @@ def report(
         # the same string twice.
         label = check if lane == check else f"{lane:<16} {check}"
         print(f"  {mark:<14} {label}  [{why}]")
+    if deferred:
+        print(f"deferred       {', '.join(deferred)} — no pre-merge job runs these lanes; the "
+              f"complete run (schedule or dispatch) remeasures them, and until then the "
+              f"evidence is stale, not verified")
     print(f"MERGE-READINESS: {state}")
 
 
@@ -512,16 +551,22 @@ def main(argv: list[str]) -> int:
         for unit in units:
             if unit["id"] in affected:
                 lanes |= required_lanes(unit)
+        # The branch ruleset is ALWAYS required: "no lane was required" and "every required
+        # lane passed" are different facts, so a closure that asks for nothing still leaves
+        # the ruleset's checks. Lanes the closure requires add their pre-merge jobs to it.
+        # A lane no pre-merge job runs is deferred to the complete run and reported as such.
+        required = {name: [name] for name in ruleset_required_checks(args.repo, args.base)}
+        deferred: list[str] = []
+        authority = "branch ruleset (no declared unit affected)"
         if lanes:
-            authority = "verification-unit closure"
-            required = checks_for_lanes(lanes, lane_scripts())
-        else:
-            # No declared unit is affected, so the manifest asks for nothing. Fall back to
-            # the ruleset rather than reading "nothing required" as "everything passed".
-            authority = "branch ruleset (no declared unit affected)"
-            required = {name: [name] for name in ruleset_required_checks(args.repo, args.base)}
+            authority = "branch ruleset + the pre-merge lane checks of the verification-unit closure"
+            resolved = checks_for_lanes(
+                lanes, lane_scripts(), pull_request_workflows(changed_files(sha, args.base))
+            )
+            deferred = sorted(lane for lane, names in resolved.items() if not names)
+            required.update({lane: names for lane, names in resolved.items() if names})
         state, rows = decide(required, check_runs(args.repo, sha), sha, umbrella_checks())
-        report(sha, affected, rows, state, authority, len(units))
+        report(sha, affected, rows, state, authority, len(units), deferred)
         return {READY: 0, NOT_READY: 1, FAILED: 2}[state]
     except Undecidable as exc:
         print(f"MERGE-READINESS: UNDECIDABLE — {exc}", file=sys.stderr)
@@ -606,6 +651,31 @@ def selftest() -> int:
         if lane not in resolved:
             print(f"  FAIL lane '{lane}' resolved to no check")
             bad += 1
+
+    # PRE-MERGE REQUIREMENTS ARE WHAT A PULL REQUEST STARTS. The complete run starts on schedule
+    # and dispatch only, so a lane that only it executes is deferred, never "missing" (which
+    # would block every merge) and never "satisfied" (which would claim a measurement).
+    for changed in ({"MODULE.bazel", "MODULE.bazel.lock", "verification/policy/toolchains.lock.toml"},
+                    {"tools/verification/verify"}, {"mcp-re-core/src/lib.rs"}):
+        started = pull_request_workflows(changed)
+        if "verification.yml" in started or "pre-merge.yml" not in started:
+            print(f"  FAIL a pull request changing {sorted(changed)} started {sorted(started)}")
+            bad += 1
+        resolved = checks_for_lanes({"test", "lean", "verus"}, lane_scripts(), started)
+        if any(resolved[lane] for lane in ("test", "lean", "verus")):
+            print(f"  FAIL a lane only the complete run executes was required before merge: {resolved}")
+            bad += 1
+    if pull_request_workflows({"MODULE.bazel"}) & {"mutation-probe.yml"}:
+        print("  FAIL a MODULE.bazel change started the mutation probe, whose filter does not name it")
+        bad += 1
+    if "mutation-probe.yml" not in pull_request_workflows({"mcp-re-core/src/lib.rs"}):
+        print("  FAIL a probed source change did not start the mutation probe")
+        bad += 1
+    if checks_for_lanes({"mutation"}, lane_scripts(), {"mutation-probe.yml"})["mutation"] != [
+        "V0 evidence self-test (mutation probes)"
+    ]:
+        print("  FAIL the mutation lane did not resolve to its bounded pre-merge job")
+        bad += 1
 
     # ATTRIBUTION. A shared job's failure must never be reported as a lane's own verdict.
     UMB = "verification platform"
