@@ -12,6 +12,18 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Changed — the complete verification run starts only on schedule or dispatch
+
+`verification.yml` no longer starts on a pull request or a push to main, and no longer widens
+to every unit when a change cannot be scoped. Only the weekly schedule and a dispatch start it,
+and every run is complete. A change to `MODULE.bazel`, the toolchain pin, a lockfile or the
+verification platform invalidates evidence (the fingerprints move and `verify --gate` reports
+it stale) without starting a remeasurement. `mutation-probe.yml` starts on pull requests only,
+inside a 30 minute timeout and a 20-unit cap, defers when it cannot scope, and installs no
+toolchain of its own. `scripts/verification_trigger_gate.py` now enforces this contract, with
+negative controls for a `MODULE.bazel` change, a toolchain update and a platform change. See
+`docs/dev/ci-scheduling.md`.
+
 ### Added — typed audit delivery posture and the commitment-provider seam (ADR-MCPRE-070 §2, §7, §11, D2, D3, Q3)
 
 - New flag `--audit-commitment best-effort|required` (Helm `auditCommitment`), default

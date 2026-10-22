@@ -7,15 +7,15 @@ no self-hosted runner. Workflow: `.github/workflows/verification.yml`.
 
 | job | runner | does |
 |---|---|---|
-| `scope` | `ubuntu-24.04` | `select-units`: the units this change affects, or every unit |
+| `scope` | `ubuntu-24.04` | refuses every event but a schedule or a dispatch; every run measures every unit |
 | `host` | `ubuntu-24.04` (x86-64) | `verify --phase host`: tests, mutations, structural probes, measured lane, Verus lane against the pinned Linux x86-64 prover |
 | `extraction` | `ubuntu-24.04-arm` | `verify --phase extraction`: Charon, Aeneas and Lean in the pinned linux/arm64 image, loaded from its digest-verified preserved archive |
 | `negative-controls` | `ubuntu-24.04` | hostile edits the production lanes must refuse |
 | `aggregate` | `ubuntu-24.04` | `verify --aggregate --gate` over every record; uploads `verification-evidence-*` |
 
-Pull requests and pushes measure the affected units. A change `select-units` cannot scope (the
-platform itself, an oversized scope) measures every unit before merge; the weekly schedule and a
-dispatch measure every unit. Evidence travels between jobs as immutable artifacts.
+The weekly schedule and a dispatch are the only starts, and each measures every unit; a pull
+request or a push to main never starts this workflow (`docs/dev/ci-scheduling.md`). Evidence
+travels between jobs as immutable artifacts.
 
 ## Measurements
 
