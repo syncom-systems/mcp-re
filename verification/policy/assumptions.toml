@@ -539,12 +539,20 @@ about the key it builds, only about the continuation flag it returns alongside i
 seam contributes no postcondition and cannot weaken the result.
 
 NOT DISCHARGED, and the reason is measured rather than assumed. Injectivity was attempted
-and blocked by two observed ceilings under the pinned V1 toolchain, recorded with
+and blocked by two ceilings observed under Verus 0.2026.08.09.92f466f, recorded with
 reproducers in verification/baseline/wp2-http-profile-triage.md:
 
     ceiling 2   `format!` is unreachable — it expands through alloc::fmt::format and
                 core::hint::must_use into unstable core::fmt::rt internals
     ceiling 9   `alloc::str::impl&%5::replace is not supported` — the escape step
+
+Re-measured under Verus 0.2026.10.18.7d82994 (Rust 1.99.1) on one probe set, against the
+previous release on the same files: a four-argument `format!` join in a verified function
+verifies where 92f466f rejected `alloc::fmt::format` and `core::hint::must_use`, so ceiling 2
+no longer holds; `s.replace('%', "%25").replace(':', "%3A")` is still rejected with
+`alloc::str::impl&%5::replace is not supported`, so ceiling 9 stands and alone keeps this
+assumption open. Discharge needs a specification of `str::replace` — an owner decision on the
+trusted model it would introduce, not a toolchain edit.
 
 Two alternatives were considered and REJECTED, both for the same reason: each would trade
 one named assumption for a larger unnamed one, which is negative progress.
@@ -559,7 +567,7 @@ one named assumption for a larger unnamed one, which is negative progress.
 
 Standing, therefore, and explicit — which is what an honest verification result looks like
 when the security value of a claim and the prover's current reach do not coincide. Revisit
-on a prover release that lifts either ceiling.
+on a prover release that lifts ceiling 9.
 
 WHY THE SCOPE IS ONE UNIT THOUGH `actor_id()` IS LOAD-BEARING TWICE. r12 R12-285 observed
 that the join carries a second security weight outside this proof: `chain_to_root`
@@ -579,9 +587,9 @@ Verus modelling limit read as the carrier of a property no Verus proof is stated
 scope = ["unit://http_profile.continuation_unbypassability", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
-review_requirement = "Owner review each release; discharge blocked by pinned-toolchain ceilings 2 and 9, not by choice."
+review_requirement = "Owner review each release; discharge blocked by pinned-toolchain ceiling 9, not by choice."
 premise_class = "review-obligation"
-discharging_event = { kind = "registry-fact", predicate = "toolchain-version-differs", tool = "verus", from = "0.2026.08.09.92f466f" }
+discharging_event = { kind = "registry-fact", predicate = "toolchain-version-differs", tool = "verus", from = "0.2026.10.18.7d82994" }
 affected_contracts = ["contract://http_profile/dispatch/prepare_http_dispatch"]
 sites = [
   "mcp-re-http-profile/src/block.rs#ActorIdentity::actor_id",
