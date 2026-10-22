@@ -25,10 +25,13 @@ from __future__ import annotations
 
 import re
 import sys
-import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools" / "verification"))
+
+import _registries  # noqa: E402
+
 VERSION = re.compile(r"\d+\.\d+\.\d+")
 JOB_NAME_VERSION = re.compile(r"^    name:.*\d+\.\d+\.\d+", re.M)
 WORKFLOW_FILES = ("pre-merge.yml", "live-infra-e2e.yml")
@@ -73,7 +76,7 @@ def check(module_text: str, lock: dict, workflows: dict[str, str], merge_gate: s
 
 
 def load() -> tuple[str, dict, dict[str, str], str]:
-    lock = tomllib.loads((REPO / "verification/policy/toolchains.lock.toml").read_text())
+    lock = _registries.document("toolchains", REPO, required=True)
     flows = {f".github/workflows/{n}": (REPO / ".github/workflows" / n).read_text() for n in WORKFLOW_FILES}
     return ((REPO / "MODULE.bazel").read_text(), lock, flows,
             (REPO / "scripts/merge_readiness_gate.py").read_text())
