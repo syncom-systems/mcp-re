@@ -85,3 +85,8 @@ implementation*, not the subset assumed when the ADR was written. Unsafe code an
 concurrency are on the tool's own limitations list. The proxy, async serving, and the
 PKCS#11 FFI are explicitly not first-pilot targets — and `mcp-re-core/src/replay.rs` was
 considered and set aside because `InMemoryReplayCache` holds a `Mutex`.
+
+Charon and Aeneas are Bazel actions (`charon_llbc`, `aeneas_lean` in `//bazel/charon`), so a
+regeneration over unchanged sources is a cache hit. The container's Bazel output root is
+`/tmp/mcp-re-extraction-bazel`; mount a named volume there (`docker run -v
+mcp-re-extraction-bazel:/tmp/mcp-re-extraction-bazel ...`) to keep it between runs.

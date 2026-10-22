@@ -12,6 +12,15 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Changed — Aeneas is a Bazel action
+
+`//bazel/charon:defs.bzl` gains `aeneas_lean`, which runs the pinned Aeneas over one
+`charon_llbc` output and writes the Lean model; `aeneas_install` links the container's Aeneas
+into the build as `@aeneas`. `regenerate-lean` builds `//mcp-re-core:mcp_re_core_lean` instead of
+calling Aeneas itself, so Charon and Aeneas are both cached actions: with the container's Bazel
+output root kept in a named volume, a rerun over unchanged sources took 27 s against 100 s cold.
+Run it with `-v mcp-re-extraction-bazel:/tmp/mcp-re-extraction-bazel`.
+
 ### Changed — the complete verification run starts only on schedule or dispatch
 
 `verification.yml` no longer starts on a pull request or a push to main, and no longer widens

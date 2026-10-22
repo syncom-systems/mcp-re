@@ -197,8 +197,24 @@ def llbc_target(crate: str) -> str:
     return found[0]
 
 
-def extract(unit: dict, crate: str, launcher: Path, aeneas: str, into: Path) -> None:
+def lean_target(llbc_label: str) -> str:
+    """The `aeneas_lean` target that consumes a crate's `charon_llbc` target.
+
+    By name, the pair being declared together in the crate's BUILD file: `<crate>_llbc` and
+    `<crate>_lean`. Absent, extraction has no model to build and says so.
+    """
+    stem, found, _ = llbc_label.rpartition("_llbc")
+    if not found:
+        raise SystemExit(f"FAIL: {llbc_label} is not named <crate>_llbc, so its aeneas_lean target is unknown")
+    return stem + "_lean"
+
+
+def extract(unit: dict, crate: str, launcher: Path, into: Path) -> None:
     """One unit's Rust → LLBC → Lean, into `into`.
+
+    BOTH STAGES ARE BAZEL TARGETS, so a stage whose inputs did not move is a cache hit rather
+    than a rerun: `charon_llbc` is keyed by the crate's sources and the extracted symbols,
+    `aeneas_lean` by that LLBC and the pinned Aeneas.
 
     THE LLBC'S BASENAME DECIDES THE LEAN MODULE NAME. Measured: `m.llbc` produces `M.lean`
     and `mcp_re_core.llbc` produces `McpReCore.lean`. The `charon_llbc` target names it
@@ -207,10 +223,10 @@ def extract(unit: dict, crate: str, launcher: Path, aeneas: str, into: Path) -> 
     Two units extracting the same crate would write the same file, which is why the caller
     compares what was produced against those declared roots rather than trusting this.
     """
-    label = llbc_target(crate)
+    label = lean_target(llbc_target(crate))
     start_from = f"--//bazel/charon:start_from={','.join(str(s) for s in unit['extracted_symbols'])}"
     env = {**os.environ, "BAZELISK_HOME": str(LOCAL / "bazelisk")}
-    run(bazel_argv(launcher, "build", start_from, label), REPO_ROOT, f"{unit['id']}: Charon over {crate}", env)
+    run(bazel_argv(launcher, "build", start_from, label), REPO_ROOT, f"{unit['id']}: Charon and Aeneas over {crate}", env)
     listed = subprocess.run(
         bazel_argv(launcher, "cquery", start_from, "--output=files", label),
         cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=False,
@@ -219,20 +235,19 @@ def extract(unit: dict, crate: str, launcher: Path, aeneas: str, into: Path) -> 
         bazel_argv(launcher, "info", start_from, "execution_root"),
         cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=False,
     ).stdout.strip()
-    llbc = Path(exec_root) / listed[0] if listed and exec_root else None
-    if llbc is None or not llbc.is_file():
+    model = Path(exec_root) / listed[0] if listed and exec_root else None
+    if model is None or not model.is_dir() or not any(model.iterdir()):
         print(
-            f"FAIL: {label} reported success but left no LLBC. A regeneration that produced "
+            f"FAIL: {label} reported success but left no model. A regeneration that produced "
             "nothing leaves the previous model in place, which reads as fresh.",
             file=sys.stderr,
         )
         raise SystemExit(1)
-    run(
-        [aeneas, "-backend", "lean", "-dest", str(into), str(llbc)],
-        REPO_ROOT,
-        f"{unit['id']}: Aeneas to Lean",
-        env,
-    )
+    shutil.copytree(model, into, dirs_exist_ok=True)
+    # Bazel outputs are executable; a model is data, and the mode is part of what git tracks.
+    for path in into.rglob("*"):
+        if path.is_file():
+            path.chmod(0o644)
 
 
 def replace_generated(staged: Path) -> None:
@@ -304,10 +319,9 @@ def main() -> int:
         )
         return 1
 
-    # CHARON_EXE is read by the `charon_install` repository, which links the container's
-    # Charon into the build; AENEAS_EXE is run here.
-    aeneas = os.environ.get("AENEAS_EXE", "")
-    if not (os.environ.get("CHARON_EXE") and aeneas):
+    # CHARON_EXE and AENEAS_EXE are read by the `charon_install` and `aeneas_install`
+    # repositories, which link the container's tools into the build.
+    if not (os.environ.get("CHARON_EXE") and os.environ.get("AENEAS_EXE")):
         print(
             "FAIL: CHARON_EXE and AENEAS_EXE are unset, so this is not the pinned "
             "extraction container.\nCharon links the private rustc crates and does not "
@@ -331,7 +345,7 @@ def main() -> int:
                 )
                 return 1
             sources.update(crate_sources(crate))
-            extract(unit, crate, launcher, aeneas, staged)
+            extract(unit, crate, launcher, staged)
 
         # EVERY check runs against the STAGED output, before the repository's model is
         # touched. A regeneration that fails must not have destroyed the model it was going
