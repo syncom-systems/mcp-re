@@ -659,7 +659,7 @@ off_merge_path = "a derived review packet; a document, not a decision"
 [[script]]
 path = "tools/verification/select-units"
 stages = []
-ci = ["mutation-probe.yml:probe"]
+ci = ["mutation-probe.yml:scope"]
 selftest = false
 selftest_exempt = "pinned by test_scoped_verification.py in ci.yml"
 off_merge_path = "scopes the bounded mutation probe; pinned by test_scoped_verification.py in ci.yml"

@@ -71,13 +71,17 @@ permissions:
   contents: read
 
 jobs:
-  probe:
-    name: V0 evidence self-test (mutation probes)
+  # Decides, in seconds, whether this change has probes to apply. It is a job of its own so that
+  # a deferral is visible as a SKIPPED `probe` check rather than as a green one: a probe job
+  # that succeeded having applied nothing would read, to the merge-readiness gate, as a
+  # measured lane.
+  scope:
+    name: mutation probe scope
     runs-on: ubuntu-latest
-    # The wall-clock bound. A pull request scoped to at most `--max-units` units fits well
-    # inside it; a run that does not is cancelled, never extended, and the complete run covers
-    # what it did not.
-    timeout-minutes: 30
+    timeout-minutes: 10
+    outputs:
+      measure: ${{ steps.scope.outputs.measure }}
+      args: ${{ steps.scope.outputs.args }}
     steps:
       # Depth 2: a pull request checks out its MERGE commit, and `select-units` measures the
       # change against that commit's first parent.
@@ -124,12 +128,24 @@ jobs:
           else
             echo "measure=false" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: No probe to apply in this merge check
-        if: steps.scope.outputs.measure != 'true'
+      - name: The scope this check decided
         run: |
-          head -1 "$RUNNER_TEMP/why"
-          echo "The complete run (weekly, or dispatched) applies every probe."
+          cat "$RUNNER_TEMP/why" 2>/dev/null || true
+          echo "measure=${{ steps.scope.outputs.measure }}; a deferred scope skips the probe job, and the complete run (weekly, or dispatched) applies every probe."
+
+  probe:
+    name: V0 evidence self-test (mutation probes)
+    needs: scope
+    if: needs.scope.outputs.measure == 'true'
+    runs-on: ubuntu-latest
+    # The wall-clock bound. A pull request scoped to at most `--max-units` units fits well
+    # inside it; a run that does not is cancelled, never extended, and the complete run covers
+    # what it did not.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
 
       # No host Rust toolchain is installed or consulted: every Rust member of a probe's
       # battery is a Bazel test target, compiled by the compiler MODULE.bazel pins.
@@ -151,5 +167,5 @@ jobs:
       # is no longer called that. Without the flag they FAIL here, and correctly: an absent
       # prepared environment in a lane that was supposed to have one is a defect.
       - name: Apply every probe this environment can run
-        if: steps.scope.outputs.measure == 'true'
-        run: tools/verification/verify-mutations --skip-unprepared ${{ steps.scope.outputs.args }}
+        if: needs.scope.outputs.measure == 'true'
+        run: tools/verification/verify-mutations --skip-unprepared ${{ needs.scope.outputs.args }}
