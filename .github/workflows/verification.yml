@@ -57,7 +57,6 @@ jobs:
     timeout-minutes: 5
     outputs:
       measure: ${{ steps.scope.outputs.measure }}
-      args: ${{ steps.scope.outputs.args }}
       complete: ${{ steps.scope.outputs.complete }}
     steps:
       # Defence in depth behind the trigger set: a trigger added by mistake produces a failed
@@ -70,7 +69,7 @@ jobs:
           case "${{ github.event_name }}" in
             schedule|workflow_dispatch)
               echo "complete run: a ${{ github.event_name }} event measures every unit"
-              { echo "args="; echo "measure=true"; echo "complete=true"; } >> "$GITHUB_OUTPUT" ;;
+              { echo "measure=true"; echo "complete=true"; } >> "$GITHUB_OUTPUT" ;;
             *)
               echo "::error::verification.yml is the complete run; a ${{ github.event_name }} event never starts it"
               exit 1 ;;
@@ -86,11 +85,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
-      - uses: actions/download-artifact@v8
-        if: needs.scope.outputs.args != ''
-        with:
-          name: scope-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .verification/scope
 
       - name: Runner shape
         run: |
@@ -120,17 +114,9 @@ jobs:
         run: ./scripts/verification_runner_preflight.sh
 
       - name: Prepare the non-Rust SDK batteries
-        env:
-          UNITS_ARGS: ${{ needs.scope.outputs.args }}
         run: |
           set -euo pipefail
-          measures() {
-            if [ -z "${UNITS_ARGS}" ]; then
-              grep -q "^id = \"$1\." verification/policy/verification.toml
-            else
-              grep -q "^$1\." .verification/scope/units
-            fi
-          }
+          measures() { grep -q "^id = \"$1\." verification/policy/verification.toml; }
           if measures sdk_python; then ./scripts/prepare_python_matrix.sh; fi
           if measures sdk_typescript; then ./scripts/prepare_node_matrix.sh; fi
 
@@ -147,7 +133,7 @@ jobs:
                 "$(df -m / | awk 'NR==2{print $3}')" "$(free -m | awk 'NR==2{print $3}')"
             done ) > "$RUNNER_TEMP/samples.log" &
           start=$(date +%s)
-          ./tools/verification/verify --phase host ${{ needs.scope.outputs.args }}
+          ./tools/verification/verify --phase host
           status=$?
           echo "host phase exit $status after $(( $(date +%s) - start )) s"
           sed -E 's/.*disk_used_mb=([0-9]+).*/\1/' "$RUNNER_TEMP/samples.log" | sort -n | tail -1 | sed 's/^/peak disk_used_mb=/'
@@ -173,11 +159,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
-      - uses: actions/download-artifact@v8
-        if: needs.scope.outputs.args != ''
-        with:
-          name: scope-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .verification/scope
 
       - name: Runner shape
         run: |
@@ -252,7 +233,7 @@ jobs:
             -v "$PWD:/workspace" -w /workspace \
             -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
             -e MCP_RE_EVIDENCE_DIR='/workspace/${{ steps.evidence.outputs.rel }}' \
-            '${{ steps.image.outputs.image }}' ./tools/verification/verify --phase extraction ${{ needs.scope.outputs.args }}
+            '${{ steps.image.outputs.image }}' ./tools/verification/verify --phase extraction
           status=$?
           echo "extraction phase exit $status after $(( $(date +%s) - start )) s"
           sed -E 's/.*disk_used_mb=([0-9]+).*/\1/' "$RUNNER_TEMP/samples.log" | sort -n | tail -1 | sed 's/^/peak disk_used_mb=/'
@@ -297,11 +278,6 @@ jobs:
         with:
           fetch-depth: 2
       - uses: actions/download-artifact@v8
-        if: needs.scope.outputs.args != ''
-        with:
-          name: scope-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .verification/scope
-      - uses: actions/download-artifact@v8
         with:
           pattern: evidence-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/records
@@ -313,7 +289,7 @@ jobs:
           cp -R "$RUNNER_TEMP"/records/. .verification/composed/
           export MCP_RE_EVIDENCE_DIR="$PWD/.verification/composed"
           ls "$MCP_RE_EVIDENCE_DIR" | head -50
-          ./tools/verification/verify --aggregate --gate ${{ needs.scope.outputs.args }}
+          ./tools/verification/verify --aggregate --gate
 
       - name: The records the verdict was composed from
         if: always()

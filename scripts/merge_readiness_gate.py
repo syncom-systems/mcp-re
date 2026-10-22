@@ -204,7 +204,13 @@ def pull_request_workflows(changed: set[str]) -> set[str]:
         trigger = read(path).triggers.get("pull_request")
         if trigger is None:
             continue
-        if trigger.paths is None or any(glob_matches(p, c) for p in trigger.paths for c in changed):
+        if trigger.paths is not None:
+            starts = any(glob_matches(p, c) for p in trigger.paths for c in changed)
+        elif trigger.paths_ignore is not None:
+            starts = any(not any(glob_matches(p, c) for p in trigger.paths_ignore) for c in changed)
+        else:
+            starts = True
+        if starts:
             started.add(path.name)
     return started
 
@@ -311,6 +317,12 @@ def classify(check: dict | None, sha: str) -> tuple[bool, str]:
     if conclusion == "success":
         return True, "completed/success"
     return False, f"conclusion {conclusion or '(empty)'}"
+
+
+def skipped_by_itself(check: dict | None, sha: str) -> bool:
+    """Whether a check is completed/skipped at this SHA: the job chose not to measure."""
+    return bool(check) and check.get("head_sha") == sha and check.get("status") == "completed" \
+        and check.get("conclusion") == "skipped"
 
 
 def decide(
@@ -556,6 +568,7 @@ def main(argv: list[str]) -> int:
         # the ruleset's checks. Lanes the closure requires add their pre-merge jobs to it.
         # A lane no pre-merge job runs is deferred to the complete run and reported as such.
         required = {name: [name] for name in ruleset_required_checks(args.repo, args.base)}
+        runs = check_runs(args.repo, sha)
         deferred: list[str] = []
         authority = "branch ruleset (no declared unit affected)"
         if lanes:
@@ -563,9 +576,13 @@ def main(argv: list[str]) -> int:
             resolved = checks_for_lanes(
                 lanes, lane_scripts(), pull_request_workflows(changed_files(sha, args.base))
             )
-            deferred = sorted(lane for lane, names in resolved.items() if not names)
-            required.update({lane: names for lane, names in resolved.items() if names})
-        state, rows = decide(required, check_runs(args.repo, sha), sha, umbrella_checks())
+            # A lane job that reports itself SKIPPED is a deferral, not a measurement: the
+            # bounded mutation probe skips when `select-units` defers the scope, and a job that
+            # succeeded having applied nothing would otherwise read as the lane measured.
+            skipped = {lane for lane, names in resolved.items() if names and all(skipped_by_itself(runs.get(n), sha) for n in names)}
+            deferred = sorted({lane for lane, names in resolved.items() if not names} | skipped)
+            required.update({lane: names for lane, names in resolved.items() if names and lane not in skipped})
+        state, rows = decide(required, runs, sha, umbrella_checks())
         report(sha, affected, rows, state, authority, len(units), deferred)
         return {READY: 0, NOT_READY: 1, FAILED: 2}[state]
     except Undecidable as exc:
@@ -676,6 +693,39 @@ def selftest() -> int:
     ]:
         print("  FAIL the mutation lane did not resolve to its bounded pre-merge job")
         bad += 1
+
+    # A DEFERRING JOB IS NOT A MEASURING ONE. A skipped check is the job's own statement that it
+    # applied nothing; a ruleset check that is skipped stays unsatisfied.
+    probe = "V0 evidence self-test (mutation probes)"
+    skipped = {"name": probe, "head_sha": sha, "status": "completed", "conclusion": "skipped"}
+    if not skipped_by_itself(skipped, sha) or skipped_by_itself({**skipped, "head_sha": "b" * 40}, sha) \
+            or skipped_by_itself({**skipped, "conclusion": "success"}, sha) or skipped_by_itself(None, sha):
+        print("  FAIL skipped_by_itself misread a check")
+        bad += 1
+    if decide({"ruleset": ["ruleset"]}, {"ruleset": {**skipped, "name": "ruleset"}}, sha)[0] != NOT_READY:
+        print("  FAIL a skipped ruleset check read as satisfied")
+        bad += 1
+
+    # paths-ignore: a pull request starts the workflow unless EVERY changed file is ignored.
+    import tempfile as _t
+    for label, filt, changed, expect in (
+        ("only ignored files", "paths-ignore:\n      - 'docs/**'", {"docs/a.md"}, False),
+        ("one non-ignored file", "paths-ignore:\n      - 'docs/**'", {"docs/a.md", "src/a.rs"}, True),
+        ("a paths filter that matches", "paths:\n      - 'src/**'", {"src/a.rs"}, True),
+        ("a paths filter that does not", "paths:\n      - 'src/**'", {"docs/a.md"}, False),
+    ):
+        with _t.TemporaryDirectory() as tmp:
+            (Path(tmp) / "w.yml").write_text(
+                f"name: w\non:\n  pull_request:\n    {filt}\njobs:\n  j:\n    steps:\n      - run: true\n",
+                encoding="utf-8")
+            saved, WORKFLOWS = WORKFLOWS, Path(tmp)
+            try:
+                got = "w.yml" in pull_request_workflows(changed)
+            finally:
+                WORKFLOWS = saved
+        if got != expect:
+            print(f"  FAIL pull_request_workflows, {label}: started={got}")
+            bad += 1
 
     # ATTRIBUTION. A shared job's failure must never be reported as a lane's own verdict.
     UMB = "verification platform"

@@ -9,7 +9,7 @@ does not, by that fact, start a remeasurement.
 | `pre-merge.yml` | every pull request, no path filter | structural gates, `bazel test`, lint, format, SDK suites | the required checks |
 | `post-merge.yml` | every push to `main` | the same jobs, on the merged result | the same |
 | `mcp-re-supply-chain.yml` | pull requests touching the dependency graph, `main`, daily | RustSec, yank and policy gate | the gate |
-| `mutation-probe.yml` | pull requests touching probed code; weekly; dispatch | the mutation probes of the units the change moves | 30 minute timeout, at most 20 units; a platform change, a larger scope or a scope that cannot be computed applies no probe and is deferred |
+| `mutation-probe.yml` | pull requests touching probed code; weekly; dispatch | the mutation probes of the units the change moves | 30 minute timeout, at most 20 units; a platform change, a larger scope or a scope that cannot be computed applies no probe: the `probe` job is SKIPPED, and the merge-readiness gate reads a skipped probe as deferred, never as measured |
 | `verification.yml` | weekly schedule and dispatch only | the complete run: every unit, host and extraction lanes, aggregate, assurance closure | none: it is the full run |
 | `assurance-closure.yml`, `release.yml`, `extraction-image.yml` | dispatch | as named | owner-started |
 | `weekly.yml`, `test-inventory.yml`, `live-infra-e2e.yml`, `cloud-kms-live.yml` | schedule, dispatch; pull requests touching only the workflow file | as named | as named |
@@ -22,8 +22,10 @@ measured is reported as stale by `tools/verification/verify --gate` and `review`
 with no current record is INCOMPLETE or MISSING, never verified. The only way back to current
 evidence is a complete run, which an owner dispatches, or the weekly schedule.
 
-`tools/verification/assurance-closure` refuses any evidence that is not from a complete run at
-the exact revision, so a closure verdict cannot be taken from the bounded probe.
+`tools/verification/assurance-closure` refuses any evidence that is not from a complete run
+whose unit fingerprints are the current ones (`attest` refuses a unit whose fingerprint moved
+since it was measured), so a closure verdict cannot be taken from the bounded probe, nor from a
+run that predates a change to the evidence.
 
 ## What enforces it
 

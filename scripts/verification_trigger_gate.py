@@ -27,7 +27,8 @@ WHAT IT PROVES, from the workflows as written:
   3. `pre-merge.yml` starts on every pull request and is callable; `post-merge.yml` starts on
      push to main and calls it.
   4. `mutation-probe.yml` starts on no push, has a pull-request path filter, a job timeout of
-     at most 30 minutes, a `--max-units` cap of at most 20, defers when `select-units` fails,
+     at most 30 minutes, a `--max-units` cap of at most 20, defers when `select-units` fails
+     (a deferral SKIPS the `probe` job, so one that applied nothing never reads as measured),
      and installs no toolchain of its own.
   5. Negative controls, run against the real workflow files: a pull request or push that
      changes `MODULE.bazel`, a lockfile, the toolchain pin, the verification platform or the
@@ -186,6 +187,16 @@ def check_bounded_probe(text: str) -> list[str]:
         failures.append(
             f"mutation-probe.yml's `probe` job has timeout-minutes {timeout!r}; it must be an "
             f"integer of at most {PROBE_MAX_TIMEOUT_MINUTES}"
+        )
+    scope_timeout = _job_scalars(text, "scope", "timeout-minutes")
+    if scope_timeout is None or not scope_timeout.isdigit() or int(scope_timeout) > PROBE_MAX_TIMEOUT_MINUTES:
+        failures.append(f"mutation-probe.yml's `scope` job has timeout-minutes {scope_timeout!r}; it must be bounded")
+    gate = _job_scalars(text, "probe", "if") or ""
+    if "needs.scope.outputs.measure == 'true'" not in gate or _job_scalars(text, "probe", "needs") != "scope":
+        failures.append(
+            "mutation-probe.yml's `probe` job does not run only when `scope` decided to measure: a "
+            "deferral must SKIP the check, because a job that succeeded having applied nothing "
+            "reads as a measured lane to the merge-readiness gate"
         )
     commands = [command.text for command in workflow.commands()]
     selects = [c for c in commands if "select-units" in c]
@@ -374,7 +385,7 @@ def selftest() -> int:
          mutate("verification.yml", "echo \"complete run:", "python3 tools/verification/select-units --base HEAD^1 --out u; echo \"complete run:"),
          "invokes `select-units`"),
         ("the aggregate gate is dropped",
-         mutate("verification.yml", "verify --aggregate --gate ${{", "verify --aggregate ${{"),
+         mutate("verification.yml", "./tools/verification/verify --aggregate --gate", "./tools/verification/verify --aggregate"),
          "step that reports a missing record as INCOMPLETE is gone"),
         ("another workflow calls the complete run",
          {**texts, "post-merge.yml": texts["post-merge.yml"] + "  full:\n    uses: ./.github/workflows/verification.yml\n"},
@@ -388,6 +399,9 @@ def selftest() -> int:
         ("the probe loses its timeout",
          mutate("mutation-probe.yml", "timeout-minutes: 30", "timeout-minutes: 360"),
          "timeout-minutes '360'"),
+        ("the probe job runs even when the scope deferred",
+         mutate("mutation-probe.yml", "    if: needs.scope.outputs.measure == 'true'\n", ""),
+         "does not run only when `scope` decided to measure"),
         ("the probe loses its unit cap",
          mutate("mutation-probe.yml", "--max-units 20 ", ""),
          "--max-units"),
