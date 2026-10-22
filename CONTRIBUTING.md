@@ -64,3 +64,23 @@ infra lane. The gate script runs each lane that CI runs.
 Read [`docs/dev/local-gate-order.md`](docs/dev/local-gate-order.md) for what each
 stage catches and the two ways the SLO lane can silently measure nothing. Use the
 repository-specific MCP-RE conformance guide when available.
+
+## Toolchain
+
+The production Rust compiler is the first `rust.toolchain` version in `MODULE.bazel`
+(1.99.1). Bazel supplies it hermetically, with the cargo, rustfmt and clippy of the same
+release, so nothing on a developer machine selects the compiler: `bazel build
+--config=lint //...` and `bazel build --config=rustfmt //...` use it, and a locally
+installed `rustc` is not part of any build path.
+
+Two other compilers exist on purpose. The Verus prover runs on that same toolchain's
+`librustc_driver`, so its release in `verification/policy/toolchains.lock.toml` must declare
+the same Rust channel. The Charon/Aeneas extraction lane uses one pinned nightly
+(`nightly/…` in `MODULE.bazel`, `[charon].rust_toolchain` in the lock), selected only by
+`--@rules_rust//rust/toolchain/channel=nightly`. `scripts/toolchain_consistency_gate.py`
+fails when the production version, the lock, the Verus pins, the workflow job names or the
+merge-readiness fallback disagree.
+
+Moving the production compiler or the Verus release changes every unit fingerprint. That is
+the intended invalidation: proof, test and mutation evidence is re-established on the new
+revision and the affected reviews are re-attested.

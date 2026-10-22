@@ -337,6 +337,13 @@ jobs:
           python3 scripts/crate_spec_parity_gate.py --selftest
           python3 scripts/crate_spec_parity_gate.py
 
+      # One production rustc: MODULE.bazel's version, the toolchain lock, both Verus pins,
+      # the job names and the merge-readiness fallback all name the same release.
+      - name: Toolchain-version consistency gate
+        run: |
+          python3 scripts/toolchain_consistency_gate.py --selftest
+          python3 scripts/toolchain_consistency_gate.py
+
       # The extraction image consumes pinned Aeneas/Charon release binaries and builds
       # neither. Stated as what the definition may contain, because a tool it built from
       # source would run Cargo behind an upstream Makefile no word scanner can see.
