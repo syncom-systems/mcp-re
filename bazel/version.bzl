@@ -6,4 +6,4 @@ means the same thing under Bazel as under a workspace member's manifest. scripts
 moves it together with `VERSION`.
 """
 
-WORKSPACE_VERSION = "0.18.1"
+WORKSPACE_VERSION = "0.19.0"

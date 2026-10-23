@@ -12,6 +12,19 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-10-23
+
+Audit commitment (ADR-MCPRE-070). The default posture is unchanged: `--audit-commitment`
+defaults to `best-effort`, which behaves as v0.18.1 did. A deployment that opts in with
+`--audit-commitment required` gets two guarantees, stated and tested separately: a committed
+intent record exists before any request is dispatched to the backend, and a committed outcome
+record exists before a success is visible to the caller. Past the point of dispatch a failure
+is reported as possibly executed, never as "nothing executed". Whether a provider's records are
+durable remains the provider's claim (ASM-0089); the proxy does not assert universal
+persistence. The toolchain moves to Rust 1.99.1 and Verus 0.2026.10.18, tokio to 1.54.1 and
+pyo3 to 0.30.1; Aeneas now runs as a Bazel action; and the complete verification run starts
+only on schedule or dispatch.
+
 ### Changed — Aeneas is a Bazel action
 
 `//bazel/charon:defs.bzl` gains `aeneas_lean`, which runs the pinned Aeneas over one
