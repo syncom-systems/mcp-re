@@ -62,7 +62,7 @@ REVISION="$(git rev-parse HEAD)"
 PACKAGING_REVISION="$(git -C "$TOOLS" rev-parse HEAD)"
 NAME="mcp-re-$VERSION-$TARGET"
 
-FLAGS=(-c opt "${PLATFORM[@]}")
+FLAGS=(-c opt ${PLATFORM[@]+"${PLATFORM[@]}"})
 # <installed name> <label>
 BINARIES=(
   "mcp-re-proxy //mcp-re-proxy:mcp_re_proxy_deploy_bin"
