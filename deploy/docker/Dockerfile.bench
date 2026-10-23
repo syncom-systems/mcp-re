@@ -8,7 +8,7 @@
 #
 #   scripts/stage_image_binaries.sh --arch amd64
 #   docker build -f deploy/docker/Dockerfile.bench \
-#     --build-arg DIST=deploy/docker/dist/amd64 -t mcp-re-slo-bench:0.18.1 .
+#     --build-arg DIST=deploy/docker/dist/amd64 -t mcp-re-slo-bench:0.19.0 .
 #
 # The image compiles nothing: the bench and the proxy it spawns are the Bazel-built
 # release binaries scripts/stage_image_binaries.sh staged — the bench from
