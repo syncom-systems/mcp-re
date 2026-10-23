@@ -85,6 +85,14 @@ The client-side proxy is the path that requires no application change at all.
 
 MCP-RE is not part of the official MCP specification unless and until it is accepted through the MCP governance and SEP process.
 
+## Install
+
+Apple Silicon macOS: `brew install syncom-systems/mcp-re/mcp-re`. Linux x86-64: a binary
+archive and a container image (`ghcr.io/syncom-systems/mcp-re-proxy`), both attested. A
+Docker Compose reference lives in [`deploy/compose`](deploy/compose/README.md). Details,
+verification and upgrade: [`docs/installation.md`](docs/installation.md); building from
+source: [`docs/source-build.md`](docs/source-build.md).
+
 ## Quickstart — see MCP-RE fail closed
 
 Run the single-node HTTP-profile demo and watch the **real `mcp-re-proxy` PEP**
@@ -435,6 +443,7 @@ conformance, reference implementation, demos, and non-goals):
 - **One-page overview:** [`docs/MCP-RE-IN-ONE-PAGE.md`](docs/MCP-RE-IN-ONE-PAGE.md) —
   what MCP-RE is, the threat it addresses, where it sits relative to EMA/OAuth, and
   what the current release proves.
+- **Install:** [`docs/installation.md`](docs/installation.md), [`docs/source-build.md`](docs/source-build.md)
 - **Quickstarts:** [`docs/quickstart-local.md`](docs/quickstart-local.md)
   (local fail-closed demo, no cloud) and
   [`docs/quickstart-gcp-kms.md`](docs/quickstart-gcp-kms.md) (live GCP Cloud KMS).

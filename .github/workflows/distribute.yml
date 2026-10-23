@@ -1,0 +1,384 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Distribution — builds the install artifacts of ONE already-qualified release tag and
+# publishes them. It is not a second release path: the release identity is the commit the
+# version tag points at, `release.yml` qualifies that commit, and this workflow refuses a
+# tag whose qualification record is not on main (scripts/distribution_gate.py).
+#
+# Triggers:
+#   release: published   a release was published for a tag (the normal path)
+#   workflow_dispatch    a deliberate (re)run or BACKFILL of an existing tag. The tag is typed
+#                        twice (`tag` and `confirm`) because publication is the point.
+#
+# What it builds is the TAGGED SOURCE (checked out to ./src) with this workflow's packaging
+# recipe (checked out to ./tools, from the ref the workflow runs at, which must be main).
+# RELEASE.json in every archive names both revisions, so a backfill built with a newer
+# recipe says so rather than passing for something it is not. Nothing here builds from a
+# moving branch under a version name.
+#
+# Fails closed and never overwrites: release assets are uploaded without --clobber and an
+# image tag that already exists is refused, so a version names one set of bytes forever.
+#
+# Cost: the build job compiles with Bazel on a hosted macOS runner (the linux binaries are
+# cross-compiled there by the hermetic zig toolchain). It runs per release or per dispatch,
+# never per pull request.
+name: distribute
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The existing release tag to distribute (vMAJOR.MINOR.PATCH).
+        required: true
+        type: string
+      confirm:
+        description: Type the tag again to authorize publishing its artifacts.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: distribute-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+  IMAGE: ghcr.io/syncom-systems/mcp-re-proxy
+
+jobs:
+  resolve:
+    name: resolve and qualify the tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.gate.outputs.version }}
+      sha: ${{ steps.gate.outputs.sha }}
+    steps:
+      - name: Run from main, with the typed confirmation
+        run: |
+          # A dispatch runs the workflow file of the ref it names, so it must be main's. A
+          # release event runs the file at the tagged commit itself, which is then also the
+          # packaging recipe: a normal release is built by the recipe it shipped with.
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+              echo "a dispatch runs only from main's copy of this workflow, not ${GITHUB_REF}" >&2
+              exit 1
+            fi
+            if [ "${CONFIRM}" != "${TAG}" ]; then
+              echo "confirm must repeat the tag exactly" >&2
+              exit 1
+            fi
+          elif [ "${GITHUB_REF}" != "refs/tags/${TAG}" ]; then
+            echo "a release run must be at its own tag, not ${GITHUB_REF}" >&2
+            exit 1
+          fi
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The tag names a qualified release
+        id: gate
+        run: |
+          set -euo pipefail
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          python3 scripts/distribution_gate.py --selftest
+          python3 scripts/distribution_gate.py --tag "${TAG}" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Nothing is published under this version yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' \
+              | grep -q "^mcp-re-${version}-"; then
+            echo "release ${TAG} already carries distribution assets; versions are immutable" >&2
+            exit 1
+          fi
+
+  build:
+    name: build archives (macOS runner)
+    needs: resolve
+    runs-on: macos-14
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: tools
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          path: src
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+
+      - name: The tagged source is the qualified commit
+        run: |
+          test "$(git -C src rev-parse HEAD)" = "${{ needs.resolve.outputs.sha }}"
+
+      - name: Bazelisk
+        run: command -v bazelisk >/dev/null || brew install bazelisk
+
+      - name: Build the archives
+        run: |
+          set -euo pipefail
+          mkdir out
+          cd tools
+          for target in darwin-arm64 linux-amd64; do
+            scripts/package_release.sh --source ../src --target "${target}" --out ../out
+          done
+          ls -l ../out
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: archives
+          path: out/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  check-archives:
+    name: extract and run the linux archive on a clean system
+    needs: [resolve, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: archives
+          path: out
+      - name: A clean Debian with nothing installed but libc
+        run: |
+          set -euo pipefail
+          version="${{ needs.resolve.outputs.version }}"
+          archive="out/mcp-re-${version}-linux-amd64.tar.gz"
+          docker run --rm -i debian:bookworm-slim sh -euc '
+            mkdir /i && tar -xz -C /i && cd /i/mcp-re-*/
+            cat RELEASE.json
+            bin/mcp-re-client --help >/dev/null
+            if bin/mcp-re-client --version >/tmp/v 2>/dev/null; then
+              grep -qx "mcp-re-client '"${version}"'" /tmp/v
+              test "$(bin/mcp-re-proxy --version)" = "mcp-re-proxy '"${version}"'"
+            fi
+            if bin/mcp-re-proxy 2>/dev/null; then echo "proxy started without configuration" >&2; exit 1; fi
+          ' < "${archive}"
+
+  publish:
+    name: publish release assets
+    needs: [resolve, build, check-archives]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: archives
+          path: out
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd out
+          sha256sum mcp-re-*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+      - name: Build-provenance attestations
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: out/mcp-re-*.tar.gz
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${TAG}" out/mcp-re-*.tar.gz out/SHA256SUMS \
+            --repo "${GITHUB_REPOSITORY}"
+
+  image:
+    name: publish the container image
+    needs: [resolve, build, check-archives]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: archives
+          path: out
+      - name: The image carries the archive's binary
+        run: |
+          set -euo pipefail
+          version="${{ needs.resolve.outputs.version }}"
+          mkdir -p deploy/docker/dist/amd64
+          tar -xzf "out/mcp-re-${version}-linux-amd64.tar.gz" -C out
+          install -m 0755 "out/mcp-re-${version}-linux-amd64/bin/mcp-re-proxy" deploy/docker/dist/amd64/mcp-re-proxy
+      - name: Log in to GHCR with the workflow token
+        env:
+          TOKEN: ${{ github.token }}
+        run: echo "${TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+      - name: Build and push
+        id: push
+        run: |
+          set -euo pipefail
+          version="${{ needs.resolve.outputs.version }}"
+          if docker buildx imagetools inspect "${IMAGE}:${version}" >/dev/null 2>&1; then
+            echo "${IMAGE}:${version} already exists; image tags are immutable" >&2
+            exit 1
+          fi
+          docker buildx build --platform linux/amd64 \
+            -f deploy/docker/Dockerfile --target proxy \
+            --build-arg DIST=deploy/docker/dist/amd64 \
+            --build-arg VERSION="${version}" \
+            --build-arg REVISION="${{ needs.resolve.outputs.sha }}" \
+            --provenance=false --sbom=false \
+            --tag "${IMAGE}:${version}" --push \
+            --metadata-file meta.json .
+          digest="$(python3 -c 'import json; print(json.load(open("meta.json"))["containerimage.digest"])')"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "${IMAGE}:${version}@${digest}"
+      - name: Image build-provenance attestation
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ghcr.io/syncom-systems/mcp-re-proxy
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  verify:
+    name: verify the published artifacts on a clean system
+    needs: [resolve, publish, image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Download from the public release and verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${{ needs.resolve.outputs.version }}"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          mkdir dl && cd dl
+          for f in "mcp-re-${version}-linux-amd64.tar.gz" "mcp-re-${version}-darwin-arm64.tar.gz" SHA256SUMS; do
+            curl -fsSL -o "$f" "${base}/${f}"
+          done
+          sha256sum -c SHA256SUMS
+          for f in mcp-re-*.tar.gz; do
+            gh attestation verify "$f" --repo "${GITHUB_REPOSITORY}"
+          done
+          mkdir x && tar -xzf "mcp-re-${version}-linux-amd64.tar.gz" -C x
+          top="x/mcp-re-${version}-linux-amd64"
+          python3 - "${top}/RELEASE.json" "${version}" "${{ needs.resolve.outputs.sha }}" <<'PY'
+          import json, sys
+          release = json.load(open(sys.argv[1]))
+          assert release["version"] == sys.argv[2], release
+          assert release["source_revision"] == sys.argv[3], release
+          print("RELEASE.json names", release["version"], release["source_revision"])
+          PY
+      - name: Pull the image without credentials, check its identity, verify its attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${{ needs.resolve.outputs.version }}"
+          digest="${{ needs.image.outputs.digest }}"
+          docker logout ghcr.io || true
+          docker pull "${IMAGE}:${version}"
+          got="$(docker image inspect "${IMAGE}:${version}" --format '{{index .RepoDigests 0}}')"
+          test "${got}" = "${IMAGE}@${digest}"
+          docker image inspect "${IMAGE}@${digest}" --format '{{.Architecture}} {{.Config.User}} {{json .Config.Labels}}'
+          test "$(docker image inspect "${IMAGE}@${digest}" --format '{{.Architecture}}')" = amd64
+          test "$(docker image inspect "${IMAGE}@${digest}" --format '{{.Config.User}}')" = 65532:65532
+          test "$(docker image inspect "${IMAGE}@${digest}" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "${version}"
+          test "$(docker image inspect "${IMAGE}@${digest}" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "${{ needs.resolve.outputs.sha }}"
+          gh attestation verify "oci://${IMAGE}@${digest}" --repo "${GITHUB_REPOSITORY}"
+          # The container's binary is the archive's binary.
+          docker create --name probe "${IMAGE}@${digest}" >/dev/null
+          docker cp probe:/usr/local/bin/mcp-re-proxy ./image-proxy
+          docker rm probe >/dev/null
+          cmp ./image-proxy "dl/x/mcp-re-${version}-linux-amd64/bin/mcp-re-proxy"
+          # Refuses to start without configuration.
+          if docker run --rm "${IMAGE}@${digest}" >/dev/null 2>&1; then
+            echo "the image started without configuration" >&2
+            exit 1
+          fi
+
+  verify-compose:
+    name: reference deployment (compose) from the published image
+    needs: [resolve, image, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install, start, restart, recreate, uninstall
+        working-directory: deploy/compose
+        run: |
+          set -euo pipefail
+          version="${{ needs.resolve.outputs.version }}"
+          ./dev-pki.sh
+          cp env.example .env
+          sed -i "s/^MCP_RE_VERSION=.*/MCP_RE_VERSION=${version}/" .env
+          sed -i "s/^REDIS_PASSWORD=.*/REDIS_PASSWORD=$(openssl rand -hex 24)/" .env
+          printf 'MCP_RE_UID=%s\nMCP_RE_GID=%s\n' "$(id -u)" "$(id -g)" >> .env
+          docker compose pull
+          docker compose up -d
+          ./verify.sh ready
+          ./verify.sh closed
+          docker compose restart proxy
+          ./verify.sh ready
+          docker compose down
+          docker compose up -d
+          ./verify.sh ready
+          docker compose down --volumes
+          test -z "$(docker volume ls -q --filter name=mcp-re_redis-data)"
+
+  verify-homebrew:
+    name: Homebrew install, test, uninstall on a clean macOS runner
+    needs: [resolve, publish]
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # The tap renders its formula from this template and the published checksum; this is
+      # the same rendering, installed from the released archive before the tap sees it.
+      - name: Render the formula from the published checksum, install, test, uninstall
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_FROM_API: "1"
+        run: |
+          set -euo pipefail
+          version="${{ needs.resolve.outputs.version }}"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          if command -v mcp-re-proxy; then echo "mcp-re-proxy is already installed on this runner" >&2; exit 1; fi
+          curl -fsSL -o SHA256SUMS "${base}/SHA256SUMS"
+          sha="$(awk '/darwin-arm64/ {print $1}' SHA256SUMS)"
+          brew tap-new --no-git local/mcp-re
+          formula="$(brew --repository local/mcp-re)/Formula/mcp-re.rb"
+          sed -e "s/@VERSION@/${version}/g" -e "s/@SHA256@/${sha}/" \
+            packaging/homebrew/mcp-re.rb.in > "${formula}"
+          brew audit --strict --online --formula local/mcp-re/mcp-re
+          brew install local/mcp-re/mcp-re
+          brew test local/mcp-re/mcp-re
+          test "$(brew list --versions mcp-re)" = "mcp-re ${version}"
+          "$(brew --prefix)/bin/mcp-re-client" --help >/dev/null
+          brew uninstall mcp-re
+          if command -v mcp-re-proxy; then echo "mcp-re-proxy survived uninstall" >&2; exit 1; fi

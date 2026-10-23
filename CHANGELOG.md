@@ -12,6 +12,19 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Added — installation and distribution
+
+Each release is now installable without cloning the repository, compiling Rust or running
+Bazel: Apple Silicon macOS through a Homebrew tap, Linux x86-64 through a versioned binary
+archive and an OCI image on GHCR. Archives carry `mcp-re-proxy` and `mcp-re-client`, a
+`RELEASE.json` naming the version and exact source revision, and `SHA256SUMS`; archives, the
+formula and the image carry build-provenance attestations. `distribute.yml` builds only a tag
+whose release-assurance record on `main` is `PASS` for that commit, and never overwrites a
+published version. `mcp-re-proxy` and `mcp-re-client` answer `--version`. A Docker Compose
+reference deployment (`deploy/compose`) and the installation and source-build guides are
+new. Linux arm64 is not offered: the hermetic cross linker rejects an option rustc passes for
+that target. See [`docs/installation.md`](docs/installation.md).
+
 ## [0.19.0] — 2026-10-23
 
 Audit commitment (ADR-MCPRE-070). The default posture is unchanged: `--audit-commitment`

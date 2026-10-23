@@ -85,6 +85,10 @@ pub(crate) fn parse_invocation(args: &[String]) -> Result<Invocation, ExitCode> 
                 println!("{USAGE}");
                 return Err(ExitCode::SUCCESS);
             }
+            "--version" | "-V" => {
+                println!("mcp-re-client {}", env!("CARGO_PKG_VERSION"));
+                return Err(ExitCode::SUCCESS);
+            }
             other => {
                 eprintln!("unknown argument {other:?}\n\n{USAGE}");
                 return Err(ExitCode::FAILURE);
@@ -161,6 +165,14 @@ pub(crate) fn serve_until_shutdown(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn version_is_answered_without_a_configuration() {
+        // `--version` leaves through the non-serving terminal, so no `--config` is demanded.
+        for flag in ["--version", "-V"] {
+            assert!(parse_invocation(&[flag.to_owned()]).is_err());
+        }
+    }
 
     #[test]
     fn a_pre_epoch_clock_is_not_a_time() {

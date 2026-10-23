@@ -147,6 +147,12 @@ ci = ["pre-merge.yml:rust"]
 selftest = true
 
 [[script]]
+path = "scripts/distribution_gate.py"
+stages = []
+ci = ["distribute.yml:resolve", "pre-merge.yml:rust"]
+selftest = true
+
+[[script]]
 path = "scripts/doc_path_gate.py"
 stages = [1]
 ci = ["pre-merge.yml:rust"]
@@ -319,6 +325,13 @@ stages = []
 ci = ["verification.yml:host"]
 selftest = false
 selftest_exempt = "an installer that provisions the pinned Python interpreters on a runner; the pins it installs are checked by python_runtime_gate.py"
+
+[[script]]
+path = "scripts/package_release.sh"
+stages = []
+ci = ["distribute.yml:build"]
+selftest = false
+not_a_control = "builds the release archives with Bazel; what it built is checked by distribute.yml's check-archives and verify jobs"
 
 [[script]]
 path = "scripts/proxy_flag_doc_gate.py"

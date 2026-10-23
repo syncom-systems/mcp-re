@@ -26,10 +26,35 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 PORTS_TOML = REPO / "config" / "ports.toml"
 HELM_VALUES = REPO / "deploy" / "helm" / "mcp-re-proxy" / "values.yaml"
+COMPOSE_DIR = REPO / "deploy" / "compose"
 
 
-def check(ports_text: str, values_text: str) -> tuple[list[str], str]:
-    """`(problems, summary)` for a registry text and a Helm values text."""
+#: The proxy port as the compose reference spells it: the bind address, the published
+#: mapping, and verify.sh's probe. Each must equal the registry.
+COMPOSE_SPELLINGS = (
+    ("compose.yaml", r"0\.0\.0\.0:(\d+)"),
+    ("compose.yaml", r'\}:(\d+):(\d+)"'),
+    ("verify.sh", r"^PORT=(\d+)$"),
+)
+
+
+def check_compose(proxy_port: int, texts: dict[str, str]) -> list[str]:
+    """Every spelling of the proxy port in the compose reference equals the registry."""
+    problems = []
+    for name, pattern in COMPOSE_SPELLINGS:
+        found = [int(n) for m in re.finditer(pattern, texts.get(name, ""), re.M) for n in m.groups()]
+        if not found:
+            problems.append(f"deploy/compose/{name}: no port matching /{pattern}/ (was it renamed?)")
+        for port in found:
+            if port != proxy_port:
+                problems.append(
+                    f"deploy/compose/{name}: port {port} != registry mcp_re_proxy.port ({proxy_port})"
+                )
+    return problems
+
+
+def check(ports_text: str, values_text: str, compose: dict[str, str] | None = None) -> tuple[list[str], str]:
+    """`(problems, summary)` for a registry text, a Helm values text and the compose files."""
     reg = tomllib.loads(ports_text)
     problems: list[str] = []
 
@@ -56,7 +81,9 @@ def check(ports_text: str, values_text: str) -> tuple[list[str], str]:
             f"({proxy_port}). Update deploy/helm/mcp-re-proxy/values.yaml to match "
             f"config/ports.toml (the source of truth)."
         )
-    return problems, f"band {band}, mcp_re_proxy={proxy_port}, Helm bindPort mirrors it."
+    if compose is not None:
+        problems.extend(check_compose(proxy_port, compose))
+    return problems, f"band {band}, mcp_re_proxy={proxy_port}, Helm bindPort and compose mirror it."
 
 
 def selftest() -> int:
@@ -67,6 +94,11 @@ def selftest() -> int:
         '[services.other]\nport = 8650\n'
     )
     values = "proxy:\n  bindPort: 8601  # mirrors config/ports.toml\n"
+    compose = {
+        "compose.yaml": '- "0.0.0.0:8601"\n  - "${P:-127.0.0.1}:8601:8601"\n',
+        "verify.sh": "PORT=8601\n",
+    }
+    drifted = {**compose, "verify.sh": "PORT=8602\n"}
     cases = [
         ("the registry and its mirror agreeing", ports, values, False),
         ("a service port outside the band", ports.replace("8650", "9650"), values, True),
@@ -79,6 +111,15 @@ def selftest() -> int:
         ok = bool(problems) == red
         print(f"  {'ok  ' if ok else 'FAIL'}  {label}: {problems or 'clean'}")
         failures += not ok
+    for label, texts, red in (
+        ("compose spellings agreeing", compose, False),
+        ("a compose probe port that drifted", drifted, True),
+        ("compose files with no port at all", {}, True),
+    ):
+        problems = check_compose(8601, texts)
+        ok = bool(problems) == red
+        print(f"  {'ok  ' if ok else 'FAIL'}  {label}: {problems or 'clean'}")
+        failures += not ok
     if failures:
         print(f"port-registry gate selftest: FAIL ({failures})")
         return 1
@@ -87,7 +128,8 @@ def selftest() -> int:
 
 
 def main() -> int:
-    problems, summary = check(PORTS_TOML.read_text(), HELM_VALUES.read_text())
+    compose = {n: (COMPOSE_DIR / n).read_text() for n in ("compose.yaml", "verify.sh")}
+    problems, summary = check(PORTS_TOML.read_text(), HELM_VALUES.read_text(), compose)
     for problem in problems:
         print(f"port-registry gate: FAIL — {problem}", file=sys.stderr)
     if problems:

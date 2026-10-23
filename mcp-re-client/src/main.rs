@@ -67,6 +67,7 @@ mcp-re-client — the MCP-RE client-side ambassador
 
   --config <path>   the JSON configuration document (required)
   --check           load the configuration and the trust anchors, then exit
+  --version         print the version and exit
   --help            this text
 
 The local listener speaks PLAIN MCP. It binds loopback unless the configuration
