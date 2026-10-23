@@ -85,6 +85,10 @@ pub(crate) fn parse_invocation(args: &[String]) -> Result<Invocation, ExitCode> 
                 println!("{USAGE}");
                 return Err(ExitCode::SUCCESS);
             }
+            "--version" | "-V" => {
+                println!("mcp-re-client {}", env!("CARGO_PKG_VERSION"));
+                return Err(ExitCode::SUCCESS);
+            }
             other => {
                 eprintln!("unknown argument {other:?}\n\n{USAGE}");
                 return Err(ExitCode::FAILURE);

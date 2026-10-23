@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# One MCP-RE proxy in front of your Streamable-HTTP MCP server, with the Redis replay store
+# it requires. Read README.md first: it lists what you must provide (nothing here is a
+# default you can run unchanged) and what the startup checks refuse.
+name: mcp-re
+
+services:
+  proxy:
+    image: ${MCP_RE_IMAGE:-ghcr.io/syncom-systems/mcp-re-proxy}:${MCP_RE_VERSION:?set MCP_RE_VERSION in .env}
+    # Non-root. The proxy refuses key files that anyone but their owner can read, so the
+    # container runs as the uid that owns ./secrets/server (65532, the image's own user,
+    # unless you set MCP_RE_UID). The image ships no shell; the root filesystem,
+    # capabilities and privilege escalation are closed here as well.
+    user: "${MCP_RE_UID:-65532}:${MCP_RE_GID:-65532}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Loopback only by default. Publish on another address deliberately.
+    ports:
+      - "${MCP_RE_PUBLISH:-127.0.0.1}:8600:8600"
+    volumes:
+      - ./secrets/server:/etc/mcp-re:ro
+    command:
+      - --bind
+      - "0.0.0.0:8600"
+      - --audience
+      - "${MCP_RE_AUDIENCE:?set MCP_RE_AUDIENCE in .env}"
+      - --server-signer
+      - "${MCP_RE_AUDIENCE}"
+      - --server-key-id
+      - "${MCP_RE_SERVER_KEY_ID:?set MCP_RE_SERVER_KEY_ID in .env}"
+      - --delegated-trust-epoch
+      - "${MCP_RE_TRUST_EPOCH:?set MCP_RE_TRUST_EPOCH in .env}"
+      - --key-source
+      - file
+      - --signing-key-seed
+      - /etc/mcp-re/signing.seed
+      - --tls-cert
+      - /etc/mcp-re/server-chain.pem
+      - --tls-key
+      - /etc/mcp-re/server-key.pem
+      - --client-ca
+      - /etc/mcp-re/client-ca.pem
+      - --trust
+      - /etc/mcp-re/trust.json
+      - --target-uri
+      - "${MCP_RE_TARGET_URI:?set MCP_RE_TARGET_URI in .env}"
+      - --mcp-protocol-version
+      - "2026-07-28"
+      - --trust-domain
+      - "${MCP_RE_TRUST_DOMAIN:?set MCP_RE_TRUST_DOMAIN in .env}"
+      - --transport-binding
+      - exact
+      - --transport-identity-source
+      - uri_san
+      - --max-client-cert-lifetime
+      - 1h
+      - --replay-redis-url
+      - "redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379"
+      - --replay-durability-tier
+      - "redis-wait-quorum:1:1000"
+      - --inner-http-url
+      - "${MCP_RE_INNER_URL:?set MCP_RE_INNER_URL in .env}"
+
+  redis:
+    image: redis:7.4-alpine
+    # The replay store: noeviction is required (an evicted nonce re-opens the replay
+    # window) and the proxy verifies it at startup. Append-only persistence keeps admitted
+    # nonces across a Redis restart.
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory-policy
+      - noeviction
+      - --requirepass
+      - ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+volumes:
+  redis-data:
