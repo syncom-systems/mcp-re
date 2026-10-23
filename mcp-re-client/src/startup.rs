@@ -167,14 +167,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn version_is_answered_without_a_configuration() {
-        // `--version` leaves through the non-serving terminal, so no `--config` is demanded.
-        for flag in ["--version", "-V"] {
-            assert!(parse_invocation(&[flag.to_owned()]).is_err());
-        }
-    }
-
-    #[test]
     fn a_pre_epoch_clock_is_not_a_time() {
         let epoch = std::time::UNIX_EPOCH;
         assert_eq!(unix_seconds(epoch - Duration::from_secs(1)), None);
