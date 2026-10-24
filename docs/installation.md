@@ -123,7 +123,11 @@ is on `main`, `VERSION` equals the tag, and `docs/releases/<tag>-release-assuran
 `main` records `PASS` for exactly that commit (`scripts/distribution_gate.py`). It builds the
 tagged source with `scripts/package_release.sh`, publishes, then verifies the public artifacts
 on clean runners. Its `verdict` job passes only when every mandatory check ran and
-succeeded, and then adds a "Distribution verified" line to the release notes; a release without
+succeeded, and then adds a "Distribution verified" line to the release notes. Besides the
+artifact checks it runs a signed call end to end (`scripts/release_artifact_e2e.py`): the
+released client, the published proxy image and an MCP backend that counts what reaches it,
+showing that a call is admitted, a modified or replayed one is refused before the backend, and
+the replay refusal survives restarts of the proxy and of Redis; a release without
 that line is published but not verified. A failed verification is retried with `mode: verify`,
 which re-checks the public artifacts and changes nothing. The first image push creates the
 GHCR package private; an organization owner makes it public once (package settings, "Change

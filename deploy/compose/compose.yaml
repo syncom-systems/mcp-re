@@ -17,8 +17,15 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
+    # `host.docker.internal` is predefined on Docker Desktop and Colima only; on Linux it
+    # resolves to the host through this mapping, which is what MCP_RE_INNER_URL's default
+    # needs to reach a backend on the host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
+        condition: service_healthy
+      redis-replica:
         condition: service_healthy
     # Loopback only by default. Publish on another address deliberately.
     ports:
@@ -91,5 +98,39 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
 
+  # The tier is `redis-wait-quorum:1:1000`: an admission is acknowledged only once one replica
+  # holds the nonce. A single Redis can never reach that quorum, so without this service the
+  # proxy starts, completes mTLS and refuses every signed request as
+  # `mcp-re.replay_cache_unavailable`. The proxy talks to `redis` only.
+  redis-replica:
+    image: redis:7.4-alpine
+    command:
+      - redis-server
+      - --replicaof
+      - redis
+      - "6379"
+      - --masterauth
+      - ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+      - --requirepass
+      - ${REDIS_PASSWORD}
+      - --appendonly
+      - "yes"
+      - --maxmemory-policy
+      - noeviction
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - redis-replica-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning info replication | grep -q master_link_status:up"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
 volumes:
   redis-data:
+  redis-replica-data:

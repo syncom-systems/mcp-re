@@ -377,6 +377,13 @@ ci = ["pre-merge.yml:rust"]
 selftest = true
 
 [[script]]
+path = "scripts/release_artifact_e2e.py"
+stages = []
+ci = ["distribute.yml:verify-signed-flow"]
+selftest = false
+not_a_control = "drives a published installation through a signed call; its checks run only in distribute.yml, against artifacts that exist after publication"
+
+[[script]]
 path = "scripts/run_gate.sh"
 stages = [1]
 ci = ["pre-merge.yml:rust"]
