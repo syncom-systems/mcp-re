@@ -463,11 +463,14 @@ jobs:
           test "${#pins[@]}" -eq 2
           .venv/bin/pip install --quiet "${pins[@]}"
       - name: Admit, modify, replay and restart (scripts/release_artifact_e2e.py)
+        env:
+          DIGEST: ${{ needs.verify.outputs.digest }}
         run: |
           set -euo pipefail
           version="${{ needs.resolve.outputs.version }}"
           .venv/bin/python scripts/release_artifact_e2e.py \
-            --client "dl/mcp-re-${version}-linux-amd64/bin/mcp-re-client" --version "${version}"
+            --client "dl/mcp-re-${version}-linux-amd64/bin/mcp-re-client" --version "${version}" \
+            --digest "${DIGEST}"
 
   # The one verdict. Publication succeeding is not qualification: this job passes only when
   # every mandatory check ran and succeeded (a skipped check is a failure), and only then
@@ -509,5 +512,6 @@ jobs:
           set -euo pipefail
           line="Distribution verified (archives, checksums, attestations, image, Homebrew, Compose, signed call): ${RUN_URL}"
           body="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json body --jq .body)"
-          if grep -q '^Distribution verified ' <<<"${body}"; then exit 0; fi
-          printf '%s\n\n%s\n' "${body}" "${line}" | gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --notes-file -
+          # A successful retry replaces the earlier line, so the link names the latest full verification.
+          kept="$(grep -v '^Distribution verified ' <<<"${body}" || true)"
+          printf '%s\n\n%s\n' "${kept}" "${line}" | gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --notes-file -

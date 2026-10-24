@@ -46,15 +46,22 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+def registry_port(service):
+    with open(ROOT / "config" / "ports.toml", "rb") as fh:
+        return tomllib.load(fh)["services"][service]["port"]
+
+
 COMPOSE_SRC = ROOT / "deploy" / "compose"
 # The published compose reference's own server identity (env.example) and listener
 # (compose.yaml, verify.sh).
 AUDIENCE = "did:web:mcp-re.example.net"
-TARGET_URI = "https://mcp-re-proxy:8600/mcp"
 SERVER_NAME = "mcp-re-proxy"
+PROXY_PORT = registry_port("mcp_re_proxy")
+TARGET_URI = f"https://{SERVER_NAME}:{PROXY_PORT}/mcp"
+STEP_TIMEOUT = 120
+PULL_TIMEOUT = 900
 SERVER_KEY_ID = "server-key-1"
 EPOCH = "epoch-1"
-PROXY_PORT = 8600
 CLIENT_KEY_ID = "evaluation-1"
 ORG_KID = "acceptance-org-1"
 MANIFEST_DOMAIN = b"mcp-re/trust-anchor-manifest/v1"
@@ -73,13 +80,8 @@ def b64url(raw):
 
 def openssl(*args, data=None):
     return subprocess.run(
-        ["openssl", *args], input=data, check=True, capture_output=True
+        ["openssl", *args], input=data, check=True, capture_output=True, timeout=STEP_TIMEOUT
     ).stdout
-
-
-def registry_port(service):
-    with open(ROOT / "config" / "ports.toml", "rb") as fh:
-        return tomllib.load(fh)["services"][service]["port"]
 
 
 def free_port():
@@ -267,11 +269,11 @@ class Run:
         self.children = []
         self.checks = []
 
-    def compose(self, *args, check=True):
+    def compose(self, *args, check=True, timeout=STEP_TIMEOUT):
         env = dict(os.environ, COMPOSE_PROJECT_NAME=self.project)
         return subprocess.run(
             ["docker", "compose", *args], cwd=self.compose_dir, env=env, check=check,
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=timeout,
         )
 
     def check(self, name, ok, detail=""):
@@ -319,8 +321,27 @@ class Run:
         reply = conn.getresponse()
         return reply.status, reply.read().decode()
 
+    def check_image_digest(self):
+        """The proxy container runs the image bytes the verify job attested, not whatever
+        the version tag names by now."""
+        if not self.args.digest:
+            return
+        container = self.compose("ps", "-q", "proxy").stdout.strip()
+        image = subprocess.run(
+            ["docker", "inspect", container, "--format", "{{.Image}}"],
+            capture_output=True, text=True, check=True, timeout=STEP_TIMEOUT,
+        ).stdout.strip()
+        repo_digests = subprocess.run(
+            ["docker", "image", "inspect", image, "--format", "{{range .RepoDigests}}{{.}} {{end}}"],
+            capture_output=True, text=True, check=True, timeout=STEP_TIMEOUT,
+        ).stdout.split()
+        self.check("the proxy container runs the verified image digest",
+                   any(d.endswith("@" + self.args.digest) for d in repo_digests),
+                   f"want {self.args.digest}, image has {repo_digests}")
+
     def ready(self):
-        ready = subprocess.run(["./verify.sh", "ready"], cwd=self.compose_dir, capture_output=True, text=True)
+        ready = subprocess.run(["./verify.sh", "ready"], cwd=self.compose_dir, capture_output=True, text=True,
+                               timeout=STEP_TIMEOUT)
         self.check("the proxy is ready and fails closed", ready.returncode == 0, ready.stderr)
 
     def restart(self, *services):
@@ -329,7 +350,8 @@ class Run:
 
     def setup(self):
         shutil.copytree(COMPOSE_SRC, self.compose_dir, ignore=shutil.ignore_patterns("secrets", ".env"))
-        subprocess.run(["./dev-pki.sh"], cwd=self.compose_dir, check=True, capture_output=True)
+        subprocess.run(["./dev-pki.sh"], cwd=self.compose_dir, check=True, capture_output=True,
+                       timeout=STEP_TIMEOUT)
         self.backend_port = registry_port("mcp_re_inner_backend")
         env = (self.compose_dir / "env.example").read_text().splitlines()
         values = {
@@ -352,7 +374,8 @@ class Run:
         self.spawn([sys.executable, str(ROOT / "tools" / "fastmcp_inner_backend.py")], backend_env, "backend")
         self.wait_port(self.backend_port)
 
-        self.compose("up", "-d")
+        self.compose("up", "-d", timeout=PULL_TIMEOUT)
+        self.check_image_digest()
         self.ready()
 
         self.tap = Tap(self.secrets)
@@ -363,7 +386,7 @@ class Run:
             self.work, self.secrets, self.client_port, self.tap.server_address[1], org_pub
         )
         checked = subprocess.run([self.args.client, "--config", str(config), "--check"],
-                                 capture_output=True, text=True)
+                                 capture_output=True, text=True, timeout=STEP_TIMEOUT)
         self.check("the released client accepts its configuration and trust anchors",
                    checked.returncode == 0, checked.stderr)
         self.spawn([self.args.client, "--config", str(config)], log="client")
@@ -424,11 +447,15 @@ def main():
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     parser.add_argument("--client", required=True, help="the released mcp-re-client executable")
     parser.add_argument("--version", required=True, help="the published image tag, for example 0.19.0")
+    parser.add_argument("--digest", help="the verified image digest (sha256:...) the proxy container must run")
     args = parser.parse_args()
     run = Run(args)
     try:
         run.setup()
         run.scenario()
+    except subprocess.TimeoutExpired as exc:
+        print(f"timed out: {exc.cmd}", file=sys.stderr)
+        raise SystemExit(run.fail())
     finally:
         run.teardown()
     print("RELEASE ARTIFACT E2E: PASS")
