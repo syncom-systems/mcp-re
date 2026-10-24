@@ -289,8 +289,10 @@ Build with (the high-assurance backends, and the cloud KMS key sources beside PK
 bazel build -c opt //mcp-re-proxy:mcp_re_proxy_ext_bin
 ```
 
-The deploy images carry `//mcp-re-proxy:mcp_re_proxy_deploy_bin`
-(`scripts/stage_image_binaries.sh`).
+The release archives and the container image carry `//mcp-re-proxy:mcp_re_proxy_deploy_bin`
+(`scripts/stage_image_binaries.sh`): the Redis replay tier, both cloud KMS signers and
+registration, without PKCS#11, etcd or online OCSP. Build it to run what a release runs;
+`mcp_re_proxy_ext_bin` is the flavor with those three instead of registration.
 
 **Every MCP-RE deployment uses the high-assurance profile** with a replay durability
 tier and its store, so all proxy nodes share replay state. This is not only a

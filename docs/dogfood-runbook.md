@@ -40,8 +40,8 @@ any more:
   mints the CA and leaves with `rcgen`, writes the seed and trust file, and spawns the
   real `mcp_re_proxy_cli` over real mTLS — `make_ca()`, `make_client_leaf()`,
   `write_material()`, `spawn_proxy()`, `signed_request()`. **Read it; do not expect
-  `cargo test` to run it.** The file is `#![cfg(feature = "redis_replay")]`, so a plain
-  `cargo test --workspace` compiles it to **zero** tests and reports green.
+  a default-feature test run to execute it.** The file is `#![cfg(feature = "redis_replay")]`,
+  so a build without that feature compiles it to **zero** tests and reports green.
 - **Client side — signing and response verification:**
   [`mcp-re-proxy/tests/integration_async/mtls_client_leg_e2e_test.rs`](../mcp-re-proxy/tests/integration_async/mtls_client_leg_e2e_test.rs)
   and `delegated_client_server_e2e_test.rs` drive the real client proxy against the real

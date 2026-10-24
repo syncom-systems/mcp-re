@@ -63,7 +63,7 @@ HISTORY = (
 #: is told to run.
 COMMAND_DOCS = re.compile(
     r"^(?:CLAUDE\.md|AGENTS\.md|CONTRIBUTING\.md|README\.md|[^/]+/README\.md|sdk/[^/]+/README\.md"
-    r"|docs/dev/.+\.md|docs/AGENT_INSTRUCTIONS\.md|tools/[^/]+/README\.md|tools/verification/README\.md"
+    r"|deploy/.+/README\.md|docs/[^/]+\.md|docs/dev/.+\.md|tools/[^/]+/README\.md|tools/verification/README\.md"
     r"|verification/README\.md|verification/[^/]+/README\.md|\.claude/.+\.md)$"
 )
 
@@ -407,6 +407,8 @@ def selftest() -> int:
         ("CLAUDE.md", "text\n```sh\ncargo clippy -- -D warnings\n```\n", True),
         ("CLAUDE.md", "Run `cargo clippy -- -D warnings` after every edit.\n", True),
         ("docs/dev/x.md", "- `cargo`: the structural-gates job\n", False),
+        ("docs/quickstart-local.md", "```sh\ncargo test -p x\n```\n", True),
+        ("deploy/compose/README.md", "```sh\ncargo build\n```\n", True),
         ("CLAUDE.md", "The `Cargo.toml` manifests describe crates.\n```sh\nbazel test //x\n```\n", False),
         ("docs/security/r7.log", "cargo test\n", False),
         ("verification/reviews/p.md", "```sh\ncargo test\n```\n", False),
