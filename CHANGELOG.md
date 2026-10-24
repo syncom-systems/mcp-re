@@ -25,6 +25,23 @@ reference deployment (`deploy/compose`) and the installation and source-build gu
 new. Linux arm64 is not offered: the hermetic cross linker rejects an option rustc passes for
 that target. See [`docs/installation.md`](docs/installation.md).
 
+### Added — a signed call is part of distribution verification
+
+`distribute.yml` now runs `scripts/release_artifact_e2e.py` against the published artifacts: the
+released `mcp-re-client`, the published proxy image under `deploy/compose`, and a Streamable-HTTP
+MCP backend that counts what reaches it (`MCP_RE_INNER_BACKEND_CALL_COUNTER=1` on
+`tools/fastmcp_inner_backend.py`; off by default). A signed call is admitted and reaches the
+backend exactly once; a call modified in flight and a recorded call replayed are refused and
+never reach it, and the replay refusal holds across a proxy restart and a Redis restart.
+
+### Fixed — the Compose reference admitted no signed request
+
+The reference deployment ran one Redis under `--replay-durability-tier redis-wait-quorum:1:1000`,
+a tier that needs a replica to acknowledge. It started, completed mTLS and refused every signed
+request as `mcp-re.replay_cache_unavailable`; `verify.sh` could not tell, since it sends an
+unsigned request. A replica now runs beside the primary, and the proxy container maps
+`host.docker.internal` so the default `MCP_RE_INNER_URL` reaches a backend on a Linux host.
+
 ## [0.19.0] — 2026-10-23
 
 Audit commitment (ADR-MCPRE-070). The default posture is unchanged: `--audit-commitment`

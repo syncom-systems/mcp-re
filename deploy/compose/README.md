@@ -3,7 +3,7 @@
 # Reference deployment: Docker Compose
 
 One `mcp-re-proxy` (the official image from GHCR) in front of your Streamable-HTTP MCP server,
-and the Redis it needs as its replay store. This is a small single-host reference; the
+and the Redis primary and replica it needs as its replay store. This is a small single-host reference; the
 Kubernetes fleet is in [`deploy/helm`](../helm/mcp-re-proxy).
 
 Nothing in it is a default you can run unchanged. It ships no credentials, generates no
@@ -14,7 +14,7 @@ production trust anchors, and the proxy refuses unsafe configuration by name.
 | what | where | notes |
 | --- | --- | --- |
 | identity of this server | `.env`: `MCP_RE_AUDIENCE`, `MCP_RE_TARGET_URI`, `MCP_RE_TRUST_DOMAIN`, `MCP_RE_SERVER_KEY_ID`, `MCP_RE_TRUST_EPOCH` | must equal what your clients sign; the `did:example:` / `example.com` placeholders are refused |
-| your MCP backend | `.env`: `MCP_RE_INNER_URL` | a Streamable-HTTP endpoint the proxy container can reach; a stdio-only server needs an external adapter |
+| your MCP backend | `.env`: `MCP_RE_INNER_URL` | a Streamable-HTTP endpoint the proxy container can reach (`host.docker.internal` is mapped to the host); a stdio-only server needs an external adapter |
 | Redis password | `.env`: `REDIS_PASSWORD` | `openssl rand -hex 24` |
 | key material | `secrets/server/`: `signing.seed`, `server-key.pem`, `server-chain.pem`, `client-ca.pem`, `trust.json` | from your own CA and key management; mode `0600`, owned by the uid in `MCP_RE_UID` |
 | image version | `.env`: `MCP_RE_VERSION` | an immutable tag, for example `0.19.0` |
@@ -50,7 +50,10 @@ docker compose up -d
 
 ## Persistent state
 
-Only Redis holds state: the admitted request nonces (`appendonly yes`, volume `redis-data`).
+Only Redis holds state: the admitted request nonces (`appendonly yes`, volume `redis-data`). The
+replay tier is `redis-wait-quorum:1:1000`, which admits a request only once one replica holds its
+nonce, so the stack runs a replica beside the primary; the proxy fails closed
+(`mcp-re.replay_cache_unavailable`) for the few seconds a restarted primary needs to resync it.
 Losing it re-opens the replay window for the freshness interval, which is why it persists and
 why it must run with `maxmemory-policy noeviction`, as it does here and as the proxy checks.
 The proxy container is read-only and keeps nothing. Redis is on the compose network only and
