@@ -9,6 +9,13 @@
 #   release: published   a release was published for a tag (the normal path)
 #   workflow_dispatch    a deliberate (re)run or BACKFILL of an existing tag. The tag is typed
 #                        twice (`tag` and `confirm`) because publication is the point.
+#                        `mode: verify` re-checks an already-published tag from the public
+#                        artifacts only; it builds, uploads and pushes nothing, so a failed
+#                        verification is retried without touching the release.
+#
+# The `verdict` job is the single outcome. Publishing is not qualification: it passes only
+# when every mandatory check ran and succeeded (skipped counts as failed), and then records
+# "Distribution verified" with the run link in the release notes.
 #
 # What it builds is the TAGGED SOURCE (checked out to ./src) with this workflow's packaging
 # recipe (checked out to ./tools, from the ref the workflow runs at, which must be main).
@@ -34,9 +41,17 @@ on:
         required: true
         type: string
       confirm:
-        description: Type the tag again to authorize publishing its artifacts.
+        description: Type the tag again to authorize the run.
         required: true
         type: string
+      mode:
+        description: >-
+          publish builds, publishes and verifies. verify only re-checks what is already
+          published and changes nothing.
+        required: true
+        type: choice
+        default: publish
+        options: [publish, verify]
 
 permissions:
   contents: read
@@ -57,7 +72,14 @@ jobs:
     outputs:
       version: ${{ steps.gate.outputs.version }}
       sha: ${{ steps.gate.outputs.sha }}
+      mode: ${{ steps.mode.outputs.mode }}
     steps:
+      - name: Mode
+        id: mode
+        run: echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
+        env:
+          MODE: ${{ github.event_name == 'release' && 'publish' || inputs.mode }}
+
       - name: Run from main, with the typed confirmation
         run: |
           # A dispatch runs the workflow file of the ref it names, so it must be main's. A
@@ -92,22 +114,29 @@ jobs:
           python3 scripts/distribution_gate.py --selftest
           python3 scripts/distribution_gate.py --tag "${TAG}" | tee -a "$GITHUB_OUTPUT"
 
-      - name: Nothing is published under this version yet
+      - name: Publish needs a version with nothing published; verify needs one that is published
         env:
           GH_TOKEN: ${{ github.token }}
+          MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -euo pipefail
           version="${TAG#v}"
-          gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null
-          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' \
-              | grep -q "^mcp-re-${version}-"; then
-            echo "release ${TAG} already carries distribution assets; versions are immutable" >&2
-            exit 1
+          assets="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')"
+          if [ "${MODE}" = publish ]; then
+            if grep -q "^mcp-re-${version}-" <<<"${assets}"; then
+              echo "release ${TAG} already carries distribution assets; versions are immutable" >&2
+              exit 1
+            fi
+          else
+            for f in "mcp-re-${version}-linux-amd64.tar.gz" "mcp-re-${version}-darwin-arm64.tar.gz" SHA256SUMS; do
+              grep -qx "$f" <<<"${assets}" || { echo "release ${TAG} has no ${f}; nothing to verify" >&2; exit 1; }
+            done
           fi
 
   build:
     name: build archives (macOS runner)
     needs: resolve
+    if: needs.resolve.outputs.mode == 'publish'
     runs-on: macos-14
     timeout-minutes: 150
     steps:
@@ -148,6 +177,7 @@ jobs:
   check-archives:
     name: extract and run the linux archive on a clean system
     needs: [resolve, build]
+    if: needs.resolve.outputs.mode == 'publish'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -174,6 +204,7 @@ jobs:
   publish:
     name: publish release assets
     needs: [resolve, build, check-archives]
+    if: needs.resolve.outputs.mode == 'publish'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -205,6 +236,7 @@ jobs:
   image:
     name: publish the container image
     needs: [resolve, build, check-archives]
+    if: needs.resolve.outputs.mode == 'publish'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -263,8 +295,14 @@ jobs:
   verify:
     name: verify the published artifacts on a clean system
     needs: [resolve, publish, image]
+    if: >-
+      ${{ !cancelled() && needs.resolve.result == 'success' &&
+      (needs.resolve.outputs.mode == 'verify' ||
+      (needs.publish.result == 'success' && needs.image.result == 'success')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
     steps:
       - name: Download from the public release and verify
         env:
@@ -291,16 +329,23 @@ jobs:
           print("RELEASE.json names", release["version"], release["source_revision"])
           PY
       - name: Pull the image without credentials, check its identity, verify its attestation
+        id: image
         env:
           GH_TOKEN: ${{ github.token }}
+          PUBLISHED_DIGEST: ${{ needs.image.outputs.digest }}
         run: |
           set -euo pipefail
           version="${{ needs.resolve.outputs.version }}"
-          digest="${{ needs.image.outputs.digest }}"
           docker logout ghcr.io || true
           docker pull "${IMAGE}:${version}"
           got="$(docker image inspect "${IMAGE}:${version}" --format '{{index .RepoDigests 0}}')"
-          test "${got}" = "${IMAGE}@${digest}"
+          digest="${got#"${IMAGE}@"}"
+          # After a publish the tag must resolve to the digest that run pushed. A
+          # verify-only run has no such witness; the attestation below is it: only this
+          # repository's workflow can have attested this digest.
+          if [ -n "${PUBLISHED_DIGEST}" ]; then test "${digest}" = "${PUBLISHED_DIGEST}"; fi
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "${IMAGE}:${version}@${digest}"
           docker image inspect "${IMAGE}@${digest}" --format '{{.Architecture}} {{.Config.User}} {{json .Config.Labels}}'
           test "$(docker image inspect "${IMAGE}@${digest}" --format '{{.Architecture}}')" = amd64
           test "$(docker image inspect "${IMAGE}@${digest}" --format '{{.Config.User}}')" = 65532:65532
@@ -320,7 +365,8 @@ jobs:
 
   verify-compose:
     name: reference deployment (compose) from the published image
-    needs: [resolve, image, verify]
+    needs: [resolve, verify]
+    if: ${{ !cancelled() && needs.verify.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -329,6 +375,8 @@ jobs:
           persist-credentials: false
       - name: Install, start, restart, recreate, uninstall
         working-directory: deploy/compose
+        env:
+          DIGEST: ${{ needs.verify.outputs.digest }}
         run: |
           set -euo pipefail
           version="${{ needs.resolve.outputs.version }}"
@@ -338,6 +386,8 @@ jobs:
           sed -i "s/^REDIS_PASSWORD=.*/REDIS_PASSWORD=$(openssl rand -hex 24)/" .env
           printf 'MCP_RE_UID=%s\nMCP_RE_GID=%s\n' "$(id -u)" "$(id -g)" >> .env
           docker compose pull
+          # The deployment runs the verified digest, not whatever the tag later names.
+          test "$(docker image inspect "${IMAGE}:${version}" --format '{{index .RepoDigests 0}}')" = "${IMAGE}@${DIGEST}"
           docker compose up -d
           ./verify.sh ready
           ./verify.sh closed
@@ -352,6 +402,9 @@ jobs:
   verify-homebrew:
     name: Homebrew install, test, uninstall on a clean macOS runner
     needs: [resolve, publish]
+    if: >-
+      ${{ !cancelled() && needs.resolve.result == 'success' &&
+      (needs.resolve.outputs.mode == 'verify' || needs.publish.result == 'success') }}
     runs-on: macos-14
     timeout-minutes: 30
     steps:
@@ -382,3 +435,46 @@ jobs:
           "$(brew --prefix)/bin/mcp-re-client" --help >/dev/null
           brew uninstall mcp-re
           if command -v mcp-re-proxy; then echo "mcp-re-proxy survived uninstall" >&2; exit 1; fi
+
+  # The one verdict. Publication succeeding is not qualification: this job passes only when
+  # every mandatory check ran and succeeded (a skipped check is a failure), and only then
+  # records the result on the release. A release without that line has not been verified.
+  verdict:
+    name: distribution verdict
+    needs: [resolve, build, check-archives, publish, image, verify, verify-compose, verify-homebrew]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Every mandatory check succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ["NEEDS"])
+          mode = needs["resolve"]["outputs"].get("mode", "")
+          required = ["resolve", "verify", "verify-compose", "verify-homebrew"]
+          if mode == "publish":
+              required += ["build", "check-archives", "publish", "image"]
+          elif mode != "verify":
+              sys.exit("distribution mode unknown: " + repr(mode))
+          bad = {j: needs[j]["result"] for j in required if needs[j]["result"] != "success"}
+          for job, result in sorted(bad.items()):
+              print(f"NOT VERIFIED: {job}: {result}", file=sys.stderr)
+          if bad:
+              sys.exit(1)
+          print(f"DISTRIBUTION VERIFIED ({mode}): " + ", ".join(required))
+          PY
+      - name: Record the verification on the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          line="Distribution verified (archives, checksums, attestations, image, Homebrew, Compose): ${RUN_URL}"
+          body="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json body --jq .body)"
+          if grep -q '^Distribution verified ' <<<"${body}"; then exit 0; fi
+          printf '%s\n\n%s\n' "${body}" "${line}" | gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --notes-file -
