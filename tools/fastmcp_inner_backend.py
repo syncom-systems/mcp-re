@@ -68,6 +68,11 @@ def add(a: int, b: int) -> int:
 
 _CONFIRM_TOOL = "confirm_action"
 
+# Opt-in observability for acceptance runs (MCP_RE_INNER_BACKEND_CALL_COUNTER=1): the number
+# of POSTs and of `tools/call` requests this process has received, at `GET` on this path.
+# Off by default, so a deployed backend serves no path beyond the MCP endpoint.
+CALL_COUNT_PATH = "/call-count"
+
 
 def _mint_request_state() -> str:
     """A self-contained opaque MRTR `requestState`: a per-open random token. Opaque to
@@ -108,13 +113,35 @@ class ConfirmActionShim:
     else (including lifespan/websocket and every other MCP method) to the wrapped
     SDK server app unchanged."""
 
-    def __init__(self, app):
+    def __init__(self, app, count_calls=False):
         self.app = app
+        self.count_calls = count_calls
+        self.posts = 0
+        self.tools_calls = 0
 
     async def __call__(self, scope, receive, send):
+        if (
+            self.count_calls
+            and scope["type"] == "http"
+            and scope.get("method") == "GET"
+            and scope.get("path") == CALL_COUNT_PATH
+        ):
+            payload = json.dumps(
+                {"posts": self.posts, "tools_call": self.tools_calls}
+            ).encode()
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"content-type", b"application/json")],
+                }
+            )
+            await send({"type": "http.response.body", "body": payload})
+            return
         if scope["type"] != "http" or scope.get("method") != "POST":
             await self.app(scope, receive, send)
             return
+        self.posts += 1
         # Buffer the (single) request body so we can inspect it and, if not ours,
         # replay it verbatim to the SDK server.
         body = b""
@@ -128,6 +155,8 @@ class ConfirmActionShim:
             rpc = json.loads(body)
         except (ValueError, TypeError):
             rpc = None
+        if isinstance(rpc, dict) and rpc.get("method") == "tools/call":
+            self.tools_calls += 1
         if (
             isinstance(rpc, dict)
             and rpc.get("method") == "tools/call"
@@ -210,4 +239,5 @@ if __name__ == "__main__":
         transport_security=security,
         host=host,
     )
-    uvicorn.run(ConfirmActionShim(app), host=host, port=port)
+    count_calls = os.environ.get("MCP_RE_INNER_BACKEND_CALL_COUNTER") == "1"
+    uvicorn.run(ConfirmActionShim(app, count_calls), host=host, port=port)

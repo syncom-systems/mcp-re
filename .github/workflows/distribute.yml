@@ -444,12 +444,48 @@ jobs:
           brew uninstall mcp-re
           if command -v mcp-re-proxy; then echo "mcp-re-proxy survived uninstall" >&2; exit 1; fi
 
+  verify-signed-flow:
+    name: signed call through the released client and proxy to an MCP backend
+    needs: [resolve, verify]
+    if: ${{ !cancelled() && needs.verify.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: The released client, from the public release
+        run: |
+          set -euo pipefail
+          version="${{ needs.resolve.outputs.version }}"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          mkdir dl && cd dl
+          for f in "mcp-re-${version}-linux-amd64.tar.gz" SHA256SUMS; do curl -fsSL -o "$f" "${base}/${f}"; done
+          sha256sum --ignore-missing -c SHA256SUMS
+          tar -xzf "mcp-re-${version}-linux-amd64.tar.gz"
+      - name: The backend's requirements, as the inner image pins them
+        run: |
+          set -euo pipefail
+          python3 -m venv .venv
+          mapfile -t pins < <(grep -oE '"(mcp|uvicorn)==[^"]+"' deploy/docker/Dockerfile.inner | tr -d '"')
+          test "${#pins[@]}" -eq 2
+          .venv/bin/pip install --quiet "${pins[@]}"
+      - name: Admit, modify, replay and restart (scripts/release_artifact_e2e.py)
+        env:
+          DIGEST: ${{ needs.verify.outputs.digest }}
+        run: |
+          set -euo pipefail
+          version="${{ needs.resolve.outputs.version }}"
+          .venv/bin/python scripts/release_artifact_e2e.py \
+            --client "dl/mcp-re-${version}-linux-amd64/bin/mcp-re-client" --version "${version}" \
+            --digest "${DIGEST}"
+
   # The one verdict. Publication succeeding is not qualification: this job passes only when
   # every mandatory check ran and succeeded (a skipped check is a failure), and only then
   # records the result on the release. A release without that line has not been verified.
   verdict:
     name: distribution verdict
-    needs: [resolve, build, check-archives, publish, image, verify, verify-compose, verify-homebrew]
+    needs: [resolve, build, check-archives, publish, image, verify, verify-compose, verify-signed-flow, verify-homebrew]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -464,7 +500,7 @@ jobs:
           import json, os, sys
           needs = json.loads(os.environ["NEEDS"])
           mode = needs["resolve"]["outputs"].get("mode", "")
-          required = ["resolve", "verify", "verify-compose", "verify-homebrew"]
+          required = ["resolve", "verify", "verify-compose", "verify-signed-flow", "verify-homebrew"]
           if mode == "publish":
               required += ["build", "check-archives", "publish", "image"]
           elif mode != "verify":
@@ -482,7 +518,8 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          line="Distribution verified (archives, checksums, attestations, image, Homebrew, Compose): ${RUN_URL}"
+          line="Distribution verified (archives, checksums, attestations, image, Homebrew, Compose, signed call): ${RUN_URL}"
           body="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json body --jq .body)"
-          if grep -q '^Distribution verified ' <<<"${body}"; then exit 0; fi
-          printf '%s\n\n%s\n' "${body}" "${line}" | gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --notes-file -
+          # A successful retry replaces the earlier line, so the link names the latest full verification.
+          kept="$(grep -v '^Distribution verified ' <<<"${body}" || true)"
+          printf '%s\n\n%s\n' "${kept}" "${line}" | gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --notes-file -
