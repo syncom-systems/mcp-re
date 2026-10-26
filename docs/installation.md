@@ -111,9 +111,10 @@ ReadOnlyPaths=/etc/mcp-re
 ## Identify what is installed
 
 Both executables answer `--version` with `<name> <version>`, for example
-`mcp-re-client --version`. The flag exists from the first release after 0.19.0. For 0.19.0 itself, which predates it,
-the identity is `RELEASE.json` (in the archive, and under `$(brew --prefix)/share/mcp-re` for
-Homebrew) together with the attestation.
+`mcp-re-client --version`, and the release workflow refuses to publish a build whose output
+differs from the tag. The flag exists from the first release after 0.19.0. For 0.19.0 itself,
+which predates it, the identity is `RELEASE.json` (in the archive, and under
+`$(brew --prefix)/share/mcp-re` for Homebrew) together with the attestation.
 
 ## Maintainers: how a release is distributed
 

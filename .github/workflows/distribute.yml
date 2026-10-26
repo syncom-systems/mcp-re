@@ -194,10 +194,8 @@ jobs:
             mkdir /i && tar -xz -C /i && cd /i/mcp-re-*/
             cat RELEASE.json
             bin/mcp-re-client --help >/dev/null
-            if bin/mcp-re-client --version >/tmp/v 2>/dev/null; then
-              grep -qx "mcp-re-client '"${version}"'" /tmp/v
-              test "$(bin/mcp-re-proxy --version)" = "mcp-re-proxy '"${version}"'"
-            fi
+            test "$(bin/mcp-re-client --version)" = "mcp-re-client '"${version}"'"
+            test "$(bin/mcp-re-proxy --version)" = "mcp-re-proxy '"${version}"'"
             if bin/mcp-re-proxy 2>/dev/null; then echo "proxy started without configuration" >&2; exit 1; fi
           ' < "${archive}"
 
@@ -328,6 +326,13 @@ jobs:
           assert release["source_revision"] == sys.argv[3], release
           print("RELEASE.json names", release["version"], release["source_revision"])
           PY
+          # A build this run published must report its version. A verify-only run re-checks
+          # releases that may predate --version (0.19.0 does), so it asserts identity from
+          # RELEASE.json and the attestation alone.
+          if [ "${{ needs.resolve.outputs.mode }}" = publish ]; then
+            test "$("${top}/bin/mcp-re-client" --version)" = "mcp-re-client ${version}"
+            test "$("${top}/bin/mcp-re-proxy" --version)" = "mcp-re-proxy ${version}"
+          fi
       - name: Pull the image without credentials, check its identity, verify its attestation
         id: image
         env:
@@ -357,6 +362,9 @@ jobs:
           docker cp probe:/usr/local/bin/mcp-re-proxy ./image-proxy
           docker rm probe >/dev/null
           cmp ./image-proxy "dl/x/mcp-re-${version}-linux-amd64/bin/mcp-re-proxy"
+          if [ "${{ needs.resolve.outputs.mode }}" = publish ]; then
+            test "$(docker run --rm "${IMAGE}@${digest}" --version)" = "mcp-re-proxy ${version}"
+          fi
           # Refuses to start without configuration.
           if docker run --rm "${IMAGE}@${digest}" >/dev/null 2>&1; then
             echo "the image started without configuration" >&2

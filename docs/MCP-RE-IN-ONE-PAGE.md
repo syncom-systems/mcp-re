@@ -159,11 +159,11 @@ topology-independent zero-drop is **not** claimed.
 
 ## How do I run the demo?
 
-Single-node end-to-end demo (Cargo):
+Single-node end-to-end demo (Bazel):
 
 ```sh
-cargo build --workspace --bins
-cargo test --workspace
+bazel build -c opt //mcp-re-proxy:mcp_re_proxy_deploy_bin //mcp-re-client:mcp_re_client_cli
+scripts/demo-local.sh
 ```
 
 Live Google Cloud KMS validation (one command, after first-time gcloud setup —

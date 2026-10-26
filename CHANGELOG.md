@@ -25,6 +25,15 @@ reference deployment (`deploy/compose`) and the installation and source-build gu
 new. Linux arm64 is not offered: the hermetic cross linker rejects an option rustc passes for
 that target. See [`docs/installation.md`](docs/installation.md).
 
+### Changed — `--version` is required of a published build
+
+`distribute.yml` no longer skips its `--version` assertions when the flag is absent. A build the
+workflow publishes must report `<name> <version>` equal to the tag, from the freshly built
+archive, the public archive and the image; a verify-only run still accepts a release that
+predates the flag. The documentation no longer instructs a Cargo invocation in the quickstart,
+the one-page overview or the dogfood runbook, and `no_cargo_execution_gate.py` now reads every
+top-level document under `docs/` and every `deploy/**/README.md`; the README names
+`mcp_re_proxy_deploy_bin` as the binary the release carries.
 ### Added — a signed call is part of distribution verification
 
 `distribute.yml` now runs `scripts/release_artifact_e2e.py` against the published artifacts: the
