@@ -20,8 +20,18 @@
 //! `async_serve` against the one each request arrived at. That comparison has an answer only
 //! for an ABSOLUTE target, so a target with no `://` cannot be held here at all: the check is
 //! never asked of a value it cannot answer.
+//!
+//! The rest of the shape is what makes the URI a request target rather than any string with
+//! a `://` in it (RFC 9110 §4.2, RFC 9421 §2.2.2):
+//!
+//! - printable ASCII only: the value is a line of the signature base;
+//! - scheme `http` or `https`, the only ones this proxy serves;
+//! - a non-empty host, a port only of digits, and no userinfo — the URI is signed and
+//!   audited, so a credential in it would be published by both;
+//! - no fragment, which no request carries, so a target with one could never match an
+//!   arrival.
 
-use crate::deployment_request::DeploymentRequest;
+use crate::deployment_request::{DeploymentRequest, RedactedLocator};
 
 /// An absolute `@target-uri` and its origin form.
 ///
@@ -48,19 +58,38 @@ impl RequestTarget {
                     .to_string(),
             );
         }
-        let Some((_scheme, authority)) = uri.split_once("://") else {
+        if !uri.bytes().all(|b| b.is_ascii_graphic()) {
+            return Err(refusal(
+                uri,
+                "contains whitespace, a control character or non-ASCII; a request target \
+                 is printable ASCII, with anything else percent-encoded",
+            ));
+        }
+        let Some((scheme, rest)) = uri.split_once("://") else {
             return Err(format!(
                 "--target-uri {} is not an absolute URI: it must be \
                  <scheme>://<authority><path> (e.g. https://proxy.internal:8600/mcp). \
                  A scheme-less target leaves the request-target reconstruction check \
                  nothing to compare, so an ingress fanning several paths into one process \
                  could not be told apart from one route",
-                crate::deployment_request::RedactedLocator::of(uri)
+                RedactedLocator::of(uri)
             ));
         };
-        let origin_form = match authority.find('/') {
-            Some(offset) => authority.get(offset..).unwrap_or("/").to_owned(),
-            None => "/".to_owned(),
+        if !(scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http")) {
+            return Err(refusal(uri, "names a scheme other than http or https"));
+        }
+        if rest.contains('#') {
+            return Err(refusal(
+                uri,
+                "carries a fragment, which no request target has, so no request could match it",
+            ));
+        }
+        let split = rest.find(['/', '?']).unwrap_or(rest.len());
+        let (authority, origin) = rest.split_at(split);
+        check_authority(uri, authority)?;
+        let origin_form = match origin.chars().next() {
+            Some('/') => origin.to_owned(),
+            _ => format!("/{origin}"),
         };
         Ok(Self {
             uri: uri.to_owned(),
@@ -79,6 +108,43 @@ impl RequestTarget {
     pub fn origin_form(&self) -> &str {
         &self.origin_form
     }
+}
+
+/// A refusal naming the flag and the redacted target, never the target itself.
+fn refusal(uri: &str, why: &str) -> String {
+    format!("--target-uri {} {why}", RedactedLocator::of(uri))
+}
+
+/// The authority is `host[:port]`: a host that is present, a port of digits, no userinfo.
+fn check_authority(uri: &str, authority: &str) -> Result<(), String> {
+    if authority.contains('@') {
+        return Err(refusal(
+            uri,
+            "carries userinfo; the target is signed and audited, so a credential in it would \
+             be published by both",
+        ));
+    }
+    let (host, port) = match authority.strip_prefix('[') {
+        Some(bracketed) => match bracketed.split_once(']') {
+            Some((literal, "")) => (literal, None),
+            Some((literal, after)) => match after.strip_prefix(':') {
+                Some(port) => (literal, Some(port)),
+                None => return Err(refusal(uri, "has text after its IP-literal host")),
+            },
+            None => return Err(refusal(uri, "has an unterminated IP-literal host")),
+        },
+        None => match authority.rsplit_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (authority, None),
+        },
+    };
+    if host.is_empty() {
+        return Err(refusal(uri, "names no host"));
+    }
+    if port.is_some_and(|p| !p.bytes().all(|b| b.is_ascii_digit()) || p.parse::<u16>().is_err()) {
+        return Err(refusal(uri, "has a port that is not a TCP port number"));
+    }
+    Ok(())
 }
 
 /// The deployment's request target, or the refusal explaining why it has none.
@@ -141,6 +207,62 @@ mod tests {
         );
     }
 
+    /// An absolute URI that is not an HTTP request target is refused, naming the flag: the
+    /// scheme, host, port, fragment and character set each decide whether a request could
+    /// ever arrive at it.
+    #[test]
+    fn a_target_that_is_not_an_http_request_target_is_unconstructible() {
+        for target in [
+            "HTTPS://proxy.internal/mcp",
+            "http://proxy.internal:8600?route=a",
+            "https://[::1]:8600/mcp",
+            "https://[::1]",
+            "https://proxy.internal:65535/mcp%20x",
+        ] {
+            assert!(
+                RequestTarget::new(target).is_ok(),
+                "an HTTP request target is the supported shape: {target}"
+            );
+        }
+        for not_a_target in [
+            "ftp://proxy.internal/mcp",
+            "://proxy.internal/mcp",
+            "https:///mcp",
+            "https://?route=a",
+            "https://:8600/mcp",
+            "https://proxy.internal:http/mcp",
+            "https://proxy.internal:/mcp",
+            "https://proxy.internal:65536/mcp",
+            "https://proxy.internal:+80/mcp",
+            "https://[::1/mcp",
+            "https://[::1]x/mcp",
+            "https://proxy.internal/mcp#section",
+            "https://proxy.internal/m cp",
+            " https://proxy.internal/mcp",
+            "https://proxy.internal/mcp\t",
+            "https://proxy.internal/\u{e9}",
+        ] {
+            let refusal = RequestTarget::new(not_a_target)
+                .expect_err("a value no request can arrive at must not be constructible");
+            assert!(
+                refusal.contains("--target-uri"),
+                "the refusal must name the flag, got: {refusal}"
+            );
+        }
+    }
+
+    /// A credential in the authority is refused, and the refusal does not publish it.
+    #[test]
+    fn a_target_carrying_userinfo_is_refused_without_echoing_it() {
+        let refusal = RequestTarget::new("https://mats:hunter2@proxy.internal:8600/mcp")
+            .expect_err("userinfo in a signed, audited target is refused");
+        assert!(refusal.contains("userinfo"), "{refusal}");
+        assert!(
+            !refusal.contains("hunter2") && !refusal.contains("mats:"),
+            "the credential reached the diagnostic: {refusal}"
+        );
+    }
+
     /// The origin form is the path and query, and `/` where the target names no path.
     #[test]
     fn the_origin_form_is_the_path_and_query() {
@@ -148,6 +270,9 @@ mod tests {
             ("https://mcp.example.com/mcp?route=a", "/mcp?route=a"),
             ("https://mcp.example.com/", "/"),
             ("https://mcp.example.com", "/"),
+            ("https://mcp.example.com?route=a", "/?route=a"),
+            ("https://mcp.example.com?next=/mcp", "/?next=/mcp"),
+            ("https://[::1]:8600/mcp", "/mcp"),
         ] {
             let target = RequestTarget::new(uri).expect("absolute");
             assert_eq!(target.origin_form(), origin, "{uri}");

@@ -541,7 +541,7 @@ pub(crate) fn transition(
 ///
 /// Nor the transitions that are the assembly's own rather than any stage's — the dispatch and
 /// the two continuation facts, stated in `handle` where they are established — or the bodied
-/// success tail, which [`ExchangeProgress::publish`] drives from [`ServedSuccess`].
+/// success tail, which [`publication::PublishPermit::publish`] drives from [`ServedSuccess`].
 #[must_use = "a stage's established fact must be handed to ExchangeProgress::establish, or \
               the machine does not learn the stage ran"]
 pub(crate) struct Established<T> {
@@ -596,9 +596,9 @@ impl ExchangeProgress {
 
     /// The exchange's position in the pipeline.
     ///
-    /// Test-only since the terminals became [`may_publish`](Self::may_publish) and
-    /// [`publish`](Self::publish): the serving path used to read the position back and
-    /// `debug_assert!` it had reached a terminal, and that check is now the structure of
+    /// Test-only since the terminals became [`may_publish`](Self::may_publish) and the permit's
+    /// [`publish`](publication::PublishPermit::publish): the serving path used to read the
+    /// position back and `debug_assert!` a terminal, and that check is now the structure of
     /// the two operations rather than an observation made afterwards.
     #[cfg(test)]
     pub(crate) fn state(&self) -> ExchangeState {
@@ -711,21 +711,15 @@ impl ExchangeProgress {
     /// Whether this exchange may publish `served`, decided BEFORE anything publishes the claim:
     /// every success path commits its outcome, discharges retention and emits `response.signed`
     /// before its terminal, so this asks against the tuple the exchange WOULD hold. `Err` leaves
-    /// the machine where it legally was, anomaly latched; `Ok` is the permit `publish` takes.
+    /// the machine where it legally was, anomaly latched; `Ok` is the permit that publishes
+    /// `served` to this exchange and no other.
     pub(crate) fn may_publish<D>(
         &mut self,
         served: ServedSuccess<D>,
-    ) -> Result<publication::PublishPermit<D>, &'static str> {
+    ) -> Result<publication::PublishPermit<'_, D>, &'static str> {
         match self.prospective_refusal(served.tail()) {
             Some(violation) => Err(violation),
-            None => Ok(publication::PublishPermit(served)),
-        }
-    }
-
-    /// Reach the terminal a permit names, driving the tail [`Self::may_publish`] checked.
-    pub(crate) fn publish<D>(&mut self, permit: publication::PublishPermit<D>) {
-        for event in permit.0.tail() {
-            self.advance(*event);
+            None => Ok(publication::PublishPermit::issue(self, served)),
         }
     }
 
@@ -1967,8 +1961,7 @@ mod tests {
             if matches!(success, Success::OpenLeg) {
                 p.observe_open_leg(OpenLeg::Recorded);
             }
-            let permit = p.may_publish(success).expect("cleared");
-            p.publish(permit);
+            p.may_publish(success).expect("cleared").publish();
             assert_eq!(p.state(), terminal);
             assert!(p.state().is_success_terminal());
             assert_eq!(p.anomaly(), None, "the checked tail is the driven tail");
@@ -2007,11 +2000,11 @@ mod tests {
         ok.advance(ExchangeEvent::BackendDispatched);
         let permit = ok.may_publish(acknowledged()).expect("cleared");
         assert_eq!(
-            ok.state(),
+            permit.exchange().state(),
             ExchangeState::Dispatched,
             "decided, not entered"
         );
-        ok.publish(permit);
+        permit.publish();
         assert_eq!(ok.state(), ExchangeState::AcknowledgedNotification);
         assert_eq!(ok.anomaly(), None);
     }

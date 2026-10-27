@@ -4227,7 +4227,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.exchange_publication"
 class = "V0"
-description = "What the machine will let the assembly publish: a success it cannot vouch for is refused rather than emitted — an open leg with no durable record, a reply that opens a leg presented as a completed exchange, synthesized transport-failure bytes, an exchange already carrying an anomaly — a refused publication leaves the exchange where it legally was and is REMEMBERED rather than re-derived, and the notification terminal is decided before its 202 is minted."
+description = "What the machine will let the assembly publish: a success it cannot vouch for is refused rather than emitted — an open leg with no durable record, a reply that opens a leg presented as a completed exchange, synthesized transport-failure bytes, an exchange already carrying an anomaly — a refused publication leaves the exchange where it legally was and is REMEMBERED rather than re-derived, and the notification terminal is decided before its 202 is minted. A permit publishes only to the exchange that cleared it, which cannot change while the permit lives."
 paths = [
   "mcp-re-proxy/src/exchange_state.rs",
   "mcp-re-proxy/src/exchange_state/publication.rs",
@@ -4259,6 +4259,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::a_refused_202_is_served_from_a_non_terminal_state",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::publication::tests::a_permit_from_may_publish_publishes_to_the_terminal",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::publication::tests::a_refused_publication_yields_no_permit",
+  "//mcp-re-proxy:proxy_unit_test#exchange_state::publication::tests::a_permit_publishes_only_to_the_exchange_that_cleared_it",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::dispatched::tests::a_notification_is_answered_before_any_reply_is_assembled",
 ]
 
@@ -12272,6 +12273,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::validation::required_coordinate_tests::every_required_coordinate_is_refused_when_empty_however_the_request_was_built",
   "//mcp-re-proxy:proxy_unit_test#config_state::validation::required_coordinate_tests::the_fixture_these_controls_mutate_is_otherwise_legal",
   "//mcp-re-proxy:proxy_unit_test#config_state::request_target::tests::a_target_the_reconstruction_check_cannot_answer_is_unconstructible",
+  "//mcp-re-proxy:proxy_unit_test#config_state::request_target::tests::a_target_that_is_not_an_http_request_target_is_unconstructible",
+  "//mcp-re-proxy:proxy_unit_test#config_state::request_target::tests::a_target_carrying_userinfo_is_refused_without_echoing_it",
   "//mcp-re-proxy:proxy_unit_test#config_state::validation::residue::tests::the_inventory_is_the_file",
   # ADR-MCPRE-069 CO-S3-6 (NP-153). Four members, all deciding in `validation/`, all over a
   # request built in code.

@@ -24,7 +24,6 @@ use mcp_re_http_profile::HttpResponse;
 use crate::async_serve::ServedHttpResponse;
 use crate::audit_record::{AuditRecord, AuditSubject};
 use crate::exchange_state::publication::PublishPermit;
-use crate::exchange_state::ExchangeProgress;
 use crate::request_stages::{OutcomeDisposition, PostDispatch};
 
 use super::super::inner_plane::NotificationDelivered;
@@ -41,8 +40,7 @@ impl HttpProfileProxy {
     pub(super) async fn publish_success(
         &self,
         acc: &Accepted<'_>,
-        progress: &mut ExchangeProgress,
-        permit: PublishPermit<NotificationDelivered>,
+        permit: PublishPermit<'_, NotificationDelivered>,
         response: HttpResponse,
         owed: PostDispatch,
     ) -> ServedHttpResponse {
@@ -63,18 +61,18 @@ impl HttpProfileProxy {
             Ok(outcome) => outcome,
             Err(refusal) => {
                 return self
-                    .refuse_retained(acc, refusal, progress, &retention)
+                    .refuse_retained(acc, refusal, permit.exchange(), &retention)
                     .await
             }
         };
         if let Some(rejection) = self
-            .retain_accepted(acc, &response, &retention, progress)
+            .retain_accepted(acc, &response, &retention, permit.exchange())
             .await
         {
             return rejection;
         }
         self.offer_outcome(acc, &outcome, observed);
-        progress.publish(permit);
+        permit.publish();
         served(response)
     }
 
@@ -124,7 +122,7 @@ mod tests {
         let g2 = at(".outcome(intent,");
         let retention = at(".retain_accepted(");
         let offer = at("self.offer_outcome(");
-        let publish = at("progress.publish(permit)");
+        let publish = at("permit.publish()");
         let serve = at("served(response)");
         assert!(
             g2 < retention && retention < offer && offer < publish && publish < serve,

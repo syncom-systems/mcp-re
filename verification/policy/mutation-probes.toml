@@ -8460,8 +8460,8 @@ unit = "proxy.legality_boundary_totality"
 theorem = "THM-0077"
 conjunct = "a target URI that would disable the request-target reconstruction check is refused at the boundary, however the request was built"
 path = "mcp-re-proxy/src/config_state/request_target.rs"
-anchor = "        let Some((_scheme, authority)) = uri.split_once(\"://\") else {\n"
-weakening = "        let Some((_scheme, authority)) = uri.split_once(\"://\").or(Some((\"\", uri))) else {\n"
+anchor = "        let Some((scheme, rest)) = uri.split_once(\"://\") else {\n"
+weakening = "        let Some((scheme, rest)) = uri.split_once(\"://\").or(Some((\"https\", uri))) else {\n"
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#config_state::request_target::tests::a_target_the_reconstruction_check_cannot_answer_is_unconstructible",
   # ADR-MCPRE-069 CO-S3-6. The same clause reached through `app::run` over all three illegal
@@ -14079,7 +14079,7 @@ conjunct = "a success is served only after retention has completed, as well as t
 path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs"
 anchor = """
         if let Some(rejection) = self
-            .retain_accepted(acc, &response, &retention, progress)
+            .retain_accepted(acc, &response, &retention, permit.exchange())
             .await
         {
             return rejection;
@@ -14087,7 +14087,7 @@ anchor = """
 """
 weakening = """
         let _ = self
-            .retain_accepted(acc, &response, &retention, progress)
+            .retain_accepted(acc, &response, &retention, permit.exchange())
             .await;
 """
 expect_red = [
@@ -14101,12 +14101,12 @@ conjunct = "a notification 202 is visible only through the success exit, after i
 # D4. Pill-evidenced RED in #1205 (PP4).
 path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs"
 anchor = """
-            Ok(ack) => self.publish_success(acc, progress, permit, ack, owed).await,
+            Ok(ack) => self.publish_success(acc, permit, ack, owed).await,
 """
 weakening = """
             Ok(ack) => {
                 let _ = owed;
-                progress.publish(permit);
+                permit.publish();
                 super::super::served(ack)
             }
 """
@@ -14133,12 +14133,12 @@ anchor = """
             Ok(outcome) => outcome,
             Err(refusal) => {
                 return self
-                    .refuse_retained(acc, refusal, progress, &retention)
+                    .refuse_retained(acc, refusal, permit.exchange(), &retention)
                     .await
             }
         };
         if let Some(rejection) = self
-            .retain_accepted(acc, &response, &retention, progress)
+            .retain_accepted(acc, &response, &retention, permit.exchange())
             .await
         {
             return rejection;
@@ -14146,7 +14146,7 @@ anchor = """
 """
 weakening = """
         if let Some(rejection) = self
-            .retain_accepted(acc, &response, &retention, progress)
+            .retain_accepted(acc, &response, &retention, permit.exchange())
             .await
         {
             return rejection;
@@ -14161,7 +14161,7 @@ weakening = """
             Ok(outcome) => outcome,
             Err(refusal) => {
                 return self
-                    .refuse_retained(acc, refusal, progress, &retention)
+                    .refuse_retained(acc, refusal, permit.exchange(), &retention)
                     .await
             }
         };

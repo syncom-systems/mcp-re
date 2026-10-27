@@ -36,13 +36,12 @@ impl HttpProfileProxy {
     async fn answer_notification(
         &self,
         acc: &Accepted<'_>,
-        progress: &mut ExchangeProgress,
-        permit: PublishPermit<NotificationDelivered>,
+        permit: PublishPermit<'_, NotificationDelivered>,
         owed: PostDispatch,
     ) -> ServedHttpResponse {
         let ex = acc.exchange();
         match sign_delegated_accepted_202(ex.http_req, owed.window()) {
-            Ok(ack) => self.publish_success(acc, progress, permit, ack, owed).await,
+            Ok(ack) => self.publish_success(acc, permit, ack, owed).await,
             // SIGNING failed, so there is no signed terminal to retain. The marker stays, and
             // it is the true statement: this exchange crossed and nothing discharges it.
             Err(e) => self.responses.response_rejection(
@@ -54,7 +53,7 @@ impl HttpProfileProxy {
                 ex.now,
                 Some(ex.verified.evidence()),
                 Some(ex.actor_id.to_owned()),
-                Self::disposition(progress, None),
+                Self::disposition(permit.exchange(), None),
                 Some(owed.window().shared()),
             ),
         }
@@ -107,7 +106,7 @@ impl HttpProfileProxy {
                 .refuse_retained(acc, refusal, progress, owed.retention())
                 .await;
         };
-        self.answer_notification(acc, progress, permit, owed).await
+        self.answer_notification(acc, permit, owed).await
     }
 }
 

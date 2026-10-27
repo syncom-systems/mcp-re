@@ -240,6 +240,54 @@ watching every control that asserted the disposition stay green.
 same change, because the serving path no longer reads either — the next addition here starts
 from a census, not from this one.
 
+### EX-001 re-census for #1245 — **disposition unchanged: `reviewed-exception`; 874 -> 868**
+
+Recorded 2026-10-27 by the agent under the owner's delegation of that date to record this
+census. It is an agent record made under that delegation, not an owner signature. It was
+measured at `origin/main` `7eeba3fe` (873 production lines against a baseline of 874), and
+the outcome below is measured on PR #1253.
+
+Occasioned by the growth record's closing line: #1245 makes the publication decision a
+value, which touches this file.
+
+**§8, on the tree #1245 started from.** Questions 1–6 and 8–10 answer as EX-001 and its
+growth record answer them. There is ONE authority: the vocabulary, `transition()` and
+`establishes()`, `ExchangeProgress` and its projections, the `Established<T>` carrier,
+`ServedSuccess<D>` and `tail()`, and the publication decision over one clone of the tuple
+are one relation, and nothing has a second independent description. Two answers were new:
+
+- **Q7, an ordering-only relationship.** `publish(served)` accepted any `ServedSuccess` with
+  no proof that `may_publish` had returned `Ok` for it. "Decide, then publish" held through
+  statement order at two call sites, measured by two `include_str!` source probes and
+  mutation probes M92/M93.
+- **Q11, a constructible inconsistency.** That same unchecked `ServedSuccess` was accepted
+  by `publish`. And a decision taken on one exchange could be spent on another, because
+  `publish` took the exchange as its receiver rather than from the decision.
+
+**Disposition: `reviewed-exception` stands.** Question 2 is still one. Both items have a
+remedy that keeps the relation in this module: `may_publish` returns a
+`PublishPermit<'x, D>` that holds the exclusive borrow of the exchange it judged, and
+`PublishPermit::publish(self)` is the only way to a success terminal. The permit lives in the
+child module `exchange_state/publication.rs`. It is a capability over this relation, not a
+piece of it, and nothing was widened out of this module to place it there. A child sees its
+parent's privates, and the permit's fields are private to the child.
+
+**Measured outcome.** `ExchangeProgress::publish` is deleted, and the file falls 874 -> 868.
+The child is 43 production lines. Compile-fail probes S76–S79 witness the four claims:
+- no publication without a permit;
+- no permit minted outside the decision;
+- no permit pointed at another exchange;
+- no change to the cleared exchange between the decision and the terminal.
+
+M92/M93 are retired, since their weakening no longer compiles.
+
+**What this record does not close.**
+- #1209: the unreachable refusal terminals.
+- THM-0101's acknowledged crate-wide `Established::new`.
+- `advance` is `pub(crate)`. That no serving stage names a publishing event is measured by
+  `exchange_transition_ownership_test` over the source, not held by a type.
+- Any growth beyond 868, which needs its own census.
+
 ---
 
 ## EX-002 — `mcp-re-proxy/src/app.rs` — **census complete, disposition: decompose first**

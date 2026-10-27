@@ -107,16 +107,15 @@ pub(super) fn classify_refusable(config: &DeploymentRequest) -> (RefusableStates
             )
         }};
     }
-    let delegated_signing = m::delegated_signing::classify_and_validate(config);
+    let delegated = m::delegated_signing::classify_and_validate(config);
     // This deployment's own actor identity. It takes the RESOLVED issuer kid rather than
     // re-reading the primitives it defaults from, so the keyid on the identity and the kid
     // the credential chains to are one value (CF-10).
-    let server_identity =
-        m::server_identity::classify_and_validate(config, delegated_signing.0.as_ref());
+    let identity = m::server_identity::classify_and_validate(config, delegated.0.as_ref());
     split_answers! {
         continuation_control = m::continuation_control::classify_and_validate(config),
         custody = m::custody::classify_and_validate(config),
-        delegated_signing = delegated_signing,
+        delegated_signing = delegated,
         replay = m::replay::classify_and_validate(config),
         channel_credential_custody = m::channel_credential_custody::classify_and_validate(config),
         trust_revocation = m::trust_revocation::classify_and_validate(config),
@@ -131,6 +130,6 @@ pub(super) fn classify_refusable(config: &DeploymentRequest) -> (RefusableStates
         mcp_transport_contract = m::mcp_transport_contract::classify_and_validate(config),
         trust_document = m::trust_document::classify_and_validate(config),
         client_credential_window = m::client_credential_window::classify_and_validate(config),
-        server_identity = server_identity,
+        server_identity = identity,
     }
 }

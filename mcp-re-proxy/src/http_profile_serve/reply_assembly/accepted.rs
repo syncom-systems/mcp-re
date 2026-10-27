@@ -58,7 +58,7 @@ impl HttpProfileProxy {
                 .refuse_retained(acc, refusal, progress, owed.retention())
                 .await;
         };
-        self.publish_success(acc, progress, permit, reply.response, owed)
+        self.publish_success(acc, permit, reply.response, owed)
             .await
     }
 

@@ -2614,8 +2614,8 @@ test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`; 
 #
 # The serving path used to hold "decide, then publish" by statement order, measured by
 # source-text probes and by mutation probes that discarded `may_publish`'s answer. The permit
-# makes the discarded answer unrepresentable: `publish` takes only what `may_publish`
-# returned, and nothing outside `exchange_state` can construct one.
+# makes the discarded answer unrepresentable: only the permit `may_publish` returned can
+# publish, and nothing outside `exchange_state` can construct one.
 [[probe]]
 id = "S76"
 unit = "proxy.exchange_publication"
@@ -2624,7 +2624,7 @@ crate = "//mcp-re-proxy:mcp_re_proxy"
 invariant = "a success cannot be published without the permit its publication decision returned"
 insertion_parent = "mcp-re-proxy/src/http_profile_serve/mod.rs"
 marker = "STRUCTURAL-PROBE-SITE"
-error_code = "E0308"
+error_code = "E0599"
 construction = """
 // ADR-MCPRE-068 structural probe S76. Injected into a scratch copy by verify-structural;
 // this file cannot exist in the working tree, because it would not build — which is the
@@ -2637,8 +2637,8 @@ fn hostile(progress: &mut ExchangeProgress) {
 }
 """
 [probe.producer_paths]
-module-tree-visibility = "`PublishPermit`'s one field is `pub(super)` from `exchange_state::publication`, so only `exchange_state` can construct or open it; the probe sits in the serving path, which can name `ExchangeProgress` and `ServedSuccess` and is refused the permit"
-alternate-constructors = "the only construction of `PublishPermit` is `ExchangeProgress::may_publish`'s `Ok` arm; `publish` takes a `PublishPermit` by value and nothing else; there is no `From`, `Into`, `Default` or builder"
+module-tree-visibility = "`PublishPermit`'s fields are private to `exchange_state::publication` and its constructor `issue` is `pub(super)`, so only `exchange_state` can construct or open one; the probe sits in the serving path, which can name `ExchangeProgress` and `ServedSuccess`, and finds no operation on the exchange that publishes"
+alternate-constructors = "the only construction of `PublishPermit` is `ExchangeProgress::may_publish`'s `Ok` arm; the only publication is `PublishPermit::publish`, which consumes the permit; there is no `From`, `Into`, `Default` or builder"
 generated-or-deserialization = "`PublishPermit` derives nothing: no Clone, Copy, Default, Serialize or Deserialize, so a permit cannot be duplicated to publish twice"
 test-only-construction = "none: the permit has no test constructor, and the publication tests obtain one from `may_publish` like the serving path"
 
@@ -2650,21 +2650,84 @@ crate = "//mcp-re-proxy:mcp_re_proxy"
 invariant = "the serving path cannot mint a publish permit; only the publication decision does"
 insertion_parent = "mcp-re-proxy/src/http_profile_serve/mod.rs"
 marker = "STRUCTURAL-PROBE-SITE"
-error_code = "E0423"
+error_code = "E0451"
 construction = """
 // ADR-MCPRE-068 structural probe S77. Injected into a scratch copy by verify-structural;
 // this file cannot exist in the working tree, because it would not build — which is the
 // proposition it witnesses.
 use crate::exchange_state::publication::PublishPermit;
-use crate::exchange_state::ServedSuccess;
+use crate::exchange_state::{ExchangeProgress, ServedSuccess};
 use crate::http_profile_serve::inner_plane::NotificationDelivered;
 
-fn hostile() -> PublishPermit<NotificationDelivered> {
-    PublishPermit(ServedSuccess::Terminal) // STRUCTURAL-PROBE-SITE
+fn hostile(progress: &mut ExchangeProgress) -> PublishPermit<'_, NotificationDelivered> {
+    PublishPermit { exchange: progress, served: ServedSuccess::Terminal } // STRUCTURAL-PROBE-SITE
 }
 """
 [probe.producer_paths]
-module-tree-visibility = "`PublishPermit`'s one field is `pub(super)` from `exchange_state::publication`, so its tuple constructor is private to `exchange_state`; the probe sits in the serving path, which can name the type and is refused its constructor"
-alternate-constructors = "the only construction of `PublishPermit` is `ExchangeProgress::may_publish`'s `Ok` arm; there is no `From`, `Into`, `Default` or builder"
+module-tree-visibility = "`PublishPermit`'s fields are private to `exchange_state::publication`, so its struct literal is refused everywhere else; the probe sits in the serving path, which can name the type and is refused its fields"
+alternate-constructors = "the only construction of `PublishPermit` is `ExchangeProgress::may_publish`'s `Ok` arm, through the `pub(super)` `issue`; there is no `From`, `Into`, `Default` or builder"
+generated-or-deserialization = "`PublishPermit` derives nothing: no Clone, Copy, Default, Serialize or Deserialize"
+test-only-construction = "none: the permit has no test constructor"
+
+# --- proxy.exchange_publication: a permit publishes to the exchange that cleared it, and no other
+#
+# A permit holds the exclusive borrow of the exchange `may_publish` judged. S78 tries to point
+# a cleared permit at another exchange; S79 tries to change the cleared exchange between the
+# decision and the terminal. Either would publish a state no decision was taken on.
+[[probe]]
+id = "S78"
+unit = "proxy.exchange_publication"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "a permit cleared on one exchange cannot be pointed at another"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0616"
+construction = """
+// ADR-MCPRE-068 structural probe S78. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::exchange_state::{ExchangeProgress, ServedSuccess};
+use crate::http_profile_serve::inner_plane::NotificationDelivered;
+
+fn hostile(cleared: &mut ExchangeProgress, other: &mut ExchangeProgress) {
+    if let Ok(permit) = cleared.may_publish(ServedSuccess::<NotificationDelivered>::Terminal) {
+        std::mem::swap(permit.exchange, other); // STRUCTURAL-PROBE-SITE
+        permit.publish();
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the permit's `exchange` field is private to `exchange_state::publication`; outside it the permit offers only `exchange(&self) -> &ExchangeProgress`, a shared borrow that cannot be swapped or assigned through"
+alternate-constructors = "`ExchangeProgress::may_publish` is the only producer and binds the permit to `self`; `publish(self)` takes no exchange argument, so there is no call that names a second exchange"
+generated-or-deserialization = "`PublishPermit` derives nothing: no Clone, Copy, Default, Serialize or Deserialize"
+test-only-construction = "none: the permit has no test constructor"
+
+[[probe]]
+id = "S79"
+unit = "proxy.exchange_publication"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "the cleared exchange cannot change between the publication decision and the terminal"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0499"
+construction = """
+// ADR-MCPRE-068 structural probe S79. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::exchange_state::{ExchangeEvent, ExchangeProgress, ServedSuccess};
+use crate::http_profile_serve::inner_plane::NotificationDelivered;
+
+fn hostile(cleared: &mut ExchangeProgress) {
+    if let Ok(permit) = cleared.may_publish(ServedSuccess::<NotificationDelivered>::Terminal) {
+        cleared.advance(ExchangeEvent::BackendDispatched); // STRUCTURAL-PROBE-SITE
+        permit.publish();
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the permit holds `&'x mut ExchangeProgress` for its whole life, so the borrow checker refuses every other access to the cleared exchange until `publish` consumes the permit or the permit is dropped"
+alternate-constructors = "`may_publish` takes `&mut self` and returns a permit carrying that borrow; there is no producer that clears a success without borrowing the exchange it judged"
 generated-or-deserialization = "`PublishPermit` derives nothing: no Clone, Copy, Default, Serialize or Deserialize"
 test-only-construction = "none: the permit has no test constructor"

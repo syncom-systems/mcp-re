@@ -5752,8 +5752,8 @@ ASSEMBLY-OWNED event is stated by a direct `advance` in the serving path, and th
 stated that way is exactly the three inventoried with the reason no stage's success could carry
 each: `BackendDispatched`, `ContinuationRetired`, `ContinuationNotRequired`. The success tail —
 `EvidenceRetained`, then `TerminalResponseServed` or `OpenLegResponseServed` — is advanced only
-by `ExchangeProgress::publish`, after `may_publish` has checked the same tail, and the serving
-path advances none of them itself.
+by `PublishPermit::publish`, on the exchange whose `may_publish` checked the same tail, and the
+serving path advances none of them itself.
 
 The two sets are disjoint: no event a stage establishes is also advanced by the serving path,
 so no stage's fact is stated twice or remembered beside the carrier. The assembly-owned set is
