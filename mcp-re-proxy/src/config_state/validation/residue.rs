@@ -30,20 +30,14 @@ use crate::deployment_request::{AuthzKind, DeploymentRequest, OnlineRevocationEv
 ///
 /// `async_serve` compares the origin-form of the configured target against the one the
 /// request arrived at, and refuses to serve where they differ. That comparison is
-/// answerable only for an ABSOLUTE target: `origin_form_of` finds `://` or returns `None`,
-/// and `target_uri_mismatch` propagates that `None` as "no mismatch". A blank target
-/// short-circuits to `None` one line earlier. So a configured target that is empty or
-/// scheme-less does not weaken the check — it disables it, silently, for every request,
-/// and the deployment goes on reporting that the binding is in force.
+/// answerable only for an ABSOLUTE target, so `target_uri_mismatch` refuses every request
+/// when the configured target is empty or scheme-less. This clause turns that deployment,
+/// which would start and then serve nothing, into a refusal at startup that names the
+/// reason.
 ///
-/// Both functions say in their own docs that the parser guarantees the shape. It did, and
-/// only for argv: `target_uri` is a public `DeploymentRequest` field, so a programmatically built
-/// config reaches the serving path having met no parser. An ingress fanning several paths
-/// into one process would then verify signatures over a `@target-uri` the request never
-/// arrived at, which is the exact scenario the parse-time diagnostic describes.
-///
-/// The validation boundary is the one caller, so a command line and a struct literal are
-/// held to the shape by the same clause.
+/// `target_uri` is a public `DeploymentRequest` field, so a programmatically built config
+/// reaches this boundary having met no parser. The validation boundary is the one caller,
+/// so a command line and a struct literal are held to the shape by the same clause.
 fn target_uri_violation(uri: &str) -> Option<String> {
     if uri.trim().is_empty() {
         return Some(

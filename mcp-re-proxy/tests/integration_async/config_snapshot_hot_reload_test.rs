@@ -232,6 +232,7 @@ fn spawn(snapshot: Arc<ServerConfigSnapshot>) -> Server {
                 };
             let options = ServerOptions {
                 limits: ServerLimits::default(),
+                target_uri: "https://localhost/".to_owned(),
                 ..ServerOptions::new(window())
             };
             // The handshake bound comes from the pool that built this runtime (4 workers),

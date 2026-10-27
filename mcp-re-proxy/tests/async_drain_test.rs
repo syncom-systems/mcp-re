@@ -352,6 +352,7 @@ fn options_with_drain(grace: Duration, request_deadline: Duration) -> ServerOpti
             ..ServerLimits::default()
         })
         .expect("bounds in force"),
+        target_uri: "https://localhost/".to_owned(),
         ..ServerOptions::new(window())
     }
 }

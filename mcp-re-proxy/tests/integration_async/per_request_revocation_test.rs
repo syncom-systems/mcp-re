@@ -312,6 +312,7 @@ fn spawn(snapshot: Arc<ServerConfigSnapshot>, revocation: Arc<SharedClientRevoca
             let options = ServerOptions {
                 limits: ServerLimits::default(),
                 client_revocation: Some(revocation),
+                target_uri: "https://localhost/".to_owned(),
                 ..ServerOptions::new(window())
             };
             // The handshake bound comes from the pool that built this runtime (4 workers),

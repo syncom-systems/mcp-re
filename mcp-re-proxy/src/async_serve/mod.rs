@@ -101,8 +101,8 @@ pub struct ServedHttpRequest {
     /// The HTTP method (RFC 9421 `@method`).
     pub method: String,
     /// The canonical `@target-uri` both client and server sign over
-    /// (deployment-configured via [`ServerOptions`]); an empty string when the
-    /// deployment did not configure one (the verifier then fails closed).
+    /// (deployment-configured via [`ServerOptions`]). Never empty or non-absolute: the serve
+    /// loop refuses a request before building this when the configured target is either.
     pub target_uri: String,
     /// The full request header block (name, value) — carries the RFC 9421
     /// `Signature`/`Signature-Input` and RFC 9530 `Content-Digest`.
@@ -253,28 +253,24 @@ pub async fn serve<H: AsyncRequestHandler>(
 /// routes on and what this process CAN see, so it is the part whose assertion is
 /// checkable.
 ///
-/// An empty configured target is not checked here — `config_state::validation::target_uri_violation` refuses it
-/// at the validation boundary every config passes through, and the verifier fails closed on
-/// a blank covered value.
+/// A configured target that is empty or not absolute has no origin form to compare, so no
+/// received request is consistent with it: every request is a mismatch. `ServerOptions` is
+/// public and `ServerOptions::new` leaves the target empty, so a value that never met
+/// `config_state::validation::target_uri_violation` reaches this check, and treating it as
+/// consistent would switch the check off for every request.
 fn target_uri_mismatch(configured: &str, received: &hyper::Uri) -> Option<String> {
-    if configured.is_empty() {
-        return None;
-    }
-    let configured_origin = origin_form_of(configured)?;
     let received_origin = received
         .path_and_query()
         .map(|pq| pq.as_str().to_owned())
         .unwrap_or_else(|| "/".to_owned());
-    (configured_origin != received_origin).then_some(received_origin)
+    match origin_form_of(configured) {
+        Some(configured_origin) if configured_origin == received_origin => None,
+        _ => Some(received_origin),
+    }
 }
 
-/// The origin-form (`/path`) of an ABSOLUTE `--target-uri`.
-///
-/// `None` only for a target with no `://`, which `config_state::validation::target_uri_violation` refuses at the
-/// validation boundary — so on the served path this is always `Some`, and the mismatch
-/// check is always live. The refusal is at the boundary rather than only in the parser
-/// because a `None` here reads as "no mismatch", which would disable this check silently
-/// for a config that never met a parser.
+/// The origin-form (`/path`) of an ABSOLUTE `--target-uri`; `None` for a target with no
+/// `://`, which includes the empty one.
 fn origin_form_of(absolute: &str) -> Option<String> {
     // Class B: `split_once` yields the authority directly, so the scheme delimiter's
     // width is named once rather than repeated as an offset.
@@ -405,11 +401,24 @@ mod target_uri_tests {
         );
     }
 
-    /// An unset target is not checked here: `--target-uri` is required and non-empty at
-    /// parse, and a blank covered value already fails verification closed.
+    /// #1243: `ServerOptions::new` leaves the target empty, and an empty target was read as
+    /// "no mismatch", which switched the check off for every request.
     #[test]
-    fn an_empty_configured_target_is_not_checked_here() {
-        assert_eq!(target_uri_mismatch("", &uri("/anything")), None);
+    fn an_empty_configured_target_refuses_every_request() {
+        assert_eq!(
+            target_uri_mismatch("", &uri("/anything")),
+            Some("/anything".to_owned())
+        );
+        assert_eq!(target_uri_mismatch("", &uri("/")), Some("/".to_owned()));
+    }
+
+    /// A scheme-less target has no origin form either, so it refuses rather than passing.
+    #[test]
+    fn a_scheme_less_configured_target_refuses_every_request() {
+        assert_eq!(
+            target_uri_mismatch("mcp.example.com/mcp", &uri("/mcp")),
+            Some("/mcp".to_owned())
+        );
     }
 }
 

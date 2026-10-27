@@ -221,7 +221,8 @@ pub struct ServerOptions {
     /// The canonical RFC 9421 `@target-uri` this deployment binds requests to
     /// (ADR-MCPRE-050). Client and server MUST agree on it byte-for-byte; the
     /// verifier checks it against the request evidence block's audience tuple. Empty
-    /// when unset (the audience/target check then fails closed).
+    /// when unset ([`ServerOptions::new`]); the async serve loop refuses every request while
+    /// it is empty or not absolute, so an embedder must set it.
     pub target_uri: String,
 }
 

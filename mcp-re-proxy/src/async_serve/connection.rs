@@ -215,6 +215,7 @@ mod tests {
                     },
                 )
                 .expect("bounds in force"),
+                target_uri: "https://x/".to_owned(),
                 ..ServerOptions::new(
                     ClientCredentialWindow::new(
                         Duration::from_secs(3600),
