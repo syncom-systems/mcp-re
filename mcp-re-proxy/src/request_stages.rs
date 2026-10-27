@@ -185,6 +185,40 @@ impl PostDispatch {
     }
 }
 
+/// A dispatched exchange for the post-dispatch stages' own tests, obtained the one way the
+/// serving path obtains one: a ready state, crossed.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    use std::sync::Arc;
+
+    /// An exchange crossed under no policy, no retention and no audit commitment, whose
+    /// in-process backend replied `reply`.
+    pub(crate) async fn dispatched_exchange(reply: &[u8]) -> DispatchedExchange {
+        let key = Arc::new(crate::delegated_wiring::test_support::issued_expiring_at(
+            1_700_000_000,
+            4,
+        ));
+        let inner = |_: &[u8]| reply.to_vec();
+        let released =
+            crate::authorization::AuthorizationPosture::NoPolicyConfigured.release(b"{}".to_vec());
+        let prepared = crate::async_inner::AsyncInnerServer::prepare(&inner, released.bytes())
+            .expect("an in-process inner always prepares");
+        ReadyForDispatch::new(
+            prepared,
+            SigningWindow::over(key, 1_699_999_000, 60).expect("a live credential opens a window"),
+            RetentionDisposition::NotConfigured(
+                crate::http_profile_serve::retention::NothingRetained::for_a_test(),
+            ),
+            IntentDisposition::NotRequired(
+                crate::audit_commitment::NoCommitmentRequired::for_a_test(),
+            ),
+        )
+        .dispatch()
+        .await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

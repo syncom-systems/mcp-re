@@ -14076,19 +14076,23 @@ id = "M616-proxy-success-needs-completed-retention"
 unit = "proxy.audit_outcome_gate"
 conjunct = "a success is served only after retention has completed, as well as the outcome committed"
 # Q2: committed outcome AND completed retention. Pill-evidenced RED in #1205 (PP2).
+# RE-ADJUDICATED (#1245). The old weakening discarded the retention step's refusal and carried
+# on; that no longer compiles, because the serving step takes the `Retained` only completed
+# retention makes. What stays falsifiable is the step reading a failed completion as accounted
+# for, which this weakening applies.
 path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs"
 anchor = """
-        if let Some(rejection) = self
-            .retain_accepted(acc, &response, &retention, permit.exchange())
             .await
+            .is_accounted_for()
         {
-            return rejection;
-        }
+            return Ok(Retained {
 """
 weakening = """
-        let _ = self
-            .retain_accepted(acc, &response, &retention, permit.exchange())
-            .await;
+            .await
+            .is_accounted_for()
+            || true
+        {
+            return Ok(Retained {
 """
 expect_red = [
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::retention_failure_after_outcome_commit_never_serves_success",
@@ -14121,54 +14125,21 @@ unit = "proxy.audit_outcome_gate"
 conjunct = "G2 precedes retention completion, so a G2 refusal is what retention holds (Q2, ADR-MCPRE-054)"
 # The placement probe: the ADR-literal order retains success bytes the client never got.
 # Pill-evidenced RED in #1205 (PP6: the store held [200]).
+# RE-ADJUDICATED (#1245). The old weakening swapped the two steps; that no longer compiles,
+# because retention takes the `Committed` only G2 makes. What stays falsifiable is the second
+# half of the conjunct: a G2 refusal served without retention completing over it, which this
+# weakening applies.
 path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs"
 anchor = """
-        // G2 BEFORE retention completes (Q2): a refusal here is what retention then holds, so
-        // the retained representation stays the one actually served.
-        let outcome = match self
-            .audit
-            .outcome(intent, acc.exchange_coordinate(), observed.clone())
-            .await
-        {
-            Ok(outcome) => outcome,
-            Err(refusal) => {
-                return self
-                    .refuse_retained(acc, refusal, permit.exchange(), &retention)
-                    .await
-            }
-        };
-        if let Some(rejection) = self
-            .retain_accepted(acc, &response, &retention, permit.exchange())
-            .await
-        {
-            return rejection;
-        }
+            Err(refusal) => Err(self
+                .refuse_retained(acc, refusal, permit.exchange(), &retention)
+                .await),
 """
 weakening = """
-        if let Some(rejection) = self
-            .retain_accepted(acc, &response, &retention, permit.exchange())
-            .await
-        {
-            return rejection;
-        }
-        // G2 BEFORE retention completes (Q2): a refusal here is what retention then holds, so
-        // the retained representation stays the one actually served.
-        let outcome = match self
-            .audit
-            .outcome(intent, acc.exchange_coordinate(), observed.clone())
-            .await
-        {
-            Ok(outcome) => outcome,
-            Err(refusal) => {
-                return self
-                    .refuse_retained(acc, refusal, permit.exchange(), &retention)
-                    .await
-            }
-        };
+            Err(refusal) => Err(self.refuse_accepted(acc, refusal, permit.exchange())),
 """
 expect_red = [
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_outcome_failure_discharges_retention_with_the_refusal_served",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::success_exit::tests::the_outcome_is_committed_before_retention_and_both_before_success_is_served",
 ]
 
 [[probe]]
