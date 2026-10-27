@@ -169,6 +169,7 @@ _PROXY_LIB_SRCS = [
     "src/config_state/mcp_transport_contract.rs",
     "src/config_state/replay.rs",
     "src/config_state/replica_clock.rs",
+    "src/config_state/request_target.rs",
     # Who this deployment IS, derived once: the server ActorIdentity two consumers used to
     # assemble independently from the same primitives.
     "src/config_state/server_identity.rs",

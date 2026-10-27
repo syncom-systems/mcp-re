@@ -332,7 +332,11 @@ fn gcp_kms_delegated_tls_handshake_round_trip() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |request, _identity| {
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
                 b"{\"ok\":true}".to_vec()
@@ -445,7 +449,11 @@ fn gcp_kms_delegated_tls_untrusted_client_rejected() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |_request, _identity| b"{\"ok\":true}".to_vec(),
         )
     });

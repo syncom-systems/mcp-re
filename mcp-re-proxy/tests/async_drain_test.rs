@@ -352,8 +352,11 @@ fn options_with_drain(grace: Duration, request_deadline: Duration) -> ServerOpti
             ..ServerLimits::default()
         })
         .expect("bounds in force"),
-        target_uri: "https://localhost/".to_owned(),
-        ..ServerOptions::new(window())
+        ..ServerOptions::new(
+            window(),
+            mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                .expect("an absolute target"),
+        )
     }
 }
 

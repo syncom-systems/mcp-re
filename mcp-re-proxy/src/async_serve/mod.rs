@@ -252,33 +252,15 @@ pub async fn serve<H: AsyncRequestHandler>(
 /// operator asserts the whole URI in the first place. The path is what the ingress
 /// routes on and what this process CAN see, so it is the part whose assertion is
 /// checkable.
-///
-/// A configured target that is empty or not absolute has no origin form to compare, so no
-/// received request is consistent with it: every request is a mismatch. `ServerOptions` is
-/// public and `ServerOptions::new` leaves the target empty, so a value that never met
-/// `config_state::validation::target_uri_violation` reaches this check, and treating it as
-/// consistent would switch the check off for every request.
-fn target_uri_mismatch(configured: &str, received: &hyper::Uri) -> Option<String> {
+fn target_uri_mismatch(
+    configured: &crate::config_state::RequestTarget,
+    received: &hyper::Uri,
+) -> Option<String> {
     let received_origin = received
         .path_and_query()
         .map(|pq| pq.as_str().to_owned())
         .unwrap_or_else(|| "/".to_owned());
-    match origin_form_of(configured) {
-        Some(configured_origin) if configured_origin == received_origin => None,
-        _ => Some(received_origin),
-    }
-}
-
-/// The origin-form (`/path`) of an ABSOLUTE `--target-uri`; `None` for a target with no
-/// `://`, which includes the empty one.
-fn origin_form_of(absolute: &str) -> Option<String> {
-    // Class B: `split_once` yields the authority directly, so the scheme delimiter's
-    // width is named once rather than repeated as an offset.
-    let (_scheme, authority) = absolute.split_once("://")?;
-    Some(match authority.find('/') {
-        Some(offset) => authority.get(offset..).unwrap_or("/").to_owned(),
-        None => "/".to_owned(),
-    })
+    (configured.origin_form() != received_origin).then_some(received_origin)
 }
 
 /// Translate the handler's [`ServedHttpResponse`] (status + headers + body) into a
@@ -347,10 +329,17 @@ mod target_uri_tests {
         value.parse().expect("test uri")
     }
 
+    fn target(value: &str) -> crate::config_state::RequestTarget {
+        crate::config_state::RequestTarget::new(value).expect("an absolute target")
+    }
+
     #[test]
     fn a_matching_origin_form_is_consistent() {
         assert_eq!(
-            target_uri_mismatch("https://mcp.example.com/mcp?route=a", &uri("/mcp?route=a")),
+            target_uri_mismatch(
+                &target("https://mcp.example.com/mcp?route=a"),
+                &uri("/mcp?route=a")
+            ),
             None
         );
     }
@@ -362,7 +351,7 @@ mod target_uri_tests {
     fn a_different_received_path_is_refused() {
         assert_eq!(
             target_uri_mismatch(
-                "https://mcp.example.com/mcp?route=a",
+                &target("https://mcp.example.com/mcp?route=a"),
                 &uri("/other?route=a")
             ),
             Some("/other?route=a".to_owned())
@@ -374,7 +363,10 @@ mod target_uri_tests {
     #[test]
     fn a_different_query_is_refused() {
         assert_eq!(
-            target_uri_mismatch("https://mcp.example.com/mcp?route=a", &uri("/mcp?route=b")),
+            target_uri_mismatch(
+                &target("https://mcp.example.com/mcp?route=a"),
+                &uri("/mcp?route=b")
+            ),
             Some("/mcp?route=b".to_owned())
         );
     }
@@ -384,7 +376,7 @@ mod target_uri_tests {
     #[test]
     fn the_configured_authority_is_not_compared() {
         assert_eq!(
-            target_uri_mismatch("https://external.example.com/mcp", &uri("/mcp")),
+            target_uri_mismatch(&target("https://external.example.com/mcp"), &uri("/mcp")),
             None
         );
     }
@@ -392,32 +384,12 @@ mod target_uri_tests {
     #[test]
     fn a_root_target_matches_a_root_request() {
         assert_eq!(
-            target_uri_mismatch("https://mcp.example.com", &uri("/")),
+            target_uri_mismatch(&target("https://mcp.example.com"), &uri("/")),
             None
         );
         assert_eq!(
-            target_uri_mismatch("https://mcp.example.com/", &uri("/")),
+            target_uri_mismatch(&target("https://mcp.example.com/"), &uri("/")),
             None
-        );
-    }
-
-    /// #1243: `ServerOptions::new` leaves the target empty, and an empty target was read as
-    /// "no mismatch", which switched the check off for every request.
-    #[test]
-    fn an_empty_configured_target_refuses_every_request() {
-        assert_eq!(
-            target_uri_mismatch("", &uri("/anything")),
-            Some("/anything".to_owned())
-        );
-        assert_eq!(target_uri_mismatch("", &uri("/")), Some("/".to_owned()));
-    }
-
-    /// A scheme-less target has no origin form either, so it refuses rather than passing.
-    #[test]
-    fn a_scheme_less_configured_target_refuses_every_request() {
-        assert_eq!(
-            target_uri_mismatch("mcp.example.com/mcp", &uri("/mcp")),
-            Some("/mcp".to_owned())
         );
     }
 }

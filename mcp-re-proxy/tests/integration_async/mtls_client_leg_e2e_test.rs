@@ -333,8 +333,10 @@ fn spawn_server(server_ca: &Ca, client_ca: &Ca) -> RunningServer {
     .expect("server tls config");
 
     let options = ServerOptions {
-        target_uri: TARGET.to_string(),
-        ..ServerOptions::new(window())
+        ..ServerOptions::new(
+            window(),
+            mcp_re_proxy::config_state::RequestTarget::new(&TARGET).expect("an absolute target"),
+        )
     };
 
     let shutdown = Arc::new(AtomicBool::new(false));

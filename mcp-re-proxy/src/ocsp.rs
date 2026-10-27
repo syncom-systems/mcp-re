@@ -2017,7 +2017,11 @@ mod tests {
         .expect("a legal credential window");
         let options = ServerOptions {
             ocsp_checker: Some(OcspChecker::new(None)),
-            ..ServerOptions::new(window)
+            ..ServerOptions::new(
+                window,
+                crate::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            )
         };
         let request = b"{\"id\":1}";
         let leaf: &[u8] = b"leaf";
@@ -2032,7 +2036,16 @@ mod tests {
             "a check that establishes nothing is rejected"
         );
         assert!(
-            ocsp_rejection_for_chain(&chain, &ServerOptions::new(window), request).is_none(),
+            ocsp_rejection_for_chain(
+                &chain,
+                &ServerOptions::new(
+                    window,
+                    crate::config_state::RequestTarget::new("https://localhost/")
+                        .expect("an absolute target")
+                ),
+                request
+            )
+            .is_none(),
             "without a checker nothing is rejected"
         );
     }

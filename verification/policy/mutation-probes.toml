@@ -8518,11 +8518,11 @@ id = "M311-proxy-a-scheme-less-target-uri-is-refused"
 unit = "proxy.legality_boundary_totality"
 theorem = "THM-0077"
 conjunct = "a target URI that would disable the request-target reconstruction check is refused at the boundary, however the request was built"
-path = "mcp-re-proxy/src/config_state/validation/residue.rs"
-anchor = "    if !uri.contains(\"://\") {\n"
-weakening = "    if false {\n"
+path = "mcp-re-proxy/src/config_state/request_target.rs"
+anchor = "        let Some((_scheme, authority)) = uri.split_once(\"://\") else {\n"
+weakening = "        let Some((_scheme, authority)) = uri.split_once(\"://\").or(Some((\"\", uri))) else {\n"
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#config_state::validation::residue::tests::a_target_uri_that_would_disable_the_reconstruction_check_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::request_target::tests::a_target_the_reconstruction_check_cannot_answer_is_unconstructible",
   # ADR-MCPRE-069 CO-S3-6. The same clause reached through `app::run` over all three illegal
   # shapes. The scheme-less case is the one this anchor decides; the row is red as soon as
   # that case is admitted.

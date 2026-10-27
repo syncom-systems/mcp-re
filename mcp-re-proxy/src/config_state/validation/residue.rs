@@ -22,44 +22,6 @@
 
 use crate::deployment_request::{AuthzKind, DeploymentRequest, OnlineRevocationEvidenceRequest};
 
-/// The `--target-uri` shape the request-target reconstruction check depends on, as a pure
-/// rule over the configured value.
-///
-/// ADR-MCPRE-058 §8.3, and the member of this file's former parser-only family with the
-/// most direct effect on a served request.
-///
-/// `async_serve` compares the origin-form of the configured target against the one the
-/// request arrived at, and refuses to serve where they differ. That comparison is
-/// answerable only for an ABSOLUTE target, so `target_uri_mismatch` refuses every request
-/// when the configured target is empty or scheme-less. This clause turns that deployment,
-/// which would start and then serve nothing, into a refusal at startup that names the
-/// reason.
-///
-/// `target_uri` is a public `DeploymentRequest` field, so a programmatically built config
-/// reaches this boundary having met no parser. The validation boundary is the one caller,
-/// so a command line and a struct literal are held to the shape by the same clause.
-fn target_uri_violation(uri: &str) -> Option<String> {
-    if uri.trim().is_empty() {
-        return Some(
-            "--target-uri must not be empty: an empty target makes the audience/target \
-             binding a tautology (both sides compare equal) instead of binding this \
-             deployment's dispatch boundary"
-                .to_string(),
-        );
-    }
-    if !uri.contains("://") {
-        return Some(format!(
-            "--target-uri {} is not an absolute URI: it must be \
-             <scheme>://<authority><path> (e.g. https://proxy.internal:8600/mcp). \
-             A scheme-less target disables the request-target reconstruction check \
-             entirely, so an ingress fanning several paths into one process would \
-             verify signatures over a @target-uri the request never arrived at",
-            crate::deployment_request::RedactedLocator::of(uri)
-        ));
-    }
-    None
-}
-
 /// The one decision about whether a configured authorization profile can be honored.
 ///
 /// `Some(diagnostic)` means it cannot. Two independent facts make it so, and the
@@ -246,19 +208,6 @@ pub(super) fn required_locator_violations(config: &DeploymentRequest) -> Vec<Str
     out
 }
 
-/// The configured `@target-uri` has a shape the reconstruction check can answer.
-///
-/// **Why layer A enforces it.** An empty or scheme-less target does not weaken the request-target check, it disables it for every request while the deployment reports the binding as in force.
-///
-/// **Why no narrower owner.** It is the RFC 9421 signature-base binding, not the mTLS channel binding `ChannelBinding` owns and not the version contract `McpTransportContract` owns.
-pub(super) fn target_uri_violations(config: &DeploymentRequest) -> Vec<String> {
-    let mut out = Vec::new();
-    if let Some(refusal) = target_uri_violation(&config.target_uri) {
-        out.push(refusal);
-    }
-    out
-}
-
 /// A deployment names at least one inner server.
 ///
 /// **Why layer A enforces it.** It arrived here from the trust plane, which could reject it only after two planes had established resources.
@@ -314,7 +263,6 @@ pub(super) const INVENTORY: &[&str] = &[
     "authz_profile_violations",
     "audience_violations",
     "required_locator_violations",
-    "target_uri_violations",
     "inner_plane_presence_violations",
     "inner_plane_structure_violations",
 ];
@@ -374,56 +322,6 @@ mod tests {
     /// registering it — or registering one that no longer exists — fails here. Without
     /// this the inventory would be prose about the code rather than a statement of it,
     /// which is the drift this whole campaign keeps finding.
-    /// ADR-MCPRE-058 §8.3: the rule the request-target reconstruction check depends on,
-    /// asserted directly on the pure predicate.
-    ///
-    /// The shapes that matter are the ones `origin_form_of` cannot answer for. A
-    /// scheme-less or empty target makes `target_uri_mismatch` return `None` for every
-    /// request, which reads as "consistent" — so the check does not weaken, it disappears.
-    #[test]
-    fn a_target_uri_that_would_disable_the_reconstruction_check_is_refused() {
-        for absolute in [
-            "https://proxy.internal:8600/mcp",
-            "http://127.0.0.1:8600/",
-            "https://proxy.internal",
-        ] {
-            assert!(
-                target_uri_violation(absolute).is_none(),
-                "an absolute target is the supported shape: {absolute}"
-            );
-        }
-        for unusable in [
-            "",
-            "   ",
-            "/mcp",
-            "proxy.internal:8600/mcp",
-            "proxy.internal",
-        ] {
-            let refusal = target_uri_violation(unusable)
-                .unwrap_or_else(|| panic!("{unusable:?} leaves the check unanswerable"));
-            assert!(
-                refusal.contains("--target-uri"),
-                "the refusal must name the flag, got: {refusal}"
-            );
-        }
-    }
-
-    /// The clause fires exactly when the target has no `://`, which is the shape a
-    /// credential-bearing typo takes. It names the target rather than echoing it.
-    #[test]
-    fn the_target_uri_refusal_does_not_echo_a_credential() {
-        let refusal = target_uri_violation("mats:hunter2@proxy.internal:8600")
-            .expect("a scheme-less target leaves the check unanswerable");
-        assert!(
-            !refusal.contains("hunter2"),
-            "the password reached the diagnostic: {refusal}"
-        );
-        assert!(
-            refusal.contains("--target-uri"),
-            "the refusal must still name the flag: {refusal}"
-        );
-    }
-
     #[test]
     fn the_inventory_is_the_file() {
         let source = include_str!("residue.rs");

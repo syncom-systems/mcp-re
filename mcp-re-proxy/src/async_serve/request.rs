@@ -108,7 +108,7 @@ pub(super) async fn handle_request<H: AsyncRequestHandler>(
         Ok(peer) => {
             let served_req = ServedHttpRequest {
                 method,
-                target_uri: options.target_uri.clone(),
+                target_uri: options.target.as_str().to_owned(),
                 headers: header_pairs,
                 body: handler_body(body_bytes),
                 peer,

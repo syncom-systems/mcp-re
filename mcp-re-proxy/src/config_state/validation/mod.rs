@@ -190,6 +190,7 @@ fn legality_violations(
         connection_bounds,
         mcp_transport_contract,
         replay,
+        request_target,
         trust_document,
         client_credential_window,
         server_identity,
@@ -253,10 +254,8 @@ fn legality_violations(
     // one. ADR-MCPRE-056 §5.1 puts the purely-knowable half here, which is also the half
     // that reads as a configuration defect rather than a missing file.
     violations.extend(residue::required_locator_violations(config));
-    // Sixth instance, and the one that reaches furthest into a served request: an empty or
-    // scheme-less `--target-uri` does not weaken the request-target reconstruction check,
-    // it disables it for every request.
-    violations.extend(residue::target_uri_violations(config));
+    // The `RequestTarget` owner, where `--target-uri` has always been read.
+    violations.extend(request_target);
     // The transport contract is mandatory: the accepted version set must name a version.
     violations.extend(mcp_transport_contract);
     // Seventh, and it arrives here from the TRUST plane, where it had no business being:

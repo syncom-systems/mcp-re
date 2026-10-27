@@ -78,6 +78,7 @@ pub(crate) mod kms_endpoint;
 pub mod mcp_transport_contract;
 pub mod replay;
 pub mod replica_clock;
+pub mod request_target;
 pub mod server_identity;
 pub mod topology;
 pub mod transport;
@@ -106,6 +107,7 @@ pub use key_file_access::{foreign_owner, FOREIGN_OWNER};
 pub use mcp_transport_contract::McpTransportContractState;
 pub use replay::ReplayState;
 pub use replica_clock::ReplicaClockDivergence;
+pub use request_target::RequestTarget;
 pub use topology::{DeploymentTopology, ShardTopologyRequest};
 pub use transport::ChannelBindingState;
 pub use trust_document::TrustDocumentSource;
@@ -149,6 +151,7 @@ struct RecognisedStates {
     key_file_access: KeyFileAccessPolicy,
     mcp_transport_contract: McpTransportContractState,
     replay: ReplayState,
+    request_target: RequestTarget,
     retention: RetentionState,
     server_identity: server_identity::ServerIdentityFacts,
     shard_topology: ShardTopologyRequest,
@@ -223,6 +226,11 @@ impl DeploymentConfigState {
         self.states.freshness
     }
 
+    /// The configured `@target-uri`, absolute by construction: what the signature base and
+    /// the audience cover, and the origin form every request's arrival path is checked against.
+    pub fn request_target(&self) -> &RequestTarget {
+        &self.states.request_target
+    }
     /// Which basis the admission limit is expressed in, with the default already applied.
     ///
     /// A resolved fact rather than a posture: the control is on in both variants, and the
@@ -775,6 +783,8 @@ mod tests {
             replay: replay::classify_and_validate(&test_support::legal_linearizable_config())
                 .0
                 .expect("the linearizable fixture names a CP store endpoint"),
+            request_target: RequestTarget::new("https://proxy.internal:8600/mcp")
+                .expect("an absolute target"),
             retention: test_support::retention_at("/var/lib/mcp-re/evidence".to_string()),
             channel_credential_custody: test_support::channel_custody_delegated_pkcs11("tls"),
             trust_revocation: test_support::revocation_posture(

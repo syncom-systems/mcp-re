@@ -32,6 +32,7 @@ pub(super) struct Refusals {
     connection_bounds: Vec<String>,
     mcp_transport_contract: Vec<String>,
     replay: Vec<String>,
+    request_target: Vec<String>,
     trust_document: Vec<String>,
     client_credential_window: Vec<String>,
     server_identity: Vec<String>,
@@ -55,6 +56,7 @@ impl Refusals {
             connection_bounds: self.connection_bounds,
             mcp_transport_contract: self.mcp_transport_contract,
             replay: self.replay,
+            request_target: self.request_target,
             trust_document: self.trust_document,
             client_credential_window: self.client_credential_window,
             server_identity: self.server_identity,
@@ -82,6 +84,7 @@ pub(super) struct RefusableStates {
     pub(super) delegated_signing: Option<crate::config_state::DelegatedSigningFacts>,
     pub(super) mcp_transport_contract: Option<crate::config_state::McpTransportContractState>,
     pub(super) replay: Option<crate::config_state::ReplayState>,
+    pub(super) request_target: Option<crate::config_state::RequestTarget>,
     pub(super) server_identity: Option<crate::config_state::server_identity::ServerIdentityFacts>,
     pub(super) channel_credential_custody:
         Option<crate::config_state::ChannelCredentialCustodyState>,
@@ -106,6 +109,7 @@ pub(super) fn classify_refusable(config: &DeploymentRequest) -> (RefusableStates
     let channel_binding = m::transport::classify_and_validate_binding(config);
     let crl_revocation = m::crl_revocation::classify_and_validate_crl(config);
     let freshness = m::freshness::classify_and_validate(config);
+    let request_target = m::request_target::classify_and_validate(config);
     let connection_bounds = m::connection_bounds::classify_and_validate(config);
     let mcp_transport_contract = m::mcp_transport_contract::classify_and_validate(config);
     let trust_document = m::trust_document::classify_and_validate(config);
@@ -130,6 +134,7 @@ pub(super) fn classify_refusable(config: &DeploymentRequest) -> (RefusableStates
             delegated_signing: delegated_signing.0,
             mcp_transport_contract: mcp_transport_contract.0,
             replay: replay.0,
+            request_target: request_target.0,
             server_identity: server_identity.0,
             channel_credential_custody: channel_credential_custody.0,
             trust_document: trust_document.0,
@@ -148,6 +153,7 @@ pub(super) fn classify_refusable(config: &DeploymentRequest) -> (RefusableStates
             connection_bounds: connection_bounds.1,
             mcp_transport_contract: mcp_transport_contract.1,
             replay: replay.1,
+            request_target: request_target.1,
             trust_document: trust_document.1,
             client_credential_window: client_credential_window.1,
             server_identity: server_identity.1,

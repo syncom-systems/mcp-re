@@ -183,7 +183,11 @@ fn spawn_server(
         serve_once(
             &listener,
             config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             move |request, identity| {
                 handler_reached.store(true, std::sync::atomic::Ordering::SeqCst);
                 let _ = request;

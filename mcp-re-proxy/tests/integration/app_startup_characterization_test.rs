@@ -784,18 +784,12 @@ fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour(
 ///
 /// `async_serve` refuses to serve when the origin-form of the configured `--target-uri`
 /// differs from the one the request arrived at. That comparison is answerable only for an
-/// absolute target: `origin_form_of` returns `None` without a `://`, and
-/// `target_uri_mismatch` reads that `None` as "no mismatch". A scheme-less target therefore
-/// does not weaken the check, it turns it off for every request — and both of those
-/// functions documented the shape as something the parser had already guaranteed.
+/// absolute target, so the `RequestTarget` owner cannot hold any other shape, and the
+/// validation boundary refuses one through that owner's classifier.
 ///
-/// It had, and only for argv. `target_uri` is a public `DeploymentRequest` field, so this was the
-/// sixth member of the parser-only family: an ingress fanning several paths into one
-/// process would verify signatures over a `@target-uri` no request arrived at, while the
-/// deployment reported the binding as in force.
-///
-/// Driven through `app::run` rather than the serving path because the boundary is where
-/// the refusal belongs — a config this shape must never reach a listener at all.
+/// `target_uri` is a public `DeploymentRequest` field, so a config built in code meets no
+/// parser. Driven through `app::run` rather than the serving path because the boundary is
+/// where the refusal belongs — a config this shape must never reach a listener at all.
 #[test]
 fn a_programmatic_config_cannot_disable_the_request_target_reconstruction_check() {
     use std::sync::atomic::AtomicBool;

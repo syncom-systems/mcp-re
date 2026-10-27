@@ -70,11 +70,6 @@ const ORDINARY: &[(&str, &str)] = &[
     ),
     ("route", "the request path this deployment answers on"),
     (
-        "target_uri",
-        "the RFC 9421 @target-uri the signature base is reconstructed against; layer A \
-         checked its shape, and the value is a coordinate rather than a posture",
-    ),
-    (
         "channel_credential",
         "read for its credential-chain locator alone, for the same reason as \
          peer_trust_anchors. WHICH custody holds the channel key is not read here: that is \

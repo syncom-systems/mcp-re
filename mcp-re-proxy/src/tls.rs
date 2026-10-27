@@ -220,20 +220,22 @@ pub struct ServerOptions {
     pub ocsp_checker: Option<crate::ocsp::OcspChecker>,
     /// The canonical RFC 9421 `@target-uri` this deployment binds requests to
     /// (ADR-MCPRE-050). Client and server MUST agree on it byte-for-byte; the
-    /// verifier checks it against the request evidence block's audience tuple. Empty
-    /// when unset ([`ServerOptions::new`]); the async serve loop refuses every request while
-    /// it is empty or not absolute, so an embedder must set it.
-    pub target_uri: String,
+    /// verifier checks it against the request evidence block's audience tuple, and the
+    /// serve loop checks each request's arrival path against its origin form.
+    pub target: crate::config_state::RequestTarget,
 }
 
 impl ServerOptions {
-    /// Options with every field at its default except the required window.
+    /// Options with every field at its default except the required window and target.
     ///
     /// `pub` because it replaces the public `Default` for out-of-crate embedders
-    /// (`serve_once` callers): a window is required, so no inhabitant leaves currency
-    /// unexamined. The composition root keeps an exhaustive literal, so an omitted
+    /// (`serve_once` callers): a window and a target are required, so no inhabitant leaves
+    /// currency unexamined or the arrival-path check unanswerable. The composition root keeps an exhaustive literal, so an omitted
     /// revocation index or custody flag stays a compile error there.
-    pub fn new(client_credential_window: crate::config_state::ClientCredentialWindow) -> Self {
+    pub fn new(
+        client_credential_window: crate::config_state::ClientCredentialWindow,
+        target: crate::config_state::RequestTarget,
+    ) -> Self {
         ServerOptions {
             identity_policy: IdentityPolicy::RECOMMENDED,
             peer_identity_provenance: PeerIdentityProvenance::default(),
@@ -243,7 +245,7 @@ impl ServerOptions {
             client_revocation: None,
             #[cfg(feature = "online_ocsp")]
             ocsp_checker: None,
-            target_uri: String::new(),
+            target,
         }
     }
 }
@@ -565,13 +567,13 @@ mod currency_policy_tests {
         for secs in [3600, 1800] {
             let expected = Duration::from_secs(secs);
             assert!(matches!(
-                currency_policy(&ServerOptions::new(window(secs))),
+                currency_policy(&ServerOptions::new(window(secs), crate::config_state::RequestTarget::new("https://localhost/").expect("an absolute target"))),
                 CredentialCurrencyPolicy::Ceiling(d) if d == expected
             ));
             assert!(matches!(
                 currency_policy(&ServerOptions {
                     client_revocation: Some(Arc::clone(&revocation)),
-                    ..ServerOptions::new(window(secs))
+                    ..ServerOptions::new(window(secs), crate::config_state::RequestTarget::new("https://localhost/").expect("an absolute target"))
                 }),
                 CredentialCurrencyPolicy::CeilingAndRevocation(d, _) if d == expected
             ));
@@ -587,7 +589,11 @@ mod currency_policy_tests {
         let (revocation, publisher) = shared();
         let options = ServerOptions {
             client_revocation: Some(Arc::clone(&revocation)),
-            ..ServerOptions::new(window(3600))
+            ..ServerOptions::new(
+                window(3600),
+                crate::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            )
         };
         let before = currency_policy(&options);
         assert!(
@@ -650,7 +656,11 @@ mod routing_header_tests {
         .expect("a legal credential window");
         let asserting = super::ServerOptions {
             peer_identity_provenance: PeerIdentityProvenance::IngressAssertion,
-            ..super::ServerOptions::new(window)
+            ..super::ServerOptions::new(
+                window,
+                crate::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            )
         };
         let name = super::MCP_INGRESS_ASSERTION_HEADER;
         let one = RequestHeaders::from_pairs([(name, "token-a")]);
@@ -665,7 +675,11 @@ mod routing_header_tests {
 
         let channel = super::ServerOptions {
             peer_identity_provenance: PeerIdentityProvenance::ChannelCredential,
-            ..super::ServerOptions::new(window)
+            ..super::ServerOptions::new(
+                window,
+                crate::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            )
         };
         assert_eq!(super::assertion_header(&channel, &one), None);
     }
@@ -1104,7 +1118,11 @@ mod channel_peer_resolution_tests {
         ServerOptions {
             identity_policy: policy,
             peer_identity_provenance: PeerIdentityProvenance::ChannelCredential,
-            ..ServerOptions::new(window())
+            ..ServerOptions::new(
+                window(),
+                crate::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            )
         }
     }
 
@@ -1259,7 +1277,11 @@ mod channel_peer_resolution_tests {
         let options = ServerOptions {
             identity_policy: IdentityPolicy::UriSan,
             peer_identity_provenance: PeerIdentityProvenance::IngressAssertion,
-            ..ServerOptions::new(window())
+            ..ServerOptions::new(
+                window(),
+                crate::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            )
         };
         assert!(
             resolve_channel_peer(Some(&acceptance), &options, wall_clock_unix())

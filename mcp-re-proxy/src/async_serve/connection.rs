@@ -215,13 +215,14 @@ mod tests {
                     },
                 )
                 .expect("bounds in force"),
-                target_uri: "https://x/".to_owned(),
                 ..ServerOptions::new(
                     ClientCredentialWindow::new(
                         Duration::from_secs(3600),
                         Duration::from_millis(50),
                     )
                     .expect("a legal credential window"),
+                    crate::config_state::RequestTarget::new("https://x/")
+                        .expect("an absolute target"),
                 )
             });
             let admission = admission(&options);

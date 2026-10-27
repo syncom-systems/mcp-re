@@ -12253,6 +12253,7 @@ paths = [
   "mcp-re-proxy/src/config_state/validation/machine_violations.rs",
   "mcp-re-proxy/src/config_state/validation/recognition.rs",
   "mcp-re-proxy/src/config_state/validation/residue.rs",
+  "mcp-re-proxy/src/config_state/request_target.rs",
   "mcp-re-proxy/src/config_state/trust_document.rs",
 ]
 exported_contracts = []
@@ -12269,14 +12270,14 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::validation::required_coordinate_tests::a_whitespace_coordinate_is_refused_like_an_empty_one",
   "//mcp-re-proxy:proxy_unit_test#config_state::validation::required_coordinate_tests::every_required_coordinate_is_refused_when_empty_however_the_request_was_built",
   "//mcp-re-proxy:proxy_unit_test#config_state::validation::required_coordinate_tests::the_fixture_these_controls_mutate_is_otherwise_legal",
-  "//mcp-re-proxy:proxy_unit_test#config_state::validation::residue::tests::a_target_uri_that_would_disable_the_reconstruction_check_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::request_target::tests::a_target_the_reconstruction_check_cannot_answer_is_unconstructible",
   "//mcp-re-proxy:proxy_unit_test#config_state::validation::residue::tests::the_inventory_is_the_file",
   # ADR-MCPRE-069 CO-S3-6 (NP-153). Four members, all deciding in `validation/`, all over a
   # request built in code.
   #
   # The description's own clause, at integration width and over all three illegal shapes
   # (scheme-less, path-only, empty), with the negative control that an absolute target is
-  # NOT refused. `residue.rs` is the deciding file and is in this closure.
+  # NOT refused. `request_target.rs` is the deciding file and is in this closure.
   "//mcp-re-proxy:integration_test#app_startup_characterization_test::a_programmatic_config_cannot_disable_the_request_target_reconstruction_check",
   # The residue inventory exercised on one of its entries: `--authz reference` is an
   # unaccepted profile, refused by `residue.rs` and by nothing downstream since the
