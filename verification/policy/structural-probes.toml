@@ -2650,7 +2650,7 @@ crate = "//mcp-re-proxy:mcp_re_proxy"
 invariant = "the serving path cannot mint a publish permit; only the publication decision does"
 insertion_parent = "mcp-re-proxy/src/http_profile_serve/mod.rs"
 marker = "STRUCTURAL-PROBE-SITE"
-error_code = "E0603"
+error_code = "E0423"
 construction = """
 // ADR-MCPRE-068 structural probe S77. Injected into a scratch copy by verify-structural;
 // this file cannot exist in the working tree, because it would not build — which is the

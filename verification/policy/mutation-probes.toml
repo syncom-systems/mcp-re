@@ -14079,7 +14079,7 @@ conjunct = "a success is served only after retention has completed, as well as t
 path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs"
 anchor = """
         if let Some(rejection) = self
-            .retain_accepted(acc, &response, retention, progress)
+            .retain_accepted(acc, &response, &retention, progress)
             .await
         {
             return rejection;
@@ -14087,7 +14087,7 @@ anchor = """
 """
 weakening = """
         let _ = self
-            .retain_accepted(acc, &response, retention, progress)
+            .retain_accepted(acc, &response, &retention, progress)
             .await;
 """
 expect_red = [
@@ -14133,12 +14133,12 @@ anchor = """
             Ok(outcome) => outcome,
             Err(refusal) => {
                 return self
-                    .refuse_retained(acc, refusal, progress, retention)
+                    .refuse_retained(acc, refusal, progress, &retention)
                     .await
             }
         };
         if let Some(rejection) = self
-            .retain_accepted(acc, &response, retention, progress)
+            .retain_accepted(acc, &response, &retention, progress)
             .await
         {
             return rejection;
@@ -14146,7 +14146,7 @@ anchor = """
 """
 weakening = """
         if let Some(rejection) = self
-            .retain_accepted(acc, &response, retention, progress)
+            .retain_accepted(acc, &response, &retention, progress)
             .await
         {
             return rejection;
@@ -14161,7 +14161,7 @@ weakening = """
             Ok(outcome) => outcome,
             Err(refusal) => {
                 return self
-                    .refuse_retained(acc, refusal, progress, retention)
+                    .refuse_retained(acc, refusal, progress, &retention)
                     .await
             }
         };

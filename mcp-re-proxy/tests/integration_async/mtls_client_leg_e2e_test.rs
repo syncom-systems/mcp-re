@@ -335,7 +335,7 @@ fn spawn_server(server_ca: &Ca, client_ca: &Ca) -> RunningServer {
     let options = ServerOptions {
         ..ServerOptions::new(
             window(),
-            mcp_re_proxy::config_state::RequestTarget::new(&TARGET).expect("an absolute target"),
+            mcp_re_proxy::config_state::RequestTarget::new(TARGET).expect("an absolute target"),
         )
     };
 

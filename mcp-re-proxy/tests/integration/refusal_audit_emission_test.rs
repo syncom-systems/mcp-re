@@ -48,9 +48,9 @@ const MINT_CALL: &str = "self.signed_rejection(";
 const MINT_VISIBILITY: &str = "pub(super) fn signed_rejection(";
 
 /// The production sites that call an emitter, by method name whatever the receiver: the
-/// response owner's funnel (two), pre-admission, the accepted-reply assembly and the
-/// notification path.
-const EMITTER_ROUTES: usize = 5;
+/// response owner's funnel (two), pre-admission and the notification path. The accepted-reply
+/// assembly reaches the funnel through `refuse_accepted` rather than calling an emitter.
+const EMITTER_ROUTES: usize = 4;
 
 fn collect_rust_files(dir: &Path, into: &mut Vec<PathBuf>) {
     let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read dir {dir:?}: {e}"));
