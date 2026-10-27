@@ -88,6 +88,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
 
       # A MERGE CHECK APPLIES ONLY THE PROBES OF THE UNITS ITS CHANGE AFFECTS, never all.
       # Same selection as `verification.yml`: moved fingerprints plus their prerequisite
@@ -146,6 +150,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
 
       # No host Rust toolchain is installed or consulted: every Rust member of a probe's
       # battery is a Bazel test target, compiled by the compiler MODULE.bazel pins.

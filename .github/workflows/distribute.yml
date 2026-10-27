@@ -105,6 +105,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
 
       - name: The tag names a qualified release
         id: gate
@@ -149,6 +153,10 @@ jobs:
           path: src
           ref: ${{ needs.resolve.outputs.sha }}
           persist-credentials: false
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: tools/.python-version
 
       - name: The tagged source is the qualified commit
         run: |
@@ -248,6 +256,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
       - uses: actions/download-artifact@v8
         with:
           name: archives
@@ -302,6 +314,15 @@ jobs:
     outputs:
       digest: ${{ steps.image.outputs.digest }}
     steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .python-version
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
       - name: Download from the public release and verify
         env:
           GH_TOKEN: ${{ github.token }}
@@ -454,6 +475,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
       - name: The released client, from the public release
         run: |
           set -euo pipefail
@@ -492,6 +517,15 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .python-version
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
       - name: Every mandatory check succeeded
         env:
           NEEDS: ${{ toJSON(needs) }}

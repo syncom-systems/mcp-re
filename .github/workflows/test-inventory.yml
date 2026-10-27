@@ -32,6 +32,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
 
       # cryptoki-sys's build script generates its FFI bindings with bindgen, which needs
       # libclang; the runner image ships it (see ci.yml).
