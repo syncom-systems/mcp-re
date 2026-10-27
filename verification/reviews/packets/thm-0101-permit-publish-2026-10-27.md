@@ -63,3 +63,19 @@ and `--fingerprint THM-0074` print the components a record names.
 THM-0101's review is also stale for a separate reason. #1253 and #1256 changed the supporting
 semantics of `proxy.exchange_publication` and `proxy.exchange_transition_ownership`, so its review
 digest has moved too. One reading at this branch's HEAD covers both.
+
+## Addendum: the owner's ruling, and a third theorem the inventory missed
+
+The owner ruled on 2026-10-27. The ruling is transcribed in
+[`rulings/thm-0101-permit-publish-2026-10-27.md`](../rulings/thm-0101-permit-publish-2026-10-27.md):
+the THM-0101 correction is accepted, and THM-0074's unchanged claim is reaffirmed at its updated
+dependency fingerprint. The two specification records are written at the fingerprints above,
+re-measured on the candidate.
+
+The table under "What moved" is incomplete. THM-0136 also depends on THM-0101, so its fingerprint
+moves too: `sha256:fe590f85…` → `sha256:37a7bedb…`. Its own statement, consequence, scope,
+severity and `depends_on` are byte-identical. The ruling does not name it. It is carried by an
+ADR-MCPRE-068 Phase-1 dependency-propagation record,
+`verification/claim-corrections/THM-0136-thm-0101-permit-publish-2026-10-27.json`. That record is
+the single link from its reviewed fingerprint. It is not an owner review: THM-0136's
+specification axis reads stale until the owner reviews it at the new fingerprint.
