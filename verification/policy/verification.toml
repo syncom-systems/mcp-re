@@ -4260,7 +4260,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#exchange_state::publication::tests::a_permit_from_may_publish_publishes_to_the_terminal",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::publication::tests::a_refused_publication_yields_no_permit",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::publication::tests::a_permit_publishes_only_to_the_exchange_that_cleared_it",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::dispatched::tests::a_notification_is_answered_before_any_reply_is_assembled",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::dispatched::tests::a_notification_yields_nothing_the_reply_assembler_takes",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::dispatched::tests::a_call_yields_the_call_with_the_id_it_answers",
 ]
 
 [[unit]]
@@ -9759,8 +9760,9 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_g1_and_g2_status_tables_differ_only_in_the_retry_safe_rows",
   "//mcp-re-proxy:proxy_unit_test#request_stages::outcome_disposition::tests::the_outcome_obligation_has_exactly_two_cases",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::machine::tests::machine_a_admits_success_only_from_outcome_committed_or_not_required",
-  # The exit's order (Q2), and that it is the only success exit.
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::success_exit::tests::the_outcome_is_committed_before_retention_and_both_before_success_is_served",
+  # That it is the only success exit. Its order (Q2) is the types': each step takes the
+  # previous step's product, so the order has no test and the falsifiers below attack what
+  # each step does with its refusal.
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::success_exit::tests::success_exit_is_the_only_success_served_call",
   # Through the production HttpProfileProxy, each window of §6 forced.
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::best_effort_success_and_notification_are_unchanged",

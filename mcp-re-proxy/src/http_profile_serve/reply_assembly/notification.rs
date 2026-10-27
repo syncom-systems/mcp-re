@@ -14,7 +14,6 @@
 
 use mcp_re_http_profile::sign_delegated_accepted_202;
 
-use crate::async_inner::DispatchedOutcome;
 use crate::async_serve::ServedHttpResponse;
 use crate::exchange_state::publication::PublishPermit;
 use crate::exchange_state::ExchangeProgress;
@@ -25,6 +24,7 @@ use crate::request_stages::PostDispatch;
 use super::super::inner_plane::NotificationDelivered;
 use super::super::receipt::Accepted;
 use super::super::HttpProfileProxy;
+use super::dispatched::DispatchedNotification;
 
 impl HttpProfileProxy {
     /// The NOTIFICATION arm: a signed bodyless 202 for a message with no JSON-RPC `id`.
@@ -74,19 +74,19 @@ impl HttpProfileProxy {
     /// machine that never claimed success (ADR-MCPRE-070 §16 item 7). What it is entered by
     /// is the observation's own carrier: no other code can construct the delivery fact, so
     /// without the observation there is no 202 to decide or to publish.
-    pub(in crate::http_profile_serve) async fn answer_notification_terminal(
+    pub(super) async fn answer_notification_terminal(
         &self,
         acc: &Accepted<'_>,
         progress: &mut ExchangeProgress,
-        outcome: &DispatchedOutcome,
-        owed: PostDispatch,
+        message: DispatchedNotification,
     ) -> ServedHttpResponse {
+        let (outcome, owed) = message.into_parts();
         // The message may not have arrived, and this refusal is the signed statement saying
         // so. It IS a terminal the proxy constructed, so it discharges the crossing: an
         // operator reading the archive then finds *the backend may have executed and the
         // client was told this*, instead of a bare surviving marker that says only
         // *unaccounted for*.
-        let acknowledged = match self.inner_async.observe_acknowledgement(progress, outcome) {
+        let acknowledged = match self.inner_async.observe_acknowledgement(progress, &outcome) {
             Ok(delivered) => ServedSuccess::Acknowledged(delivered),
             Err(refusal) => {
                 return self

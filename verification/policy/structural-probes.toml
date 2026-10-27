@@ -2731,3 +2731,85 @@ module-tree-visibility = "the permit holds `&'x mut ExchangeProgress` for its wh
 alternate-constructors = "`may_publish` takes `&mut self` and returns a permit carrying that borrow; there is no producer that clears a success without borrowing the exchange it judged"
 generated-or-deserialization = "`PublishPermit` derives nothing: no Clone, Copy, Default, Serialize or Deserialize"
 test-only-construction = "none: the permit has no test constructor"
+
+# --- proxy.exchange_publication: a dispatched notification has no reply to assemble
+#
+# Which exit a dispatched exchange takes is decided once, from the request: a one-way message
+# becomes a `DispatchedNotification` and a call a `DispatchedCall`. The reply assembler takes
+# only the second, so the notification arm answering first is the absence of a value to pass,
+# not the order of two statements.
+[[probe]]
+id = "S80"
+unit = "proxy.exchange_publication"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "a dispatched notification cannot be handed to the reply assembler"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/reply_assembly/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0308"
+construction = """
+// ADR-MCPRE-068 structural probe S80. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::exchange_state::ExchangeProgress;
+
+use super::super::receipt::Accepted;
+use super::super::HttpProfileProxy;
+use super::dispatched::DispatchedNotification;
+
+async fn hostile(
+    proxy: &HttpProfileProxy,
+    acc: &Accepted<'_>,
+    progress: &mut ExchangeProgress,
+    message: DispatchedNotification,
+) {
+    let _ = proxy.assemble_reply(acc, progress, message).await; // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`DispatchedNotification` and `DispatchedCall` have private fields in `reply_assembly::dispatched`, so no other module builds either by struct literal; the probe sits in `reply_assembly`, which can name both types and call the assembler, and finds the assembler typed to take a call alone"
+alternate-constructors = "the only construction of either value is `Answering::of`, private to `reply_assembly::dispatched`, which reads `OutstandingId::is_notification` once and yields a `DispatchedCall` only for a request with an id; neither type has a `From`, `Into`, `Default` or builder, and their `into_parts` projections consume them"
+generated-or-deserialization = "neither type derives anything: no Clone, Copy, Default, Serialize or Deserialize"
+test-only-construction = "none: the dispatched module's tests obtain both through `Answering::of`, from an exchange crossed by `ReadyForDispatch::dispatch`"
+
+# --- proxy.audit_outcome_gate: a cleared success is served only by the success exit's last step
+#
+# The success exit's steps each take the previous step's product, and the products and steps are
+# private to `reply_assembly::success_exit`. S81 tries to serve a cleared success from outside
+# it, skipping the outcome commitment and retention.
+[[probe]]
+id = "S81"
+unit = "proxy.audit_outcome_gate"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "outside the success exit a cleared success cannot be served without its outcome committed and its retention completed"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/reply_assembly/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+construction = """
+// ADR-MCPRE-068 structural probe S81. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use mcp_re_http_profile::HttpResponse;
+
+use crate::async_serve::ServedHttpResponse;
+use crate::exchange_state::publication::PublishPermit;
+
+use super::super::inner_plane::NotificationDelivered;
+use super::super::receipt::Accepted;
+use super::super::HttpProfileProxy;
+
+fn hostile(
+    proxy: &HttpProfileProxy,
+    acc: &Accepted<'_>,
+    permit: PublishPermit<'_, NotificationDelivered>,
+    response: HttpResponse,
+) -> ServedHttpResponse {
+    proxy.serve_published(acc, permit, response) // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the serving step `serve_published` and the stage products `Committed` and `Retained` are private to `reply_assembly::success_exit`; the probe sits in `reply_assembly`, beside the success exit, and is refused the step; the exit's only visible entry is `publish_success`, which runs every step"
+alternate-constructors = "`Committed` is built only on the `Ok` arm of `commit_outcome` (G2) and `Retained` only on the accounted-for arm of `complete_retention`; neither has a `From`, `Into`, `Default` or builder"
+generated-or-deserialization = "neither stage product derives anything: no Clone, Copy, Default, Serialize or Deserialize"
+test-only-construction = "none: the stage products have no test constructor"

@@ -1,16 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Discharging the durable responsibility taken before the dispatch, and reaching a success
-//! terminal.
+//! The bodied reply's terminal decision, and discharging the durable responsibility taken
+//! before the dispatch when the exchange is refused instead.
 //!
-//! The reservation was taken while refusing was still free; this is where it is completed
-//! with what was actually served. A deployment with retention on asserts it can account for
-//! what it served, and refusing when the evidence cannot be kept is the only thing that keeps
-//! that true — so retention completes BEFORE the response goes out and before its
-//! `response.signed` record, and after its outcome is committed (ADR-MCPRE-070 Q2).
-//!
-//! Both success exits retain through here, the bodied reply and the bodyless 202 alike. It is
-//! one function and not a block copied twice because retention wired onto only one of them is
-//! a client-selectable guarantee, not a weaker one.
+//! The reservation was taken while refusing was still free; it is completed with what was
+//! actually served. A success completes it in the success exit, after its outcome is committed
+//! and before it is served (ADR-MCPRE-070 Q2). A post-dispatch refusal completes it here, with
+//! the refusal.
 
 use mcp_re_http_profile::HttpResponse;
 
@@ -31,7 +26,7 @@ impl HttpProfileProxy {
     /// time: everything before it can still discard this response. Under the required posture
     /// the committed outcome is a different statement — what the proxy observed and signed,
     /// never that it was served (ADR-MCPRE-070 Q2).
-    pub(in crate::http_profile_serve) async fn serve_retained(
+    pub(super) async fn serve_retained(
         &self,
         acc: &Accepted<'_>,
         progress: &mut ExchangeProgress,
@@ -73,8 +68,8 @@ impl HttpProfileProxy {
     /// yields 502 — accumulate *indeterminate* crossings at will, drowning the signal the
     /// marker exists to carry in the cheapest thing a caller can do.
     ///
-    /// **The ordering inverts here, and it has to.** On a success exit retention runs first
-    /// and a failure REFUSES. A refusal exit cannot refuse: there is no further exit to fall
+    /// **The ordering inverts here, and it has to.** On the success exit retention completes
+    /// before anything is served, and a failure REFUSES. A refusal exit cannot refuse: there is no further exit to fall
     /// through to, and converting one refusal into another loses the cause the client needs.
     /// So the refusal is minted, retention is attempted, and the refusal is served — and a
     /// `Failed` outcome leaves the marker, which under the invariant above is the true
@@ -105,42 +100,6 @@ impl HttpProfileProxy {
             .await
             .is_accounted_for();
         rejection
-    }
-
-    /// Retain one ACCEPTED exchange (ADR-MCPRE-054), or produce the refusal.
-    ///
-    /// `Some(rejection)` means the evidence could not be kept and the exchange must be
-    /// refused; `None` means it is retained, or retention is not configured, and the
-    /// caller may serve.
-    ///
-    /// EVERY SUCCESS exit reaches it through
-    /// [`publish_success`](Self::publish_success), after the outcome is committed and before
-    /// the response goes out or its `response.signed` record is offered: retaining an
-    /// exchange the client never received would put a record in the store that no receipt
-    /// should be issued about. A REFUSAL exit cannot use it — refusing a refusal has no exit
-    /// to fall through to — so those go through [`refuse_retained`](Self::refuse_retained).
-    pub(super) async fn retain_accepted(
-        &self,
-        acc: &Accepted<'_>,
-        response: &HttpResponse,
-        retention_owed: &RetentionDisposition,
-        progress: &ExchangeProgress,
-    ) -> Option<ServedHttpResponse> {
-        if self
-            .retention
-            .complete(retention_owed, response)
-            .await
-            .is_accounted_for()
-        {
-            return None;
-        }
-        // The call executed and the record did not land. INDETERMINATE, and deliberately
-        // not 503: the backend has already run, and 503 is the status clients retry.
-        let refusal = crate::refusal::Refusal::new(
-            mcp_re_core::McpReError::EvidenceRetentionIndeterminate,
-            500,
-        );
-        Some(self.refuse_accepted(acc, refusal, progress))
     }
 }
 

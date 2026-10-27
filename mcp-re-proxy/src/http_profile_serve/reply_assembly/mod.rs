@@ -16,7 +16,6 @@
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::OutstandingId;
 
-use crate::async_inner::DispatchedOutcome;
 use crate::async_serve::ServedHttpResponse;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
@@ -29,6 +28,7 @@ use super::receipt::Accepted;
 use super::reply::ReplyClass;
 use super::reply::ValidatedReply;
 use super::HttpProfileProxy;
+use dispatched::DispatchedCall;
 
 /// The bodyless 202 terminal a one-way message reaches.
 mod notification;
@@ -103,14 +103,17 @@ impl HttpProfileProxy {
     /// produces the answer, and not by the caller — an `Err` arm in `handle` returns the
     /// binding its stage produced and nothing else, which `refusal_provenance_gate` enforces
     /// against THM-0081.
-    pub(super) async fn assemble_reply(
+    ///
+    /// It takes a [`DispatchedCall`], which only a request with an `id` yields, so a
+    /// notification has nothing to pass here. The reply comes back with what the exchange
+    /// still owes, for the success exit to discharge.
+    async fn assemble_reply(
         &self,
         acc: &Accepted<'_>,
         progress: &mut ExchangeProgress,
-        outcome: DispatchedOutcome,
-        outstanding: &OutstandingId,
-        owed: &PostDispatch,
-    ) -> Result<SignedReply, ServedHttpResponse> {
+        call: DispatchedCall<'_>,
+    ) -> Result<(SignedReply, PostDispatch), ServedHttpResponse> {
+        let (outcome, outstanding, owed) = call.into_parts();
         let inner_bytes = match self.inner_async.observe_reply(progress, outcome) {
             Ok(bytes) => progress.establish(bytes),
             Err(refusal) => {
@@ -145,7 +148,7 @@ impl HttpProfileProxy {
             };
         self.record_continuation_leg(acc, progress, &class, response_base)
             .await?;
-        Ok(SignedReply { response, class })
+        Ok((SignedReply { response, class }, owed))
     }
 
     /// VALIDATED then CLASSIFIED — two facts about the same bytes, kept apart.

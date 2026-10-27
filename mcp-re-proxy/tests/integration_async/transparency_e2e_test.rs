@@ -868,8 +868,8 @@ fn build_server_breaking_store_on_dispatch(
 }
 
 /// Reserve and commit succeed, the backend runs, and completion then fails: neither success
-/// exit (bodied 200, bodyless 202) is served. Both go through `retain_accepted`, which
-/// refuses as indeterminate.
+/// exit (bodied 200, bodyless 202) is served. Both complete retention in the one success
+/// exit, which refuses as indeterminate.
 #[test]
 fn a_success_whose_evidence_cannot_be_kept_after_execution_is_refused_on_both_exits() {
     let bodied_scratch = Scratch::new("indeterminate-bodied");
