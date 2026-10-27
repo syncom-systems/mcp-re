@@ -2609,3 +2609,62 @@ module-tree-visibility = "`NoCommitmentRequired`'s one field is bare-private to 
 alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes a `Redeemed<Intent>` by type; there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
 generated-or-deserialization = "`NoCommitmentRequired`, `IntentDisposition` and `Redeemed` derive Debug only: no Clone, Copy, Default, Serialize or Deserialize"
 test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`; the required posture's constructor `AuditPosture::required` takes an `EstablishedProvider`, whose only production constructor is the fallible `establish`, and the reference authority's registration `AuditProviders::with_reference_for_test` is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
+
+# --- proxy.exchange_publication: a success is published only with the permit its decision minted
+#
+# The serving path used to hold "decide, then publish" by statement order, measured by
+# source-text probes and by mutation probes that discarded `may_publish`'s answer. The permit
+# makes the discarded answer unrepresentable: `publish` takes only what `may_publish`
+# returned, and nothing outside `exchange_state` can construct one.
+[[probe]]
+id = "S76"
+unit = "proxy.exchange_publication"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "a success cannot be published without the permit its publication decision returned"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0308"
+construction = """
+// ADR-MCPRE-068 structural probe S76. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::exchange_state::{ExchangeProgress, ServedSuccess};
+use crate::http_profile_serve::inner_plane::NotificationDelivered;
+
+fn hostile(progress: &mut ExchangeProgress) {
+    progress.publish(ServedSuccess::<NotificationDelivered>::Terminal); // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`PublishPermit`'s one field is `pub(super)` from `exchange_state::publication`, so only `exchange_state` can construct or open it; the probe sits in the serving path, which can name `ExchangeProgress` and `ServedSuccess` and is refused the permit"
+alternate-constructors = "the only construction of `PublishPermit` is `ExchangeProgress::may_publish`'s `Ok` arm; `publish` takes a `PublishPermit` by value and nothing else; there is no `From`, `Into`, `Default` or builder"
+generated-or-deserialization = "`PublishPermit` derives nothing: no Clone, Copy, Default, Serialize or Deserialize, so a permit cannot be duplicated to publish twice"
+test-only-construction = "none: the permit has no test constructor, and the publication tests obtain one from `may_publish` like the serving path"
+
+[[probe]]
+id = "S77"
+unit = "proxy.exchange_publication"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "the serving path cannot mint a publish permit; only the publication decision does"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0603"
+construction = """
+// ADR-MCPRE-068 structural probe S77. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::exchange_state::publication::PublishPermit;
+use crate::exchange_state::ServedSuccess;
+use crate::http_profile_serve::inner_plane::NotificationDelivered;
+
+fn hostile() -> PublishPermit<NotificationDelivered> {
+    PublishPermit(ServedSuccess::Terminal) // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`PublishPermit`'s one field is `pub(super)` from `exchange_state::publication`, so its tuple constructor is private to `exchange_state`; the probe sits in the serving path, which can name the type and is refused its constructor"
+alternate-constructors = "the only construction of `PublishPermit` is `ExchangeProgress::may_publish`'s `Ok` arm; there is no `From`, `Into`, `Default` or builder"
+generated-or-deserialization = "`PublishPermit` derives nothing: no Clone, Copy, Default, Serialize or Deserialize"
+test-only-construction = "none: the permit has no test constructor"

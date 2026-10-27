@@ -16,14 +16,14 @@ use mcp_re_http_profile::sign_delegated_accepted_202;
 
 use crate::async_inner::DispatchedOutcome;
 use crate::async_serve::ServedHttpResponse;
+use crate::exchange_state::publication::PublishPermit;
 use crate::exchange_state::ExchangeProgress;
 use crate::exchange_state::ServedSuccess;
 use crate::refusal::RefusalCause;
-use crate::request_stages::{IntentDisposition, RetentionDisposition};
+use crate::request_stages::PostDispatch;
 
 use super::super::inner_plane::NotificationDelivered;
 use super::super::receipt::Accepted;
-use super::super::signing_window::SigningWindow;
 use super::super::HttpProfileProxy;
 
 impl HttpProfileProxy {
@@ -37,17 +37,12 @@ impl HttpProfileProxy {
         &self,
         acc: &Accepted<'_>,
         progress: &mut ExchangeProgress,
-        acknowledged: ServedSuccess<NotificationDelivered>,
-        window: &SigningWindow,
-        retention: &RetentionDisposition,
-        intent: IntentDisposition,
+        permit: PublishPermit<NotificationDelivered>,
+        owed: PostDispatch,
     ) -> ServedHttpResponse {
         let ex = acc.exchange();
-        match sign_delegated_accepted_202(ex.http_req, window) {
-            Ok(ack) => {
-                self.publish_success(acc, progress, acknowledged, ack, retention, intent)
-                    .await
-            }
+        match sign_delegated_accepted_202(ex.http_req, owed.window()) {
+            Ok(ack) => self.publish_success(acc, progress, permit, ack, owed).await,
             // SIGNING failed, so there is no signed terminal to retain. The marker stays, and
             // it is the true statement: this exchange crossed and nothing discharges it.
             Err(e) => self.responses.response_rejection(
@@ -60,7 +55,7 @@ impl HttpProfileProxy {
                 Some(ex.verified.evidence()),
                 Some(ex.actor_id.to_owned()),
                 Self::disposition(progress, None),
-                Some(window.shared()),
+                Some(owed.window().shared()),
             ),
         }
     }
@@ -85,9 +80,7 @@ impl HttpProfileProxy {
         acc: &Accepted<'_>,
         progress: &mut ExchangeProgress,
         outcome: &DispatchedOutcome,
-        window: &SigningWindow,
-        retention: &RetentionDisposition,
-        intent: IntentDisposition,
+        owed: PostDispatch,
     ) -> ServedHttpResponse {
         // The message may not have arrived, and this refusal is the signed statement saying
         // so. It IS a terminal the proxy constructed, so it discharges the crossing: an
@@ -98,68 +91,28 @@ impl HttpProfileProxy {
             Ok(delivered) => ServedSuccess::Acknowledged(delivered),
             Err(refusal) => {
                 return self
-                    .refuse_retained(acc, refusal, progress, retention)
+                    .refuse_retained(acc, refusal, progress, owed.retention())
                     .await
             }
         };
         // The 202 is a signed success claim, so an exchange that no longer satisfies its
         // model may not mint one — and the decision is taken before the acknowledgement is
         // signed, while the exchange can still reach a post-dispatch refusal instead.
-        if progress.may_publish(&acknowledged).is_err() {
+        let Ok(permit) = progress.may_publish(acknowledged) else {
             let refusal = crate::refusal::Refusal::new(
                 mcp_re_core::McpReError::ExchangeInvariantViolation,
                 500,
             );
             return self
-                .refuse_retained(acc, refusal, progress, retention)
+                .refuse_retained(acc, refusal, progress, owed.retention())
                 .await;
-        }
-        self.answer_notification(acc, progress, acknowledged, window, retention, intent)
-            .await
+        };
+        self.answer_notification(acc, progress, permit, owed).await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    /// The 202 is not minted until the exchange is allowed to claim the terminal.
-    ///
-    /// `answer_notification` signs the acknowledgement, then the success exit commits its
-    /// outcome, retains it and records `response.signed` — publications of one success claim. The same order rule as
-    /// the bodied path, asserted the same way and for the same reason: the tuple this
-    /// refuses is unconstructible through the serving path, so the order is the only thing
-    /// a test can reach.
-    #[test]
-    fn the_terminal_is_decided_before_the_202_is_minted() {
-        let source = include_str!("notification.rs");
-        let body = source
-            .split_once("async fn answer_notification_terminal(")
-            .expect("the terminal is in this file")
-            .1;
-        // BRANCHED ON, not merely called. `let _ = progress.may_publish(..)` takes the
-        // decision, latches the anomaly, and mints the 202 anyway — the pre-enforcement
-        // behaviour with the enforcement still present and simply not acted on. An order
-        // check alone reads that as clean, so the refusing form is what is asserted.
-        let decision = body
-            .find("progress.may_publish(&acknowledged).is_err()")
-            .expect("the terminal decision is branched on");
-        let mint = body
-            .find("self.answer_notification(")
-            .expect("the 202 is minted");
-        assert!(
-            decision < mint,
-            "the 202 must not be signed before the exchange may claim its terminal"
-        );
-        // And the refusing arm must LEAVE. A refusal that falls through to the 202 decides
-        // nothing.
-        assert!(
-            body[decision..mint]
-                .split_whitespace()
-                .collect::<String>()
-                .contains("returnself.refuse_retained("),
-            "the refusing arm must exit before the 202 is signed"
-        );
-    }
-
     /// The 202 is minted only for a message the inner plane is known to have received. The
     /// refused outcome is the one that says it may not have got there — a signed statement
     /// that a backend accepted something no backend is known to have seen is the failure
