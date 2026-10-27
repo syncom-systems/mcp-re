@@ -27,6 +27,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import _tree  # noqa: E402
 from _load_tool import load_tool  # noqa: E402
 
 from _fingerprint import fingerprint_unit, MUTATION_LANE_INPUTS, VERUS_LANE_INPUTS  # noqa: E402
@@ -405,17 +406,29 @@ def _while_perturbed(path: str, observe):
         assert target.read_bytes() == original
 
 
+class _PerturbedTree(_tree.WorkingTree):
+    """The checkout, except that `path` reads as carrying one extra line."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__()
+        self.path = path
+
+    def read(self, rel: str) -> bytes:
+        data = super().read(rel)
+        return data + b"\n# falsifier\n" if rel == self.path else data
+
+
 def _perturbed(path: str, unit_ids):
-    """Unit fingerprints measured while `path` is perturbed."""
-    return _while_perturbed(
-        path,
-        lambda: {
-            unit_id: fingerprint_unit(UNITS[unit_id], DOC, TOOLCHAINS, ASSUMPTIONS)[
-                "fingerprint"
-            ]
+    """Unit fingerprints measured over a tree in which `path` is perturbed.
+
+    Through the source-tree seam rather than by patching the filesystem: the fingerprint
+    reads only `_tree.current()`, so the perturbation reaches it and nothing else, and the
+    file itself is never written."""
+    with _tree.reading(_PerturbedTree(path)):
+        return {
+            unit_id: fingerprint_unit(UNITS[unit_id], DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
             for unit_id in unit_ids
-        },
-    )
+        }
 
 
 def _read_sets() -> dict[str, frozenset[str]]:
@@ -427,71 +440,109 @@ def _read_sets() -> dict[str, frozenset[str]]:
     }
 
 
+#: One listing of what git tracks, reused by every observing tree below.
+_TRACKED = _tree.WorkingTree()
+
+
+class _ObservingTree(_tree.WorkingTree):
+    """The checkout, noting every file read through it. It memoizes nothing, so a value a
+    previous unit derived is read again and observed again."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.read_paths: set[str] = set()
+
+    def read(self, rel: str) -> bytes:
+        self.read_paths.add(rel)
+        return super().read(rel)
+
+    def memo(self, key, compute):
+        return compute()
+
+    def tracked(self) -> frozenset[str]:
+        return _tree.WorkingTree.tracked(_TRACKED)
+
+
 def test_the_read_set_holds_every_file_the_fingerprint_opens():
     """The trigger gate requires a workflow filter for every path in the read set, so a
     file the fingerprint reads and the read set omits is a change that moves the evidence
-    and re-runs nothing. Measured at the I/O boundary rather than by asking each component
-    what it reads: every open of a repository file during the fingerprint is observed, and
-    each one must be in that unit's read set.
+    and re-runs nothing. Observed at the source-tree seam: every read the fingerprint makes
+    goes through `_tree.current()`, and each one must be in that unit's read set. That no
+    read goes AROUND the seam is the next test's proposition.
 
-    Caches are cleared first, or a file read before the window would go unobserved. A file
-    the fingerprint never opens cannot move it by its bytes; what it can do by EXISTING —
-    appearing under a declared glob — reaches the read set as a tracked file on the very
-    change that adds it."""
-    import builtins
-    import io
+    A file the fingerprint never reads cannot move it by its bytes; what it can do by
+    EXISTING — appearing under a declared glob — reaches the read set as a tracked file on
+    the very change that adds it."""
+    import _fingerprint
+
+    missing: dict[str, list[str]] = {}
+    observed = 0
+    for unit_id, unit in UNITS.items():
+        observer = _ObservingTree()
+        with _tree.reading(observer):
+            read_set = _fingerprint.fingerprint_read_set(unit, DOC, TOOLCHAINS, ASSUMPTIONS)
+        observed += len(observer.read_paths)
+        if observer.read_paths - read_set:
+            missing[unit_id] = sorted(observer.read_paths - read_set)
+    assert observed, "nothing was observed reading a file — the seam measured nothing"
+    assert not missing, f"read by the fingerprint but absent from its read set: {missing}"
+
+
+def test_the_fingerprint_reads_nothing_beside_its_tree():
+    """Every byte a fingerprint depends on comes through the source-tree seam.
+
+    The seam's observations are only as complete as the seam: a reader that resolved a path
+    against the checkout directly would be invisible to the test above and would make
+    `select-units` measure the base commit with HEAD's bytes. So the tools are copied to a
+    scratch root that holds NOTHING else, and every unit is fingerprinted there over the
+    commit tree of HEAD. A read that bypasses the tree finds no file under that root and
+    the run fails or diverges; equal fingerprints mean every read went through the seam."""
+    import json
+    import shutil
+    import subprocess
+    import tempfile
 
     import _fingerprint
-    import _rust_targets
     from _manifest import REPO_ROOT as ROOT
 
-    opened: dict[str, set[str]] = {}
-    current: list[str] = []
+    script = (
+        "import json, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from pathlib import Path\n"
+        "import _tree\n"
+        "from _fingerprint import fingerprint_unit\n"
+        "from _manifest import load_assumptions, load_toolchains, load_verification\n"
+        "tree = _tree.CommitTree('HEAD', Path(sys.argv[2]))\n"
+        "with _tree.reading(tree):\n"
+        "    doc = load_verification(tree_checks=False)\n"
+        "    tc, asm = load_toolchains(), load_assumptions(tree_checks=False)\n"
+        "    print(json.dumps({u['id']: fingerprint_unit(u, doc, tc, asm)['fingerprint']\n"
+        "                      for u in doc['unit']}))\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="mcp-re-seam-") as scratch:
+        tools = Path(scratch) / "tools" / "verification"
+        shutil.copytree(HERE, tools, ignore=shutil.ignore_patterns("__pycache__"))
+        proc = subprocess.run(
+            [sys.executable, "-c", script, str(tools), str(ROOT)],
+            cwd=scratch, capture_output=True, text=True,
+        )
+    assert proc.returncode == 0, f"the scratch run read beside its tree: {proc.stderr[-2000:]}"
+    beside = json.loads(proc.stdout)
 
-    def note(path) -> None:
-        try:
-            rel = Path(path).resolve().relative_to(ROOT).as_posix()
-        except (TypeError, ValueError):
-            return
-        opened.setdefault(current[0], set()).add(rel)
-
-    real_open, real_io_open = builtins.open, io.open
-    real_bytes, real_text = Path.read_bytes, Path.read_text
-
-    def spy_open(file, *args, **kwargs):
-        note(file)
-        return real_open(file, *args, **kwargs)
-
-    def spy_bytes(self):
-        note(self)
-        return real_bytes(self)
-
-    def spy_text(self, *args, **kwargs):
-        note(self)
-        return real_text(self, *args, **kwargs)
-
-    read_sets: dict[str, frozenset[str]] = {}
-    builtins.open, io.open = spy_open, spy_open
-    Path.read_bytes, Path.read_text = spy_bytes, spy_text
-    try:
-        for unit_id, unit in UNITS.items():
-            _rust_targets.table.cache_clear()
-            _fingerprint._boundary_files.cache_clear()
-            current[:] = [unit_id]
-            read_sets[unit_id] = _fingerprint.fingerprint_read_set(
-                unit, DOC, TOOLCHAINS, ASSUMPTIONS
-            )
-    finally:
-        builtins.open, io.open = real_open, real_io_open
-        Path.read_bytes, Path.read_text = real_bytes, real_text
-
-    assert opened, "nothing was observed opening a file — the spy measured nothing"
-    missing = {
-        unit_id: sorted(paths - read_sets[unit_id])
-        for unit_id, paths in opened.items()
-        if paths - read_sets[unit_id]
-    }
-    assert not missing, f"opened by the fingerprint but absent from its read set: {missing}"
+    tree = _tree.CommitTree("HEAD", ROOT)
+    with _tree.reading(tree):
+        doc = load_verification(tree_checks=False)
+        toolchains, assumptions = load_toolchains(), load_assumptions(tree_checks=False)
+        here = {
+            unit["id"]: _fingerprint.fingerprint_unit(unit, doc, toolchains, assumptions)[
+                "fingerprint"
+            ]
+            for unit in doc["unit"]
+        }
+    tree.close()
+    assert here, "no unit was fingerprinted — the comparison compared nothing"
+    differ = sorted(unit_id for unit_id in here if beside.get(unit_id) != here[unit_id])
+    assert not differ, f"fingerprinted differently with nothing beside the tree: {differ[:10]}"
 
 
 def test_a_gate_control_is_in_its_units_read_set_and_moves_its_fingerprint():

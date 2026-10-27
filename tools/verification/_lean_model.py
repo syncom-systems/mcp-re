@@ -63,7 +63,9 @@ def lean_libs() -> list[tuple[str, tuple[str, ...]]]:
     is not answerable from root names alone, and answering it from a glob would let a module
     that stopped being built keep participating.
     """
-    doc = tomllib.loads((LEAN_DIR / "lakefile.toml").read_text(encoding="utf-8"))
+    import _tree
+
+    doc = tomllib.loads(_tree.read_path(LEAN_DIR / "lakefile.toml").decode("utf-8"))
     return [
         (
             str(lib.get("srcDir", ".")),

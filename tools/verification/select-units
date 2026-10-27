@@ -26,9 +26,11 @@ DEFERRED to that complete run, and says so, rather than widened to it:
     fingerprint reads);
   * the scope cannot be computed.
 
-The base tree is fingerprinted by ITS OWN tools, in a temporary worktree, so both sides
-are measured by the instrument that describes them. A change to that instrument defers,
-so the two instruments are the same whenever a scope is produced.
+The base is fingerprinted in this process, reading the base commit's tree from the object
+database (`_tree.CommitTree`); no checkout is made. Both sides are measured by these tools,
+and that is the instrument that describes both: a change to the instrument defers, so the
+base's tools and these are the same whenever a scope is produced. The base's registries are
+validated as documents only, since their paths describe a tree that is not checked out.
 
 Output: FILE holds the affected unit ids, one per line (empty when nothing moved or the
 check is deferred). The mode is `scoped` or `deferred`.
@@ -42,17 +44,18 @@ this narrowing per lane itself.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import subprocess
 import sys
-import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import _tree  # noqa: E402
 from _affected import consumer_closure, platform_change  # noqa: E402
 from _compose import requirements  # noqa: E402
+from _fingerprint import fingerprint_unit  # noqa: E402
 from _lanes import FORMAL  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
@@ -77,31 +80,31 @@ def changed_paths(base: str) -> list[str]:
 DEFAULT_MAX_UNITS = 20
 
 
-def fingerprints(root: Path) -> dict[str, str]:
-    """Every unit's fingerprint, measured by the tools checked out under `root`."""
-    completed = subprocess.run(
-        [sys.executable, str(root / "tools" / "verification" / "fingerprint")],
-        cwd=root, capture_output=True, text=True, check=True,
-    )
-    return {row["unit_id"]: row["fingerprint"] for row in json.loads(completed.stdout)}
+def fingerprints(tree: _tree.SourceTree | None = None) -> dict[str, str]:
+    """Every unit's fingerprint over `tree`, or over the checkout when `tree` is None.
+
+    A tree other than the checkout has its registries validated as documents only: what a
+    declared path resolves to is a question about that tree, and it was asked when the
+    tree was committed.
+    """
+    with _tree.reading(tree) if tree is not None else nullcontext():
+        checks = tree is None
+        doc = load_verification(tree_checks=checks)
+        toolchains = load_toolchains()
+        assumptions = load_assumptions(tree_checks=checks)
+        return {
+            unit["id"]: fingerprint_unit(unit, doc, toolchains, assumptions)["fingerprint"]
+            for unit in doc.get("unit", [])
+        }
 
 
 def base_fingerprints(base: str) -> dict[str, str]:
-    """The base tree's fingerprints, from a throwaway worktree that is always removed."""
-    with tempfile.TemporaryDirectory(prefix="mcp-re-select-") as scratch:
-        tree = Path(scratch) / "base"
-        subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "worktree", "add", "--detach", "--quiet",
-             str(tree), base],
-            capture_output=True, text=True, check=True,
-        )
-        try:
-            return fingerprints(tree)
-        finally:
-            subprocess.run(
-                ["git", "-C", str(REPO_ROOT), "worktree", "remove", "--force", str(tree)],
-                capture_output=True, text=True, check=False,
-            )
+    """The base commit's fingerprints, read from its tree in the object database."""
+    tree = _tree.CommitTree(base, REPO_ROOT)
+    try:
+        return fingerprints(tree)
+    finally:
+        tree.close()
 
 
 def moved(base: dict[str, str], head: dict[str, str]) -> set[str]:
@@ -116,10 +119,13 @@ def select(base: str, max_units: int = DEFAULT_MAX_UNITS) -> tuple[str, set[str]
         reason = platform_change(changed_paths(base))
         if reason:
             return "deferred", set(), reason + later
-        head = fingerprints(REPO_ROOT)
+        head = fingerprints()
         before = base_fingerprints(base)
         edges = load_verification().get("edge", [])
-    except (subprocess.CalledProcessError, OSError, ValueError, KeyError, ManifestError) as exc:
+    except (
+        subprocess.CalledProcessError, OSError, ValueError, KeyError, ManifestError,
+        _tree.TreeError,
+    ) as exc:
         detail = getattr(exc, "stderr", "") or str(exc)
         return "deferred", set(), f"the scope could not be computed ({detail.strip()[:300]})" + later
     changed = moved(before, head)

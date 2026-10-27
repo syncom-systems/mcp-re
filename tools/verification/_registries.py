@@ -90,7 +90,21 @@ def read(file: Path, where: str | None = None) -> dict:
 
 
 def document(name: str, root: Path = REPO_ROOT, *, required: bool = False) -> dict:
-    """Registry `name` parsed. An absent registry is empty unless `required`."""
+    """Registry `name` parsed. An absent registry is empty unless `required`.
+
+    Under the repository root it is read from the current source tree (`_tree.current()`),
+    so a measurement of another commit reads that commit's registry; any other root is a
+    scratch tree a selftest built, read from the filesystem.
+    """
+    if root == REPO_ROOT:
+        import _tree
+
+        tree = _tree.current()
+        if not tree.is_file(relative(name)):
+            if required:
+                raise ManifestError(f"{relative(name)}: missing")
+            return {}
+        return parse(tree.read(relative(name)).decode("utf-8"), relative(name))
     file = path(name, root)
     if not file.is_file() and not required:
         return {}
@@ -104,6 +118,10 @@ def rows(name: str, table: str, root: Path = REPO_ROOT) -> list[dict]:
 
 def text(name: str, root: Path = REPO_ROOT) -> str:
     """Registry `name` as committed text, for a reader that digests or quotes entries."""
+    if root == REPO_ROOT:
+        import _tree
+
+        return _tree.text(relative(name))
     return path(name, root).read_text(encoding="utf-8")
 
 
