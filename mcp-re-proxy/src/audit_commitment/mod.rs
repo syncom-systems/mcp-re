@@ -144,6 +144,7 @@ pub(crate) use crossing::{Accounting, Crossing, Intent, Outcome};
 pub(crate) use established::EstablishedProvider;
 pub(crate) use established::Redeemed;
 pub(crate) use established_audit::EstablishedAudit;
+pub(crate) use outcome::OwedOutcome;
 // What a crossing spends and why it may refuse: no code outside `established` names these
 // yet, in any build.
 #[allow(unused_imports)]

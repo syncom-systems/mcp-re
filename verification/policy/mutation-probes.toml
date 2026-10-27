@@ -13946,32 +13946,38 @@ expect_red = [
 id = "M610-proxy-the-intent-is-committed-before-the-crossing-is-recorded"
 unit = "proxy.audit_intent_gate"
 conjunct = "G1 runs before the retention commit, so no .pending marker exists for an exchange whose intent was not committed (D7)"
-path = "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
+# RE-ANCHORED (#1247): D7's three steps are one function, `dispatch_obligations::take`, and the
+# weakening swaps the same two of them there.
+path = "mcp-re-proxy/src/http_profile_serve/dispatch_obligations.rs"
 anchor = """
-        let intent = ExecutionIntent::new(acc.exchange().actor_id, acc.exchange().now);
-        let intent = match self.audit.intent(acc.exchange_coordinate(), intent).await {
-            Ok(intent) => intent,
-            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
-        };
-        let retention = match self.retention.commit(accepted).await {
-            Ok(disposition) => progress.establish(disposition),
-            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
-        };
+    let intent = audit.intent(coordinate, intent).await?;
+    let crossing = retention.commit(accepted).await?;
 """
 weakening = """
-        let retention = match self.retention.commit(accepted).await {
-            Ok(disposition) => progress.establish(disposition),
-            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
-        };
-        let intent = ExecutionIntent::new(acc.exchange().actor_id, acc.exchange().now);
-        let intent = match self.audit.intent(acc.exchange_coordinate(), intent).await {
-            Ok(intent) => intent,
-            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
-        };
+    let crossing = retention.commit(accepted).await?;
+    let intent = audit.intent(coordinate, intent).await?;
 """
 expect_red = [
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::w3_retention_commit_failure_after_intent_leaves_no_pending_and_no_dispatch",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::an_intent_refusal_leaves_no_pending_marker",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::dispatch_obligations::tests::a_refused_intent_records_no_crossing",
+]
+
+[[probe]]
+id = "M626-proxy-a-refused-reservation-commits-no-intent"
+unit = "proxy.audit_intent_gate"
+conjunct = "G1 runs after the retention reserve, so a refused reservation commits no intent (D7)"
+path = "mcp-re-proxy/src/http_profile_serve/dispatch_obligations.rs"
+anchor = """
+    let accepted = retention.reserve(request).await?;
+    let intent = audit.intent(coordinate, intent).await?;
+"""
+weakening = """
+    let intent = audit.intent(coordinate, intent).await?;
+    let accepted = retention.reserve(request).await?;
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::dispatch_obligations::tests::a_refused_reservation_commits_no_intent",
 ]
 
 [[probe]]
@@ -14052,8 +14058,10 @@ expect_red = [
 id = "M615-proxy-a-failed-outcome-commit-does-not-proceed"
 unit = "proxy.audit_outcome_gate"
 conjunct = "a failed outcome commitment refuses; it never proceeds as though no commitment were owed"
+# RE-ANCHORED (#1247): G2's match moved from `AuditPosture::outcome` to `IntentDisposition::outcome`
+# in `outcome.rs`, beside the crossing it spends. Same line, same weakening.
 # The G2 guard (S2). Pill-evidenced RED in #1205 (PP1).
-path = "mcp-re-proxy/src/audit_commitment/posture.rs"
+path = "mcp-re-proxy/src/audit_commitment/outcome.rs"
 anchor = """
                 .map(|committed| OutcomeDisposition::Committed(Box::new(committed))),
 """
@@ -14061,7 +14069,7 @@ weakening = """
                 .map(|committed| OutcomeDisposition::Committed(Box::new(committed)))
                 .or_else(|_| {
                     Ok(OutcomeDisposition::NotRequired(
-                        NoCommitmentRequired::minted_by_posture(),
+                        super::NoCommitmentRequired::minted_by_posture(),
                     ))
                 }),
 """

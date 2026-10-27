@@ -77,7 +77,8 @@ impl HttpProfileProxy {
     }
 
     /// G2, BEFORE retention completes (Q2): a refusal here is what retention then holds, so
-    /// the retained representation stays the one actually served.
+    /// the retained representation stays the one actually served. The intent G1 carried is
+    /// what G2 commits through; neither the posture nor the coordinate is read here.
     async fn commit_outcome<'x>(
         &self,
         acc: &Accepted<'_>,
@@ -92,11 +93,7 @@ impl HttpProfileProxy {
             status: response.status,
             at_unix: acc.exchange().now,
         };
-        match self
-            .audit
-            .outcome(intent, acc.exchange_coordinate(), observed.clone())
-            .await
-        {
+        match intent.outcome(observed.clone()).await {
             Ok(outcome) => Ok(Committed {
                 permit,
                 response,

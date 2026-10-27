@@ -41,6 +41,7 @@ use crate::refusal::Refusal;
 use crate::request_stages::ReadyForDispatch;
 
 use super::body_boundary::ForwardedBody;
+use super::dispatch_obligations;
 use super::receipt::Accepted;
 use super::receipt::RefusalPoint;
 use super::request_admission::ValidatedRequestEnvelope;
@@ -146,19 +147,19 @@ impl HttpProfileProxy {
                 progress,
             ));
         }
-        let accepted = match self.retention.reserve(acc.exchange().http_req).await {
-            Ok(accepted) => accepted,
-            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
-        };
-        // G1 (ADR-MCPRE-070 D7). A refusal drops `accepted`, which rescinds the reservation,
-        // and `prepared`, which returns the plane's capacity: nothing is left behind.
-        let intent = ExecutionIntent::new(acc.exchange().actor_id, acc.exchange().now);
-        let intent = match self.audit.intent(acc.exchange_coordinate(), intent).await {
-            Ok(intent) => intent,
-            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
-        };
-        let retention = match self.retention.commit(accepted).await {
-            Ok(disposition) => progress.establish(disposition),
+        // ADR-MCPRE-070 D7. A refusal drops `prepared`, which returns the plane's capacity,
+        // and the obligations taken so far rescind themselves: nothing is left behind.
+        let ex = acc.exchange();
+        let intent = ExecutionIntent::new(ex.actor_id, ex.now);
+        let obligations = dispatch_obligations::take(
+            &self.retention,
+            &self.audit,
+            ex.http_req,
+            acc.exchange_coordinate(),
+            intent,
+        );
+        let (retention, intent) = match obligations.await {
+            Ok((crossing, intent)) => (progress.establish(crossing), intent),
             Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
         };
         Ok(ReadyForDispatch::new(prepared, window, retention, intent))
