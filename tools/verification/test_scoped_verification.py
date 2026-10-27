@@ -107,7 +107,7 @@ def _stubbed_select(moved_count: int, max_units: int):
     head = {f"u{i}": "new" for i in range(50)}
     base = {f"u{i}": ("old" if i < moved_count else "new") for i in range(50)}
     select_units.changed_paths = lambda _base: ["mcp-re-core/src/lib.rs"]
-    select_units.fingerprints = lambda _root: head
+    select_units.fingerprints = lambda *_tree: head
     select_units.base_fingerprints = lambda _base: base
     select_units.load_verification = lambda: {"edge": []}
     try:
@@ -243,6 +243,51 @@ def test_units_file_naming_an_undeclared_unit_is_refused():
         assert "undeclared unit" in completed.stderr, completed.stderr
         # The refusal still leaves a bundle, and it is not a pass.
         assert json.loads((Path(scratch) / "bundle.json").read_text())["aggregate"] == "FAIL"
+
+
+def test_the_base_is_read_from_the_object_database_not_a_checkout():
+    """The base's fingerprints come from its commit tree, so measuring it creates nothing:
+    no worktree, no scratch checkout, no file outside the object database."""
+    source = (HERE / "select-units").read_text(encoding="utf-8")
+    assert "worktree" not in source.split('"""', 2)[2], "select-units makes a checkout again"
+    listed = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=HERE,
+                            capture_output=True, text=True, check=True).stdout
+    before = listed.count("worktree ")
+    fingerprints = select_units.base_fingerprints("HEAD")
+    after = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=HERE,
+                           capture_output=True, text=True, check=True).stdout.count("worktree ")
+    assert fingerprints and before == after, (len(fingerprints), before, after)
+
+
+def test_a_commit_tree_reads_what_the_commit_holds_and_nothing_else():
+    """The commit adapter answers from git's objects: the same files and bytes the checkout
+    tracks for a pattern, a refusal for a path the commit lacks, and a refusal for a commit
+    that does not resolve."""
+    import _tree
+
+    working, commit = _tree.WorkingTree(), _tree.CommitTree("HEAD")
+    try:
+        for pattern in ("tools/verification/*.py", "mcp-re-proxy/src/**/*.rs", "**/BUILD.bazel"):
+            assert commit.files(pattern), pattern
+            assert set(commit.files(pattern)) <= set(working.files(pattern)), pattern
+        assert commit.read("VERSION") == subprocess.run(
+            ["git", "show", "HEAD:VERSION"], cwd=HERE, capture_output=True, check=True
+        ).stdout
+        assert not commit.is_file("no/such/file.txt")
+        try:
+            commit.read("no/such/file.txt")
+        except FileNotFoundError:
+            pass
+        else:
+            raise AssertionError("a path the commit lacks was read")
+    finally:
+        commit.close()
+    try:
+        _tree.CommitTree("no-such-revision-anywhere")
+    except _tree.TreeError:
+        pass
+    else:
+        raise AssertionError("an unresolvable commit produced a tree")
 
 
 if __name__ == "__main__":

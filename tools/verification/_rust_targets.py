@@ -45,7 +45,6 @@ generation error, not a guess.
 from __future__ import annotations
 
 import json
-from functools import lru_cache
 from pathlib import Path
 import subprocess
 
@@ -190,8 +189,19 @@ def render(table: dict) -> str:
 def rows_at(root: Path) -> dict[str, dict]:
     """The rows, by label, of the table committed under `root`."""
     try:
-        data = json.loads((root / TABLE_RELATIVE).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as err:
+        return _rows_of((root / TABLE_RELATIVE).read_text(encoding="utf-8"))
+    except OSError as err:
+        raise TargetTableError(
+            f"{TABLE_RELATIVE} is unreadable ({err}); regenerate it with "
+            f"`tools/verification/rust-targets --write`"
+        ) from err
+
+
+def _rows_of(text: str) -> dict[str, dict]:
+    """The rows, by label, of one rendering of the table."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as err:
         raise TargetTableError(
             f"{TABLE_RELATIVE} is unreadable ({err}); regenerate it with "
             f"`tools/verification/rust-targets --write`"
@@ -206,10 +216,22 @@ def fixture(rows: dict[str, dict]) -> str:
     return render({"schema": SCHEMA, "query": QUERY, "targets": rows})
 
 
-@lru_cache(maxsize=1)
 def table() -> dict[str, dict]:
-    """The committed table's rows, by label."""
-    return rows_at(REPO_ROOT)
+    """The committed table's rows, by label, as the current source tree holds it."""
+    import _tree
+
+    tree = _tree.current()
+
+    def load() -> dict[str, dict]:
+        try:
+            return _rows_of(tree.read(TABLE_RELATIVE).decode("utf-8"))
+        except OSError as err:
+            raise TargetTableError(
+                f"{TABLE_RELATIVE} is unreadable ({err}); regenerate it with "
+                f"`tools/verification/rust-targets --write`"
+            ) from err
+
+    return tree.memo("rust-targets", load)
 
 
 def production_targets(rows: dict[str, dict] | None = None) -> list[str]:

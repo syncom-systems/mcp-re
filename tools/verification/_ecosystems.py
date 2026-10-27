@@ -72,6 +72,7 @@ import re
 import tempfile
 
 import _rust_targets
+import _tree
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -194,7 +195,7 @@ def project_of(path: str, eco: Ecosystem) -> str | None:
             rel = current.relative_to(REPO_ROOT)
         except ValueError:
             return None
-        if any((current / manifest).is_file() for manifest in eco.project_manifests):
+        if any(_tree.current().is_file((rel / manifest).as_posix()) for manifest in eco.project_manifests):
             return rel.as_posix()
         if current == REPO_ROOT:
             return None

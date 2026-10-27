@@ -137,9 +137,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
 from contextvars import ContextVar
-from functools import lru_cache
 
 from _ecosystems import build_configuration_patterns
 from _ecosystems import RUST
@@ -150,6 +148,7 @@ from _ecosystems import unit_projects
 from _lean_sources import generated_model_paths, LAKEFILE, theorem_source_paths
 import _registries
 import _rust_targets
+import _tree
 from _premise import is_model_registration
 from _lanes import claims
 from _manifest import (
@@ -218,20 +217,19 @@ def _digest_paths(patterns: list[str], *, tracked_only: bool = False) -> dict[st
     digest. `tracked_only` inputs are the exception: they name alternatives — a
     `poetry.lock` where a project uses `uv` — that contribute nothing until tracked.
     """
-    tracked = _tracked_files() if tracked_only or _READS.get() is not None else None
+    tree = _tree.current()
+    tracked = tree.tracked() if tracked_only or _READS.get() is not None else None
     out: dict[str, str] = {}
     for pattern in sorted(patterns):
         if not tracked_only and not _is_pattern(pattern):
             _record(pattern)
-        for path in sorted(REPO_ROOT.glob(pattern)):
-            if path.is_file():
-                rel = path.relative_to(REPO_ROOT).as_posix()
-                if tracked is not None and rel not in tracked:
-                    if tracked_only:
-                        continue
-                else:
-                    _record(rel)
-                out[rel] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+        for rel in tree.files(pattern):
+            if tracked is not None and rel not in tracked:
+                if tracked_only:
+                    continue
+            else:
+                _record(rel)
+            out[rel] = "sha256:" + hashlib.sha256(tree.read(rel)).hexdigest()
     return out
 
 
@@ -261,9 +259,8 @@ def _formal_sources(unit: dict) -> dict[str, str]:
     return _digest_tracked(formal_source_patterns(unit))
 
 
-@lru_cache(maxsize=1)
 def _tracked_files() -> frozenset[str]:
-    """Every path git tracks, as repo-relative POSIX strings.
+    """Every path git tracks in the tree being measured, as repo-relative POSIX strings.
 
     A fingerprint describes the COMMITTED tree, and every explicitly declared input already
     is one. The glob-driven inputs are not, and an untracked file among them makes the same
@@ -278,22 +275,8 @@ def _tracked_files() -> frozenset[str]:
     (issue #746). The filter stays, because it is what keeps that repair honest: a lock that
     goes back to being ignored silently leaves the closure again, and the filter is what
     makes that a measured absence rather than a machine-dependent digest.
-
-    Git is already a platform premise here — `render-r9-dispositions --check` establishes
-    merge ancestry the same way — and the call is made once per process.
     """
-    proc = subprocess.run(
-        ["git", "ls-files", "-z"],
-        cwd=REPO_ROOT,
-        stdout=subprocess.PIPE,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        # No git, no answer. Returning "everything is tracked" would silently restore the
-        # machine-dependent digest this exists to remove.
-        raise RuntimeError("git ls-files failed; the fingerprint cannot describe the tree")
-    return frozenset(entry for entry in proc.stdout.split("\0") if entry)
+    return _tree.current().tracked()
 
 
 def _digest_tracked(patterns: list[str]) -> dict[str, str]:
@@ -720,10 +703,11 @@ def _measured_lane_identity(unit: dict) -> dict[str, str]:
     return _digest_paths(list(MEASURED_LANE_INPUTS))
 
 
-@lru_cache(maxsize=None)
 def _boundary_files(patterns: tuple[str, ...]) -> frozenset[str]:
-    """The files a boundary's patterns name. Cached: the globs are walked once per run."""
-    return frozenset(expand_paths(list(patterns)))
+    """The files a boundary's patterns name, walked once per tree."""
+    return _tree.current().memo(
+        f"boundary:{patterns!r}", lambda: frozenset(expand_paths(list(patterns)))
+    )
 
 
 def _governing_boundaries(unit: dict, boundaries: dict) -> dict[str, str]:
