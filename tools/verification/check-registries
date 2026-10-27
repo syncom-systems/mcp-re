@@ -208,6 +208,12 @@ def selftest() -> int:
         ("prose naming a registry", 'msg = "register it in verification/policy/assumptions.toml first"\n', False),
         ("a docstring", '"""Reads verification/policy/theorems.toml."""\n', False),
     ]
+    table = 'T = REPO / "verification" / "generated" / "rust-targets.json"\n'
+    readers += [
+        ("the generated target table built as a path", table, True),
+        ("the generated target table named as a string",
+         'FILES = ("verification/generated/rust-targets.json",)\n', True),
+    ]
     for label, source, flagged in readers:
         got = source_problems(source, "probe.py")
         ok = bool(got) is flagged
@@ -215,6 +221,12 @@ def selftest() -> int:
         if not ok:
             failed += 1
             print(f"        got {got}")
+    got = source_problems(table, "tools/verification/_rust_targets.py")
+    ok = not got
+    print(f"  {'ok  ' if ok else 'FAIL'}  reader rule: the generated table's owner may spell its path")
+    if not ok:
+        failed += 1
+        print(f"        got {got}")
 
     if failed:
         print(f"check-registries: SELFTEST FAILED ({failed})")
