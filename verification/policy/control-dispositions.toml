@@ -8223,10 +8223,10 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-18020"
 project = "mcp-re-proxy"
-control = "src/lib.rs#async_serve::target_uri_tests::an_empty_configured_target_is_not_checked_here"
+control = "src/lib.rs#config_state::request_target::tests::the_origin_form_is_the_path_and_query"
 decision = "new-proposition"
 proposition = "NP-141"
-recorded = "2026-09-19"
+recorded = "2026-10-27"
 
 [[disposition]]
 id = "CD-18021"
@@ -12059,7 +12059,7 @@ recorded = "2026-09-29"
 [[disposition]]
 id = "CD-20047"
 project = "mcp-re-proxy"
-control = "src/lib.rs#config_state::validation::residue::tests::the_target_uri_refusal_does_not_echo_a_credential"
+control = "src/lib.rs#config_state::request_target::tests::the_target_uri_refusal_does_not_echo_a_credential"
 decision = "new-proposition"
 proposition = "NP-215"
 recorded = "2026-09-29"
@@ -15539,3 +15539,11 @@ control = "gate#scripts/distribution_gate.py"
 decision = "not-evidence"
 reason_family = "ND-003"
 recorded = "2026-10-23"
+
+[[disposition]]
+id = "CD-20607"
+project = "mcp-re-proxy"
+control = "src/lib.rs#config_state::request_target::tests::the_classifier_refuses_what_construction_refuses"
+decision = "new-proposition"
+proposition = "NP-141"
+recorded = "2026-10-27"

@@ -44,10 +44,11 @@ Two requirements are load-bearing:
   structural probes, measurements, and Verus — builds and runs through it, on the Rust
   toolchain MODULE.bazel pins. The prover runs as a Bazel action on that toolchain's own
   compiler driver, so the box needs no rustup for it.
-- **A Python with `tomllib` must precede `/usr/bin`.** Both lanes parse
-  `verification/policy/toolchains.lock.toml` with the standard library. macOS ships a
-  3.9 at `/usr/bin/python3` that satisfies `python3` and fails only on import. The
-  symptom was `ModuleNotFoundError: No module named 'tomllib'`.
+- **The pinned Python must be the first `python3` on the PATH.** `.python-version` names
+  it (3.14.7, one of `toolchains.lock.toml` `[python].interpreters`), and every lane tool
+  runs on `python3`, so its verdicts are that interpreter's. macOS ships a 3.9 at
+  `/usr/bin/python3` and Homebrew a newer minor; neither is the pin. `uv python install
+  3.14.7` provides it, and `uv python find 3.14.7` names the directory to put first.
 
 After editing `.env`, restart the service — a running runner keeps its old environment:
 

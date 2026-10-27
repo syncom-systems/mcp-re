@@ -114,6 +114,9 @@ impl MachineStates {
                 .mcp_transport_contract
                 .ok_or_else(|| unrecognised("mcp-transport-contract"))?,
             replay: r.replay.ok_or_else(|| unrecognised("replay"))?,
+            request_target: r
+                .request_target
+                .ok_or_else(|| unrecognised("request-target"))?,
             retention: t.retention,
             server_identity: r
                 .server_identity

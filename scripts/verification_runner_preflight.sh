@@ -23,19 +23,22 @@ fail() {
   failed=1
 }
 
-# --- Python must be new enough for tomllib -----------------------------------
-# The lock file is TOML and both lanes parse it with the standard library.
-# tomllib is 3.11+; macOS ships a 3.9 under /usr/bin that satisfies `python3`
-# and fails only once it imports.
+# --- Python is the pinned interpreter -----------------------------------------
+# Every lane tool is Python, and its verdicts are that interpreter's: `unicodedata`'s
+# Unicode version, the stdlib behaviour THM-0094 rests on. `.python-version` names the
+# one the repository runs, and a lane on any other `python3` measures something else.
 python_path="$(command -v python3 || true)"
+python_pin="$(tr -d '[:space:]' < "$(dirname "$0")/../.python-version" 2>/dev/null || true)"
 if [[ -z "$python_path" ]]; then
   fail "no python3 on the lane PATH."
+elif [[ -z "$python_pin" ]]; then
+  fail ".python-version is missing or empty, so no interpreter is pinned."
 else
   python_version="$(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null || true)"
-  if python3 -c 'import tomllib' 2>/dev/null; then
-    echo "python3 ${python_version} at ${python_path} (tomllib present)"
+  if [[ "$python_version" == "$python_pin" ]]; then
+    echo "python3 ${python_version} at ${python_path} (the pinned interpreter)"
   else
-    fail "python3 ${python_version} at ${python_path} has no tomllib (needs 3.11+)."
+    fail "python3 ${python_version:-?} at ${python_path} is not the pinned ${python_pin} (.python-version)."
   fi
 fi
 

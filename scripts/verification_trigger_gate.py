@@ -47,8 +47,6 @@ Run:  python3 scripts/verification_trigger_gate.py
 from __future__ import annotations
 
 import functools
-import importlib.machinery
-import importlib.util
 import re
 import sys
 from pathlib import Path
@@ -80,6 +78,7 @@ from _manifest import (  # noqa: E402
     load_trust_boundaries,
     load_verification,
 )
+import _affected  # noqa: E402
 import _registries  # noqa: E402
 from _registry_refs import structural_probe_paths  # noqa: E402
 
@@ -281,16 +280,6 @@ def stale_filters(workflow_text: str, repo: Path, required: list[str]) -> list[s
     return sorted(set(stale))
 
 
-def load_select_units():
-    path = REPO / "tools" / "verification" / "select-units"
-    loader = importlib.machinery.SourceFileLoader("select_units", str(path))
-    spec = importlib.util.spec_from_loader("select_units", loader)
-    assert spec is not None
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
-
-
 def check_controls(verification: str, probe: str, deferral) -> list[str]:
     """The negative controls, as properties of the given workflow texts."""
     failures: list[str] = []
@@ -339,7 +328,7 @@ def fingerprint_inputs() -> list[str]:
 def selftest() -> int:
     failed = False
     texts = read_texts()
-    deferral = load_select_units().platform_change
+    deferral = _affected.platform_change
     # Deriving the fingerprint read set measures every unit (about a minute); the real run does
     # it, and the controls below need only the workflow files.
     required: list[str] = []
@@ -444,7 +433,7 @@ def main(argv: list[str]) -> int:
     try:
         required = fingerprint_inputs()
         texts = read_texts()
-        failures = all_failures(texts, load_select_units().platform_change, required)
+        failures = all_failures(texts, _affected.platform_change, required)
     except ManifestError as exc:
         print(f"verification-trigger gate: FAILED — the manifest does not load: {exc}")
         return 1

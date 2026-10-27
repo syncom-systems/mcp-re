@@ -68,6 +68,7 @@
 //! **Not a framework.** Closed enums and exhaustive matches, per ADR-MCPRE-058 §12.
 //! **Not public.** Exchange state is not a protocol surface (ADR-MCPRE-057 §18).
 
+pub(crate) mod publication;
 /// Where one exchange is in the serving pipeline.
 ///
 /// The order is the pipeline order: a directed path with five terminals and exactly two
@@ -540,7 +541,7 @@ pub(crate) fn transition(
 ///
 /// Nor the transitions that are the assembly's own rather than any stage's — the dispatch and
 /// the two continuation facts, stated in `handle` where they are established — or the bodied
-/// success tail, which [`ExchangeProgress::publish`] drives from [`ServedSuccess`].
+/// success tail, which [`publication::PublishPermit::publish`] drives from [`ServedSuccess`].
 #[must_use = "a stage's established fact must be handed to ExchangeProgress::establish, or \
               the machine does not learn the stage ran"]
 pub(crate) struct Established<T> {
@@ -595,9 +596,9 @@ impl ExchangeProgress {
 
     /// The exchange's position in the pipeline.
     ///
-    /// Test-only since the terminals became [`may_publish`](Self::may_publish) and
-    /// [`publish`](Self::publish): the serving path used to read the position back and
-    /// `debug_assert!` it had reached a terminal, and that check is now the structure of
+    /// Test-only since the terminals became [`may_publish`](Self::may_publish) and the permit's
+    /// [`publish`](publication::PublishPermit::publish): the serving path used to read the
+    /// position back and `debug_assert!` a terminal, and that check is now the structure of
     /// the two operations rather than an observation made afterwards.
     #[cfg(test)]
     pub(crate) fn state(&self) -> ExchangeState {
@@ -707,24 +708,18 @@ impl ExchangeProgress {
         established.value
     }
 
-    /// Whether this exchange may publish `served`, deciding BEFORE anything is published.
-    ///
-    /// Every success path commits its outcome, discharges retention and emits `response.signed`
-    /// before it reaches its terminal, each publishing the claim, and the 202 is signed first. So
-    /// the question is asked here, against the tuple the exchange WOULD hold, while refusing is
-    /// still possible: `Err` leaves the machine where it legally was, with the anomaly latched.
-    pub(crate) fn may_publish<D>(&mut self, served: &ServedSuccess<D>) -> Result<(), &'static str> {
+    /// Whether this exchange may publish `served`, decided BEFORE anything publishes the claim:
+    /// every success path commits its outcome, discharges retention and emits `response.signed`
+    /// before its terminal, so this asks against the tuple the exchange WOULD hold. `Err` leaves
+    /// the machine where it legally was, anomaly latched; `Ok` is the permit that publishes
+    /// `served` to this exchange and no other.
+    pub(crate) fn may_publish<D>(
+        &mut self,
+        served: ServedSuccess<D>,
+    ) -> Result<publication::PublishPermit<'_, D>, &'static str> {
         match self.prospective_refusal(served.tail()) {
             Some(violation) => Err(violation),
-            None => Ok(()),
-        }
-    }
-
-    /// Reach the terminal `served` names, driving the same tail that was checked, from the
-    /// same owner: for a 202, the one event its stage's [`Established`] fact carries.
-    pub(crate) fn publish<D>(&mut self, served: ServedSuccess<D>) {
-        for event in served.tail() {
-            self.advance(*event);
+            None => Ok(publication::PublishPermit::issue(self, served)),
         }
     }
 
@@ -1849,8 +1844,8 @@ mod tests {
         // kept nothing to continue from.
         p.observe_open_leg(OpenLeg::Required);
         assert_eq!(
-            p.may_publish(&Success::OpenLeg),
-            Err("an open leg was served without a durable continuation record")
+            p.may_publish(Success::OpenLeg).err(),
+            Some("an open leg was served without a durable continuation record")
         );
         assert!(p.anomaly().is_some(), "the refusal latches");
     }
@@ -1862,8 +1857,8 @@ mod tests {
         // The record is durable, so the OPEN terminal would be legal — but this asks for
         // the TERMINAL one, which claims the call is over while a leg is outstanding.
         assert_eq!(
-            p.may_publish(&Success::Terminal),
-            Err("a reply that opens a leg was served as a terminal completion")
+            p.may_publish(Success::Terminal).err(),
+            Some("a reply that opens a leg was served as a terminal completion")
         );
     }
 
@@ -1879,8 +1874,8 @@ mod tests {
             // timeout case, and it is refused on BOTH bodied exits.
             p.observe_origin(ResponseOrigin::DispatchIndeterminate);
             assert_eq!(
-                p.may_publish(&success),
-                Err("synthesized transport-failure bytes were served as a success"),
+                p.may_publish(success).err(),
+                Some("synthesized transport-failure bytes were served as a success"),
             );
         }
     }
@@ -1889,7 +1884,7 @@ mod tests {
     fn a_publication_refused_leaves_the_exchange_where_it_legally_was() {
         let mut p = signed_and_settled(ExchangeEvent::OpenLegRecorded);
         p.observe_open_leg(OpenLeg::Required);
-        assert!(p.may_publish(&Success::OpenLeg).is_err());
+        assert!(p.may_publish(Success::OpenLeg).is_err());
         assert_eq!(
             p.state(),
             ExchangeState::ContinuationSettled,
@@ -1904,7 +1899,7 @@ mod tests {
     fn a_refused_publication_reports_the_exchange_as_possibly_executed() {
         let mut p = signed_and_settled(ExchangeEvent::ContinuationNotRequired);
         p.observe_origin(ResponseOrigin::DispatchIndeterminate);
-        assert!(p.may_publish(&Success::Terminal).is_err());
+        assert!(p.may_publish(Success::Terminal).is_err());
         // The latch is what makes this true, and it is why it happens BEFORE the refusal is
         // constructed: the disposition the refusal carries is derived from this machine.
         assert_eq!(
@@ -1927,9 +1922,11 @@ mod tests {
         // publication would succeed — published by a machine that has already said it
         // cannot vouch for this exchange. The refusal has to be remembered, not re-derived.
         assert_eq!(
-            p.may_publish(&Success::Terminal),
-            Err("a success publication was checked against a tail that \
-                 reaches no success terminal")
+            p.may_publish(Success::Terminal).err(),
+            Some(
+                "a success publication was checked against a tail that \
+                 reaches no success terminal"
+            )
         );
     }
 
@@ -1941,8 +1938,8 @@ mod tests {
         // derived from the tuple may be read at face value, a success claim least of all.
         p.advance(ExchangeEvent::SignatureVerified);
         assert_eq!(
-            p.may_publish(&Success::Terminal),
-            Err("the serving path drove an illegal exchange transition")
+            p.may_publish(Success::Terminal).err(),
+            Some("the serving path drove an illegal exchange transition")
         );
     }
 
@@ -1964,8 +1961,7 @@ mod tests {
             if matches!(success, Success::OpenLeg) {
                 p.observe_open_leg(OpenLeg::Recorded);
             }
-            assert_eq!(p.may_publish(&success), Ok(()));
-            p.publish(success);
+            p.may_publish(success).expect("cleared").publish();
             assert_eq!(p.state(), terminal);
             assert!(p.state().is_success_terminal());
             assert_eq!(p.anomaly(), None, "the checked tail is the driven tail");
@@ -1989,8 +1985,8 @@ mod tests {
         // exist because the transport failed cannot be the evidence for it.
         p.observe_origin(ResponseOrigin::DispatchIndeterminate);
         assert_eq!(
-            p.may_publish(&acknowledged()),
-            Err("synthesized transport-failure bytes were served as a success")
+            p.may_publish(acknowledged()).err(),
+            Some("synthesized transport-failure bytes were served as a success")
         );
         assert_eq!(
             p.state(),
@@ -2002,13 +1998,13 @@ mod tests {
         // about the operation refusing everything.
         let mut ok = progressed_to(ExchangeState::RetentionCommitted);
         ok.advance(ExchangeEvent::BackendDispatched);
-        assert_eq!(ok.may_publish(&acknowledged()), Ok(()));
+        let permit = ok.may_publish(acknowledged()).expect("cleared");
         assert_eq!(
-            ok.state(),
+            permit.exchange().state(),
             ExchangeState::Dispatched,
             "decided, not entered"
         );
-        ok.publish(acknowledged());
+        permit.publish();
         assert_eq!(ok.state(), ExchangeState::AcknowledgedNotification);
         assert_eq!(ok.anomaly(), None);
     }
@@ -2022,7 +2018,7 @@ mod tests {
         let mut p = progressed_to(ExchangeState::RetentionCommitted);
         p.advance(ExchangeEvent::BackendDispatched);
         p.observe_origin(ResponseOrigin::BackendReplied);
-        assert_eq!(p.may_publish(&acknowledged()), Ok(()));
+        assert!(p.may_publish(acknowledged()).is_ok());
         // The 202 was approved, then refused: nothing published it.
         assert_eq!(p.state(), ExchangeState::Dispatched);
         assert!(!p.state().is_success_terminal());

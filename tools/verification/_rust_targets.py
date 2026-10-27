@@ -50,7 +50,10 @@ from pathlib import Path
 import subprocess
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TABLE = REPO_ROOT / "verification" / "generated" / "rust-targets.json"
+#: Where the committed table lives. This module is its one reader: `_registries`
+#: refuses a production source that spells this path instead of asking here.
+TABLE_RELATIVE = "verification/generated/rust-targets.json"
+TABLE = REPO_ROOT / TABLE_RELATIVE
 SCHEMA = 1
 
 #: The rule classes rustc compiles a crate for, each taking a `lint_config`.
@@ -184,19 +187,29 @@ def render(table: dict) -> str:
     return json.dumps(table, indent=1, sort_keys=True) + "\n"
 
 
-@lru_cache(maxsize=1)
-def table() -> dict[str, dict]:
-    """The committed table's rows, by label."""
+def rows_at(root: Path) -> dict[str, dict]:
+    """The rows, by label, of the table committed under `root`."""
     try:
-        data = json.loads(TABLE.read_text())
+        data = json.loads((root / TABLE_RELATIVE).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as err:
         raise TargetTableError(
-            f"{TABLE.relative_to(REPO_ROOT)} is unreadable ({err}); regenerate it with "
+            f"{TABLE_RELATIVE} is unreadable ({err}); regenerate it with "
             f"`tools/verification/rust-targets --write`"
         ) from err
     if data.get("schema") != SCHEMA:
-        raise TargetTableError(f"{TABLE.relative_to(REPO_ROOT)} has schema {data.get('schema')}, not {SCHEMA}")
+        raise TargetTableError(f"{TABLE_RELATIVE} has schema {data.get('schema')}, not {SCHEMA}")
     return data["targets"]
+
+
+def fixture(rows: dict[str, dict]) -> str:
+    """A table holding exactly `rows`, as a gate's selftest writes one under a scratch root."""
+    return render({"schema": SCHEMA, "query": QUERY, "targets": rows})
+
+
+@lru_cache(maxsize=1)
+def table() -> dict[str, dict]:
+    """The committed table's rows, by label."""
+    return rows_at(REPO_ROOT)
 
 
 def production_targets(rows: dict[str, dict] | None = None) -> list[str]:

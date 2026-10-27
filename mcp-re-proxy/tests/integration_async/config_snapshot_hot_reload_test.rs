@@ -232,7 +232,11 @@ fn spawn(snapshot: Arc<ServerConfigSnapshot>) -> Server {
                 };
             let options = ServerOptions {
                 limits: ServerLimits::default(),
-                ..ServerOptions::new(window())
+                ..ServerOptions::new(
+                    window(),
+                    mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                        .expect("an absolute target"),
+                )
             };
             // The handshake bound comes from the pool that built this runtime (4 workers),
             // never from a constant that never saw the depth.

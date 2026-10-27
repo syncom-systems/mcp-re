@@ -735,7 +735,11 @@ fn pkcs11_tls_full_mtls_handshake_token_resident_no_disk_read() {
         serve_once(
             &listener,
             server_config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |request, _identity| {
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
                 b"{\"ok\":true}".to_vec()

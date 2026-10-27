@@ -248,7 +248,11 @@ fn fault_accept_any_client_makes_missing_client_cert_accepted() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |_req, _id| b"{\"ok\":true}".to_vec(),
         )
     });
@@ -304,7 +308,11 @@ fn fault_accept_any_client_makes_untrusted_client_cert_accepted() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |_req, _id| b"{\"ok\":true}".to_vec(),
         )
     });

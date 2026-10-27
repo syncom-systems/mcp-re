@@ -101,8 +101,8 @@ pub struct ServedHttpRequest {
     /// The HTTP method (RFC 9421 `@method`).
     pub method: String,
     /// The canonical `@target-uri` both client and server sign over
-    /// (deployment-configured via [`ServerOptions`]); an empty string when the
-    /// deployment did not configure one (the verifier then fails closed).
+    /// (deployment-configured via [`ServerOptions`]). Never empty or non-absolute: the serve
+    /// loop refuses a request before building this when the configured target is either.
     pub target_uri: String,
     /// The full request header block (name, value) — carries the RFC 9421
     /// `Signature`/`Signature-Input` and RFC 9530 `Content-Digest`.
@@ -252,37 +252,15 @@ pub async fn serve<H: AsyncRequestHandler>(
 /// operator asserts the whole URI in the first place. The path is what the ingress
 /// routes on and what this process CAN see, so it is the part whose assertion is
 /// checkable.
-///
-/// An empty configured target is not checked here — `config_state::validation::target_uri_violation` refuses it
-/// at the validation boundary every config passes through, and the verifier fails closed on
-/// a blank covered value.
-fn target_uri_mismatch(configured: &str, received: &hyper::Uri) -> Option<String> {
-    if configured.is_empty() {
-        return None;
-    }
-    let configured_origin = origin_form_of(configured)?;
+fn target_uri_mismatch(
+    configured: &crate::config_state::RequestTarget,
+    received: &hyper::Uri,
+) -> Option<String> {
     let received_origin = received
         .path_and_query()
         .map(|pq| pq.as_str().to_owned())
         .unwrap_or_else(|| "/".to_owned());
-    (configured_origin != received_origin).then_some(received_origin)
-}
-
-/// The origin-form (`/path`) of an ABSOLUTE `--target-uri`.
-///
-/// `None` only for a target with no `://`, which `config_state::validation::target_uri_violation` refuses at the
-/// validation boundary — so on the served path this is always `Some`, and the mismatch
-/// check is always live. The refusal is at the boundary rather than only in the parser
-/// because a `None` here reads as "no mismatch", which would disable this check silently
-/// for a config that never met a parser.
-fn origin_form_of(absolute: &str) -> Option<String> {
-    // Class B: `split_once` yields the authority directly, so the scheme delimiter's
-    // width is named once rather than repeated as an offset.
-    let (_scheme, authority) = absolute.split_once("://")?;
-    Some(match authority.find('/') {
-        Some(offset) => authority.get(offset..).unwrap_or("/").to_owned(),
-        None => "/".to_owned(),
-    })
+    (configured.origin_form() != received_origin).then_some(received_origin)
 }
 
 /// Translate the handler's [`ServedHttpResponse`] (status + headers + body) into a
@@ -351,10 +329,17 @@ mod target_uri_tests {
         value.parse().expect("test uri")
     }
 
+    fn target(value: &str) -> crate::config_state::RequestTarget {
+        crate::config_state::RequestTarget::new(value).expect("an absolute target")
+    }
+
     #[test]
     fn a_matching_origin_form_is_consistent() {
         assert_eq!(
-            target_uri_mismatch("https://mcp.example.com/mcp?route=a", &uri("/mcp?route=a")),
+            target_uri_mismatch(
+                &target("https://mcp.example.com/mcp?route=a"),
+                &uri("/mcp?route=a")
+            ),
             None
         );
     }
@@ -366,7 +351,7 @@ mod target_uri_tests {
     fn a_different_received_path_is_refused() {
         assert_eq!(
             target_uri_mismatch(
-                "https://mcp.example.com/mcp?route=a",
+                &target("https://mcp.example.com/mcp?route=a"),
                 &uri("/other?route=a")
             ),
             Some("/other?route=a".to_owned())
@@ -378,7 +363,10 @@ mod target_uri_tests {
     #[test]
     fn a_different_query_is_refused() {
         assert_eq!(
-            target_uri_mismatch("https://mcp.example.com/mcp?route=a", &uri("/mcp?route=b")),
+            target_uri_mismatch(
+                &target("https://mcp.example.com/mcp?route=a"),
+                &uri("/mcp?route=b")
+            ),
             Some("/mcp?route=b".to_owned())
         );
     }
@@ -388,7 +376,7 @@ mod target_uri_tests {
     #[test]
     fn the_configured_authority_is_not_compared() {
         assert_eq!(
-            target_uri_mismatch("https://external.example.com/mcp", &uri("/mcp")),
+            target_uri_mismatch(&target("https://external.example.com/mcp"), &uri("/mcp")),
             None
         );
     }
@@ -396,20 +384,13 @@ mod target_uri_tests {
     #[test]
     fn a_root_target_matches_a_root_request() {
         assert_eq!(
-            target_uri_mismatch("https://mcp.example.com", &uri("/")),
+            target_uri_mismatch(&target("https://mcp.example.com"), &uri("/")),
             None
         );
         assert_eq!(
-            target_uri_mismatch("https://mcp.example.com/", &uri("/")),
+            target_uri_mismatch(&target("https://mcp.example.com/"), &uri("/")),
             None
         );
-    }
-
-    /// An unset target is not checked here: `--target-uri` is required and non-empty at
-    /// parse, and a blank covered value already fails verification closed.
-    #[test]
-    fn an_empty_configured_target_is_not_checked_here() {
-        assert_eq!(target_uri_mismatch("", &uri("/anything")), None);
     }
 }
 

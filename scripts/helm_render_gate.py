@@ -45,11 +45,13 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools" / "verification"))
+
+import _rust_targets  # noqa: E402
 CHART = REPO / "deploy" / "helm" / "mcp-re-proxy"
 DOCKERFILE = REPO / "deploy" / "docker" / "Dockerfile"
 #: Stages the binaries the image copies in, each named by its Bazel label.
 STAGE_SCRIPT = REPO / "scripts" / "stage_image_binaries.sh"
-TARGET_TABLE = REPO / "verification" / "generated" / "rust-targets.json"
 
 #: `keySource` value -> the cargo feature the binary needs to serve it. A mode the
 #: chart accepts but the default image was not built with does not degrade: the CLI
@@ -77,8 +79,7 @@ def default_image_features(root: Path = REPO) -> set[str]:
             label = stripped.split()[1]
     if not label:
         return set()
-    table = root / TARGET_TABLE.relative_to(REPO)
-    row = json.loads(table.read_text(encoding="utf-8"))["targets"].get(label)
+    row = _rust_targets.rows_at(root).get(label)
     return set(row["features"]) if row else set()
 
 
@@ -1144,7 +1145,7 @@ TEXT_INPUTS = (
     "mcp-re-proxy/src/audit_sink/drain.rs",
     "mcp-re-proxy/src/cli/audit_flags.rs",
     "scripts/stage_image_binaries.sh",
-    "verification/generated/rust-targets.json",
+    _rust_targets.TABLE_RELATIVE,
 )
 
 
@@ -1166,7 +1167,7 @@ def selftest() -> int:
     """
     edits = {
         "the default image serves every offered keySource": (
-            "verification/generated/rust-targets.json",
+            _rust_targets.TABLE_RELATIVE,
             lambda text: _without_feature(text, "gcp_kms_keysource"),
         ),
         "the proxy image declares the chart's non-root uid": (

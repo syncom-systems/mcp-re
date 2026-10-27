@@ -32,6 +32,7 @@ pub(super) struct Refusals {
     connection_bounds: Vec<String>,
     mcp_transport_contract: Vec<String>,
     replay: Vec<String>,
+    request_target: Vec<String>,
     trust_document: Vec<String>,
     client_credential_window: Vec<String>,
     server_identity: Vec<String>,
@@ -55,6 +56,7 @@ impl Refusals {
             connection_bounds: self.connection_bounds,
             mcp_transport_contract: self.mcp_transport_contract,
             replay: self.replay,
+            request_target: self.request_target,
             trust_document: self.trust_document,
             client_credential_window: self.client_credential_window,
             server_identity: self.server_identity,
@@ -82,6 +84,7 @@ pub(super) struct RefusableStates {
     pub(super) delegated_signing: Option<crate::config_state::DelegatedSigningFacts>,
     pub(super) mcp_transport_contract: Option<crate::config_state::McpTransportContractState>,
     pub(super) replay: Option<crate::config_state::ReplayState>,
+    pub(super) request_target: Option<crate::config_state::RequestTarget>,
     pub(super) server_identity: Option<crate::config_state::server_identity::ServerIdentityFacts>,
     pub(super) channel_credential_custody:
         Option<crate::config_state::ChannelCredentialCustodyState>,
@@ -93,66 +96,40 @@ pub(super) struct RefusableStates {
 /// `None` and the refusal that explains it.
 pub(super) fn classify_refusable(config: &DeploymentRequest) -> (RefusableStates, Refusals) {
     use crate::config_state as m;
-    // Each machine's answer is one value, `(state, refusals)`, split once below.
-    let continuation_control = m::continuation_control::classify_and_validate(config);
-    let custody = m::custody::classify_and_validate(config);
-    let delegated_signing = m::delegated_signing::classify_and_validate(config);
-    let replay = m::replay::classify_and_validate(config);
-    let channel_credential_custody = m::channel_credential_custody::classify_and_validate(config);
-    let trust_revocation = m::trust_revocation::classify_and_validate(config);
-    let admission = m::admission::classify_and_validate(config);
-    let audit = m::audit_policy::classify_and_validate(config);
-    let authorization = m::authorization::classify_and_validate(config);
-    let channel_binding = m::transport::classify_and_validate_binding(config);
-    let crl_revocation = m::crl_revocation::classify_and_validate_crl(config);
-    let freshness = m::freshness::classify_and_validate(config);
-    let connection_bounds = m::connection_bounds::classify_and_validate(config);
-    let mcp_transport_contract = m::mcp_transport_contract::classify_and_validate(config);
-    let trust_document = m::trust_document::classify_and_validate(config);
-    let client_credential_window = m::client_credential_window::classify_and_validate(config);
+    // Each machine's answer is one value, `(state, refusals)`. The macro names a machine once
+    // and splits every answer the same way, so no machine can reach one half without the other.
+    macro_rules! split_answers {
+        ($($machine:ident = $answer:expr),* $(,)?) => {{
+            $(let $machine = $answer;)*
+            (
+                RefusableStates { $($machine: $machine.0,)* },
+                Refusals { $($machine: $machine.1,)* },
+            )
+        }};
+    }
+    let delegated = m::delegated_signing::classify_and_validate(config);
     // This deployment's own actor identity. It takes the RESOLVED issuer kid rather than
     // re-reading the primitives it defaults from, so the keyid on the identity and the kid
     // the credential chains to are one value (CF-10).
-    let server_identity =
-        m::server_identity::classify_and_validate(config, delegated_signing.0.as_ref());
-    (
-        RefusableStates {
-            admission: admission.0,
-            audit: audit.0,
-            authorization: authorization.0,
-            channel_binding: channel_binding.0,
-            client_credential_window: client_credential_window.0,
-            freshness: freshness.0,
-            connection_bounds: connection_bounds.0,
-            continuation_control: continuation_control.0,
-            crl_revocation: crl_revocation.0,
-            custody: custody.0,
-            delegated_signing: delegated_signing.0,
-            mcp_transport_contract: mcp_transport_contract.0,
-            replay: replay.0,
-            server_identity: server_identity.0,
-            channel_credential_custody: channel_credential_custody.0,
-            trust_document: trust_document.0,
-            trust_revocation: trust_revocation.0,
-        },
-        Refusals {
-            admission: admission.1,
-            audit: audit.1,
-            authorization: authorization.1,
-            channel_binding: channel_binding.1,
-            continuation_control: continuation_control.1,
-            crl_revocation: crl_revocation.1,
-            custody: custody.1,
-            delegated_signing: delegated_signing.1,
-            freshness: freshness.1,
-            connection_bounds: connection_bounds.1,
-            mcp_transport_contract: mcp_transport_contract.1,
-            replay: replay.1,
-            trust_document: trust_document.1,
-            client_credential_window: client_credential_window.1,
-            server_identity: server_identity.1,
-            channel_credential_custody: channel_credential_custody.1,
-            trust_revocation: trust_revocation.1,
-        },
-    )
+    let identity = m::server_identity::classify_and_validate(config, delegated.0.as_ref());
+    split_answers! {
+        continuation_control = m::continuation_control::classify_and_validate(config),
+        custody = m::custody::classify_and_validate(config),
+        delegated_signing = delegated,
+        replay = m::replay::classify_and_validate(config),
+        channel_credential_custody = m::channel_credential_custody::classify_and_validate(config),
+        trust_revocation = m::trust_revocation::classify_and_validate(config),
+        admission = m::admission::classify_and_validate(config),
+        audit = m::audit_policy::classify_and_validate(config),
+        authorization = m::authorization::classify_and_validate(config),
+        channel_binding = m::transport::classify_and_validate_binding(config),
+        crl_revocation = m::crl_revocation::classify_and_validate_crl(config),
+        freshness = m::freshness::classify_and_validate(config),
+        request_target = m::request_target::classify_and_validate(config),
+        connection_bounds = m::connection_bounds::classify_and_validate(config),
+        mcp_transport_contract = m::mcp_transport_contract::classify_and_validate(config),
+        trust_document = m::trust_document::classify_and_validate(config),
+        client_credential_window = m::client_credential_window::classify_and_validate(config),
+        server_identity = identity,
+    }
 }

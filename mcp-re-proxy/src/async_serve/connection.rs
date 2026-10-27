@@ -221,6 +221,8 @@ mod tests {
                         Duration::from_millis(50),
                     )
                     .expect("a legal credential window"),
+                    crate::config_state::RequestTarget::new("https://x/")
+                        .expect("an absolute target"),
                 )
             });
             let admission = admission(&options);

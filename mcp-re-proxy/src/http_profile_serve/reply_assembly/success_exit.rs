@@ -23,8 +23,8 @@ use mcp_re_http_profile::HttpResponse;
 
 use crate::async_serve::ServedHttpResponse;
 use crate::audit_record::{AuditRecord, AuditSubject};
-use crate::exchange_state::{ExchangeProgress, ServedSuccess};
-use crate::request_stages::{IntentDisposition, OutcomeDisposition, RetentionDisposition};
+use crate::exchange_state::publication::PublishPermit;
+use crate::request_stages::{OutcomeDisposition, PostDispatch};
 
 use super::super::inner_plane::NotificationDelivered;
 use super::super::receipt::Accepted;
@@ -36,16 +36,15 @@ impl HttpProfileProxy {
     ///
     /// The only place a success is `served`, and it cannot be reached without the
     /// [`OutcomeDisposition`] G2 returns — under the required posture, a committed outcome.
-    /// The caller has already decided `may_publish(success)`.
+    /// The caller has already decided `may_publish(success)`: the permit is its answer.
     pub(super) async fn publish_success(
         &self,
         acc: &Accepted<'_>,
-        progress: &mut ExchangeProgress,
-        success: ServedSuccess<NotificationDelivered>,
+        permit: PublishPermit<'_, NotificationDelivered>,
         response: HttpResponse,
-        retention: &RetentionDisposition,
-        intent: IntentDisposition,
+        owed: PostDispatch,
     ) -> ServedHttpResponse {
+        let (retention, intent) = owed.into_publication();
         let observed = AuditRecord {
             subject: AuditSubject::response_signed(),
             actor_id: Some(acc.exchange().actor_id.to_owned()),
@@ -62,18 +61,18 @@ impl HttpProfileProxy {
             Ok(outcome) => outcome,
             Err(refusal) => {
                 return self
-                    .refuse_retained(acc, refusal, progress, retention)
+                    .refuse_retained(acc, refusal, permit.exchange(), &retention)
                     .await
             }
         };
         if let Some(rejection) = self
-            .retain_accepted(acc, &response, retention, progress)
+            .retain_accepted(acc, &response, &retention, permit.exchange())
             .await
         {
             return rejection;
         }
         self.offer_outcome(acc, &outcome, observed);
-        progress.publish(success);
+        permit.publish();
         served(response)
     }
 
@@ -123,7 +122,7 @@ mod tests {
         let g2 = at(".outcome(intent,");
         let retention = at(".retain_accepted(");
         let offer = at("self.offer_outcome(");
-        let publish = at("progress.publish(success)");
+        let publish = at("permit.publish()");
         let serve = at("served(response)");
         assert!(
             g2 < retention && retention < offer && offer < publish && publish < serve,

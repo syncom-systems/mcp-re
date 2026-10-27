@@ -97,7 +97,11 @@ mod tests {
             connection_bounds: crate::config_state::ConnectionBounds::from_limits(&limits)
                 .expect("bounds in force"),
             limits,
-            ..ServerOptions::new(window())
+            ..ServerOptions::new(
+                window(),
+                crate::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            )
         };
         format!("{:?}", http_builder(&options))
     }

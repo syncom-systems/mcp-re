@@ -23,12 +23,11 @@ use crate::exchange_state::ExchangeEvent;
 use crate::exchange_state::ExchangeProgress;
 use crate::exchange_state::OpenLeg;
 use crate::refusal::Refusal;
-use crate::request_stages::RetentionDisposition;
+use crate::request_stages::PostDispatch;
 
 use super::receipt::Accepted;
 use super::reply::ReplyClass;
 use super::reply::ValidatedReply;
-use super::signing_window::SigningWindow;
 use super::HttpProfileProxy;
 
 /// The bodyless 202 terminal a one-way message reaches.
@@ -104,21 +103,19 @@ impl HttpProfileProxy {
     /// produces the answer, and not by the caller — an `Err` arm in `handle` returns the
     /// binding its stage produced and nothing else, which `refusal_provenance_gate` enforces
     /// against THM-0081.
-    #[allow(clippy::too_many_arguments)]
     pub(super) async fn assemble_reply(
         &self,
         acc: &Accepted<'_>,
         progress: &mut ExchangeProgress,
         outcome: DispatchedOutcome,
         outstanding: &OutstandingId,
-        window: &SigningWindow,
-        retention: &RetentionDisposition,
+        owed: &PostDispatch,
     ) -> Result<SignedReply, ServedHttpResponse> {
         let inner_bytes = match self.inner_async.observe_reply(progress, outcome) {
             Ok(bytes) => progress.establish(bytes),
             Err(refusal) => {
                 return Err(self
-                    .refuse_retained(acc, refusal, progress, retention)
+                    .refuse_retained(acc, refusal, progress, owed.retention())
                     .await)
             }
         };
@@ -131,12 +128,15 @@ impl HttpProfileProxy {
             Ok(read) => read,
             Err(refusal) => {
                 return Err(self
-                    .refuse_retained(acc, refusal, progress, retention)
+                    .refuse_retained(acc, refusal, progress, owed.retention())
                     .await)
             }
         };
         let (response, response_base) =
-            match self.responses.sign_reply(acc.exchange(), validated, window) {
+            match self
+                .responses
+                .sign_reply(acc.exchange(), validated, owed.window())
+            {
                 Ok((response, base)) => (response, progress.establish(base)),
                 // SIGNING failed, so there is no signed terminal to retain. The marker stays,
                 // and it is the true statement: this exchange crossed and no durable retained

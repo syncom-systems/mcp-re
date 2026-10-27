@@ -581,7 +581,11 @@ fn mtls_round_trip_extracts_client_identity_and_serves_request() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |request, identity| {
                 // Echo the request body back; the identity is asserted via the join.
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
@@ -725,7 +729,11 @@ fn delegated_ed25519_tls_handshake_round_trip() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |request, identity| {
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
                 let _ = identity;
@@ -830,7 +838,11 @@ fn validated_delegated_build_round_trip_and_corrupted_sig_fails() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |request, _identity| {
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
                 b"{\"ok\":true}".to_vec()
@@ -894,7 +906,11 @@ fn validated_delegated_build_round_trip_and_corrupted_sig_fails() {
         serve_once(
             &listener2,
             config2,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |_req, _id| b"{\"ok\":true}".to_vec(),
         )
     });
@@ -974,7 +990,11 @@ fn missing_client_certificate_is_rejected() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |_req, _id| b"{\"ok\":true}".to_vec(),
         )
     });
@@ -1005,7 +1025,11 @@ fn untrusted_client_certificate_is_rejected() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |_req, _id| b"{\"ok\":true}".to_vec(),
         )
     });
@@ -1045,7 +1069,11 @@ fn over_long_client_cert_is_rejected() {
     );
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
-    let options = ServerOptions::new(window());
+    let options = ServerOptions::new(
+        window(),
+        mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+            .expect("an absolute target"),
+    );
 
     let server = thread::spawn(move || {
         serve_once(&listener, config, &options, |_req, _id| {
@@ -1079,7 +1107,11 @@ fn within_limit_client_cert_is_served() {
     );
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
-    let options = ServerOptions::new(window());
+    let options = ServerOptions::new(
+        window(),
+        mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+            .expect("an absolute target"),
+    );
 
     let server = thread::spawn(move || {
         serve_once(&listener, config, &options, |_req, _id| {
@@ -1126,7 +1158,11 @@ fn non_revoked_client_cert_completes_handshake_with_crl_configured() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |request, _id| {
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
                 b"{\"ok\":true}".to_vec()
@@ -1167,7 +1203,11 @@ fn revoked_client_cert_handshake_is_rejected() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |_req, _id| b"{\"ok\":true}".to_vec(),
         )
     });
@@ -1209,7 +1249,11 @@ fn stale_crl_fails_client_handshake_closed() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |_req, _id| b"{\"ok\":true}".to_vec(),
         )
     });
@@ -1276,7 +1320,11 @@ fn a_client_whose_revocation_status_cannot_be_determined_is_denied() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |_req, _id| b"{\"ok\":true}".to_vec(),
         )
     });

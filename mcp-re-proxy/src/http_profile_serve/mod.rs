@@ -492,18 +492,10 @@ impl HttpProfileProxy {
         // a state entered only on the way out would leave a cancelled or panicking dispatch
         // claiming nothing happened.
         progress.advance(ExchangeEvent::BackendDispatched);
-        let (outcome, window, owed, intent) = ready.dispatch().await.into_parts();
+        let (outcome, owed) = ready.dispatch().await.split();
         let outstanding = admitted.envelope.outstanding();
-        self.answer_dispatched(
-            &acc,
-            &mut progress,
-            outstanding,
-            outcome,
-            &window,
-            &owed,
-            intent,
-        )
-        .await
+        self.answer_dispatched(&acc, &mut progress, outstanding, outcome, owed)
+            .await
     }
 }
 

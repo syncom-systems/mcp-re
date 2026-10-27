@@ -77,7 +77,11 @@ fn matching_client_identity_round_trips_and_equals_signer() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |request, _id| {
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
                 b"{\"ok\":true}".to_vec()
@@ -125,7 +129,11 @@ fn mismatched_client_chains_to_the_same_ca_but_differs_from_signer() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |_req, _id| b"{\"ok\":true}".to_vec(),
         )
     });
@@ -169,7 +177,11 @@ fn server_leaf_does_not_chain_to_the_client_ca() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::new(window()),
+            &ServerOptions::new(
+                window(),
+                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            ),
             |_req, _id| b"{\"ok\":true}".to_vec(),
         )
     });

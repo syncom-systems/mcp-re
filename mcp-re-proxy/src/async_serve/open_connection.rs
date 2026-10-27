@@ -63,7 +63,11 @@ mod tests {
     }
 
     fn admission() -> CoreAdmission {
-        let options = ServerOptions::new(window());
+        let options = ServerOptions::new(
+            window(),
+            crate::config_state::RequestTarget::new("https://localhost/")
+                .expect("an absolute target"),
+        );
         let pool = crate::async_fleet::CorePool::for_core(
             std::num::NonZeroUsize::MIN.saturating_add(1),
             crate::config_state::PrivateKeyExposure::ProcessReadable,

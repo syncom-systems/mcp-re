@@ -85,6 +85,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
 
       - name: Runner shape
         run: |
@@ -159,6 +163,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
 
       - name: Runner shape
         run: |
@@ -259,6 +267,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
       - name: Install the pinned Verus release, digest-checked
         run: |
           set -euo pipefail
@@ -277,6 +289,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
       - uses: actions/download-artifact@v8
         with:
           pattern: evidence-*-${{ github.run_id }}-${{ github.run_attempt }}
@@ -313,6 +329,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
       - uses: actions/download-artifact@v8
         with:
           name: verification-evidence-${{ github.run_id }}-${{ github.run_attempt }}

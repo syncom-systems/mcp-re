@@ -52,6 +52,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
 
       # JCS vocabulary firewall (D1 of the active-profile/legacy-quarantine note):
       # forward-design docs must not frame a live "object profile + HTTP profile"
@@ -304,13 +308,8 @@ jobs:
           python3 scripts/test_inventory_gate.py
 
       # The audit scalar refuses every Unicode format control (Cf); the Rust range table that
-      # says which codepoints those are is compared with `unicodedata`, which needs the
-      # interpreter whose Unicode version the table declares.
-      - name: Set up Python for the format-control table
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.14"
-
+      # says which codepoints those are is compared with `unicodedata`, so the verdict is the
+      # pinned interpreter's Unicode version, set up at the top of this job.
       - name: Format-control table gate
         run: |
           python3 scripts/format_control_table_gate.py --selftest
@@ -773,10 +772,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Python
+      - name: Set up the pinned Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version-file: .python-version
 
       - name: Install pinned external RFC 9421 dependency
         run: pip install -r mcp-re-conformance/tools/requirements-cross-verify.txt
@@ -1010,6 +1009,10 @@ jobs:
     # (they are cfg'd out on macOS); this is also the canonical hermetic target.
     steps:
       - uses: actions/checkout@v7
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
 
       # The FFI closure (cryptoki-sys) builds bindings with libclang, same as the
       # cargo jobs; install it so the Bazel build links on a clean runner.
@@ -1145,10 +1148,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Python
+      - name: Set up the pinned Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version-file: .python-version
 
       # The wheel is Bazel's: the PyO3 binding is built by the same Rust toolchain and crate
       # universe as every other target, and packaged by rules_python's py_wheel.
