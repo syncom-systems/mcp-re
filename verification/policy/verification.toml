@@ -4332,6 +4332,8 @@ paths = [
   "mcp-re-proxy/src/async_inner/in_process.rs",
   "mcp-re-proxy/src/authorization/dispatch.rs",
   "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs",
+  # The obligations the crossing carries, taken in D7's order.
+  "mcp-re-proxy/src/http_profile_serve/dispatch_obligations.rs",
   # R11-481. The boundary now asks one more question, and this file is where the answer
   # lives: `SigningWindow::covers` is the projection the crossing consults. It is also in
   # `proxy.response_signing`, which is correct — that unit claims what a window ADVERTISES,
@@ -9638,6 +9640,8 @@ paths = [
   "mcp-re-proxy/src/audit_record/intent.rs",
   # Shared with `proxy.dispatch_commitment`: G1 is placed, and the window extended, there.
   "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs",
+  # Shared with `proxy.dispatch_commitment`: D7's order, reserve -> intent -> crossing.
+  "mcp-re-proxy/src/http_profile_serve/dispatch_obligations.rs",
   "mcp-re-proxy/src/async_inner/completion_bound.rs",
 ]
 exported_contracts = []
@@ -9660,6 +9664,10 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_coordinate_from_another_run_is_500_and_asks_nothing",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::each_failure_class_earns_its_own_status",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_spent_budget_refuses_before_dispatch_and_asks_nobody",
+  # D7's order, at unit level over a real store and a scripted authority.
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::dispatch_obligations::tests::a_refused_reservation_commits_no_intent",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::dispatch_obligations::tests::a_refused_intent_records_no_crossing",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::dispatch_obligations::tests::the_crossing_is_recorded_once_the_intent_is_committed",
   # The posture: best-effort mints the owner's statement and asks nothing; required never does.
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::only_best_effort_mints_not_required",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_required_posture_never_yields_not_required",
@@ -9730,6 +9738,8 @@ description = "Under the required audit posture no completed success — bodied 
 paths = [
   "mcp-re-proxy/src/audit_commitment/outcome.rs",
   "mcp-re-proxy/src/request_stages/outcome_disposition.rs",
+  # The carrier G2 spends: a committed intent holds the outcome it owes.
+  "mcp-re-proxy/src/request_stages/intent_disposition.rs",
   "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs",
   # Shared: the A-state reading lives in the posture, the provider in the intent crossing.
   "mcp-re-proxy/src/audit_commitment/posture.rs",
@@ -9753,7 +9763,8 @@ tested_symbols = [
   # The procedure: one bounded attempt, the actual status, always 500.
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::outcome::tests::outcome_commit_gives_committed_with_the_actual_status",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::outcome::tests::every_outcome_failure_is_500",
-  "//mcp-re-proxy:proxy_unit_test#audit_commitment::outcome::tests::an_absent_coordinate_is_500_and_asks_nothing",
+  # G2 is handed no coordinate: the intent G1 committed carries the one it named (D9).
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::outcome::tests::the_owed_outcome_is_committed_for_the_exchange_its_intent_named",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::outcome::tests::an_intent_receipt_does_not_commit_an_outcome",
   # Requiredness from the carried A state; one token, two status tables (D12).
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::not_required_passes_through_and_asks_nothing",
