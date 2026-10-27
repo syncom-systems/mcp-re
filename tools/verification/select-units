@@ -51,24 +51,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _affected import consumer_closure, platform_change  # noqa: E402
 from _compose import requirements  # noqa: E402
 from _lanes import FORMAL  # noqa: E402
-from _evidence import PREREQUISITE_KINDS  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
     ManifestError,
     load_assumptions,
     load_toolchains,
     load_verification,
-)
-
-#: A changed path under any of these defers the check to the complete run. The platform's
-#: own code decides what every verdict means, so a scope computed by a changed instrument
-#: is not trusted.
-PLATFORM_PREFIXES = (
-    "tools/verification/",
-    ".github/workflows/verification.yml",
-    ".github/workflows/mutation-probe.yml",
 )
 
 
@@ -84,13 +75,6 @@ def changed_paths(base: str) -> list[str]:
 #: verification job 7-11 minutes, most of it fixed setup; the complete run of 245 units
 #: took 95. A larger scope is deferred to the weekly / release run.
 DEFAULT_MAX_UNITS = 20
-
-
-def platform_change(paths: list[str]) -> str | None:
-    hits = sorted(p for p in paths if p.startswith(PLATFORM_PREFIXES))
-    if hits:
-        return f"the change touches the verification platform: {', '.join(hits[:5])}"
-    return None
 
 
 def fingerprints(root: Path) -> dict[str, str]:
@@ -123,20 +107,6 @@ def base_fingerprints(base: str) -> dict[str, str]:
 def moved(base: dict[str, str], head: dict[str, str]) -> set[str]:
     """Units new at HEAD or whose fingerprint differs from the base's."""
     return {unit_id for unit_id, fp in head.items() if base.get(unit_id) != fp}
-
-
-def consumer_closure(units: set[str], edges: list[dict]) -> set[str]:
-    """`units` plus every unit that consumes one of them over a prerequisite edge."""
-    closure = set(units)
-    grew = True
-    while grew:
-        grew = False
-        for edge in edges:
-            if edge.get("kind") in PREREQUISITE_KINDS and edge["from"] in closure:
-                if edge["to"] not in closure:
-                    closure.add(edge["to"])
-                    grew = True
-    return closure
 
 
 def select(base: str, max_units: int = DEFAULT_MAX_UNITS) -> tuple[str, set[str], str]:

@@ -127,7 +127,7 @@ import argparse
 import json
 import subprocess
 import sys
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 WORKFLOWS = REPO / ".github" / "workflows"
@@ -136,8 +136,8 @@ from workflow_reader import glob_matches, named_paths, read  # noqa: E402
 
 sys.path.insert(0, str(REPO / "tools" / "verification"))
 
-from _evidence import MALFORMED_LANE, PREREQUISITE_KINDS, required_lanes  # noqa: E402
-from _fingerprint import WORKSPACE_BUILD_INPUTS  # noqa: E402
+import _affected  # noqa: E402
+from _evidence import MALFORMED_LANE, required_lanes  # noqa: E402
 from _lanes import LANES  # noqa: E402
 from _manifest import SCHEMA_VERSION, load_verification  # noqa: E402
 import _registries  # noqa: E402
@@ -269,48 +269,6 @@ def checks_for_lanes(
             )
         resolved[lane] = found
     return resolved
-
-
-def declares(declared: str, changed: str) -> bool:
-    """Whether the declared `paths` entry `declared` names the changed file `changed`.
-
-    A glob entry is matched with the syntax `_manifest.expand_paths` expands it with, as a
-    pattern rather than against the tree, because the commit judged here is not the working
-    tree. A literal entry names a file, or a directory and everything under it.
-    """
-    if any(ch in declared for ch in "*?["):
-        return PurePosixPath(changed).full_match(declared)
-    return changed == declared or changed.startswith(declared.rstrip("/") + "/")
-
-
-def affected_units(units: list[dict], edges: list[dict], changed: set[str]) -> set[str]:
-    """The unit ids whose evidence this change can invalidate.
-
-    Three widenings, each closing a way a change reaches a unit without touching its own
-    declared paths: a workspace build input changes what EVERY unit is about; the
-    verification tooling and policy change what every measurement MEANS; and a prerequisite
-    edge carries a producer's invalidation forward to its consumers.
-    """
-    if any(c in WORKSPACE_BUILD_INPUTS for c in changed):
-        return {u["id"] for u in units}
-    if any(c.startswith(("tools/verification/", "verification/policy/")) for c in changed):
-        return {u["id"] for u in units}
-
-    hit = set()
-    for unit in units:
-        for declared in unit.get("paths", []):
-            if any(declares(declared, c) for c in changed):
-                hit.add(unit["id"])
-                break
-
-    changed_flag = True
-    while changed_flag:
-        changed_flag = False
-        for edge in edges:
-            if edge["kind"] in PREREQUISITE_KINDS and edge["from"] in hit and edge["to"] not in hit:
-                hit.add(edge["to"])
-                changed_flag = True
-    return hit
 
 
 # ------------------------------------------------------------------------------ verdict
@@ -570,7 +528,7 @@ def main(argv: list[str]) -> int:
         # From the CANDIDATE, never from the tree: see `manifest_at`.
         manifest = manifest_at(sha)
         units, edges = manifest.get("unit", []), manifest.get("edge", [])
-        affected = affected_units(units, edges, changed_files(sha, args.base))
+        affected = _affected.by_paths(units, edges, changed_files(sha, args.base))
         lanes: set[str] = set()
         for unit in units:
             if unit["id"] in affected:
@@ -794,7 +752,7 @@ def selftest() -> int:
 
     # A build-input change must widen to every unit, not to the units that declare it.
     manifest = load_verification()
-    every = affected_units(manifest["unit"], manifest.get("edge", []), {"bazel/crates.lock"})
+    every = _affected.by_paths(manifest["unit"], manifest.get("edge", []), {"bazel/crates.lock"})
     if len(every) != len(manifest["unit"]):
         print(f"  FAIL a crates.lock change widened to {len(every)} of {len(manifest['unit'])} units")
         bad += 1
@@ -804,7 +762,7 @@ def selftest() -> int:
     synthetic = [{"id": "g", "paths": ["src/serve/**/*.rs"]}]
     for path, want in (("src/serve/a.rs", True), ("src/serve/x/y/a.rs", True),
                        ("src/serve/a.py", False), ("src/other/a.rs", False)):
-        if ("g" in affected_units(synthetic, [], {path})) != want:
+        if ("g" in _affected.by_paths(synthetic, [], {path})) != want:
             print(f"  FAIL glob unit path vs {path}: wanted affected={want}")
             bad += 1
     # The same, over the registry as declared: every glob entry reaches its unit through a
@@ -813,16 +771,16 @@ def selftest() -> int:
 
     globbed = 0
     for unit in manifest["unit"]:
-        literal = [p for p in unit.get("paths", []) if not any(ch in p for ch in "*?[")]
+        literal = [p for p in unit.get("paths", []) if not _affected.is_glob(p)]
         for pattern in unit.get("paths", []):
             if pattern in literal:
                 continue
             only = sorted(f for f in expand_paths([pattern])
-                          if not any(declares(p, f) for p in literal))
+                          if not any(_affected.declares(p, f) for p in literal))
             if not only:
                 continue
             globbed += 1
-            if unit["id"] not in affected_units([unit], [], {only[0]}):
+            if unit["id"] not in _affected.by_paths([unit], [], {only[0]}):
                 print(f"  FAIL {unit['id']}: a change to {only[0]} (named by {pattern}) is not counted")
                 bad += 1
     if globbed == 0:
