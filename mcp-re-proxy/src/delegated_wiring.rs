@@ -228,7 +228,8 @@ mod tests {
         .collect();
         crate::cli::parse_args(&args)
             .expect("parse delegated-required config")
-            .into_inner()
+            .config()
+            .clone()
     }
 
     /// A ROOT issuer whose every signing call fails — proves fail-closed issuance flows

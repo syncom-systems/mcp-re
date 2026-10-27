@@ -280,7 +280,8 @@ fn a_config_that_skipped_the_parser_still_cannot_bypass_the_safety_guards() {
     let m = serving_fixtures::write_material();
     let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m))
         .expect("the base config parses")
-        .into_inner();
+        .config()
+        .clone();
 
     // `parse_args` would have refused this. Setting it afterwards is not a contrived
     // move — it is the only shape an in-code caller has.
@@ -320,7 +321,8 @@ fn a_programmatic_config_cannot_claim_an_ocsp_check_the_serving_path_never_makes
     let m = serving_fixtures::write_material();
     let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m))
         .expect("the base config parses")
-        .into_inner();
+        .config()
+        .clone();
 
     // What an in-code caller can write. `parse_args` refuses the flag, so this is the
     // only shape the configuration can take.
@@ -361,7 +363,8 @@ fn a_programmatic_config_cannot_carry_a_deny_list_nothing_enforces() {
     let m = serving_fixtures::write_material();
     let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m))
         .expect("the base config parses")
-        .into_inner();
+        .config()
+        .clone();
 
     // What an in-code caller can write; `parse_args` refuses the flag, so this is the only
     // shape the configuration can take.
@@ -399,7 +402,8 @@ fn a_programmatic_config_cannot_enable_an_unaccepted_authz_profile() {
     let m = serving_fixtures::write_material();
     let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m))
         .expect("the base config parses")
-        .into_inner();
+        .config()
+        .clone();
 
     config.authorization.kind = mcp_re_proxy::deployment_request::AuthzKind::Reference;
 
@@ -435,7 +439,8 @@ fn the_boundary_alone_refuses_an_lb_assertion_binding() {
     let m = serving_fixtures::write_material();
     let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m))
         .expect("the base config parses")
-        .into_inner();
+        .config()
+        .clone();
 
     config.peer_identity =
         mcp_re_proxy::deployment_request::PeerIdentityEvidenceRequest::IngressAssertion(
@@ -480,7 +485,8 @@ fn mode_c_attested_ingress_is_refused_at_the_configuration_boundary() {
     let m = serving_fixtures::write_material();
     let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m))
         .expect("the base config parses")
-        .into_inner();
+        .config()
+        .clone();
 
     config.peer_identity =
         mcp_re_proxy::deployment_request::PeerIdentityEvidenceRequest::AttestedIngress(
@@ -692,7 +698,8 @@ fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour(
     let m = serving_fixtures::write_material();
     let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m))
         .expect("the base config parses")
-        .into_inner();
+        .config()
+        .clone();
 
     // Each case is a mutation the parser would have refused, applied afterwards — the
     // only shape an in-code caller has — with the substring the refusal must name.
@@ -798,7 +805,8 @@ fn a_programmatic_config_cannot_disable_the_request_target_reconstruction_check(
     let m = serving_fixtures::write_material();
     let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m))
         .expect("the base config parses")
-        .into_inner();
+        .config()
+        .clone();
 
     for (label, target) in [
         ("scheme-less", "proxy.internal:8600/mcp"),
@@ -916,7 +924,8 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
     let m = serving_fixtures::write_material();
     let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m))
         .expect("the base config parses")
-        .into_inner();
+        .config()
+        .clone();
 
     // (flag, the REASON the refusal must give, mutation). The reason matters: three of
     // these fields are also named by unrelated coherence rules, so asserting only that the
@@ -1091,7 +1100,8 @@ fn a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector() {
     let m = serving_fixtures::write_material();
     let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m))
         .expect("the base config parses")
-        .into_inner();
+        .config()
+        .clone();
 
     #[allow(clippy::type_complexity)]
     let cases: Vec<(
@@ -1174,7 +1184,8 @@ fn a_programmatic_config_cannot_hot_spin_the_crl_reloader() {
     let m = serving_fixtures::write_material();
     let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m))
         .expect("the base config parses")
-        .into_inner();
+        .config()
+        .clone();
 
     let mut config = parsed.clone();
     config.peer_revocation.lists.reload_secs = Some(0);
@@ -1223,7 +1234,8 @@ fn a_programmatic_config_cannot_mint_an_unboundedly_long_lived_delegated_credent
     let m = serving_fixtures::write_material();
     let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m))
         .expect("the base config parses")
-        .into_inner();
+        .config()
+        .clone();
     let ceiling = mcp_re_proxy::config_state::delegated_signing::MAX_DELEGATED_TTL_SECS;
 
     let mut config = parsed.clone();
@@ -1391,7 +1403,8 @@ fn a_programmatic_config_cannot_carry_a_decision_scope_that_selects_nothing() {
     let m = serving_fixtures::write_material();
     let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m))
         .expect("the base config parses")
-        .into_inner();
+        .config()
+        .clone();
     config.authorization.decision_scope =
         Some(mcp_re_http_profile::pdp_decision::DecisionScope::Principal);
 

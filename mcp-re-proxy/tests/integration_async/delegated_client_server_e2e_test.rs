@@ -137,7 +137,8 @@ fn server_config() -> mcp_re_proxy::deployment_request::DeploymentRequest {
     .collect();
     mcp_re_proxy::cli::parse_args(&args)
         .expect("parse server config")
-        .into_inner()
+        .config()
+        .clone()
 }
 
 /// The server's trust seam: the client key for the Request slot (the server verifies

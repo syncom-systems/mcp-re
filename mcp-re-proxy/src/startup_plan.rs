@@ -359,7 +359,7 @@ mod tests {
     }
 
     fn parse(extra: &[&str]) -> Result<DeploymentRequest, String> {
-        crate::cli::parse_args(&base_argv(extra)).map(ValidatedDeployment::into_inner)
+        crate::cli::parse_args(&base_argv(extra)).map(|validated| validated.config().clone())
     }
 
     fn strategy_for(extra: &[&str]) -> PeerIdentityProvenance {

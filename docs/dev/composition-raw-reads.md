@@ -7,11 +7,21 @@ The rule this inventory serves:
 > startup composition, materialization and the serving path must not ask for it again.
 
 `ValidatedDeployment::config()` is the escape hatch. Its own doc comment already says each
-forward is "countable as work remaining" — this is the count. Five call sites bind it, and
-through those bindings **39 raw field reads over 26 distinct fields** reach composition:
-29 reads / 20 fields in `app.rs`, 10 reads / 10 fields in `startup_plan.rs`.
+forward is "countable as work remaining" — this is the count.
 
-Measured at `438abc2`.
+**Today** (measured at `e236f1d4`, 2026-10-27): three production sites read it —
+`app.rs:136`, `startup_plan.rs:200` and `startup_plan.rs:294` — and through them **12 raw
+reads over 7 fields** reach composition:
+- `app.rs`: 10 reads over 7 fields — `bind`×3, `audience`×2, `channel_credential`,
+  `peer_trust_anchors`, `route`, `limits`, `inner_http_urls`.
+- `startup_plan.rs`: 2 reads — `audience`, and `limits` for the handshake-signing capacity.
+
+Every one is in `composition_raw_read_test`'s `ORDINARY` inventory, which now scans every
+production file that calls `config()` rather than `app.rs` alone.
+
+The rest of this document is the campaign that got there, measured at `438abc2`. Its starting
+count was **39 raw field reads over 26 distinct fields**: 29 reads / 20 fields in `app.rs`,
+10 reads / 10 fields in `startup_plan.rs`.
 
 ## The taxonomy
 
@@ -189,22 +199,22 @@ certificate path and a backend URL are things you construct with, not decisions 
 
 What the criterion forbids is a DECISION taken from a raw field, and that is not
 mechanically decidable. So `mcp-re-proxy/tests/integration/composition_raw_read_test.rs`
-pins the decidable half: the exact set of fields `app.rs` still reads, each with the
-sentence saying why it is ordinary. A new raw read fails the gate. The fix is normally to
+pins the decidable half: the exact set of fields every production caller of `config()`
+still reads, each with the sentence saying why it is ordinary. A new raw read fails the gate. The fix is normally to
 find the owner, not to add an entry — six fields that looked ordinary on the first pass
 were not, and two of those were holding live defects.
 
-The remaining nine are locators and coordinates: `bind`, `channel_credential`,
-`peer_trust_anchors`, `inner_http_urls`, `route`, `target_uri`, `audience`,
-`trust_domain`, `limits`.
+The remaining seven are locators, coordinates and ceilings: `bind`, `channel_credential`,
+`peer_trust_anchors`, `inner_http_urls`, `route`, `audience`, `limits`. `trust_domain` left
+when the server identity took it, and `target_uri` when `RequestTarget` became its owner
+(#1246).
 
-`app.rs` went **29 raw reads → 13**; `startup_plan.rs` **10 → 3**.
+`app.rs` went **29 raw reads → 10**; `startup_plan.rs` **10 → 2**.
 
 ### Still open
 
-- The resolved shard count is established twice (`app.rs` and `serve_fleet`) from the same
-  request. They agree; nothing makes them agree. That is a change to the serving runtime's
-  shape rather than to configuration ownership — see `config_state/topology.rs`.
+- ~~The resolved shard count is established twice (`app.rs` and `serve_fleet`)~~. **Done**:
+  `app.rs` resolves it once and the fleet sizes from that value.
 - `ServerLimits` still carries `max_connection_age` into the runtime as a plain duration,
   beside a `ServerOptions` lifetime that now comes from `ClientCredentialWindow`. The
   relation holds because layer A refused the deployments where it would not, which is the

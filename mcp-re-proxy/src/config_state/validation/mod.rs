@@ -72,12 +72,6 @@ pub struct ValidatedDeployment {
 }
 
 impl ValidatedDeployment {
-    /// The validated configuration. Named rather than a public field so the wrapper
-    /// cannot be reconstructed around an unchecked `DeploymentRequest`.
-    pub fn into_inner(self) -> DeploymentRequest {
-        self.config
-    }
-
     /// Which state each configuration machine was recognised to be in.
     ///
     /// Planning reads this together with the validated values; it does not ask again which
