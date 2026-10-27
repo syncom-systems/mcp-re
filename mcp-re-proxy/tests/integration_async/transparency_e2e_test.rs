@@ -150,7 +150,8 @@ fn server_config() -> mcp_re_proxy::deployment_request::DeploymentRequest {
     .collect();
     mcp_re_proxy::cli::parse_args(&args)
         .expect("parse server config")
-        .into_inner()
+        .config()
+        .clone()
 }
 
 /// The trust seam for BOTH the serving path (Request slot) and the auditor's

@@ -218,7 +218,6 @@ pub fn parse_args(args: &[String]) -> Result<ValidatedDeployment, String> {
 #[cfg(test)]
 mod tests {
     use super::DeploymentRequest;
-    use super::ValidatedDeployment;
     use crate::config_state::validation::unsafe_config_violations;
     use crate::deployment_request::AuditSinkKind;
     use crate::deployment_request::AuthzKind;
@@ -230,7 +229,7 @@ mod tests {
 
     /// The request `parse_args` validated, for asserting what the parser put in each field.
     fn parse_request(args: &[String]) -> Result<DeploymentRequest, String> {
-        super::parse_args(args).map(ValidatedDeployment::into_inner)
+        super::parse_args(args).map(|validated| validated.config().clone())
     }
 
     /// The full, valid set of Mode-C flags (attestor key + ingress identity +

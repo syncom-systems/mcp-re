@@ -589,7 +589,8 @@ path = "mcp-re-proxy/src/config_state/validation/mod.rs"
 # already spliced on main: 374 (measured at 0ba3db2) -> 362. `baseline_sha` names that parent.
 # #1206: the `Audit` machine joins the refusable splice (+5) and a stale doc enumeration of
 # refused postures is replaced by the machines that own them: 362 (measured at ab46131a) -> 357.
-baseline_prod_loc = 357
+# #1252: the test-only `into_inner` is deleted, its callers read `config()`: 357 -> 350.
+baseline_prod_loc = 350
 baseline_sha = "ab46131a"
 status = "unreviewed"
 
