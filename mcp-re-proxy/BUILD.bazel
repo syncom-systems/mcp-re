@@ -506,6 +506,7 @@ _PROXY_LIB_SRCS = [
     "src/http_profile_serve/pre_admission/action.rs",
     "src/http_profile_serve/answering_commitment.rs",
     "src/http_profile_serve/dispatch_commitment.rs",
+    "src/http_profile_serve/dispatch_obligations.rs",
     "src/http_profile_serve/reply_assembly/mod.rs",
     "src/http_profile_serve/reply_assembly/notification.rs",
     "src/http_profile_serve/reply_assembly/success_exit.rs",

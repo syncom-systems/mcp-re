@@ -100,6 +100,8 @@ mod answering_commitment;
 /// The last three questions before the backend is reached, in the order that keeps the
 /// durable record honest.
 mod dispatch_commitment;
+/// Retention reserved, intent committed, crossing recorded: D7's order, stated once.
+mod dispatch_obligations;
 
 /// Everything after the backend has acted — where no exit can claim nothing happened.
 mod reply_assembly;

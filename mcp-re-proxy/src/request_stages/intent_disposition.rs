@@ -7,7 +7,7 @@
 //! committed intent redeemed for THIS exchange. The model A is stated, and checked against
 //! the request machine, in `crate::audit_commitment::machine`.
 
-use crate::audit_commitment::{Intent, NoCommitmentRequired, Redeemed};
+use crate::audit_commitment::{NoCommitmentRequired, OwedOutcome};
 
 /// The intent obligation, as a closed set.
 ///
@@ -23,10 +23,10 @@ pub(crate) enum IntentDisposition {
     /// commitment was owed — never a fake witness.
     NotRequired(NoCommitmentRequired),
     /// A committed execution intent, redeemed for this exchange's event against the
-    /// provider the posture holds. Held across the dispatch, where the outcome crossing (G2)
-    /// reads which arm it is — that the outcome is owed — and not the witness: the intent
-    /// and the outcome are linked by the exchange coordinate (D9), not by each other.
-    Committed(#[allow(dead_code)] Redeemed<Intent>),
+    /// provider the posture holds, and the outcome it leaves owed. Held across the dispatch
+    /// and spent by the outcome crossing (G2), which commits for the coordinate the intent
+    /// named (D9) and to the provider it was committed to, reading neither again.
+    Committed(OwedOutcome),
 }
 
 #[cfg(test)]
