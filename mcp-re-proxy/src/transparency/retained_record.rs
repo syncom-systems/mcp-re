@@ -112,6 +112,9 @@ impl std::fmt::Debug for RetainedResponse {
 /// will ever need.
 ///
 impl RetainedHopRecord {
+    /// The record of a request this owner projects itself. Test-only: production builds a
+    /// hop from the projection a commitment carries, through [`over`](Self::over).
+    #[cfg(test)]
     pub(super) fn of(request: &HttpRequest, response: &HttpResponse) -> Self {
         RetainedHopRecord::over(retained_request(request), response)
     }

@@ -16,16 +16,13 @@
 //! rescind its guard emits as `commit_to_dispatch` returns — so `K` reservations bound the
 //! queue at `2K` jobs. [`super::durability_bounds::write_queue_capacity`] carries the
 //! census; this sentence and that one are the same claim, so they move together. Exceeding
-//! the ceiling is refused before dispatch.
+//! the ceiling is refused before dispatch, by [`super::retention_queue`]'s admission.
 //!
 //! Nothing here decides what a record CONTAINS, and nothing in the record owner decides
 //! when a write has landed. Two copies of either fact is how they would come to disagree.
 
-use super::durability_bounds::write_queue_capacity;
 use super::durability_bounds::MAX_RESERVATIONS;
 use std::path::PathBuf;
-use std::sync::mpsc::SyncSender;
-use std::sync::Arc;
 
 use mcp_re_http_profile::scitt::EvidenceDigest;
 use mcp_re_http_profile::HttpRequest;
@@ -34,17 +31,13 @@ use mcp_re_http_profile::HttpResponse;
 use crate::retained_evidence::FsRetainedArchive;
 use crate::retained_evidence::FsRetainedEvidenceStore;
 
-use super::dispatch_committed::PENDING_EXTENSION;
-use super::durable_job::AdmissionPermit;
-use super::durable_job::JobFault;
 use super::durable_job::JobKind;
-use super::durable_job::WriteJob;
-use super::durable_writer::write_loop;
+use super::marker_stage::MarkerStage;
 use super::reservation_marker::ReservationMarker;
-use super::reserved_before_dispatch::RESERVED_EXTENSION;
 use super::retained_archive::RetainedArchive;
 use super::retained_record::retained_request;
 use super::retained_record::RetainedHopRecord;
+use super::retention_queue::RetentionQueue;
 use super::DispatchCommitted;
 use super::ReservedBeforeDispatch;
 use super::RetentionError;
@@ -63,121 +56,24 @@ use super::RetentionError;
 /// where refusing is free (before dispatch, HTTP 503, retry-safe), never dropped after
 /// the backend has run.
 pub struct EvidenceRetention {
-    /// The READ projection this authority holds and hands out.
+    /// The READ projection over the root this authority created, asked for the object and
+    /// marker names the writes use, so the naming rule is the reader's.
     ///
-    /// Held rather than reimplemented, and handed out rather than wrapped: a consumer that
-    /// only reads — [`super::attest_chain`], the auditor — takes
-    /// [`EvidenceRetention::archive`] and never acquires the write authority this type
-    /// proved at startup (MCPRE-179).
+    /// Not handed out. A consumer that only reads — [`super::attest_chain`], the auditor —
+    /// opens its own with [`RetainedArchive::open_read_only`] and never acquires the write
+    /// authority this type proved at startup (MCPRE-179).
     archive: RetainedArchive,
-    root: PathBuf,
-    /// Hand-off to the writer thread.
-    jobs: SyncSender<WriteJob>,
-    /// Bounds concurrent reservations, and through them the queue.
-    permits: Arc<tokio::sync::Semaphore>,
-    /// Reclaimed on drop within a bounded budget, so a dropped store has no writes still
-    /// in flight — or says which ones it gave up waiting for.
-    writer: Option<std::thread::JoinHandle<()>>,
-}
-
-impl Drop for EvidenceRetention {
-    /// Close this authority's sender, then reclaim the writer WITHIN A BUDGET.
-    ///
-    /// Dropping the last sender ends the writer's receive loop — but this is not the last
-    /// sender. `reserve` hands every [`ReservedBeforeDispatch`] a clone, and that clone is
-    /// not held through this type, so the store can reach its own `Drop` while a
-    /// reservation is still alive on a task parked against a slow backend. The channel then
-    /// never closes, `recv()` blocks forever, and an unbounded `join()` never returns: the
-    /// whole shutdown deadlocks on a reservation that is itself waiting.
-    ///
-    /// So the wait is bounded, the same way `WorkerSet` bounds its own and for the same
-    /// reason: a teardown that can hang is a teardown that has no deadline, and correctness
-    /// on this path must not depend on every other holder having finished first. Past the
-    /// budget the handle is dropped and the thread is left running, which is stated in the
-    /// line below rather than left to be inferred from a process that never exits.
-    ///
-    /// Giving up the wait is not giving up the guarantee: nothing was acknowledged that is
-    /// not durable, because acknowledgement happens after the fsync. What is lost is only
-    /// the assurance that the queue was empty at the moment this type went away.
-    fn drop(&mut self) {
-        let (dead, _) = std::sync::mpsc::sync_channel(1);
-        let live = std::mem::replace(&mut self.jobs, dead);
-        drop(live);
-        let Some(writer) = self.writer.take() else {
-            return;
-        };
-        let now = std::time::Instant::now();
-        // Class R: this budget bounds how long shutdown may wait, so a deadline that cannot
-        // be represented is treated as already reached.
-        let deadline = now
-            .checked_add(crate::managed_worker::JOIN_DEADLINE)
-            .unwrap_or(now);
-        while !writer.is_finished() && std::time::Instant::now() < deadline {
-            std::thread::sleep(WRITER_JOIN_POLL);
-        }
-        if writer.is_finished() {
-            let _ = writer.join();
-            return;
-        }
-        // RELINQUISHED. Written out because it is the one decision here that gives up a
-        // guarantee, and should read as a choice rather than as a binding falling out of
-        // scope.
-        drop(writer);
-        eprintln!(
-            "mcp-re-proxy: the retained-evidence writer did not finish within {}s of its \
-             store closing — a reservation still holds the queue open. It is left running \
-             rather than blocking shutdown on it; nothing unacknowledged was durable, so no \
-             completed exchange is in doubt.",
-            crate::managed_worker::JOIN_DEADLINE.as_secs()
-        );
-    }
-}
-
-/// A writer that stopped before acknowledging: a pre-dispatch write is then unresolved.
-fn writer_lost(pre_dispatch: bool) -> RetentionError {
-    let lost = std::io::Error::new(
-        std::io::ErrorKind::BrokenPipe,
-        "retention writer stopped before acknowledging the write",
-    );
-    if pre_dispatch {
-        RetentionError::Unresolved(lost)
-    } else {
-        RetentionError::Store(lost)
-    }
-}
-
-/// The digest token a marker file name carries at the given suffix, if it is one.
-fn marker_digest(name: &str, suffix: &str) -> Option<String> {
-    let token = name.strip_suffix(suffix)?;
-    let digest = EvidenceDigest::from_token(token).ok()?;
-    Some(digest.as_str().to_owned())
+    /// The writer thread's queue: admission, hand-off and the thread's reclamation.
+    queue: RetentionQueue,
 }
 
 #[cfg(test)]
 impl EvidenceRetention {
-    /// Put this store in the state a returned or panicked write loop leaves it: holding a
-    /// sender whose receiver is gone.
-    ///
-    /// `#[cfg(test)]`, so it is not a production surface. It exists because the terminal
-    /// fault is otherwise reachable only by making the writer thread panic, and a test that
-    /// panicked a thread to reach it would be measuring the panic rather than the answer.
+    /// Put this store in the state a returned or panicked write loop leaves it.
     pub(crate) fn retire_writer_for_test(&mut self) {
-        let (orphaned, receiver) = std::sync::mpsc::sync_channel(1);
-        drop(receiver);
-        self.jobs = orphaned;
-    }
-
-    /// Put this store in the state a writer that drops every job unanswered leaves it: the
-    /// queue accepts, and no acknowledgement ever comes back.
-    fn swallow_jobs_for_test(&mut self) {
-        let (swallowing, receiver) = std::sync::mpsc::sync_channel(8);
-        std::thread::spawn(move || while receiver.recv().is_ok() {});
-        self.jobs = swallowing;
+        self.queue.retire_writer_for_test();
     }
 }
-
-/// How often the drop path re-checks the writer while waiting out its budget.
-const WRITER_JOIN_POLL: std::time::Duration = std::time::Duration::from_millis(10);
 
 impl EvidenceRetention {
     /// Open (creating if absent) a retention store rooted at `dir`, proving it writable
@@ -198,78 +94,8 @@ impl EvidenceRetention {
         // then a view over a root this call has already established.
         let writer_store = FsRetainedEvidenceStore::open(&root)?;
         let archive = RetainedArchive::over(FsRetainedArchive::open_read_only(&root)?);
-        let (jobs, receiver) =
-            std::sync::mpsc::sync_channel(write_queue_capacity(max_reservations));
-        let writer = std::thread::Builder::new()
-            .name("mcp-re-retention".to_owned())
-            .spawn(move || write_loop(writer_store, receiver))?;
-        Ok(EvidenceRetention {
-            archive,
-            root,
-            jobs,
-            permits: Arc::new(tokio::sync::Semaphore::new(max_reservations)),
-            writer: Some(writer),
-        })
-    }
-
-    /// Hand the writer a security-bearing job and await its acknowledgement.
-    ///
-    /// The `await` is the point of the whole arrangement: the runtime worker is free
-    /// while the fsync runs. Every failure mode — a full queue, a dead writer, a dropped
-    /// acknowledgement — is a failure, never a silent success. A dropped acknowledgement
-    /// for a pre-dispatch job is unresolved: the store's state is unknown.
-    ///
-    /// `slot` is the permit this call was admitted against, and the job holds it too. The
-    /// caller's future can be dropped at the `await` — hyper does exactly that when a
-    /// connection goes — and the job it already queued does not leave with it. Without the
-    /// job holding the slot, a cancelled call would hand its permit straight back and its
-    /// orphaned job would still be in the queue, so the reservation ceiling would stop
-    /// bounding the queue at all.
-    async fn submit(
-        &self,
-        kind: JobKind,
-        slot: Arc<AdmissionPermit>,
-    ) -> Result<(), RetentionError> {
-        let pre_dispatch = kind.is_pre_dispatch();
-        let (ack, acked) = tokio::sync::oneshot::channel();
-        // `Full` and `Disconnected` are two facts and they demand two answers. A full queue
-        // is genuine backpressure and an ordinary retry is correct — the capacity argument
-        // in `durability_bounds` depends on it staying retryable. A disconnected one means
-        // the writer thread has returned or panicked and NO future job will ever be
-        // accepted, so answering it as transient tells a client to retry something that
-        // cannot succeed until this replica is restarted.
-        self.jobs
-            .try_send(WriteJob::accounted(kind, ack, slot))
-            .map_err(|e| match e {
-                std::sync::mpsc::TrySendError::Full(_) => RetentionError::Store(
-                    std::io::Error::new(std::io::ErrorKind::WouldBlock, "retention queue is full"),
-                ),
-                std::sync::mpsc::TrySendError::Disconnected(_) => {
-                    RetentionError::StoreRetired(std::io::Error::new(
-                        std::io::ErrorKind::BrokenPipe,
-                        "the retained-evidence writer has stopped; no further write will be \
-                         accepted by this replica",
-                    ))
-                }
-            })?;
-        match acked.await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(JobFault::NotPublished(e))) => Err(RetentionError::Store(e)),
-            Ok(Err(JobFault::Unwithdrawn(e))) => Err(RetentionError::Unresolved(e)),
-            Err(_) => Err(writer_lost(pre_dispatch)),
-        }
-    }
-
-    /// The path for a marker at `stage`.
-    ///
-    /// The name is the object path plus the stage extension, so it is refused unless the
-    /// archive accepts the digest as a token; the extension keeps it out of the
-    /// content-addressed namespace, which is read back by bare digest and can therefore
-    /// never resolve to one of these.
-    fn marker_path(&self, digest: &EvidenceDigest, stage: &str) -> Result<PathBuf, RetentionError> {
-        let mut name = self.object_path(digest)?.into_os_string();
-        name.push(format!(".{stage}"));
-        Ok(PathBuf::from(name))
+        let queue = RetentionQueue::start(writer_store, max_reservations)?;
+        Ok(EvidenceRetention { archive, queue })
     }
 
     /// Accept durable responsibility for an exchange, WITHOUT asserting that anything ran.
@@ -302,12 +128,7 @@ impl EvidenceRetention {
         &self,
         request: &HttpRequest,
     ) -> Result<ReservedBeforeDispatch, RetentionError> {
-        let permit = Arc::new(Arc::clone(&self.permits).try_acquire_owned().map_err(|_| {
-            RetentionError::Store(std::io::Error::new(
-                std::io::ErrorKind::WouldBlock,
-                "retention queue is full",
-            ))
-        })?);
+        let permit = self.queue.admit()?;
         // Projected ONCE, and carried. The digest is this value's digest, so a completion
         // that took a request from its caller could discharge this crossing with a hop
         // describing a different exchange; carrying it is what removes the second input.
@@ -316,22 +137,28 @@ impl EvidenceRetention {
             &serde_json::to_vec(&retained)
                 .map_err(|_| RetentionError::Malformed("retained request does not serialize"))?,
         );
-        let marker = self.marker_path(&digest, RESERVED_EXTENSION)?;
+        let marker = self.archive.marker_path(&digest, MarkerStage::Reserved)?;
         let bytes = ReservationMarker::of(&digest).to_bytes()?;
         // Built before the await, so a request future cancelled there still rescinds the
         // marker it may have published. A marker that is not durable proves nothing about
         // an obligation the exchange is about to rely on, so the acknowledgement is
         // awaited before the caller may go on.
-        let reserved =
-            ReservedBeforeDispatch::over(digest, retained, marker, self.jobs.clone(), permit);
-        self.submit(
-            JobKind::PublishOrWithdraw {
-                path: reserved.marker().to_path_buf(),
-                bytes,
-            },
-            reserved.permit(),
-        )
-        .await?;
+        let reserved = ReservedBeforeDispatch::over(
+            digest,
+            retained,
+            marker,
+            self.queue.rescind_sender(),
+            permit,
+        );
+        self.queue
+            .submit(
+                JobKind::PublishOrWithdraw {
+                    path: reserved.marker().to_path_buf(),
+                    bytes,
+                },
+                reserved.permit(),
+            )
+            .await?;
         Ok(reserved)
     }
 
@@ -360,14 +187,15 @@ impl EvidenceRetention {
         reserved: ReservedBeforeDispatch,
     ) -> Result<DispatchCommitted, RetentionError> {
         let digest = reserved.digest().clone();
-        self.submit(
-            JobKind::Commit {
-                reserved: reserved.marker().to_path_buf(),
-                committed: self.marker_path(&digest, PENDING_EXTENSION)?,
-            },
-            reserved.permit(),
-        )
-        .await?;
+        self.queue
+            .submit(
+                JobKind::Commit {
+                    reserved: reserved.marker().to_path_buf(),
+                    committed: self.archive.marker_path(&digest, MarkerStage::Committed)?,
+                },
+                reserved.permit(),
+            )
+            .await?;
         Ok(DispatchCommitted::over(
             digest,
             reserved.retained(),
@@ -408,95 +236,19 @@ impl EvidenceRetention {
         let bytes = serde_json::to_vec(&RetainedHopRecord::over(committed.retained(), response))
             .map_err(|_| RetentionError::Malformed("retained hop does not serialize"))?;
         let digest = EvidenceDigest::of(&bytes);
-        self.submit(
-            JobKind::Publish {
-                path: self.object_path(&digest)?,
-                bytes,
-                clear_marker: Some(self.marker_path(committed.digest(), PENDING_EXTENSION)?),
-            },
-            committed.permit(),
-        )
-        .await?;
-        Ok(digest)
-    }
-
-    /// The digest tokens of every COMMITTED marker currently on disk.
-    ///
-    /// The reconciliation read, and it reads one stage only. A committed-stage marker
-    /// records an exchange that crossed the execution threshold and whose outcome was
-    /// never retained, and a fact recorded where nothing can enumerate it is not a record
-    /// an auditor can act on: this is how the audit lane asks which calls crossed without
-    /// landing a hop.
-    ///
-    /// Reserved-stage markers are deliberately NOT here. They record obligations accepted
-    /// by exchanges that never committed, so counting them would be counting refused calls
-    /// as calls that may have run — the collapse this stage split exists to remove. They
-    /// have their own enumerator, [`stale_reservations`](Self::stale_reservations), and it
-    /// answers a different question.
-    pub fn pending_reservations(&self) -> Result<Vec<String>, RetentionError> {
-        self.markers_at(PENDING_EXTENSION)
-    }
-
-    /// The digest tokens of every RESERVED marker currently on disk.
-    ///
-    /// Cleanup debt, and nothing else. Each one is an obligation that was accepted by an
-    /// exchange which then did not commit, and whose rescind did not land — a queue that
-    /// was full when the reservation dropped, or a process that died between the two.
-    ///
-    /// An auditor must not read this as indeterminacy. That is the whole reason the stage
-    /// has its own name on disk: a residue that says *nothing ran* is answerable by
-    /// deleting it, and one that says *something may have* is not.
-    pub fn stale_reservations(&self) -> Result<Vec<String>, RetentionError> {
-        self.markers_at(RESERVED_EXTENSION)
-    }
-
-    /// The digest tokens of every marker at one stage.
-    fn markers_at(&self, stage: &str) -> Result<Vec<String>, RetentionError> {
-        let suffix = format!(".{stage}");
-        let mut found = Vec::new();
-        for entry in std::fs::read_dir(&self.root).map_err(RetentionError::Store)? {
-            let entry = entry.map_err(RetentionError::Store)?;
-            let name = entry.file_name();
-            found.extend(name.to_str().and_then(|name| marker_digest(name, &suffix)));
-        }
-        found.sort();
-        Ok(found)
-    }
-
-    /// Retain one exchange with NO execution boundary, returning its handle.
-    ///
-    /// NOT the serving path's entry point — that is [`EvidenceRetention::reserve`] then
-    /// [`EvidenceRetention::complete`], and the serving path refuses an accepted exit
-    /// that reached completion without a reservation. This is for a caller with nothing
-    /// to dispatch: importing a hop, or a test. Using it to retain a call that had side
-    /// effects would leave no record that the execution threshold was crossed, which is
-    /// the one fact an auditor cannot recover afterwards.
-    pub async fn retain(
-        &self,
-        request: &HttpRequest,
-        response: &HttpResponse,
-    ) -> Result<EvidenceDigest, RetentionError> {
-        // The same admission permit a reservation holds, so the queue-capacity argument
-        // covers every job that can reach the writer rather than most of them.
-        let permit = Arc::new(Arc::clone(&self.permits).try_acquire_owned().map_err(|_| {
-            RetentionError::Store(std::io::Error::new(
-                std::io::ErrorKind::WouldBlock,
-                "retention queue is full",
-            ))
-        })?);
-        let bytes = serde_json::to_vec(&RetainedHopRecord::of(request, response))
-            .map_err(|_| RetentionError::Malformed("retained hop does not serialize"))?;
-        let digest = EvidenceDigest::of(&bytes);
-        let path = self.object_path(&digest)?;
-        self.submit(
-            JobKind::Publish {
-                path,
-                bytes,
-                clear_marker: None,
-            },
-            permit,
-        )
-        .await?;
+        self.queue
+            .submit(
+                JobKind::Publish {
+                    path: self.object_path(&digest)?,
+                    bytes,
+                    clear_marker: Some(
+                        self.archive
+                            .marker_path(committed.digest(), MarkerStage::Committed)?,
+                    ),
+                },
+                committed.permit(),
+            )
+            .await?;
         Ok(digest)
     }
 
@@ -507,14 +259,38 @@ impl EvidenceRetention {
     fn object_path(&self, digest: &EvidenceDigest) -> Result<PathBuf, RetentionError> {
         self.archive.object_path(digest)
     }
+}
 
-    /// The READ projection over this archive.
-    ///
-    /// What a consumer that only reads is given, instead of this whole authority. Reading
-    /// costs no write access and no writer thread, and a consumer holding one of these
-    /// cannot reserve, commit or retain anything.
-    pub fn archive(&self) -> &RetainedArchive {
-        &self.archive
+/// Retention with NO execution boundary: a hop written with no reservation and no crossing.
+///
+/// `#[cfg(test)]`. The serving path's entry is [`EvidenceRetention::reserve`] then
+/// [`EvidenceRetention::complete`], and the serving path refuses an accepted exit that
+/// reached completion without a reservation; retaining a call that had side effects this
+/// way would leave no record that the execution threshold was crossed. What remains is the
+/// tests that exercise the record and the writer without a dispatch around them.
+#[cfg(test)]
+impl EvidenceRetention {
+    async fn retain(
+        &self,
+        request: &HttpRequest,
+        response: &HttpResponse,
+    ) -> Result<EvidenceDigest, RetentionError> {
+        let permit = self.queue.admit()?;
+        let bytes = serde_json::to_vec(&RetainedHopRecord::of(request, response))
+            .map_err(|_| RetentionError::Malformed("retained hop does not serialize"))?;
+        let digest = EvidenceDigest::of(&bytes);
+        let path = self.object_path(&digest)?;
+        self.queue
+            .submit(
+                JobKind::Publish {
+                    path,
+                    bytes,
+                    clear_marker: None,
+                },
+                permit,
+            )
+            .await?;
+        Ok(digest)
     }
 }
 
@@ -523,6 +299,7 @@ mod tests {
     use super::*;
     use crate::transparency::covered_set::covered_headers;
     use std::future::Future;
+    use std::sync::Arc;
 
     struct TempDir(std::path::PathBuf);
 
@@ -598,7 +375,7 @@ mod tests {
 
         let digest = retention.retain(&request, &response).await.expect("retain");
         let hop = retention
-            .archive()
+            .archive
             .load(&digest)
             .expect("load")
             .expect("present");
@@ -636,7 +413,7 @@ mod tests {
 
         let digest = retention.retain(&request, &response).await.expect("retain");
         let hop = retention
-            .archive()
+            .archive
             .load(&digest)
             .expect("load")
             .expect("present");
@@ -688,7 +465,7 @@ mod tests {
         };
         assert!(
             matches!(
-                retention.archive().load(&digest),
+                retention.archive.load(&digest),
                 Err(RetentionError::Malformed("unknown retained-hop schema"))
             ),
             "an unrecognized schema is refused, not reinterpreted"
@@ -707,7 +484,7 @@ mod tests {
 
         assert_eq!(
             retention
-                .archive()
+                .archive
                 .load_chain(std::slice::from_ref(&present))
                 .expect("the present hop loads")
                 .len(),
@@ -715,7 +492,7 @@ mod tests {
         );
         assert!(
             matches!(
-                retention.archive().load_chain(&[present, absent]),
+                retention.archive.load_chain(&[present, absent]),
                 Err(RetentionError::Malformed("retained chain is missing a hop"))
             ),
             "a missing hop refuses the whole chain"
@@ -727,24 +504,13 @@ mod tests {
         assert!(serde_json::from_str::<EvidenceDigest>("\"../../etc/passwd\"").is_err());
     }
 
-    #[test]
-    fn an_enumerated_marker_is_a_well_formed_token() {
-        let dir = TempDir::new("marker-enumeration");
-        let retention = EvidenceRetention::open(&dir.0).expect("open");
-        std::fs::write(dir.0.join(format!(".{PENDING_EXTENSION}")), b"").expect("write");
-        std::fs::write(dir.0.join(format!("not-a-digest.{PENDING_EXTENSION}")), b"")
-            .expect("write");
-
-        assert!(retention.pending_reservations().expect("list").is_empty());
-    }
-
     #[tokio::test]
     async fn a_lost_acknowledgement_for_a_pre_dispatch_job_is_unresolved() {
         let dir = TempDir::new("lost-ack");
         let mut retention = EvidenceRetention::open(&dir.0).expect("open");
         let (request, response) = exchange();
         let reserved = retention.reserve(&request).await.expect("reserve");
-        retention.swallow_jobs_for_test();
+        retention.queue.swallow_jobs_for_test();
 
         assert!(matches!(
             retention.commit_to_dispatch(reserved).await,
@@ -776,7 +542,11 @@ mod tests {
         other.body.extend_from_slice(b"other");
         retention.retain(&other, &response).await.expect("retain");
 
-        assert!(retention.stale_reservations().expect("list").is_empty());
+        assert!(retention
+            .archive
+            .stale_reservations()
+            .expect("list")
+            .is_empty());
     }
 
     #[test]
@@ -1078,7 +848,7 @@ mod tests {
             .expect("complete");
 
         let hop = retention
-            .archive()
+            .archive
             .load(&hop_digest)
             .expect("load")
             .expect("present");
@@ -1122,7 +892,7 @@ mod tests {
             "accepting an obligation must not assert that anything crossed"
         );
         assert_eq!(
-            retention.pending_reservations().expect("list"),
+            retention.archive.pending_reservations().expect("list"),
             Vec::<String>::new(),
             "a reservation is not a crossing, and reconciliation must not count it as one"
         );
@@ -1140,7 +910,7 @@ mod tests {
             "the backend must not be reachable before the crossing is on disk"
         );
         assert_eq!(
-            retention.pending_reservations().expect("list"),
+            retention.archive.pending_reservations().expect("list"),
             vec![digest.clone()],
             "a crossing that never lands a hop is what an auditor reconciles"
         );
@@ -1152,7 +922,11 @@ mod tests {
 
         assert!(dir.0.join(hop.as_str()).exists(), "the hop is retained");
         assert!(!committed_marker.exists(), "its marker is consumed");
-        assert!(retention.pending_reservations().expect("list").is_empty());
+        assert!(retention
+            .archive
+            .pending_reservations()
+            .expect("list")
+            .is_empty());
     }
 
     /// The marker holds the exchange's digest and none of its credentials.
@@ -1269,7 +1043,7 @@ mod tests {
             "the obligation is durable before it is relied on"
         );
         assert_eq!(
-            retention.stale_reservations().expect("list"),
+            retention.archive.stale_reservations().expect("list"),
             vec![digest.clone()],
             "an accepted obligation is enumerable, or nothing can reconcile it"
         );
@@ -1286,9 +1060,17 @@ mod tests {
             !marker.exists(),
             "a call that never committed left a marker only a completion could remove"
         );
-        assert!(retention.stale_reservations().expect("list").is_empty());
+        assert!(retention
+            .archive
+            .stale_reservations()
+            .expect("list")
+            .is_empty());
         assert!(
-            retention.pending_reservations().expect("list").is_empty(),
+            retention
+                .archive
+                .pending_reservations()
+                .expect("list")
+                .is_empty(),
             "and it never produced a committed-stage marker at all"
         );
     }
@@ -1324,7 +1106,7 @@ mod tests {
             "a dropped commitment must not read as a call that never ran"
         );
         assert_eq!(
-            retention.pending_reservations().expect("list"),
+            retention.archive.pending_reservations().expect("list"),
             vec![digest]
         );
     }
