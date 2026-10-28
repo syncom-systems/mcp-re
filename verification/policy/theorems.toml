@@ -5797,6 +5797,7 @@ review_requirement = "Owner security-specification review"
 supported_by = [
   "unit://proxy.exchange_transition_ownership",
   "unit://proxy.exchange_publication",
+  "unit://proxy.publish_permit_sole_producer",
 ]
 depends_on = ["THM-0043"]
 
@@ -7867,6 +7868,7 @@ owner = "proxy.audit_outcome_gate"
 review_requirement = "Owner security-specification review"
 supported_by = [
   "unit://proxy.audit_outcome_gate",
+  "unit://proxy.success_exit_order",
   "unit://proxy.audit_intent_gate_sole_producer",
   "unit://proxy.audit_commitment_witness",
   "unit://proxy.audit_commitment_sole_producer",
