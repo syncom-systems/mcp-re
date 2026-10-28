@@ -135,6 +135,7 @@ extensionless script because an extensionless file cannot be imported.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 from contextvars import ContextVar
@@ -491,12 +492,7 @@ def _mutation_probes(unit_id: str) -> dict[str, str]:
     registry entry is the claim, so the entry's content is what participates. Same argument,
     and same shape, as `_trusted_assumptions`.
     """
-    _record(_registries.relative("mutation-probes"))
-    return {
-        probe["id"]: canonical_digest(probe)
-        for probe in _registries.rows("mutation-probes", "probe")
-        if probe.get("unit") == unit_id
-    }
+    return _registry_entries("mutation-probes", "probe", unit_id)
 
 
 #: The lane that decides what "a declared control went red" means.
@@ -532,11 +528,30 @@ def _registry_entries(name: str, key: str, unit_id: str) -> dict[str, str]:
     DIRTY. The registry entry IS the claim, so the entry's content participates.
     """
     _record(_registries.relative(name))
-    return {
-        record["id"]: canonical_digest(record)
-        for record in _registries.rows(name, key)
-        if record.get("unit") == unit_id
-    }
+    rel = _registries.relative(name)
+    if not _tree.current().is_file(rel):
+        return {}
+    return dict(_entries_by_unit(_tree.text(rel), key).get(unit_id, {}))
+
+
+@functools.lru_cache(maxsize=16)
+def _entries_by_unit(text: str, key: str) -> dict[str, dict[str, str]]:
+    """Every `[[key]]` record of a registry's `text`, digested whole and grouped by unit.
+
+    Once per distinct text: a fingerprint asks for every unit's records, and grouping the
+    registry once is what lets that cost one pass rather than one per unit.
+    """
+    out: dict[str, dict[str, str]] = {}
+    for record in _registries.parse(text, key).get(key, []):
+        out.setdefault(record.get("unit"), {})[record["id"]] = canonical_digest(record)
+    return out
+
+
+def _trust_boundaries() -> dict:
+    """The declared trust boundaries, loaded and checked once per registry text and tree."""
+    text = _tree.text(_registries.relative("trust-boundaries"))
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return _tree.current().memo(f"trust-boundaries:{digest}", load_trust_boundaries)
 
 
 #: The lane that decides what a machine-checked PROOF is, and whether one was checked.
@@ -821,7 +836,7 @@ def fingerprint_unit(
         # the cap was a gate that participated in no fingerprint, so relaxing it left every
         # claim above it reading as fresh.
         "governing_boundaries": _governing_boundaries(
-            unit, load_trust_boundaries() if boundaries is None else boundaries
+            unit, _trust_boundaries() if boundaries is None else boundaries
         ),
         "toolchain_identity": _toolchain_identity(
             toolchains, eco.name if (eco := unit_ecosystem(unit)) is not None else None
