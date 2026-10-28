@@ -3043,3 +3043,98 @@ every refusal sentence and test body moved byte for byte. The unit
 measured at `c939c2f`), still over the 200-line trigger. Whether one authority of that size
 is kept whole is a census question this action did not ask, so the register entry stays
 `reviewed-action-required` at the new baseline until a census records it.
+
+## EX-019 — `mcp-re-proxy/src/transparency/durability.rs` — **census complete, disposition: ACTION REQUIRED, no exception sought**
+
+The twelve questions (ADR-MCPRE-061 §8), answered for the file as a unit at `6c045ef7`
+(498 production lines, `unreviewed`; #1248).
+
+1. **Owns.** WHEN the deployment becomes answerable for retaining an exchange — the
+   `reserve` → `commit_to_dispatch` → `complete` stage protocol — AND the lifecycle of the
+   writer thread AND admission to its queue AND which marker files are on disk AND a second
+   retention path with no execution boundary. Four "and"s.
+2. **Authorities.** Five:
+   - (a) the writer thread's lifecycle: `open_bounded`'s spawn, the bounded `Drop`,
+     `writer_lost`, `WRITER_JOIN_POLL` and the two test hooks that stand in for a dead or
+     silent writer;
+   - (b) queue admission and fault mapping: `submit` (a full queue is retryable
+     backpressure, a disconnected one a retired store, a dropped acknowledgement unresolved
+     before dispatch) and the permit acquisition, written out twice (`reserve`, `retain`);
+   - (c) the stage protocol: `reserve`, `commit_to_dispatch`, `complete`;
+   - (d) marker naming and enumeration: `marker_path`, `marker_digest`, `markers_at`,
+     `pending_reservations`, `stale_reservations`, with the two stage extensions held in
+     `reserved_before_dispatch.rs` and `dispatch_committed.rs`;
+   - (e) `retain`, which writes a hop with no reservation and no crossing.
+3. **Decides.** (c) what each stage writes and what its failure means (`Store`,
+   `Unresolved`, `AlreadyCompleted`); (b) which of three faults a failed hand-off is, and
+   that admission is refused before dispatch.
+4. **Executes.** Spawning and reclaiming the writer thread (a); a `read_dir` of the root (d).
+   Every filesystem write is the writer's (`durable_writer.rs`).
+5. **Transports.** Write jobs and their acknowledgements between request futures and the
+   writer thread; the `RetainedArchive` projection, handed out through `archive()`.
+6. **Reconstructs.** Nothing another owner decided: an object's path is asked of the
+   archive. But the marker naming rule is in four places (question 10).
+7. **Ordering-only relationships.** None across calls: the stage order is held by
+   `ReservedBeforeDispatch` → `DispatchCommitted`, each consumed by the next stage. Inside
+   `open_bounded`, the writable open precedes the read projection by statement order, and
+   says why.
+8. **Test-only interface.** Four `pub` items with no production caller:
+   `pending_reservations` (integration tests only), `stale_reservations` (this file's tests
+   only), `retain` (this file's tests only) and `archive()` (tests only — the auditor opens
+   its own read-only archive, `auditor/run.rs`).
+9. **Unreachable.** None found.
+10. **Represented twice.** The permit acquisition and its refusal (`reserve`, `retain`). The
+    marker naming rule: the path is built by `marker_path` here, parsed back by
+    `marker_digest` here, and its two extensions are constants in two other files.
+11. **Constructible inconsistency.** `marker_path` and `markers_at` take the stage as a
+    `&str`, so a marker can be named, or enumerated, at a stage the protocol does not have.
+12. **Lanes.** `//mcp-re-proxy:proxy_unit_test` (`transparency::durability::tests`);
+    `//mcp-re-proxy:integration_async_test` (`outcome_before_success_test`,
+    `mrt_continuation_serving_test`, `transparency_e2e_test`); mutation probe M138.
+
+### Disposition
+
+Action required, by responsibility:
+
+- (a) moves to `transparency/writer_thread.rs` as `WriterThread`: the thread, the one sender
+  this side holds, and the bounded reclamation on drop.
+- (b) moves to `transparency/retention_queue.rs` as `RetentionQueue`, over a `WriterThread`:
+  admission, which becomes one method so the permit is acquired in one place, and the
+  acknowledged hand-off with its fault mapping. (a) and (b) share only the sender, and each
+  is describable without the other: how long teardown waits for a thread, and whether a job
+  may reach it and what its failure was.
+- (d) splits by who needs it. The naming rule becomes a closed type,
+  `transparency/marker_stage.rs::MarkerStage`, which names a stage's marker and reads one
+  back; the two extensions leave `reserved_before_dispatch.rs` and `dispatch_committed.rs`.
+  Enumeration moves to `RetainedArchive`, the read projection: which markers are on disk is
+  a fact about the directory, and an auditor holding only a read-only archive can ask it.
+- (e) becomes `#[cfg(test)]`, and with it `RetainedHopRecord::of`, which only it called. It is a
+  second retention contract with no execution boundary; the reason its doc gave for it,
+  importing a hop, has no caller and no fixture.
+- `archive()` is removed. Tests read the directory the way the auditor does,
+  `RetainedArchive::open_read_only`.
+- `EvidenceRetention` keeps (c).
+
+### Performed (2026-10-28, #1248)
+
+All of the above. No behaviour changed. Moved docs and function bodies keep their wording
+except where they named the type they left, and the stage protocol's code differs only in
+asking `RetentionQueue` to admit and submit and `RetainedArchive` for marker names. Measured with `module_size_gate.py`:
+
+| file | production lines |
+|---|---|
+| `durability.rs` | 264 (498 before) |
+| `retention_queue.rs` | 131 |
+| `writer_thread.rs` | 105 |
+| `marker_stage.rs` | 60 |
+| `retained_archive.rs` | 174 (116 before) |
+
+M138 follows `submit` to `retention_queue.rs`, unchanged. The unit
+`proxy.retention_commitment` measures the three new files and claims their seven tests; the
+enumeration test moves to `retained_archive::tests` under its existing disposition.
+
+`durability.rs` now holds authority (c) alone, at 264 production lines, still over the
+200-line trigger. The remainder is the three stages and the argument for their order, and
+this census found no further seam in it; whether it is kept whole as a reviewed exception is
+recorded separately, so the register entry stays `reviewed-action-required` at the new
+baseline until then.

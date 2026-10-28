@@ -327,12 +327,15 @@ status = "unreviewed"
 # for retaining it is durably established (`durability.rs`), and the auditor's half
 # (`attestation.rs`). The debt follows the bulk rather than the path: `transparency/mod.rs`
 # is 143 lines and below the threshold, so the registered file is the durability runtime,
-# which inherits 882 registered lines as 498.
+# which inherits 882 registered lines as 498. EX-019 (#1248) then moved the writer thread,
+# queue admission, marker naming and enumeration to their owners; the file holds the stage
+# protocol alone.
 [[debt]]
 path = "mcp-re-proxy/src/transparency/durability.rs"
-baseline_prod_loc = 498
-baseline_sha = "255465e"
-status = "unreviewed"
+baseline_prod_loc = 264
+baseline_sha = "6c045ef7d"
+status = "reviewed-action-required"
+review_ref = "EX-019 in docs/architecture/review-dispositions.md"
 
 # MCPRE-175 re-censused the PKCS#11 provider and found four subordinates inside it: the
 # session vocabulary (`session.rs`), ONE session reused (`amortized_session.rs`), a bounded
