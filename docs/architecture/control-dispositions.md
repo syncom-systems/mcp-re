@@ -4363,9 +4363,9 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 
 ## NP-220 — the crossing reconciliation read reports only well-formed exchange digests
 
-**Controls:** `mcp-re-proxy` `lib#transparency::durability::tests::an_enumerated_marker_is_a_well_formed_token`.
-**Carrier:** mcp-re-proxy/src/transparency/durability.rs (markers_at, marker_digest).
-**Statement.** *EvidenceRetention::pending_reservations (and stale_reservations at its own stage) reports a marker only when the file stem at that stage's suffix parses as an EvidenceDigest token. A file named '.pending' or 'not-a-digest.pending' is never reported as a crossing.*
+**Controls:** `mcp-re-proxy` `lib#transparency::retained_archive::tests::an_enumerated_marker_is_a_well_formed_token`.
+**Carrier:** mcp-re-proxy/src/transparency/retained_archive.rs (markers_at) and marker_stage.rs (MarkerStage::digest_in).
+**Statement.** *RetainedArchive::pending_reservations (and stale_reservations at its own stage) reports a marker only when the file stem at that stage's suffix parses as an EvidenceDigest token. A file named '.pending' or 'not-a-digest.pending' is never reported as a crossing.*
 **If false.** An auditor asking which calls crossed the execution threshold without landing a hop is shown entries that name no exchange: phantom indeterminate calls from stray or planted files, reported as answerability debt.
 **Likely owner:** proxy.retention_commitment owns the file, but THM-0088's statement is WHEN responsibility was accepted and crossed, and says nothing about what the enumeration may return. proxy.retained_record_at_the_store (THM-0112) 'claims nothing about how the object is NAMED'.
 **Severity:** `medium`.

@@ -10,15 +10,6 @@ use mcp_re_http_profile::scitt::EvidenceDigest;
 use super::durable_job::AdmissionPermit;
 use super::retained_record::RetainedRequest;
 
-/// The extension a marker carries once its exchange has committed to dispatching.
-///
-/// The one an auditor reads as *this exact request crossed the execution threshold and its
-/// outcome was never retained*. Distinct from
-/// [`super::RESERVED_EXTENSION`](super::reserved_before_dispatch::RESERVED_EXTENSION)
-/// because those are different facts, and a reconciliation that could not tell them apart
-/// counted refused calls as calls that may have run.
-pub(super) const PENDING_EXTENSION: &str = "pending";
-
 /// The exchange has committed to dispatching, and the commitment is durable.
 ///
 /// Holding one means a `<request-digest>.pending` marker is on disk. It is consumed by

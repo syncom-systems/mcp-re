@@ -70,6 +70,7 @@ mod required {
     use crate::intent_before_dispatch_test::{deploy_with, Deployment, REPLY};
     use mcp_re_client_core::ExecutionStatus;
     use mcp_re_proxy::transparency::EvidenceRetention;
+    use mcp_re_proxy::transparency::RetainedArchive;
     use mcp_re_proxy::{HttpProfileProxy, ReferenceCommitment, ScriptedAnswer};
 
     const UNAVAILABLE: &str = "mcp-re.audit_commitment_unavailable";
@@ -223,7 +224,10 @@ mod required {
         let kind = r.d.call(&plain_request()).kind;
         assert_eq!(possibly_executed(&kind).as_deref(), Some(UNAVAILABLE));
         assert_eq!(
-            retention.pending_reservations().expect("list"),
+            RetainedArchive::open_read_only(&store)
+                .expect("open the archive")
+                .pending_reservations()
+                .expect("list"),
             Vec::<String>::new()
         );
         assert_eq!(
@@ -379,7 +383,11 @@ mod required {
             "the intent, and no outcome"
         );
         assert_eq!(
-            retention.pending_reservations().expect("list").len(),
+            RetainedArchive::open_read_only(&store)
+                .expect("open the archive")
+                .pending_reservations()
+                .expect("list")
+                .len(),
             1,
             "the crossing stays marked: possibly executed, for a reconciler"
         );
