@@ -555,6 +555,7 @@ _PROXY_LIB_SRCS = [
     # configuration alone — no I/O, no environment, no clock. Crate-internal.
     "src/startup_plan/channel_establishment_plan.rs",
     "src/startup_plan/mod.rs",
+    "src/startup_plan/response_authority.rs",
     # ADR-MCPRE-056 §5.4: the optional-capability posture vocabulary — every seam
     # states ON or OFF, and an undeclared seam fails the debug build. Crate-internal.
     "src/startup_posture.rs",

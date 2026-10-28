@@ -68,6 +68,7 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `ShardTopologyRequest` | `config_state/topology.rs` | `shards()`, `workers_per_shard()` |
 | `ResolvedTopology` | `async_fleet/resolved_topology.rs` | `shards() -> NonZeroUsize`, `depth() -> NonZeroUsize` |
 | `TrustPlan` | `trust_plan.rs` | `revocation()`, `document_path()`, `response_kid()`, `reload()`, `epoch()` |
+| `ResponseAuthority` | `startup_plan/response_authority.rs` | `kid()`, `epoch()` — the root issuer kid and the shared trust epoch, read once for both the trust plan and the signing plan, whose constructors take it whole. `response_authority_plans` is the only producer. Structural: S84 (`proxy.response_authority_sole_producer`) |
 | `ChannelEstablishmentPlan` | `startup_plan/channel_establishment_plan.rs` | `currency_bound()`, `credential_window()`, `handshake_capacity()`, `crl_paths()`, `crl_reload_cadence_secs()` — the revocation posture and the window are projected as the bound they make together, never as two terms. `from_validated` is the only producer. Structural: S82, S83 (`proxy.channel_establishment_plan_sole_producer`) |
 | `TlsListenerSecurityState` | `tls_listener_state/` (a module TREE) | `epoch()`, `build_exported_key_config()`, `build_delegated_config()`, `build_delegated_resolver_config()` |
 | `PeerIdentityValue` | `communication_assurance/peer_identity_value.rs` | `as_str()` |
@@ -123,7 +124,8 @@ keeping:
 - **`TrustEpochPlan` deliberately did NOT move.** It is shared with `SigningPlan`, so
   relocating it into a trust-only module would make trust the authority over a fact
   signing also consumes — the CF-09 defect this tree already closed. It stays in
-  `startup_plan` as the shared composition input, and `TrustPlan` takes it as an argument.
+  `startup_plan` as the shared composition input. `TrustPlan` takes it inside a
+  `ResponseAuthority`, beside the issuer kid, and the signing plan takes the same authority.
 - **The move made the seal bite.** A `startup_plan` test was reading `trust.epoch` and
   `trust.response_kid` directly; once the fields were private to the owner's module that
   stopped compiling, and the test now relates the two plans through `epoch()` and
@@ -837,6 +839,13 @@ writing the next one:
 | a refusal made unavoidable | the check cannot be routed around | S04, S06, S08 |
 | provenance closed | the value's bytes or pairing are the owner's | S07, S09–S11, S12/S13 |
 | co-provenance | separately legal parts cannot be combined by a caller | S14 |
+
+S14 covers the posture and the locator. The issuer kid and the epoch are the trust plan's
+other two facts, and they are shared with the signing plan, so their seal is one level up:
+`ResponseAuthority` holds both, its only producer is `response_authority_plans`, and both
+plan constructors take it whole. Before that, `from_validated` took a kid and an epoch as two
+free arguments, and in-crate tests handed it values no deployment produces. S84 builds an
+authority from `startup_plan`, the authority's parent, and is refused with `E0451`.
 
 ### The eighth: the trust-configuration pair, and a probe that must not measure the wrong privacy
 

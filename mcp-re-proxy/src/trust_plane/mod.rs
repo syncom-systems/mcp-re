@@ -939,11 +939,7 @@ mod handle_lifetime_tests {
                 .is_none(),
             "the shape under test is the one with NO reload cadence"
         );
-        let plan = crate::startup_plan::TrustPlan::from_validated(
-            &config,
-            "response-kid".to_string(),
-            crate::startup_plan::TrustEpochPlan::from_validated(&config),
-        );
+        let (plan, _) = crate::startup_plan::response_authority_plans(&config);
         let plane = TrustPlane::materialize(&plan, Arc::new(AtomicBool::new(false)))
             .expect("the trust plane materializes");
 
