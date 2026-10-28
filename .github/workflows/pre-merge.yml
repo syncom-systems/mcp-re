@@ -378,6 +378,7 @@ jobs:
 
 
 
+
   gates-2:
     name: structural gates (2/3)
     runs-on: ubuntu-latest
@@ -520,6 +521,7 @@ jobs:
         run: |
           python3 scripts/merge_path_gate.py --selftest
           python3 scripts/merge_path_gate.py
+
 
 
 
@@ -734,6 +736,7 @@ jobs:
 
 
 
+
   selftests-1:
     name: assurance platform self-tests (1/2)
     runs-on: ubuntu-latest
@@ -781,6 +784,7 @@ jobs:
           python3 tools/verification/test_invalidation.py
           python3 tools/verification/test_theorem_review.py
           python3 tools/verification/test_views.py
+
 
 
 
@@ -846,6 +850,7 @@ jobs:
 
 
 
+
   # The structural lane's self-test builds hostile constructions with Bazel in a scratch copy
   # of the tree. On a runner without a Bazel cache it starts cold, so it runs here, behind the
   # main cache and a cache of the scratch copy's own output base. The measured lane's
@@ -856,6 +861,14 @@ jobs:
     timeout-minutes: 4
     steps:
       - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
       - name: Set up the pinned Python
         uses: actions/setup-python@v7
         with:
@@ -973,6 +986,7 @@ jobs:
           key: bazel-structural-lane-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}
 
 
+
   # The branch ruleset requires a check named "Bazel build + test". The work it stands for
   # is the seven shards above; this job is the check. It runs `if: always()` because a job
   # whose `needs:` failed is SKIPPED, and a skipped required check reads as passing: the
@@ -1001,6 +1015,7 @@ jobs:
 
 
 
+
   rfc9421-cross-verify:
     name: RFC 9421 third-party cross-verification (no-merge gate)
     runs-on: ubuntu-latest
@@ -1012,6 +1027,14 @@ jobs:
     # merge; this gate is required before full-profile parity is declared green.
     steps:
       - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
 
       - name: Set up the pinned Python
         uses: actions/setup-python@v7
@@ -1109,6 +1132,7 @@ jobs:
 
 
 
+
   release-race:
     name: release gates — replay race, drain, inner plane, saturation liveness
     runs-on: ubuntu-latest
@@ -1120,6 +1144,14 @@ jobs:
     # than replays a cached result, and --test_output=all so the log names what ran.
     steps:
       - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
 
       # cryptoki-sys's build script generates its FFI bindings with bindgen, which needs
       # libclang.
@@ -1238,12 +1270,21 @@ jobs:
 
 
 
+
   release-harness:
     name: release gates — load harness
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
       - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
 
       # cryptoki-sys's build script generates its FFI bindings with bindgen, which needs
       # libclang.
@@ -1319,6 +1360,7 @@ jobs:
 
 
 
+
   # The required check "feature-gated backend tests (Bazel)", over its two shards.
   release-gates:
     name: feature-gated backend tests (Bazel)
@@ -1343,6 +1385,7 @@ jobs:
 
 
 
+
   bazel-drift:
     name: bazel — semantic drift, target table
     runs-on: ubuntu-latest
@@ -1352,6 +1395,14 @@ jobs:
     # (they are cfg'd out on macOS); this is also the canonical hermetic target.
     steps:
       - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
       - name: Set up the pinned Python
         uses: actions/setup-python@v7
         with:
@@ -1442,12 +1493,21 @@ jobs:
 
 
 
+
   bazel-test-proxy:
     name: bazel — test parity (proxy), lint policy
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
       - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
       - name: Set up the pinned Python
         uses: actions/setup-python@v7
         with:
@@ -1555,12 +1615,21 @@ jobs:
       - name: Assurance platform self-tests (ADR-MCPRE-059) — the measured lane
         run: python3 tools/verification/test_measured_lane.py
 
+
   bazel-test-rest:
     name: bazel — test parity (rest), lint, format
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
       - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
       - name: Set up the pinned Python
         uses: actions/setup-python@v7
         with:
@@ -1641,16 +1710,7 @@ jobs:
       # this one is `//...` minus the proxy package, and `bazel-test-proxy` is that package.
 
       - name: Bazel test parity (//... except //mcp-re-proxy/...)
-        run: bazel test --test_output=errors --profile="$RUNNER_TEMP/rest.json.gz" -- //... -//mcp-re-proxy/...
-      - name: Profile of the test step (diagnostic)
-        run: |
-          python3 - "$RUNNER_TEMP/rest.json.gz" <<'EOF'
-          import gzip, json, sys
-          events = json.load(gzip.open(sys.argv[1])).get("traceEvents", [])
-          spans = sorted((e for e in events if e.get("dur")), key=lambda e: -e["dur"])
-          for e in spans[:40]:
-              print(f'{e["dur"] / 1e6:8.2f}s  {e.get("cat", "")[:28]:28}  {e.get("name", "")[:120]}')
-          EOF
+        run: bazel test --test_output=errors -- //... -//mcp-re-proxy/...
 
 
       # The Rust lint lane: clippy over every first-party target under the workspace lint
@@ -1661,6 +1721,7 @@ jobs:
       # rustfmt over every first-party target, check-only: a mis-formatted file fails.
       - name: Rust format lane (bazel build --config=rustfmt //...)
         run: bazel build --config=rustfmt //...
+
 
 
 
@@ -1688,6 +1749,7 @@ jobs:
 
 
 
+
   # The Bazel cache every PR shard restores. Saved only after a merge to main, by one job
   # that builds everything the shards and the SDK jobs build — each shard builds a part, and
   # a cache saved from one part would leave the others cold. It is not part of the pre-merge
@@ -1699,6 +1761,14 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
       - name: Set up the pinned Python
         uses: actions/setup-python@v7
         with:
@@ -1818,12 +1888,21 @@ jobs:
 
 
 
+
   sdk-python:
     name: downloader — Python SDK wheel (Bazel)
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
       - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
 
       - name: Set up the pinned Python
         uses: actions/setup-python@v7
@@ -1871,6 +1950,7 @@ jobs:
 
 
 
+
   sdk-typescript:
     name: downloader — TypeScript napi package (Bazel)
     runs-on: ubuntu-latest
@@ -1884,6 +1964,14 @@ jobs:
         working-directory: sdk/typescript
     steps:
       - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
