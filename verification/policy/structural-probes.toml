@@ -1773,7 +1773,7 @@ pub struct ServerIdentityFacts {
 
 [[probe]]
 id = "S50"
-unit = "core.max_clock_skew_bound"
+unit = "core.max_clock_skew_sole_producer"
 kind = "in-crate-source-injection"
 crate = "//mcp-re-core:mcp_re_core"
 invariant = "no code outside `MaxClockSkew`'s own module can build one around an unchecked tolerance"
@@ -2610,7 +2610,7 @@ alternate-constructors = "the only construction of `NoCommitmentRequired` outsid
 generated-or-deserialization = "`NoCommitmentRequired`, `IntentDisposition` and `Redeemed` derive Debug only: no Clone, Copy, Default, Serialize or Deserialize"
 test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`; the required posture's constructor `AuditPosture::required` takes an `EstablishedProvider`, whose only production constructor is the fallible `establish`, and the reference authority's registration `AuditProviders::with_reference_for_test` is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
 
-# --- proxy.exchange_publication: a success is published only with the permit its decision minted
+# --- proxy.publish_permit_sole_producer: a success is published only with the permit its decision minted
 #
 # The serving path used to hold "decide, then publish" by statement order, measured by
 # source-text probes and by mutation probes that discarded `may_publish`'s answer. The permit
@@ -2618,7 +2618,7 @@ test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`; 
 # publish, and nothing outside `exchange_state` can construct one.
 [[probe]]
 id = "S76"
-unit = "proxy.exchange_publication"
+unit = "proxy.publish_permit_sole_producer"
 kind = "in-crate-source-injection"
 crate = "//mcp-re-proxy:mcp_re_proxy"
 invariant = "a success cannot be published without the permit its publication decision returned"
@@ -2644,7 +2644,7 @@ test-only-construction = "none: the permit has no test constructor, and the publ
 
 [[probe]]
 id = "S77"
-unit = "proxy.exchange_publication"
+unit = "proxy.publish_permit_sole_producer"
 kind = "in-crate-source-injection"
 crate = "//mcp-re-proxy:mcp_re_proxy"
 invariant = "the serving path cannot mint a publish permit; only the publication decision does"
@@ -2669,14 +2669,14 @@ alternate-constructors = "the only construction of `PublishPermit` is `ExchangeP
 generated-or-deserialization = "`PublishPermit` derives nothing: no Clone, Copy, Default, Serialize or Deserialize"
 test-only-construction = "none: the permit has no test constructor"
 
-# --- proxy.exchange_publication: a permit publishes to the exchange that cleared it, and no other
+# --- proxy.publish_permit_sole_producer: a permit publishes to the exchange that cleared it, and no other
 #
 # A permit holds the exclusive borrow of the exchange `may_publish` judged. S78 tries to point
 # a cleared permit at another exchange; S79 tries to change the cleared exchange between the
 # decision and the terminal. Either would publish a state no decision was taken on.
 [[probe]]
 id = "S78"
-unit = "proxy.exchange_publication"
+unit = "proxy.publish_permit_sole_producer"
 kind = "in-crate-source-injection"
 crate = "//mcp-re-proxy:mcp_re_proxy"
 invariant = "a permit cleared on one exchange cannot be pointed at another"
@@ -2705,7 +2705,7 @@ test-only-construction = "none: the permit has no test constructor"
 
 [[probe]]
 id = "S79"
-unit = "proxy.exchange_publication"
+unit = "proxy.publish_permit_sole_producer"
 kind = "in-crate-source-injection"
 crate = "//mcp-re-proxy:mcp_re_proxy"
 invariant = "the cleared exchange cannot change between the publication decision and the terminal"
@@ -2732,7 +2732,7 @@ alternate-constructors = "`may_publish` takes `&mut self` and returns a permit c
 generated-or-deserialization = "`PublishPermit` derives nothing: no Clone, Copy, Default, Serialize or Deserialize"
 test-only-construction = "none: the permit has no test constructor"
 
-# --- proxy.exchange_publication: a dispatched notification has no reply to assemble
+# --- proxy.dispatched_exit_split: a dispatched notification has no reply to assemble
 #
 # Which exit a dispatched exchange takes is decided once, from the request: a one-way message
 # becomes a `DispatchedNotification` and a call a `DispatchedCall`. The reply assembler takes
@@ -2740,7 +2740,7 @@ test-only-construction = "none: the permit has no test constructor"
 # not the order of two statements.
 [[probe]]
 id = "S80"
-unit = "proxy.exchange_publication"
+unit = "proxy.dispatched_exit_split"
 kind = "in-crate-source-injection"
 crate = "//mcp-re-proxy:mcp_re_proxy"
 invariant = "a dispatched notification cannot be handed to the reply assembler"
@@ -2772,14 +2772,14 @@ alternate-constructors = "the only construction of either value is `Answering::o
 generated-or-deserialization = "neither type derives anything: no Clone, Copy, Default, Serialize or Deserialize"
 test-only-construction = "none: the dispatched module's tests obtain both through `Answering::of`, from an exchange crossed by `ReadyForDispatch::dispatch`"
 
-# --- proxy.audit_outcome_gate: a cleared success is served only by the success exit's last step
+# --- proxy.success_exit_order: a cleared success is served only by the success exit's last step
 #
 # The success exit's steps each take the previous step's product, and the products and steps are
 # private to `reply_assembly::success_exit`. S81 tries to serve a cleared success from outside
 # it, skipping the outcome commitment and retention.
 [[probe]]
 id = "S81"
-unit = "proxy.audit_outcome_gate"
+unit = "proxy.success_exit_order"
 kind = "in-crate-source-injection"
 crate = "//mcp-re-proxy:mcp_re_proxy"
 invariant = "outside the success exit a cleared success cannot be served without its outcome committed and its retention completed"
