@@ -117,7 +117,10 @@ mod tests {
     #[test]
     fn a_fail_closed_gate_projects_no_degraded_window() {
         let state = enforcing(AdmissionAvailabilityRequest::FailClosed);
-        let policy = state.enforced().expect("an enforcing state").enforcer_policy(skew(7));
+        let policy = state
+            .enforced()
+            .expect("an enforcing state")
+            .enforcer_policy(skew(7));
         assert!(!policy.allow_degraded_mode);
         assert_eq!(policy.degraded_propagation_bound, 0);
         assert_eq!(policy.max_clock_skew, 7);
@@ -133,7 +136,10 @@ mod tests {
         let state = enforcing(AdmissionAvailabilityRequest::Degraded {
             bound_secs: NonZeroU64::new(90).expect("90 is not zero"),
         });
-        let policy = state.enforced().expect("an enforcing state").enforcer_policy(skew(5));
+        let policy = state
+            .enforced()
+            .expect("an enforcing state")
+            .enforcer_policy(skew(5));
         assert!(policy.allow_degraded_mode);
         assert_eq!(policy.degraded_propagation_bound, 90);
         assert_eq!(policy.max_clock_skew, 5);

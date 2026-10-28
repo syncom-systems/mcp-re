@@ -275,15 +275,13 @@ pub(crate) fn admission_currency(
     // second trust root wearing the first one's name.
     let resolve_authority =
         crate::admission_enforcer::fixed_authority_resolver(kid.clone(), key.clone());
+    let verifier = crate::admission_source::AdmissionRecordVerifier::new(
+        std::sync::Arc::clone(&resolve_authority),
+        mcp_re_http_profile::PROFILE_TAG,
+        gate.record_verifier_currentness(max_clock_skew),
+    );
     let source = handle
-        .block_on(crate::redis_admission_source::RedisAdmissionSource::connect(
-            url,
-            crate::admission_source::AdmissionRecordVerifier::new(
-                std::sync::Arc::clone(&resolve_authority),
-                mcp_re_http_profile::PROFILE_TAG,
-                gate.record_verifier_currentness(max_clock_skew),
-            ),
-        ))
+        .block_on(crate::redis_admission_source::RedisAdmissionSource::connect(url, verifier))
         .map_err(|e| format!("connect redis admission source: {e}"))?;
     let line = format!(
         "admission currency = {} (authority {kid}, shared record over redis signed by that \
