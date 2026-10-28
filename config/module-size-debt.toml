@@ -458,8 +458,10 @@ status = "unreviewed"
 path = "mcp-re-proxy/src/tls_plane/mod.rs"
 # MCPRE-185: the requested-versus-established custody check left for the key-source owner,
 # and the plane takes one established credential: 393 -> 372.
-baseline_prod_loc = 372
-baseline_sha = "abd8f49"
+# #1249: the fleet bound reads the channel plan's own `currency_bound`: 372 (measured at
+# 099787cbf) -> 369.
+baseline_prod_loc = 369
+baseline_sha = "099787cbf"
 status = "unreviewed"
 
 [[debt]]
@@ -570,7 +572,7 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/startup_plan.rs"
+path = "mcp-re-proxy/src/startup_plan/mod.rs"
 # MCPRE-197: the inner-plane ceiling and raise left with the `Option` x `Option` interface they
 # projected: 385 (measured at bff0cb9) -> 340.
 # MCPRE-209: the response-authority plans have one producer here and the signing plan's
@@ -578,9 +580,11 @@ path = "mcp-re-proxy/src/startup_plan.rs"
 # MCPRE-208: the peer-identity provenance is part of the channel-binding state's projection,
 # so its second exhaustive match here goes: 338 (measured at 132f448) -> 312.
 # MCPRE-210: the clock-fault rule moves to the clock owner: 312 (measured at a36c92f) -> 292.
+# #1249: the channel-establishment plan is sealed in its own file, and `startup_plan.rs`
+# becomes `startup_plan/mod.rs` to declare it: 292 (measured at 099787cbf) -> 259.
 # `baseline_sha` names that parent.
-baseline_prod_loc = 292
-baseline_sha = "a36c92f"
+baseline_prod_loc = 259
+baseline_sha = "099787cbf"
 status = "unreviewed"
 
 [[debt]]

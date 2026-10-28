@@ -2813,3 +2813,70 @@ module-tree-visibility = "the serving step `serve_published` and the stage produ
 alternate-constructors = "`Committed` is built only on the `Ok` arm of `commit_outcome` (G2) and `Retained` only on the accounted-for arm of `complete_retention`; neither has a `From`, `Into`, `Default` or builder"
 generated-or-deserialization = "neither stage product derives anything: no Clone, Copy, Default, Serialize or Deserialize"
 test-only-construction = "none: the stage products have no test constructor"
+
+# --- proxy.channel_establishment_plan_sole_producer: a channel plan is one deployment's
+#
+# The plan's three facts — the revocation posture, the credential window and the handshake
+# capacity — are private to `startup_plan::channel_establishment_plan`, and `from_validated` is the only producer. S82 tries
+# to assemble a plan from terms a caller holds; S83 tries to replace one term of a plan
+# `from_validated` produced. Either would hold facts no one deployment was validated with.
+[[probe]]
+id = "S82"
+unit = "proxy.channel_establishment_plan_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside `startup_plan::channel_establishment_plan` can assemble a ChannelEstablishmentPlan, so possession means `from_validated` projected it from one validated deployment"
+insertion_parent = "mcp-re-proxy/src/tls_plane/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S82. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::config_state::ClientCredentialWindow;
+use crate::delegated_tls::HandshakeSignCapacity;
+use crate::startup_plan::{ChannelEstablishmentPlan, ClientRevocationPlan};
+
+pub fn hostile(
+    client_revocation: ClientRevocationPlan,
+    credential_window: ClientCredentialWindow,
+    handshake_signing: HandshakeSignCapacity,
+) -> ChannelEstablishmentPlan {
+    ChannelEstablishmentPlan {
+        client_revocation, // STRUCTURAL-PROBE-SITE
+        credential_window,
+        handshake_signing,
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "all three fields are bare-private to `startup_plan::channel_establishment_plan`: no `pub(crate)`, no `pub(super)`. The probe sits in `tls_plane`, the plan's consumer, which can name the type and every term's type and is refused the literal"
+alternate-constructors = "`from_validated` is the only associated function returning Self. There is no `From`, `Default` or builder, and the projections return a bound, a window, a capacity, the CRL paths and the cadence, never `&mut` or the representation"
+generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. Clone copies a plan `from_validated` produced and assembles nothing new; there is no Serialize, Deserialize or Default"
+test-only-construction = "none: every fixture goes through `startup_plan::channel_plan`, which validates a deployment and calls `from_validated`; no test-gated constructor or field visibility exists"
+
+[[probe]]
+id = "S83"
+unit = "proxy.channel_establishment_plan_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside `startup_plan::channel_establishment_plan` can replace one fact of a ChannelEstablishmentPlan, so a plan never pairs terms from two deployments"
+insertion_parent = "mcp-re-proxy/src/tls_plane/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0616"
+construction = """
+// ADR-MCPRE-068 structural probe S83. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::delegated_tls::HandshakeSignCapacity;
+use crate::startup_plan::ChannelEstablishmentPlan;
+
+pub fn hostile(plan: &mut ChannelEstablishmentPlan) {
+    plan.handshake_signing = HandshakeSignCapacity::default(); // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the fields are bare-private to `startup_plan::channel_establishment_plan`, so a consumer holding `&mut ChannelEstablishmentPlan` can neither read nor assign one; the probe assigns from `tls_plane`, where the listener's capacity is read"
+alternate-constructors = "no method takes `&mut self`: the plan is immutable once `from_validated` returns it"
+generated-or-deserialization = "no derive yields a mutable view of a field; Clone copies the whole plan"
+test-only-construction = "none: a test that needs another capacity validates a deployment stating it (`startup_plan::channel_plan`)"

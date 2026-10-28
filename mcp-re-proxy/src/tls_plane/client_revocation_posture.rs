@@ -126,7 +126,7 @@ pub(crate) fn revocation_posture_lines(
     // beside a connection age that outlives it. There is no `unbounded` arm because there
     // is no such deployment: disabling either bound is refused at layer A, and a window
     // exists only where both are set and the age respects the lifetime.
-    let exposure_window = format!("{}s", plan.credential_window.exposure_window().as_secs());
+    let exposure_window = format!("{}s", plan.credential_window().exposure_window().as_secs());
     // The exposure window above is only true because these two bounds hold: the
     // certificate is re-checked against the clock on EVERY request (not just at the
     // handshake), and a connection is closed at a bounded age so the peer must
@@ -134,7 +134,7 @@ pub(crate) fn revocation_posture_lines(
     let mut lines = vec![format!(
         "mcp-re.revocation.posture connection_max_age={}s per_request_cert_validity=enforced \
          per_request_crl_check={} crl_reload={} tls_session_resumption=epoch-bound",
-        plan.credential_window.connection_age().as_secs(),
+        plan.credential_window().connection_age().as_secs(),
         // The claim the CRL lines below rest on. rustls consults the CRLs during client
         // authentication, which runs on a full handshake only, so without this a revoked
         // peer serves every later request on the connection it already holds and the
@@ -147,7 +147,7 @@ pub(crate) fn revocation_posture_lines(
         maintenance.wire(),
     )];
     if crls.is_empty() {
-        let max_lifetime = plan.credential_window.cert_lifetime().as_secs();
+        let max_lifetime = plan.credential_window().cert_lifetime().as_secs();
         lines.push(format!(
             "mcp-re.revocation.posture revocation_mode=short_lived_cert dynamic_revocation=false \
              exposure_window={exposure_window} max_client_cert_lifetime={max_lifetime}s"
@@ -191,14 +191,13 @@ mod revocation_posture_tests {
     /// refuses — disabled, over the ceiling, or shorter than the connection age — cannot be
     /// written here at all. The `Option<Duration>` this took could name every one of them.
     fn plan(cert_lifetime_secs: u64) -> ChannelEstablishmentPlan {
-        ChannelEstablishmentPlan {
-            client_revocation: crate::config_state::test_support::crl_plan(&[], None),
-            credential_window: crate::config_state::test_support::credential_window(
-                cert_lifetime_secs,
-                300,
-            ),
-            handshake_signing: crate::delegated_tls::HandshakeSignCapacity::default(),
-        }
+        crate::startup_plan::channel_plan(
+            &[],
+            None,
+            cert_lifetime_secs,
+            300,
+            crate::delegated_tls::HandshakeSignCapacity::default(),
+        )
     }
 
     fn no_crls() -> ClientCrlEvidence {

@@ -8883,7 +8883,7 @@ id = "M312-proxy-the-credential-is-minted-under-the-planned-issuer"
 unit = "proxy.startup_plan_provenance"
 theorem = "THM-0077"
 conjunct = "the issuer kid in the minted credential is the one that was PLANNED, not one the signing plan re-derived from configuration"
-path = "mcp-re-proxy/src/startup_plan.rs"
+path = "mcp-re-proxy/src/startup_plan/mod.rs"
 anchor = "                issuer_kid: response_kid,\n"
 weakening = "                issuer_kid: {\n                    let _ = &response_kid;\n                    config.state().delegated_signing().issuer_kid().to_string()\n                },\n"
 expect_red = [
@@ -8908,7 +8908,7 @@ id = "M313-proxy-the-trust-epoch-build-refusal-is-stated-once"
 unit = "proxy.startup_plan_legality"
 theorem = "THM-0077"
 conjunct = "a networked trust-epoch source in a build that cannot carry one REFUSES, once, naming both consequences"
-path = "mcp-re-proxy/src/startup_plan.rs"
+path = "mcp-re-proxy/src/startup_plan/mod.rs"
 anchor = "            TrustEpochPlan::Redis { .. } if cfg!(feature = \"redis_replay\") => None,\n"
 weakening = "            TrustEpochPlan::Redis { .. } if true => None,\n"
 expect_red = [
@@ -12000,7 +12000,7 @@ listener is refused — an outage spelled as a setting, which startup must refus
 id = "M486-proxy-the-channel-plan-carries-the-operators-signing-capacity"
 unit = "proxy.handshake_sign_capacity"
 conjunct = "the channel plan carries the capacity the operator stated, not a default"
-path = "mcp-re-proxy/src/startup_plan.rs"
+path = "mcp-re-proxy/src/startup_plan/channel_establishment_plan.rs"
 anchor = """
             handshake_signing: config.config().limits.tls_handshake_signing,
 """
@@ -12034,7 +12034,7 @@ conjunct = "the TLS plane establishes its listener from the plan's capacity"
 path = "mcp-re-proxy/src/tls_plane/mod.rs"
 anchor = """
             client_ca,
-            plan.handshake_signing,
+            plan.handshake_capacity(),
 """
 weakening = """
             client_ca,

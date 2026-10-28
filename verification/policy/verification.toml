@@ -1197,7 +1197,8 @@ paths = [
   "mcp-re-proxy/src/delegated_tls.rs",
   "mcp-re-proxy/src/tls_listener_state/mod.rs",
   "mcp-re-proxy/src/tls_plane/mod.rs",
-  "mcp-re-proxy/src/startup_plan.rs",
+  "mcp-re-proxy/src/startup_plan/mod.rs",
+  "mcp-re-proxy/src/startup_plan/channel_establishment_plan.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -12578,7 +12579,7 @@ tested_symbols = [
 id = "proxy.startup_plan_provenance"
 class = "V0"
 description = "A STARTUP PLAN CARRIES THE DECISION IT WAS HANDED, NOT ONE IT RE-DERIVED: the trust plan and the signing plan come from ONE producer that reads the issuer kid and the trust epoch once, and the signing plan cannot be given an epoch the trust plan does not hold, the continuation plan carries its own endpoint verbatim, the replay plan carries the declared Redis pool size, the channel plan carries the classified custody and the credential window, the epoch plan normalises the key ONCE, the issuer kid in the minted credential is the one that was planned — falling back to the server key id only where the resolution reads it — the audience scope defaults to the response audience and is overridable, both consumers of the epoch hold ONE decision, each CRL posture is projected as its own variant, and the paths accessor answers which FILES rather than which posture. Says nothing about what planning REFUSES, which is `proxy.startup_plan_legality`'s, and nothing about whether any named endpoint can be reached, which is materialization's."
-paths = ["mcp-re-proxy/src/startup_plan.rs"]
+paths = ["mcp-re-proxy/src/startup_plan/mod.rs", "mcp-re-proxy/src/startup_plan/channel_establishment_plan.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -12587,6 +12588,8 @@ evidence = [
   "mutation://proxy/startup_plan_provenance/issuer_kid_is_the_planned_one",
 ]
 tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::channel_establishment_plan::tests::each_projection_answers_with_what_the_deployment_stated",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::channel_establishment_plan::tests::the_currency_bound_relates_the_plans_own_posture_and_window",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::a_declared_replay_pool_size_reaches_the_plan",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::both_consumers_of_the_epoch_hold_one_decision",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::each_crl_posture_is_projected_as_its_own_variant",
@@ -12600,11 +12603,28 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_signing_plan_cannot_be_given_a_different_epoch",
 ]
 
+# `ChannelEstablishmentPlan` is sealed (#1249): its three facts are private to
+# `startup_plan::channel_establishment_plan` and `from_validated` is the only producer. That
+# `from_validated` projects the right facts is `proxy.startup_plan_provenance`'s claim, tested;
+# that nothing else can assemble or alter a plan is a compile-time fact about the module
+# boundary, witnessed here by S82 and S83.
+[[unit]]
+id = "proxy.channel_establishment_plan_sole_producer"
+class = "V0"
+description = "`ChannelEstablishmentPlan::from_validated` is the ONLY producer of a channel plan, and no consumer can replace one of its facts: the revocation posture, the credential window and the handshake-signing capacity are bare-private to `startup_plan::channel_establishment_plan`, there is no second constructor, no derive fills or exposes the fields, and every test fixture goes through a validated deployment — so holding a plan means its three facts came from ONE validated deployment, and the posture and window that bound peer currency together are related by the plan's `currency_bound` rather than re-paired by a caller. States nothing about WHICH facts `from_validated` projects, which is `proxy.startup_plan_provenance`'s."
+paths = ["mcp-re-proxy/src/startup_plan/channel_establishment_plan.rs"]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "high"
+evidence = [
+  "structural://proxy/startup_plan/channel_establishment_plan_sole_producer",
+]
+
 [[unit]]
 id = "proxy.startup_plan_legality"
 class = "V0"
 description = "PLANNING REFUSES A STATE THAT SKIPPED THE PARSER, AND CONTACTS NOTHING: a linearizable tier without an endpoint, a shared Redis tier without a URL and a shared tier without a durability tier are each refused for what they are missing, a request with no durable replay configuration fails closed, the withdrawn alias is refused rather than reinterpreted, each selection is made by its own owner — continuation on its own locator and not the replay tier, admission independently of replay, only the Redis tier selecting a networked store, only the networked push state planning an epoch source — the build refusal is stated ONCE and names both consequences, the assertion arm is refused at the boundary and the both-set arm agrees with the gate on an unreachable input, a deployable configuration reads the verified peer certificate, and PLANNING A NETWORKED TIER OPENS NO SOCKET. Says nothing about what a plan that survives CARRIES, which is `proxy.startup_plan_provenance`'s."
-paths = ["mcp-re-proxy/src/startup_plan.rs"]
+paths = ["mcp-re-proxy/src/startup_plan/mod.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
