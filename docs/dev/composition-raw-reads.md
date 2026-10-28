@@ -9,12 +9,14 @@ The rule this inventory serves:
 `ValidatedDeployment::config()` is the escape hatch. Its own doc comment already says each
 forward is "countable as work remaining" — this is the count.
 
-**Today** (measured at `e236f1d4`, 2026-10-27): three production sites read it —
-`app.rs:136`, `startup_plan.rs:200` and `startup_plan.rs:294` — and through them **12 raw
-reads over 7 fields** reach composition:
+**Today** (measured 2026-10-28, #1249): three production sites read it —
+`app.rs:136`, `startup_plan/mod.rs:200` and `startup_plan/channel_establishment_plan.rs:51` —
+and through them **12 raw reads over 7 fields** reach composition:
 - `app.rs`: 10 reads over 7 fields — `bind`×3, `audience`×2, `channel_credential`,
   `peer_trust_anchors`, `route`, `limits`, `inner_http_urls`.
-- `startup_plan.rs`: 2 reads — `audience`, and `limits` for the handshake-signing capacity.
+- `startup_plan/mod.rs`: 1 read — `audience`.
+- `startup_plan/channel_establishment_plan.rs`: 1 read — `limits`, for the handshake-signing
+  capacity.
 
 Every one is in `composition_raw_read_test`'s `ORDINARY` inventory, which now scans every
 production file that calls `config()` rather than `app.rs` alone.

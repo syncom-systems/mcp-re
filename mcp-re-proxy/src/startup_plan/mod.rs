@@ -256,45 +256,14 @@ impl SigningPlan {
 /// its own validated state, not a value planning rebuilds from the state's paths.
 pub use crate::config_state::crl_revocation::ClientRevocationPlan;
 
-/// What must hold for this node to establish authenticated channels (ADR-MCPRE-056 §8).
-///
-/// Three classified states, none of them protocol vocabulary: the custody of this node's
-/// own channel credential, the currency posture it holds peer credentials to, and the
-/// window a peer credential authorizes traffic for. The mechanism that consumes them is
-/// `TlsPlane`, and it is the plane — not the plan — that is entitled to say rustls
-/// (ADR-MCPRE-067 §5, §6). The certificate lifetime and the connection-age bound used to
-/// travel here as two `Option<Duration>` inputs, with a doc comment claiming their
-/// compatibility "was settled at layer A" — which was not true: relation X5 compared the
-/// connection age against the ceiling CONSTANT and never against the configured lifetime.
-/// `ClientCredentialWindow` states the relation over the chosen values and owns both, so
-/// the plan carries one fact instead of two durations that could disagree.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChannelEstablishmentPlan {
-    /// The offline peer-credential revocation posture.
-    pub client_revocation: ClientRevocationPlan,
-    /// How long a client credential authorizes traffic, and how long one connection may
-    /// serve on a single handshake — the pair that makes the exposure window honest.
-    pub credential_window: crate::config_state::ClientCredentialWindow,
-    /// The capacity of the listener's handshake-signature budget: a global ceiling on the
-    /// signing backend, not a per-peer allowance.
-    pub handshake_signing: crate::delegated_tls::HandshakeSignCapacity,
-}
+/// What this node needs to establish authenticated channels, sealed in its own module:
+/// `from_validated` is its only producer, so the plan's facts come from one validated
+/// deployment and reach the TLS plane as projections.
+mod channel_establishment_plan;
 
-impl ChannelEstablishmentPlan {
-    /// Project the plan from the retained classification and the validated inputs.
-    ///
-    /// **Infallible, deliberately.** Whether this binary has a PKCS#11, AWS or GCP backend
-    /// for delegated custody is a fact about the BUILD, and making this fallible for it
-    /// would collapse the A/B split: the request is coherent either way, and only
-    /// materialization can say whether this executable can serve it.
-    pub fn from_validated(config: &ValidatedDeployment) -> ChannelEstablishmentPlan {
-        ChannelEstablishmentPlan {
-            client_revocation: config.state().crl_revocation().client_revocation_plan(),
-            credential_window: config.state().client_credential_window(),
-            handshake_signing: config.config().limits.tls_handshake_signing,
-        }
-    }
-}
+#[cfg(test)]
+pub(crate) use channel_establishment_plan::channel_plan;
+pub use channel_establishment_plan::ChannelEstablishmentPlan;
 
 /// What the MRTR continuation store must establish (ADR-MCPS-047, CF-12).
 ///
@@ -1011,14 +980,14 @@ mod tests {
         let config = validated(&["--max-client-cert-lifetime", "3600"]);
         let plan = ChannelEstablishmentPlan::from_validated(&config);
         assert_eq!(
-            plan.credential_window.cert_lifetime(),
+            plan.credential_window().cert_lifetime(),
             std::time::Duration::from_secs(3600)
         );
         assert!(
-            plan.credential_window.connection_age() <= plan.credential_window.exposure_window(),
+            plan.credential_window().connection_age() <= plan.credential_window().exposure_window(),
             "the plan cannot hold a connection age that outlives the credential"
         );
-        assert!(!plan.client_revocation.is_enforced());
+        assert!(plan.crl_paths().is_empty());
     }
 
     /// The operator's handshake-signing capacity reaches the plan the TLS plane builds the
@@ -1033,12 +1002,12 @@ mod tests {
             "40",
         ]);
         assert_eq!(
-            ChannelEstablishmentPlan::from_validated(&stated).handshake_signing,
+            ChannelEstablishmentPlan::from_validated(&stated).handshake_capacity(),
             HandshakeSignCapacity::new(250, 40).expect("in bounds")
         );
         let unstated = validated(&[]);
         assert_eq!(
-            ChannelEstablishmentPlan::from_validated(&unstated).handshake_signing,
+            ChannelEstablishmentPlan::from_validated(&unstated).handshake_capacity(),
             HandshakeSignCapacity::default()
         );
     }

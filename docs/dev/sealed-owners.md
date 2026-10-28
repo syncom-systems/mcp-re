@@ -68,6 +68,7 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `ShardTopologyRequest` | `config_state/topology.rs` | `shards()`, `workers_per_shard()` |
 | `ResolvedTopology` | `async_fleet/resolved_topology.rs` | `shards() -> NonZeroUsize`, `depth() -> NonZeroUsize` |
 | `TrustPlan` | `trust_plan.rs` | `revocation()`, `document_path()`, `response_kid()`, `reload()`, `epoch()` |
+| `ChannelEstablishmentPlan` | `startup_plan/channel_establishment_plan.rs` | `currency_bound()`, `credential_window()`, `handshake_capacity()`, `crl_paths()`, `crl_reload_cadence_secs()` — the revocation posture and the window are projected as the bound they make together, never as two terms. `from_validated` is the only producer. Structural: S82, S83 (`proxy.channel_establishment_plan_sole_producer`) |
 | `TlsListenerSecurityState` | `tls_listener_state/` (a module TREE) | `epoch()`, `build_exported_key_config()`, `build_delegated_config()`, `build_delegated_resolver_config()` |
 | `PeerIdentityValue` | `communication_assurance/peer_identity_value.rs` | `as_str()` |
 | `CertificatePeerIdentityEvidence` | `communication_assurance/certificate_peer_identity_evidence.rs` | `value()`, `source()` |
@@ -247,6 +248,12 @@ The owner holds both durations and enforces the relation at construction, so
 Making them non-optional also deleted two tests: the `unbounded` and `none` rendering arms
 were only reachable for a configuration the boundary refuses, so the tests asserting their
 wording were describing a transcript no proxy prints.
+
+The plan that carries the window had the same shape one level up. Its three fields were
+`pub`, so `fleet_crl_bound` paired `plan.client_revocation` with `plan.credential_window`
+itself, and fixtures assembled plans from a posture and a window no one deployment held. The
+fields are now private to `startup_plan::channel_establishment_plan`, and the pairing is the
+plan's `currency_bound()`.
 
 ## Borrowed views
 

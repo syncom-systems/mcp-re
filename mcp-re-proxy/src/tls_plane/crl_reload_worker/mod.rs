@@ -47,7 +47,7 @@ pub(super) fn start_reload_worker(
     crls: ClientCrlEvidence,
 ) -> Result<(WorkerSet, Arc<ClientRevocationCurrency>), String> {
     let mut workers = WorkerSet::new(deployment);
-    let Some(cadence_secs) = plan.client_revocation.reload_cadence_secs() else {
+    let Some(cadence_secs) = plan.crl_reload_cadence_secs() else {
         return Ok((workers, Arc::new(ClientRevocationCurrency::new(crls, None))));
     };
     let currency = Arc::new(ClientRevocationCurrency::new(crls, Some(cadence_secs)));

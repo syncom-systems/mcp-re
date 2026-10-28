@@ -2011,7 +2011,7 @@ happen* — is the root above it, and this is the half about what the shutdown D
 
 **NP-068, NP-069 AND NP-070 ARE DISCHARGED, 2026-09-19 (ADR-MCPRE-069 §5).** All 31 of the
 startup planner's controls that were theirs are now claimed by three `[[unit]]`s over
-`mcp-re-proxy/src/startup_plan.rs` — `proxy.startup_plan_provenance` (10),
+`mcp-re-proxy/src/startup_plan/mod.rs` — `proxy.startup_plan_provenance` (10),
 `proxy.startup_plan_legality` (17) and `proxy.startup_plan_pool_ceiling` (4) — each attached
 to THM-0077's `supported_by`, with falsifiers M312, M313 and M314 demonstrated red. The file
 was in no unit's `paths` before this; it now is, so a change to the planner moves the

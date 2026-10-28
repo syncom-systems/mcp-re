@@ -165,7 +165,7 @@ Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_g
 |---|---:|---|---|
 | `mcp-re-proxy/src/config_state/trust_revocation.rs` | 429 | `TrustRevocationState`, `EpochSource`, `classify_and_validate` | the revocation fact owner — unchanged, already sealed |
 | `mcp-re-proxy/src/config_state/trust_document.rs` | 83 | `TrustDocumentSource` | the locator fact owner — unchanged, already sealed |
-| `mcp-re-proxy/src/startup_plan.rs` | 476 | hosts `TrustPlan` among other plans | `TrustPlan` moves to live **with its owner**; `startup_plan` re-exports |
+| `mcp-re-proxy/src/startup_plan/mod.rs` (then `startup_plan.rs`) | 476 | hosts `TrustPlan` among other plans | `TrustPlan` moves to live **with its owner**; `startup_plan` re-exports |
 | `mcp-re-proxy/src/trust_plane.rs` | 690 | materialization entry | trust facade |
 | `mcp-re-proxy/src/trust_cache.rs` | 442 | cached resolution | private subordinate |
 | `mcp-re-proxy/src/trust_epoch.rs` | 451 | shared epoch mechanism | private subordinate |

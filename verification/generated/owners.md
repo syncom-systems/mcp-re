@@ -162,6 +162,7 @@ not an omission to hide.
 | proxy.channel_associated_identity | V0 | THM-0029 | 1 |
 | proxy.channel_associated_identity_sole_producer | V0 | _none_ | 0 |
 | proxy.channel_credential_custody_state | V0 | _none_ | 0 |
+| proxy.channel_establishment_plan_sole_producer | V0 | _none_ | 0 |
 | proxy.channel_peer_resolution | V0 | _none_ | 0 |
 | proxy.client_certificate_posture | V0 | THM-0054 | 0 |
 | proxy.client_credential_window | V0 | THM-0102 | 0 |

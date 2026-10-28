@@ -166,6 +166,7 @@ attestations this view cannot see.
 | unit://proxy.channel_associated_identity | source, contracts or evidence | THM-0029 | proxy.authenticated_relationship_peer (COMPILE_DEPENDENCY) |
 | unit://proxy.channel_associated_identity_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.channel_credential_custody_state | source, contracts or evidence | THM-0077 | _no consumer_ |
+| unit://proxy.channel_establishment_plan_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.channel_peer_resolution | source, contracts or evidence | THM-0031 | _no consumer_ |
 | unit://proxy.client_certificate_posture | source, contracts or evidence | THM-0054 | proxy.credential_currency (COMPILE_DEPENDENCY) |
 | unit://proxy.client_credential_window | source, contracts or evidence | THM-0102 | _no consumer_ |

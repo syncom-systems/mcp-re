@@ -2,7 +2,7 @@
 //! The composition root reads only ORDINARY validated parameters from the request.
 //!
 //! "The composition root" is every production file that reads the request through
-//! `ValidatedDeployment::config()` — `app.rs` and `startup_plan.rs` today — found by scanning
+//! `ValidatedDeployment::config()` — `app.rs` and `startup_plan/` today — found by scanning
 //! the source tree rather than listed, so a new composition file is measured when it starts
 //! reading.
 //!
@@ -199,14 +199,15 @@ fn composition_sources() -> Vec<(std::path::PathBuf, String)> {
 fn the_composition_root_reads_only_ordinary_validated_parameters() {
     let declared: BTreeSet<String> = ORDINARY.iter().map(|(f, _)| f.to_string()).collect();
     let sources = composition_sources();
-    let names: Vec<String> = sources
-        .iter()
-        .filter_map(|(path, _)| path.file_name().map(|n| n.to_string_lossy().into_owned()))
-        .collect();
-    for expected in ["app.rs", "startup_plan.rs"] {
+    let paths: Vec<&std::path::Path> = sources.iter().map(|(path, _)| path.as_path()).collect();
+    for expected in [
+        "app.rs",
+        "startup_plan/mod.rs",
+        "startup_plan/channel_establishment_plan.rs",
+    ] {
         assert!(
-            names.iter().any(|n| n == expected),
-            "{expected} reads the request and was not found by the scan: {names:?}"
+            paths.iter().any(|path| path.ends_with(expected)),
+            "{expected} reads the request and was not found by the scan: {paths:?}"
         );
     }
     let actual: BTreeSet<String> = sources
