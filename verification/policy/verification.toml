@@ -3369,7 +3369,7 @@ evidence = [
 id = "proxy.trust_plan"
 class = "V0"
 description = "WHAT THE PLAN PROJECTS AND WHAT IT REFUSES TO RE-DERIVE: the classified revocation posture, the document locator, the excluded response issuer, and the shared epoch mechanism it is HANDED rather than computes; its reload cadence is derived from the posture rather than stored, so no second reload value exists to disagree with the first. That the posture and the locator necessarily describe ONE deployment — because the sole constructor takes one `ValidatedDeployment` and no caller can pair them itself — is a compile-time fact and belongs to `proxy.trust_plan_co_provenance`."
-paths = ["mcp-re-proxy/src/trust_plan.rs"]
+paths = ["mcp-re-proxy/src/trust_plan.rs", "mcp-re-proxy/src/startup_plan/response_authority.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
@@ -3378,13 +3378,14 @@ evidence = [
   "mutation://proxy/trust/reload_is_a_projection",
 ]
 # The reload rule in both directions, plus the CF-09 property that the shared values are
-# INPUTS: a plan built with a value the configuration does not name carries that value,
-# which is only possible because nothing inside re-derives it.
+# INPUTS: a plan built around an authority the configuration does not name carries it, which
+# is only possible because nothing inside re-derives it. That control lives with
+# `ResponseAuthority`, the only module that can build such an authority.
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#trust_plan::tests::a_reload_bearing_state_cannot_be_projected_to_read_once",
   "//mcp-re-proxy:proxy_unit_test#trust_plan::tests::bounded_cache_keeps_both_refresh_postures",
   "//mcp-re-proxy:proxy_unit_test#trust_plan::tests::the_trust_plan_carries_the_retained_classification",
-  "//mcp-re-proxy:proxy_unit_test#trust_plan::tests::the_shared_values_are_inputs_the_trust_plan_cannot_re_derive",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::response_authority::tests::the_trust_plan_carries_the_authority_it_is_handed",
 ]
 
 # ---------------------------------------------------------------------------
@@ -3404,7 +3405,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.trust_plan_co_provenance"
 class = "V0"
-description = "A TrustPlan's revocation posture and document locator necessarily describe ONE deployment: all four fields are bare-private to `trust_plan`, `from_validated` is the only associated function returning Self and reads both from a single `&ValidatedDeployment`, nothing decodes a plan, and no test-gated construction route exists — so no caller can pair a posture from one validated deployment with a locator from another. Not a claim that any field is legal, which is each field owner's, and not a claim about what the plan projects, which is `proxy.trust_plan`'s."
+description = "A TrustPlan's revocation posture and document locator necessarily describe ONE deployment: all three fields are bare-private to `trust_plan`, `from_validated` is the only associated function returning Self and reads both from a single `&ValidatedDeployment`, nothing decodes a plan, and no test-gated construction route exists — so no caller can pair a posture from one validated deployment with a locator from another. Not a claim that any field is legal, which is each field owner's, and not a claim about what the plan projects, which is `proxy.trust_plan`'s."
 paths = [
   "mcp-re-proxy/src/trust_plan.rs",
 ]
@@ -12655,7 +12656,7 @@ tested_symbols = [
 id = "proxy.startup_plan_provenance"
 class = "V0"
 description = "A STARTUP PLAN CARRIES THE DECISION IT WAS HANDED, NOT ONE IT RE-DERIVED: the trust plan and the signing plan come from ONE producer that reads the issuer kid and the trust epoch once, and the signing plan cannot be given an epoch the trust plan does not hold, the continuation plan carries its own endpoint verbatim, the replay plan carries the declared Redis pool size, the channel plan carries the classified custody and the credential window, the epoch plan normalises the key ONCE, the issuer kid in the minted credential is the one that was planned — falling back to the server key id only where the resolution reads it — the audience scope defaults to the response audience and is overridable, both consumers of the epoch hold ONE decision, each CRL posture is projected as its own variant, and the paths accessor answers which FILES rather than which posture. Says nothing about what planning REFUSES, which is `proxy.startup_plan_legality`'s, and nothing about whether any named endpoint can be reached, which is materialization's."
-paths = ["mcp-re-proxy/src/startup_plan/mod.rs", "mcp-re-proxy/src/startup_plan/channel_establishment_plan.rs"]
+paths = ["mcp-re-proxy/src/startup_plan/mod.rs", "mcp-re-proxy/src/startup_plan/channel_establishment_plan.rs", "mcp-re-proxy/src/startup_plan/response_authority.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -12674,7 +12675,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_continuation_plan_carries_its_own_endpoint_verbatim",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_epoch_plan_normalizes_the_key_once",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_issuer_kid_falls_back_to_the_server_key_id",
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_issuer_kid_in_the_credential_is_the_one_that_was_planned",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::response_authority::tests::the_authority_reads_what_layer_a_decided",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::response_authority::tests::the_issuer_kid_in_the_credential_is_the_one_that_was_planned",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_paths_accessor_answers_which_files_not_which_posture",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_signing_plan_cannot_be_given_a_different_epoch",
 ]
@@ -12694,6 +12696,26 @@ evidence_class = "structural"
 direct_consequence_severity = "high"
 evidence = [
   "structural://proxy/startup_plan/channel_establishment_plan_sole_producer",
+]
+
+# `ResponseAuthority` is sealed (#1251): the root issuer kid and the shared trust epoch are
+# private to `startup_plan::response_authority`, whose private `from_validated` is called only
+# by `response_authority_plans`, and both plan constructors take the authority whole. That the
+# authority reads the right facts is `proxy.startup_plan_provenance`'s claim, tested; that
+# nothing else can assemble one is a compile-time fact about the module boundary, witnessed
+# here by S84.
+[[unit]]
+id = "proxy.response_authority_sole_producer"
+class = "V0"
+description = "`response_authority_plans` is the ONLY producer of a `ResponseAuthority`, and so of the trust plan and the signing plan in production: the issuer kid and the epoch plan are bare-private to `startup_plan::response_authority`, `from_validated` is private to it, no derive fills the fields, and no test-gated constructor exists outside that module — so a trust plan and a signing plan built from one authority hold one kid and one epoch, read once from one validated deployment, and neither plan can be built around a kid or an epoch a caller chose. States nothing about WHICH facts the authority reads, which is `proxy.startup_plan_provenance`'s."
+paths = ["mcp-re-proxy/src/startup_plan/response_authority.rs"]
+exported_contracts = []
+evidence_class = "structural"
+# A trust plan and a signing plan holding different kids is a deployment that excludes one
+# issuer from the request-signer set while minting under another.
+direct_consequence_severity = "high"
+evidence = [
+  "structural://proxy/startup_plan/response_authority_sole_producer",
 ]
 
 [[unit]]
