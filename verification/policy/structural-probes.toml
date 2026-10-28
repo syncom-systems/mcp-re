@@ -429,11 +429,11 @@ perfectly good value. What would be false is that they describe the same deploym
 literal restores exactly the hand-pairing the signature removes, which is why the probe is a
 literal rather than a bad argument.
 """
-construction = "// ADR-MCPRE-068 structural probe S14. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\n//\n// The hostile act is not an illegal FIELD \u2014 each of these could be a perfectly good value.\n// It is assembling them SEPARATELY, which is exactly what `from_validated` taking one\n// `ValidatedDeployment` prevents and what a struct literal would restore.\nuse crate::trust_plan::TrustPlan;\n\npub fn hostile() -> TrustPlan {\n    TrustPlan {\n        revocation: todo!(), // STRUCTURAL-PROBE-SITE\n        document: todo!(),\n        response_kid: String::new(),\n        epoch: todo!(),\n    }\n}\n"
+construction = "// ADR-MCPRE-068 structural probe S14. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\n//\n// The hostile act is not an illegal FIELD \u2014 each of these could be a perfectly good value.\n// It is assembling them SEPARATELY, which is exactly what `from_validated` taking one\n// `ValidatedDeployment` prevents and what a struct literal would restore.\nuse crate::trust_plan::TrustPlan;\n\npub fn hostile() -> TrustPlan {\n    TrustPlan {\n        revocation: todo!(), // STRUCTURAL-PROBE-SITE\n        document: todo!(),\n        authority: todo!(),\n    }\n}\n"
 
 [probe.producer_paths]
-module-tree-visibility = "all four fields are bare-private to `trust_plan`, which is a crate-root module. The probe is injected at the crate root, a sibling, so it is outside the defining module and every descendant of it"
-alternate-constructors = "`from_validated` is the only associated function returning Self. It is TOTAL \u2014 there is nothing to refuse, because the legality of each part is its own owner's \u2014 and its single `&ValidatedDeployment` parameter is the entire mechanism: it is what makes the two owned facts co-provenant. `response_kid` and `epoch` are passed in deliberately, being shared with the signing plane, and the five projections return borrows or a computed `TrustReloadPlan`, never the representation"
+module-tree-visibility = "all three fields are bare-private to `trust_plan`, which is a crate-root module. The probe is injected at the crate root, a sibling, so it is outside the defining module and every descendant of it"
+alternate-constructors = "`from_validated` is the only associated function returning Self. It is TOTAL \u2014 there is nothing to refuse, because the legality of each part is its own owner's \u2014 and its single `&ValidatedDeployment` parameter is the entire mechanism: it is what makes the two owned facts co-provenant. the `ResponseAuthority` is passed in deliberately, being shared with the signing plane, and only `startup_plan::response_authority` can produce one (S84); the five projections return borrows or a computed `TrustReloadPlan`, never the representation"
 generated-or-deserialization = "no derives that construct: no Serialize, no Deserialize, no Default. Nothing decodes a TrustPlan \u2014 it is projected from validated configuration, never parsed"
 test-only-construction = "the crate's tests build plans through `from_validated` against a `ValidatedDeployment`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
 
@@ -2880,3 +2880,41 @@ module-tree-visibility = "the fields are bare-private to `startup_plan::channel_
 alternate-constructors = "no method takes `&mut self`: the plan is immutable once `from_validated` returns it"
 generated-or-deserialization = "no derive yields a mutable view of a field; Clone copies the whole plan"
 test-only-construction = "none: a test that needs another capacity validates a deployment stating it (`startup_plan::channel_plan`)"
+
+
+# --- proxy.response_authority_sole_producer: one kid and one epoch for both planes
+#
+# The trust plan and the signing plan each take a `ResponseAuthority` whole. S84 builds one
+# from outside its module, around a kid and an epoch a caller chose — the hand-pairing that
+# `response_authority_plans` exists to remove.
+[[probe]]
+id = "S84"
+unit = "proxy.response_authority_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside `startup_plan::response_authority` can build a ResponseAuthority, so the trust plan and the signing plan are built around a kid and an epoch read once from one validated deployment"
+insertion_parent = "mcp-re-proxy/src/startup_plan/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S84. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::startup_plan::{ResponseAuthority, TrustEpochPlan};
+
+pub fn hostile() -> ResponseAuthority {
+    ResponseAuthority {
+        kid: "chosen-by-a-caller".to_string(), // STRUCTURAL-PROBE-SITE
+        epoch: TrustEpochPlan::NoNetworkChannel,
+    }
+}
+"""
+note = """
+Injected into `startup_plan`, the module that declares `response_authority` and holds the
+signing plan's private constructor: the nearest neighbour, and still refused.
+"""
+[probe.producer_paths]
+module-tree-visibility = "both fields are bare-private to `startup_plan::response_authority`, and `startup_plan` re-exports the type without them; the probe is injected into `startup_plan` itself, the parent, which is outside the defining module"
+alternate-constructors = "`from_validated` is the only associated function returning Self, and it is private to `startup_plan::response_authority`; its one caller is `response_authority_plans`. `kid()` and `epoch()` return borrows, and neither plan projects the authority whole, so no consumer can obtain one to clone"
+generated-or-deserialization = "derives Debug, Clone, PartialEq and Eq only; no Default, From or Deserialize exists"
+test-only-construction = "the one test-only construction is inside `startup_plan::response_authority`'s own tests, which build an authority naming a kid and an epoch no deployment names to show that both plans carry what they are handed; no test-gated constructor or field visibility exists outside that module"

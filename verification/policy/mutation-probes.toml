@@ -8884,10 +8884,10 @@ unit = "proxy.startup_plan_provenance"
 theorem = "THM-0077"
 conjunct = "the issuer kid in the minted credential is the one that was PLANNED, not one the signing plan re-derived from configuration"
 path = "mcp-re-proxy/src/startup_plan/mod.rs"
-anchor = "                issuer_kid: response_kid,\n"
-weakening = "                issuer_kid: {\n                    let _ = &response_kid;\n                    config.state().delegated_signing().issuer_kid().to_string()\n                },\n"
+anchor = "                issuer_kid: authority.kid().to_string(),\n"
+weakening = "                issuer_kid: {\n                    let _ = &authority;\n                    config.state().delegated_signing().issuer_kid().to_string()\n                },\n"
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_issuer_kid_in_the_credential_is_the_one_that_was_planned",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::response_authority::tests::the_issuer_kid_in_the_credential_is_the_one_that_was_planned",
 ]
 note = """
 THE WEAKENING RESTORES THE DEFECT VERBATIM, which is why it is the falsifier for this unit.
