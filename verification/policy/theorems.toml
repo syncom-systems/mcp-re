@@ -5797,6 +5797,7 @@ review_requirement = "Owner security-specification review"
 supported_by = [
   "unit://proxy.exchange_transition_ownership",
   "unit://proxy.exchange_publication",
+  "unit://proxy.publish_permit_sole_producer",
 ]
 depends_on = ["THM-0043"]
 

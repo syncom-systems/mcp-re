@@ -87,7 +87,7 @@ def _measured(**changes) -> dict[str, dict]:
 
 def _fixture() -> Registries:
     unit = {"id": "u.one", "paths": ["a/src/lib.rs"], "tested_symbols": ["//a:t#ctl"],
-            "gate_controls": ["scripts/g.py"]}
+            "gate_controls": ["scripts/g.py"], "evidence": ["structural://u/one"]}
     return Registries(
         units={"u.one": unit, "u.measured": _MEASURED_UNIT},
         theorems=[{"id": "THM-0001", "owner": "u.one", "supported_by": ["unit://u.one"]}],
@@ -183,6 +183,9 @@ def selftest() -> int:
             ("a structural probe on an undeclared unit",
              _with(reg, structural_probes=[dict(reg.structural_probes[0], unit="u.gone")]),
              "structural probe S1: unit 'u.gone'"),
+            ("a structural probe on a unit that declares no structural:// evidence",
+             _with(reg, structural_probes=[dict(reg.structural_probes[0], unit="u.measured")]),
+             "unit 'u.measured' declares no structural:// evidence"),
             ("a structural probe whose documented case is gone",
              _with(reg, structural_probes=[dict(reg.structural_probes[0], doc_item="Gone")]),
              "does not declare"),
