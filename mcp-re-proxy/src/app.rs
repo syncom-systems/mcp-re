@@ -362,8 +362,14 @@ fn run_validated(
     let serve_options = ServerOptions {
         identity_policy,
         peer_identity_provenance,
-        limits: values.limits.clone(),
-        // The owner's resolved bounds: serving reads every timeout and limit here, not the request.
+        // The two size limits no owner classifies: ordinary validated parameters.
+        max_header_bytes: values.limits.max_header_bytes,
+        max_body_bytes: values.limits.max_body_bytes,
+        // Each core's share of the admission limit the boundary resolved, over this host's
+        // resolved shard count.
+        max_in_flight_requests: Some(in_flight_limit.per_core_ceiling(topology.shards()).get()),
+        // The owner's resolved bounds: serving reads every timeout and the connection ceiling
+        // here, not the request.
         connection_bounds: bounds,
         // The owner's sealed window; serving reads both bounds from it, not from the request.
         client_credential_window: config.state().client_credential_window(),

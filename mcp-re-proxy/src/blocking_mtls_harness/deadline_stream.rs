@@ -9,7 +9,6 @@ use std::io::Read;
 use std::io::Write;
 use std::time::Duration;
 
-use crate::tls::ServerLimits;
 
 /// A `Read`/`Write` wrapper that enforces an AGGREGATE wall-clock deadline across
 /// every READ on the inner stream — the server-side mirror of mcp-re-transport's
@@ -52,7 +51,7 @@ impl ReadTimeout for std::net::TcpStream {
 }
 
 impl<S> DeadlineStream<S> {
-    /// Build the wrapper from the configured limits: the aggregate deadline is
+    /// Build the wrapper from the two read bounds: the aggregate deadline is
     /// `now + request_deadline` (or `None`, disabling the bound). `request_deadline`
     /// is retained only for the error message.
     ///
@@ -63,16 +62,18 @@ impl<S> DeadlineStream<S> {
     /// defense-in-depth we saturate to the current instant (deadline already
     /// elapsed → next read fails closed) rather than disable the control. The
     /// `None` deadline is reserved exclusively for "no deadline was requested".
-    pub(super) fn new(inner: S, limits: &ServerLimits) -> Self {
+    pub(super) fn new(
+        inner: S,
+        request_deadline: Option<Duration>,
+        read_timeout: Option<Duration>,
+    ) -> Self {
         let now = std::time::Instant::now();
-        let deadline = limits
-            .request_deadline
-            .map(|t| now.checked_add(t).unwrap_or(now));
+        let deadline = request_deadline.map(|t| now.checked_add(t).unwrap_or(now));
         DeadlineStream {
             inner,
             deadline,
-            timeout: limits.request_deadline,
-            read_timeout: limits.read_timeout,
+            timeout: request_deadline,
+            read_timeout,
         }
     }
 
@@ -185,22 +186,23 @@ mod aggregate_deadline_tests {
         // Small aggregate budget; the per-read sleep is well UNDER it, so each
         // individual read "succeeds" and only the aggregate deadline can stop the
         // header read. Without the wrapper, `read_http_request` would loop forever.
-        let limits = ServerLimits {
-            // Per-read timeout disabled to prove the AGGREGATE bound (not the
-            // per-socket timeout) is what fails closed.
-            read_timeout: None,
-            request_deadline: Some(Duration::from_millis(150)),
-            ..ServerLimits::default()
-        };
+        // Per-read timeout disabled to prove the AGGREGATE bound (not the per-socket
+        // timeout) is what fails closed.
         let mut stream = DeadlineStream::new(
             TricklingReader {
                 per_read_sleep: Duration::from_millis(5),
             },
-            &limits,
+            Some(Duration::from_millis(150)),
+            None,
         );
 
         let start = Instant::now();
-        let result = crate::blocking_mtls_harness::http1::read_http_request(&mut stream, &limits);
+        let limits = ServerLimits::default();
+        let result = crate::blocking_mtls_harness::http1::read_http_request(
+            &mut stream,
+            limits.max_header_bytes,
+            limits.max_body_bytes,
+        );
         let elapsed = start.elapsed();
 
         let err = match result {
@@ -225,14 +227,15 @@ mod aggregate_deadline_tests {
         // `request_deadline: None` disables the aggregate bound; a reader that DOES
         // complete the request must still parse cleanly (the wrapper is transparent
         // when the deadline is off).
-        let limits = ServerLimits {
-            request_deadline: None,
-            ..ServerLimits::default()
-        };
+        let limits = ServerLimits::default();
         let body = b"POST / HTTP/1.1\r\nContent-Length: 0\r\n\r\n".to_vec();
-        let mut stream = DeadlineStream::new(io::Cursor::new(body), &limits);
-        let req = crate::blocking_mtls_harness::http1::read_http_request(&mut stream, &limits)
-            .expect("a complete request must parse when the aggregate deadline is disabled");
+        let mut stream = DeadlineStream::new(io::Cursor::new(body), None, limits.read_timeout);
+        let req = crate::blocking_mtls_harness::http1::read_http_request(
+            &mut stream,
+            limits.max_header_bytes,
+            limits.max_body_bytes,
+        )
+        .expect("a complete request must parse when the aggregate deadline is disabled");
         assert!(req.body.is_empty());
     }
 
@@ -242,12 +245,7 @@ mod aggregate_deadline_tests {
         let addr = listener.local_addr().expect("local addr");
         let _client = std::net::TcpStream::connect(addr).expect("connect");
         let (server, _) = listener.accept().expect("accept");
-        let limits = ServerLimits {
-            read_timeout: None,
-            request_deadline: Some(Duration::from_millis(150)),
-            ..ServerLimits::default()
-        };
-        let mut stream = DeadlineStream::new(server, &limits);
+        let mut stream = DeadlineStream::new(server, Some(Duration::from_millis(150)), None);
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut buf = [0u8; 8];

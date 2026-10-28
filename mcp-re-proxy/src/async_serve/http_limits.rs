@@ -25,8 +25,8 @@ use super::MIN_HYPER_BUF_BYTES;
 /// read by nothing on this path, so an operator tightening it got a silent no-op.
 pub(super) fn http_builder(options: &ServerOptions) -> auto::Builder<TokioExecutor> {
     let header_read_timeout = options.connection_bounds.idle_bound();
-    let stream_ceiling = options.limits.max_in_flight_requests;
-    let max_header_bytes = options.limits.max_header_bytes;
+    let stream_ceiling = options.max_in_flight_requests;
+    let max_header_bytes = options.max_header_bytes;
     let write_timeout = options.connection_bounds.write_timeout();
     let mut builder = auto::Builder::new(TokioExecutor::new());
     // Bound the HTTP/1 header read so a slow-loris trickling header bytes cannot
@@ -92,35 +92,41 @@ mod tests {
         .expect("a legal credential window")
     }
 
-    fn rendered(limits: ServerLimits) -> String {
-        let options = ServerOptions {
-            connection_bounds: crate::config_state::ConnectionBounds::from_limits(&limits)
+    fn options(limits: &ServerLimits) -> ServerOptions {
+        ServerOptions {
+            connection_bounds: crate::config_state::ConnectionBounds::from_limits(limits)
                 .expect("bounds in force"),
-            limits,
+            max_header_bytes: limits.max_header_bytes,
+            max_body_bytes: limits.max_body_bytes,
             ..ServerOptions::new(
                 window(),
                 crate::config_state::RequestTarget::new("https://localhost/")
                     .expect("an absolute target"),
             )
+        }
+    }
+
+    fn rendered(limits: ServerLimits) -> String {
+        format!("{:?}", http_builder(&options(&limits)))
+    }
+
+    fn rendered_with_ceiling(ceiling: usize) -> String {
+        let options = ServerOptions {
+            max_in_flight_requests: Some(ceiling),
+            ..options(&ServerLimits::default())
         };
         format!("{:?}", http_builder(&options))
     }
 
     #[test]
     fn the_in_flight_ceiling_caps_h2_streams() {
-        let out = rendered(ServerLimits {
-            max_in_flight_requests: Some(7),
-            ..ServerLimits::default()
-        });
+        let out = rendered_with_ceiling(7);
         assert!(out.contains("max_concurrent_streams: Some(7)"), "{out}");
     }
 
     #[test]
     fn an_in_flight_ceiling_beyond_u32_saturates_the_h2_stream_cap() {
-        let out = rendered(ServerLimits {
-            max_in_flight_requests: Some((u32::MAX as usize).saturating_add(1)),
-            ..ServerLimits::default()
-        });
+        let out = rendered_with_ceiling((u32::MAX as usize).saturating_add(1));
         assert!(
             out.contains("max_concurrent_streams: Some(4294967295)"),
             "{out}"
