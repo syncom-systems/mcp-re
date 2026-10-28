@@ -1,4 +1,3 @@
-// TEMPORARY: forces a full rebuild to measure the pre-merge worst case; reverted next commit.
 // ADR-MCPRE-059 Phase 2: Verus attaches its loop annotations to loop *expressions*,
 // which needs `proc_macro_hygiene`. Gated with everything else in the lane, so a
 // production build sees no feature gate and stays on stable rustc.
