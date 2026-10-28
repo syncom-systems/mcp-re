@@ -15541,6 +15541,14 @@ reason_family = "ND-003"
 recorded = "2026-10-23"
 
 [[disposition]]
+id = "CD-0044"
+project = ""
+control = "gate#scripts/pre_merge_budget.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-10-28"
+
+[[disposition]]
 id = "CD-20607"
 project = "mcp-re-proxy"
 control = "src/lib.rs#config_state::request_target::tests::the_classifier_refuses_what_construction_refuses"
