@@ -18,4 +18,9 @@ permissions:
 jobs:
   gates:
     name: gates
+    # The three required checks read their own run's timing from the Actions API, and a
+    # called workflow may hold no permission its caller does not grant.
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/pre-merge.yml
