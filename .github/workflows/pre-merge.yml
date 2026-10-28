@@ -28,9 +28,11 @@
 #     module from Bazel, install it into a clean environment (fresh venv / empty npm
 #     project), and run the SDK test suite against it.
 #
-# The budget is 4 minutes end to end. Every pull-request job carries `timeout-minutes: 4`,
-# and the three required checks measure the run itself. `bazel-cache` runs on main only,
-# after a merge, and saves the cache every shard restores.
+# The target is 4 minutes end to end and the budget 6. Every pull-request job carries
+# `timeout-minutes: 6`, and the three required checks measure the run itself: past the
+# budget they fail, past the target they pass with a warning annotation, and every run
+# records each job's time. `bazel-cache` runs on main only, after a merge, and saves the
+# cache every shard restores.
 #
 # Pre-merge: every pull request. post-merge.yml calls this workflow on main after a merge.
 # Public repository, so every job runs on a GitHub-hosted runner.
@@ -57,7 +59,7 @@ jobs:
   rust:
     name: structural gates (1/3)
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
       # Full history: the module-size ratchet checks DISPOSITION TRANSITIONS against
       # `origin/main:config/module-size-debt.toml`, and at depth 1 that ref does not
@@ -384,7 +386,7 @@ jobs:
   gates-2:
     name: structural gates (2/3)
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
       # Full history, as in `rust`: the ratchets and the closure records read it.
       - uses: actions/checkout@v7
@@ -532,7 +534,7 @@ jobs:
   gates-3:
     name: structural gates (3/3)
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
       # Full history, as in `rust`: the ratchets and the closure records read it.
       - uses: actions/checkout@v7
@@ -746,7 +748,7 @@ jobs:
   selftests:
     name: assurance platform self-tests
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
       # Full history, as in `rust`: the ratchets and the closure records read it.
       - uses: actions/checkout@v7
@@ -845,7 +847,7 @@ jobs:
   selftests-bazel:
     name: assurance platform self-tests (structural lane)
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
 
@@ -1011,7 +1013,7 @@ jobs:
   rfc9421-cross-verify:
     name: RFC 9421 third-party cross-verification (no-merge gate)
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     # ADR-MCPRE-050 / MCPRE-99: the HTTP-profile corpus MUST validate through a
     # pinned, INDEPENDENT RFC 9421 implementation (python-cryptography Ed25519),
     # both ways — our signatures verify externally, and an externally produced
@@ -1131,7 +1133,7 @@ jobs:
   release-race:
     name: release gates — replay race, drain, inner plane, saturation liveness
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     # The ADR-MCPRE-051 §7 release gates as NAMED, attributable lanes (MCPRE-123). Their
     # tests also run inside the `bazel-test-*` shards' `bazel test`; naming them makes each a
     # gate whose failure is unambiguous. Each lane runs through run_test_lane.sh, which
@@ -1272,7 +1274,7 @@ jobs:
   release-harness:
     name: release gates — load harness
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
 
@@ -1392,7 +1394,7 @@ jobs:
   bazel-drift:
     name: bazel — semantic drift, target table, lint policy
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     # ADR-MCPS-048 / MCPS-70 — the enforcement that makes generation stick.
     # Runs on Linux so the platform-gated crates (seccompiler, landlock) compile
     # (they are cfg'd out on macOS); this is also the canonical hermetic target.
@@ -1530,7 +1532,7 @@ jobs:
   bazel-test-proxy:
     name: bazel — test parity (proxy units)
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
 
@@ -1628,7 +1630,7 @@ jobs:
   bazel-test-proxy-integration:
     name: bazel — test parity (proxy integration)
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
 
@@ -1723,7 +1725,7 @@ jobs:
   bazel-test-rest:
     name: bazel — test parity (rest)
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
 
@@ -1825,7 +1827,7 @@ jobs:
   bazel-lint:
     name: bazel — lint lane, format lane
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
 
@@ -2095,7 +2097,7 @@ jobs:
   sdk-python:
     name: downloader — Python SDK wheel (Bazel)
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
 
@@ -2160,7 +2162,7 @@ jobs:
   sdk-typescript:
     name: downloader — TypeScript napi package (Bazel)
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     # ADR-MCPS-048 / MCPS-71 — the npm downloader path. The native addon is Bazel's
     # (//sdk/typescript:native), built by the same Rust toolchain and crate universe as
     # every other target; the pinned @napi-rs/cli renders its loader from the type

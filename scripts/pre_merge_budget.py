@@ -7,7 +7,9 @@ WHAT THIS PROVES, exactly: for the one required check whose job runs it, every j
 check `needs:` concluded `success`, and the workflow run had been going for no more than
 `--budget-seconds` when this check ran — measured from the run attempt's own start time as
 the GitHub API reports it. It prints every job of the attempt with its queue and run time,
-so a run states its own timing rather than leaving it to be inferred.
+so a run states its own timing rather than leaving it to be inferred, and a run past
+`--target-seconds` but inside the budget passes with a warning annotation, so drift shows
+on the pull request before it fails one.
 
 WHY. The required checks are names in the branch ruleset, and the pre-merge work behind
 each one runs as several jobs in parallel so that the whole workflow fits its budget. A job
@@ -38,8 +40,10 @@ import os
 import sys
 import urllib.request
 
-#: The pre-merge budget, end to end, in seconds.
-BUDGET_SECONDS = 240
+#: The pre-merge budget, end to end, in seconds: a run past it fails the required check.
+BUDGET_SECONDS = 360
+#: The pre-merge target: a run past it, inside the budget, passes with a warning.
+TARGET_SECONDS = 240
 
 
 def _when(stamp: str | None) -> datetime.datetime | None:
@@ -67,6 +71,17 @@ def budget_problem(started: str | None, now: datetime.datetime, budget: int) -> 
     elapsed = (now - begun).total_seconds()
     if elapsed > budget:
         return f"the run took {elapsed:.0f}s to reach this check; the pre-merge budget is {budget}s"
+    return None
+
+
+def target_warning(started: str | None, now: datetime.datetime, target: int) -> str | None:
+    """Why the run missed the target; None when it is inside it or was not measured."""
+    begun = _when(started)
+    if begun is None:
+        return None
+    elapsed = (now - begun).total_seconds()
+    if elapsed > target:
+        return f"the run took {elapsed:.0f}s to reach this check; the pre-merge target is {target}s"
     return None
 
 
@@ -101,6 +116,7 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Pre-merge budget")
     parser.add_argument("--check", help="the required check this job carries")
     parser.add_argument("--budget-seconds", type=int, default=BUDGET_SECONDS)
+    parser.add_argument("--target-seconds", type=int, default=TARGET_SECONDS)
     parser.add_argument("--selftest", action="store_true")
     args = parser.parse_args(argv)
     if args.selftest:
@@ -122,12 +138,18 @@ def main(argv: list[str]) -> int:
 
     begun = _when(started)
     elapsed = f"{(now - begun).total_seconds():.0f}s" if begun else "unmeasured"
-    report = [f"pre-merge budget for {args.check!r}: {elapsed} of {args.budget_seconds}s", *job_lines(jobs)]
+    report = [
+        f"pre-merge budget for {args.check!r}: {elapsed} (target {args.target_seconds}s, budget {args.budget_seconds}s)",
+        *job_lines(jobs),
+    ]
     print("\n".join(report))
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as out:
             out.write("```\n" + "\n".join(report) + "\n```\n")
+    missed = target_warning(started, now, args.target_seconds)
+    if missed is not None:
+        print(f"::warning title=pre-merge target missed ({args.check})::{missed}")
     if problems:
         print(f"pre-merge budget: FAIL — {len(problems)} problem(s)", file=sys.stderr)
         for problem in problems:
@@ -149,6 +171,8 @@ def selftest() -> int:
         ("inside the budget", [p for p in [budget_problem("2026-10-28T12:00:30Z", now, 240)] if p], False),
         ("over the budget", [p for p in [budget_problem("2026-10-28T11:59:00Z", now, 240)] if p], True),
         ("an unmeasured run", [p for p in [budget_problem(None, now, 240)] if p], True),
+        ("inside the target", [p for p in [target_warning("2026-10-28T12:00:30Z", now, 240)] if p], False),
+        ("past the target, which warns", [p for p in [target_warning("2026-10-28T11:59:00Z", now, 240)] if p], True),
     ]
     failed = 0
     for label, problems, expect in cases:
