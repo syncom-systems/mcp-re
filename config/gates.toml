@@ -85,7 +85,7 @@ selftest = true
 [[script]]
 path = "scripts/clippy_ratchet_gate.py"
 stages = [1, 2]
-ci = ["pre-merge.yml:bazel-drift"]
+ci = ["pre-merge.yml:bazel-test-rest"]
 selftest = true
 
 [[script]]
@@ -428,7 +428,7 @@ not_a_control = "a topology measurement on this host, with no verdict"
 [[script]]
 path = "scripts/saturation_liveness.sh"
 stages = [2]
-ci = ["pre-merge.yml:release-harness"]
+ci = ["pre-merge.yml:release-race"]
 selftest = false
 not_a_control = "a liveness check of the capacity instrument, not of the product"
 
@@ -579,7 +579,7 @@ selftest = true
 [[script]]
 path = "scripts/workspace_lints_gate.py"
 stages = [1, 2]
-ci = ["pre-merge.yml:bazel-drift", "pre-merge.yml:rust"]
+ci = ["pre-merge.yml:bazel-test-rest", "pre-merge.yml:rust"]
 selftest = true
 
 # Needs a live kind cluster and a 3 GB bench image, which no CI runner has.
@@ -595,7 +595,7 @@ off_merge_path = "a kind-cluster Job-spec rehearsal; its wiring is policed by re
 [[script]]
 path = "tools/verification/assurance-closure"
 stages = [1]
-ci = ["assurance-closure.yml:closure", "pre-merge.yml:selftests-4", "verification.yml:assurance-closure"]
+ci = ["assurance-closure.yml:closure", "pre-merge.yml:selftests-2", "verification.yml:assurance-closure"]
 selftest = true
 off_merge_path = "binding only at epic end, as a complete verification.yml run's continuation; the pull-request path stays the fast checks, which run its selftest and test_assurance_closure.py"
 

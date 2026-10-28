@@ -10,18 +10,18 @@
 # (scripts/pre_merge_budget.py). The shards run side by side, so the slowest one, not
 # their sum, sets the time.
 #   - REQUIRED "bazel semantic-drift gate + test parity" (`bazel`): `bazel-drift` — the
-#     BUILD semantic-drift gate, the target table, the format lane, the workspace-lints
-#     membership gate and its probe, the ADR-MCPRE-061 clippy debt ratchet;
-#     `bazel-test-proxy` and `bazel-test-rest` — every non-manual test target, in two
-#     shards whose union is `//...` by construction; and the lint lane (clippy under
-#     //bazel:workspace_lints, warnings as errors). Live-infra e2e tests skip themselves
+#     BUILD semantic-drift gate and the target table; `bazel-test-proxy` and
+#     `bazel-test-rest` — every non-manual test target, in two shards whose union is
+#     `//...` by construction — with, in `bazel-test-rest`, the lint lane (clippy under
+#     //bazel:workspace_lints, warnings as errors), the format lane, the workspace-lints
+#     membership gate and its probe, and the ADR-MCPRE-061 clippy debt ratchet. Live-infra e2e tests skip themselves
 #     while their MCP_RE_TEST_* variables are unset.
 #   - REQUIRED "feature-gated backend tests (Bazel)" (`release-gates`): the ADR-MCPRE-051
 #     §7 release gates as named Bazel test lanes, the load harness's Docker tests and the
 #     saturation rig's liveness check, in `release-race` and `release-harness`.
 #   - REQUIRED "Bazel build + test" (`required`): the repository's structural gates in
 #     `rust`, `gates-2` and `gates-3`, and the assurance platform's self-tests in
-#     `selftests-1` to `selftests-4`. They build nothing.
+#     `selftests-1` and `selftests-2`. They build nothing.
 #   - BLOCKING (ADR-MCPS-048 / MCPS-71): the `sdk-python` and `sdk-typescript` jobs
 #     build each SDK's published artifact — the wheel, the npm package — with its native
 #     module from Bazel, install it into a clean environment (fresh venv / empty npm
@@ -728,7 +728,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   selftests-1:
-    name: assurance platform self-tests (1/4)
+    name: assurance platform self-tests (1/2)
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
@@ -748,14 +748,14 @@ jobs:
       # means, and every product claim rests on that. They ran in `local_gate.sh` and
       # nowhere else, so nothing on the merge path established it.
       #
-      # Four shards, balanced by measured time, so the slowest suite rather than their sum
+      # Two shards, balanced by measured time, so the slowest suite rather than their sum
       # sets the job's length; `required` reports each shard's time on every run.
       #
       # Spelled out one per line rather than looped over a variable: `merge_path_gate.py`
       # reads literal paths, and a name a workflow assembles at run time is a name it
       # cannot see. A control that is enforced but not legible to the checker is how the
       # next instance of this class would be missed.
-      - name: Assurance platform self-tests (ADR-MCPRE-059) — 1/4
+      - name: Assurance platform self-tests (ADR-MCPRE-059) — 1/2
         run: |
           python3 tools/verification/_lanes.py --selftest
           python3 tools/verification/test_verdict_algebra.py
@@ -771,31 +771,13 @@ jobs:
           # reason the comment above gives: `merge_path_gate.py` reads literal paths,
           # so a suite a workflow assembles at run time is one it cannot see.
           python3 tools/verification/test_evidence_class.py
-
-  selftests-2:
-    name: assurance platform self-tests (2/4)
-    runs-on: ubuntu-latest
-    timeout-minutes: 4
-    steps:
-      # Full history, as in `rust`: the ratchets and the closure records read it.
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - name: Set up the pinned Python
-        uses: actions/setup-python@v7
-        with:
-          python-version-file: .python-version
-
-      # The assurance platform's self-tests, shard 2/4 (see `selftests-1`).
-      - name: Assurance platform self-tests (ADR-MCPRE-059) — 2/4
-        run: |
           python3 tools/verification/test_invalidation.py
           python3 tools/verification/test_theorem_review.py
           python3 tools/verification/test_views.py
           python3 tools/verification/test_measured_lane.py
 
-  selftests-3:
-    name: assurance platform self-tests (3/4)
+  selftests-2:
+    name: assurance platform self-tests (2/2)
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
@@ -808,8 +790,8 @@ jobs:
         with:
           python-version-file: .python-version
 
-      # The assurance platform's self-tests, shard 3/4 (see `selftests-1`).
-      - name: Assurance platform self-tests (ADR-MCPRE-059) — 3/4
+      # The assurance platform's self-tests, shard 2/2 (see `selftests-1`).
+      - name: Assurance platform self-tests (ADR-MCPRE-059) — 2/2
         run: |
           python3 tools/verification/test_ecosystems.py
           python3 tools/verification/test_measured_inputs.py
@@ -820,24 +802,6 @@ jobs:
           # hostile construction that BUILDS and requires the runner to report FAIL; the
           # measured suite runs a dead apparatus, a silent one and an irreproducible one.
           python3 tools/verification/test_structural_lane.py
-
-  selftests-4:
-    name: assurance platform self-tests (4/4)
-    runs-on: ubuntu-latest
-    timeout-minutes: 4
-    steps:
-      # Full history, as in `rust`: the ratchets and the closure records read it.
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - name: Set up the pinned Python
-        uses: actions/setup-python@v7
-        with:
-          python-version-file: .python-version
-
-      # The assurance platform's self-tests, shard 4/4 (see `selftests-1`).
-      - name: Assurance platform self-tests (ADR-MCPRE-059) — 4/4
-        run: |
           python3 tools/verification/test_attest.py
           python3 tools/verification/test_verus_lane.py
           python3 tools/verification/test_test_lane.py
@@ -887,7 +851,7 @@ jobs:
   required:
     name: Bazel build + test
     if: always()
-    needs: [rust, gates-2, gates-3, selftests-1, selftests-2, selftests-3, selftests-4]
+    needs: [rust, gates-2, gates-3, selftests-1, selftests-2]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
@@ -1011,9 +975,8 @@ jobs:
           scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
           //mcp-re-conformance:scitt_interop_test
 
-
   release-race:
-    name: release gates — replay race, drain, inner plane
+    name: release gates — replay race, drain, inner plane, saturation liveness
     runs-on: ubuntu-latest
     timeout-minutes: 4
     # The ADR-MCPRE-051 §7 release gates as NAMED, attributable lanes (MCPRE-123). Their
@@ -1123,8 +1086,24 @@ jobs:
           scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
           //mcp-re-proxy:integration_async_test --test_arg=http_inner_test::
 
+      # LIVENESS of the standardized capacity instrument, not a measurement.
+      #
+      # The saturation rig is a Bazel binary driven by a script, so no test target
+      # reaches it and no gate above can see it. When ADR-MCPRE-064 Slice 4 moved the
+      # channel-binding operand to the request SUBJECT, the rig kept minting a client
+      # leaf naming the composed actor id: every request it sent was refused
+      # `mcp-re.transport_binding_failed` before backend dispatch, for eleven days, with
+      # every check on every PR green. Nothing anywhere asked the instrument to send one
+      # request.
+      #
+      # This asks. One core, one generator, 2000 requests, and NO throughput number — it
+      # asserts zero failures, a non-zero rate and a backend CPU clock that moved. The
+      # full sweep needs a quiet box and stays out of CI.
+      - name: Release gate — saturation instrument liveness
+        run: scripts/saturation_liveness.sh
+
   release-harness:
-    name: release gates — load harness, saturation liveness
+    name: release gates — load harness
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
@@ -1202,22 +1181,6 @@ jobs:
           scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
           //mcp-re-proxy:tls_load_harness_bench
 
-      # LIVENESS of the standardized capacity instrument, not a measurement.
-      #
-      # The saturation rig is a Bazel binary driven by a script, so no test target
-      # reaches it and no gate above can see it. When ADR-MCPRE-064 Slice 4 moved the
-      # channel-binding operand to the request SUBJECT, the rig kept minting a client
-      # leaf naming the composed actor id: every request it sent was refused
-      # `mcp-re.transport_binding_failed` before backend dispatch, for eleven days, with
-      # every check on every PR green. Nothing anywhere asked the instrument to send one
-      # request.
-      #
-      # This asks. One core, one generator, 2000 requests, and NO throughput number — it
-      # asserts zero failures, a non-zero rate and a backend CPU clock that moved. The
-      # full sweep needs a quiet box and stays out of CI.
-      - name: Release gate — saturation instrument liveness
-        run: scripts/saturation_liveness.sh
-
   # The required check "feature-gated backend tests (Bazel)", over its two shards.
   release-gates:
     name: feature-gated backend tests (Bazel)
@@ -1241,7 +1204,7 @@ jobs:
         run: python3 scripts/pre_merge_budget.py --check "feature-gated backend tests (Bazel)"
 
   bazel-drift:
-    name: bazel — semantic drift, format, lint policy
+    name: bazel — semantic drift, target table
     runs-on: ubuntu-latest
     timeout-minutes: 4
     # ADR-MCPS-048 / MCPS-70 — the enforcement that makes generation stick.
@@ -1337,31 +1300,6 @@ jobs:
       - name: Rust target table matches the build graph
         run: tools/verification/rust-targets --check
 
-      # rustfmt over every first-party target, check-only: a mis-formatted file fails.
-      - name: Rust format lane (bazel build --config=rustfmt //...)
-        run: bazel build --config=rustfmt //...
-
-      # ADR-MCPRE-061 Amendment 1 §3. The Group A zero-debt protections are ONE
-      # `rust_lint_config`, which every `nt_rust_*` target carries by default. A target that
-      # overrides it, or is written with a raw rule, is silently exempt, so the gate checks
-      # every first-party Rust target in the graph; `--probe` proves the policy is ENFORCED
-      # by compiling a deliberate violation of each half. A policy merely attached is the
-      # configuration-enforces-nothing failure this repo has already hit twice.
-      - name: Workspace-lints gate (every Rust target carries the one lint authority)
-        run: |
-          python3 scripts/workspace_lints_gate.py
-          python3 scripts/workspace_lints_gate.py --probe
-
-      # ADR-MCPRE-061 §6.4. The adopted lints run over every production library and binary
-      # flavor, and each crate's count may only fall (config/clippy-debt.toml). The probes
-      # prove the lints are switched on and the nesting threshold sits where CLAUDE.md says.
-      - name: Clippy debt ratchet (ADR-MCPRE-061 §6)
-        run: |
-          python3 scripts/clippy_ratchet_gate.py --selftest
-          python3 scripts/clippy_ratchet_gate.py --activation-probe
-          python3 scripts/clippy_ratchet_gate.py --nesting-probe
-          python3 scripts/clippy_ratchet_gate.py
-
   bazel-test-proxy:
     name: bazel — test parity (proxy)
     runs-on: ubuntu-latest
@@ -1441,6 +1379,9 @@ jobs:
             bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
             bazel-${{ runner.os }}-
 
+      - name: Bazel cache composition (diagnostic)
+        run: du -x -h -d 5 ~/.cache/bazel 2>/dev/null | sort -h | tail -40
+
       - name: Bazel version
         run: bazel version
 
@@ -1449,7 +1390,7 @@ jobs:
         run: bazel test --test_output=errors -- //mcp-re-proxy/...
 
   bazel-test-rest:
-    name: bazel — test parity (rest), lint lane
+    name: bazel — test parity (rest), lint, format, lint policy
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
@@ -1540,6 +1481,31 @@ jobs:
       # policy (//bazel:workspace_lints) and .clippy.toml, warnings as errors.
       - name: Rust lint lane (bazel build --config=lint //...)
         run: bazel build --config=lint //...
+
+      # rustfmt over every first-party target, check-only: a mis-formatted file fails.
+      - name: Rust format lane (bazel build --config=rustfmt //...)
+        run: bazel build --config=rustfmt //...
+
+      # ADR-MCPRE-061 Amendment 1 §3. The Group A zero-debt protections are ONE
+      # `rust_lint_config`, which every `nt_rust_*` target carries by default. A target that
+      # overrides it, or is written with a raw rule, is silently exempt, so the gate checks
+      # every first-party Rust target in the graph; `--probe` proves the policy is ENFORCED
+      # by compiling a deliberate violation of each half. A policy merely attached is the
+      # configuration-enforces-nothing failure this repo has already hit twice.
+      - name: Workspace-lints gate (every Rust target carries the one lint authority)
+        run: |
+          python3 scripts/workspace_lints_gate.py
+          python3 scripts/workspace_lints_gate.py --probe
+
+      # ADR-MCPRE-061 §6.4. The adopted lints run over every production library and binary
+      # flavor, and each crate's count may only fall (config/clippy-debt.toml). The probes
+      # prove the lints are switched on and the nesting threshold sits where CLAUDE.md says.
+      - name: Clippy debt ratchet (ADR-MCPRE-061 §6)
+        run: |
+          python3 scripts/clippy_ratchet_gate.py --selftest
+          python3 scripts/clippy_ratchet_gate.py --activation-probe
+          python3 scripts/clippy_ratchet_gate.py --nesting-probe
+          python3 scripts/clippy_ratchet_gate.py
 
   # The required check "bazel semantic-drift gate + test parity", over its three shards.
   bazel:
@@ -1656,6 +1622,8 @@ jobs:
           bazel build --config=rustfmt //...
           bazel build //sdk/python:wheel //mcp-re-proxy:http_profile_proxy
           bazel build -c opt //sdk/typescript:native //sdk/typescript:native_type_defs
+          bazel build //mcp-re-proxy:tls_load_harness_bench //mcp-re-proxy:async_drain_test
+          bazel build -c dbg //mcp-re-proxy:saturation_rig
 
       # After a green run on main only: what the next PR restores. Saving on success
       # alone keeps a cache from a run that failed halfway out of the chain.
@@ -1690,7 +1658,6 @@ jobs:
             bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
             bazel-${{ runner.os }}-
 
-
       # The wheel is Bazel's: the PyO3 binding is built by the same Rust toolchain and crate
       # universe as every other target, and packaged by rules_python's py_wheel.
       - name: Build the SDK wheel (bazel build //sdk/python:wheel)
@@ -1718,7 +1685,6 @@ jobs:
         run: |
           /tmp/venv/bin/python -m pytest sdk/python/tests -q \
             --cov --cov-config=sdk/python/pyproject.toml --cov-report=term-missing
-
 
   sdk-typescript:
     name: downloader — TypeScript napi package (Bazel)
@@ -1749,7 +1715,6 @@ jobs:
           restore-keys: |
             bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
             bazel-${{ runner.os }}-
-
 
       - name: Install JS dependencies
         run: npm ci
