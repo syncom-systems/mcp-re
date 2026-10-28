@@ -97,6 +97,11 @@ impl Scratch {
     fn join(&self, name: &str) -> std::path::PathBuf {
         self.0.join(name)
     }
+    /// The retained evidence as an auditor reads it: a read-only archive over the directory.
+    fn archive(&self) -> mcp_re_proxy::transparency::RetainedArchive {
+        mcp_re_proxy::transparency::RetainedArchive::open_read_only(self.join("evidence"))
+            .expect("open the archive")
+    }
 }
 
 impl Drop for Scratch {
@@ -485,7 +490,7 @@ fn a_post_dispatch_refusal_leaves_no_dangling_crossing() {
     );
 
     assert_eq!(
-        retention.pending_reservations().expect("list"),
+        scratch.archive().pending_reservations().expect("list"),
         Vec::<String>::new(),
         "the refusal is a terminal the proxy constructed and retained, so the crossing is \
          discharged; a surviving marker here would say the exchange is unaccounted for when \
@@ -606,7 +611,7 @@ fn a_served_call_becomes_an_offline_verifiable_receipt() {
     let audiences = [AUD];
     let epochs = [EPOCH];
     let attestation = attest_chain(
-        retention.archive(),
+        &scratch.archive(),
         &[digest],
         &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(&audiences, &epochs),
@@ -678,7 +683,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
     let audiences = [AUD];
     let epochs = [EPOCH];
     let attestation = attest_chain(
-        retention.archive(),
+        &scratch.archive(),
         std::slice::from_ref(&digest),
         &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(&audiences, &epochs),
@@ -694,7 +699,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
 
     // Re-derived independently from the store, as an auditor holding only the retained
     // bytes and the statement would.
-    let hops = retention
+    let hops = scratch
         .archive()
         .load_chain(&[digest])
         .expect("load the chain");
@@ -726,10 +731,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
     let other_digest = mcp_re_http_profile::scitt::EvidenceDigest::of(
         &std::fs::read(scratch.join("evidence").join(&names[0])).expect("read"),
     );
-    let other_hops = retention
-        .archive()
-        .load_chain(&[other_digest])
-        .expect("load");
+    let other_hops = scratch.archive().load_chain(&[other_digest]).expect("load");
     let other_reconstruction = mcp_re_http_profile::reconstruct_chain(
         &other_hops,
         &Verifier::new(&VerifierPolicy::default(), &resolver()),
@@ -995,7 +997,7 @@ fn a_chain_with_no_verified_hop_is_still_attested() {
         Box::new(|_key_id: &str, _slot: SignerSlot| Option::<ResolvedActor>::None.into());
 
     let attestation = attest_chain(
-        retention.archive(),
+        &scratch.archive(),
         std::slice::from_ref(&digest),
         &Verifier::new(&VerifierPolicy::default(), &nobody),
         &expectations(&audiences, &epochs),
@@ -1035,7 +1037,7 @@ fn a_chain_with_no_verified_hop_is_still_attested() {
 
     // The empty chain is the same class and must behave the same way.
     let empty = attest_chain(
-        retention.archive(),
+        &scratch.archive(),
         &[],
         &Verifier::new(&VerifierPolicy::default(), &nobody),
         &expectations(&audiences, &epochs),
@@ -1053,7 +1055,7 @@ fn a_chain_with_no_verified_hop_is_still_attested() {
     // The self-check is still applied where it means something: a statement about a
     // chain that DID verify is checked against the retained bytes.
     let complete = attest_chain(
-        retention.archive(),
+        &scratch.archive(),
         std::slice::from_ref(&digest),
         &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(&audiences, &epochs),

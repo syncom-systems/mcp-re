@@ -12497,7 +12497,7 @@ recorded = "2026-09-29"
 [[disposition]]
 id = "CD-20107"
 project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::durability::tests::an_enumerated_marker_is_a_well_formed_token"
+control = "src/lib.rs#transparency::retained_archive::tests::an_enumerated_marker_is_a_well_formed_token"
 decision = "new-proposition"
 proposition = "NP-220"
 recorded = "2026-09-29"
