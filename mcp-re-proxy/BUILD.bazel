@@ -149,7 +149,8 @@ _PROXY_LIB_SRCS = [
     "src/config_snapshot.rs",
     # The classified legal deployment state — layer A.
     # One classifier/validator per configuration machine, and the value they produce.
-    "src/config_state/admission.rs",
+    "src/config_state/admission/enforced_admission.rs",
+    "src/config_state/admission/mod.rs",
     "src/config_state/authorization.rs",
     "src/config_state/client_credential_window.rs",
     "src/config_state/connection_bounds/mod.rs",

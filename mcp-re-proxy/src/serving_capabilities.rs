@@ -281,10 +281,7 @@ pub(crate) fn admission_currency(
             crate::admission_source::AdmissionRecordVerifier::new(
                 std::sync::Arc::clone(&resolve_authority),
                 mcp_re_http_profile::PROFILE_TAG,
-                mcp_re_http_profile::authoritative_admission::record::AdmissionStateCurrentness {
-                    max_record_age: gate.record_currentness().max_age_secs(),
-                    max_clock_skew: max_clock_skew.secs(),
-                },
+                gate.record_verifier_currentness(max_clock_skew),
             ),
         ))
         .map_err(|e| format!("connect redis admission source: {e}"))?;

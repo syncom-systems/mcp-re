@@ -553,9 +553,11 @@ baseline_sha = "1021196"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/config_state/admission.rs"
-baseline_prod_loc = 509
-baseline_sha = "d1fc5fa"
+path = "mcp-re-proxy/src/config_state/admission/mod.rs"
+# #1250: the enforcing view moves to its own child, `admission/enforced_admission.rs`, with the
+# record verifier's currentness budget it now projects: 509 (as `admission.rs`) -> 433.
+baseline_prod_loc = 433
+baseline_sha = "8ad919901"
 status = "unreviewed"
 
 [[debt]]
@@ -614,8 +616,9 @@ path = "mcp-re-proxy/src/serving_capabilities.rs"
 # -> 377.
 # #1206: the audit seam moves to its own child, `serving_capabilities/audit_posture.rs`, with
 # the required posture: 375 (measured at ab46131a) -> 348.
-baseline_prod_loc = 348
-baseline_sha = "ab46131a"
+# #1250: the record verifier's currentness budget is the admission view's projection: 348 -> 345.
+baseline_prod_loc = 345
+baseline_sha = "8ad919901"
 status = "unreviewed"
 
 # MCPRE-211: the two delegated emitters are crate-private and read their signer from one
