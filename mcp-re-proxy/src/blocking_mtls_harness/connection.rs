@@ -64,10 +64,18 @@ where
     let bounds = &options.connection_bounds;
     let mut stream = StreamOwned::new(
         conn,
-        DeadlineStream::new(tcp, Some(bounds.request_deadline()), Some(bounds.read_timeout())),
+        DeadlineStream::new(
+            tcp,
+            Some(bounds.request_deadline()),
+            Some(bounds.read_timeout()),
+        ),
     );
 
-    let request = read_http_request(&mut stream, options.max_header_bytes, options.max_body_bytes)?;
+    let request = read_http_request(
+        &mut stream,
+        options.limits.max_header_bytes,
+        options.limits.max_body_bytes,
+    )?;
     // THE ESTABLISHMENT BOUNDARY (ADR-MCPRE-063 Slice 4). The read above is what drove
     // the rustls handshake to completion — a `ServerConnection` exists before that and
     // proves nothing — so this is the first point at which the mechanism can be asked

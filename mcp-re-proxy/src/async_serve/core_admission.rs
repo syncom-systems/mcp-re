@@ -79,12 +79,14 @@ impl CoreAdmission {
     pub(super) fn for_core(options: &ServerOptions, handshake_bound: HandshakeBound) -> Self {
         CoreAdmission {
             in_flight: options
+                .limits
                 .max_in_flight_requests
                 .map(|n| Arc::new(tokio::sync::Semaphore::new(n))),
             connections: Arc::new(AtomicUsize::new(0)),
             drain_signal: Arc::new(watch::channel(false).0),
             body_budget: Arc::new(BodyByteBudget::new(
                 options
+                    .limits
                     .max_body_bytes
                     .saturating_mul(BUFFERED_BODY_BUDGET_MULTIPLE),
             )),

@@ -121,7 +121,7 @@ pub(super) async fn read_body(
     options: &ServerOptions,
     budget: &Arc<BodyByteBudget>,
 ) -> Result<(Bytes, BodyBytes), Box<Response<Full<Bytes>>>> {
-    let max_body = options.max_body_bytes;
+    let max_body = options.limits.max_body_bytes;
     let collect = collect_body(req.into_body(), max_body, budget);
     match tokio::time::timeout(options.connection_bounds.request_deadline(), collect).await {
         Ok(Ok(collected)) => Ok(collected),

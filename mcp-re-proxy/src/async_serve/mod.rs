@@ -17,7 +17,7 @@
 //!   * the request handler is the SAME `Proxy` handler (`Proxy` is `Send + Sync`
 //!     since MCPRE-111, which is why this work was blocked on it).
 //!
-//! Only the I/O framing changes. `ServerLimits` map onto the async stack: the
+//! Only the I/O framing changes. The requested limits map onto the async stack: the
 //! aggregate read deadline (`request_deadline`, the slow-loris defense) bounds the
 //! TLS handshake and the per-request body read via `tokio::time::timeout`, the
 //! header read is bounded by `hyper`'s HTTP/1 header-read timeout, `max_body_bytes`

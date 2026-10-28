@@ -317,11 +317,11 @@ fn with_per_core_ceiling(
     options: Arc<ServerOptions>,
     ceiling: std::num::NonZeroUsize,
 ) -> Arc<ServerOptions> {
-    if options.max_in_flight_requests == Some(ceiling.get()) {
+    if options.limits.max_in_flight_requests == Some(ceiling.get()) {
         return options;
     }
     let mut opts = (*options).clone();
-    opts.max_in_flight_requests = Some(ceiling.get());
+    opts.limits.max_in_flight_requests = Some(ceiling.get());
     Arc::new(opts)
 }
 

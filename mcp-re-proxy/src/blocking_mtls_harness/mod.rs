@@ -54,7 +54,7 @@ use connection::serve_one;
 use crate::communication_assurance::AuthenticatedChannelPeer;
 
 /// Accept ONE TLS connection, complete the handshake (mTLS — a missing or untrusted client
-/// certificate fails here), read one HTTP request body (bounded by `options.max_header_bytes` and `max_body_bytes`),
+/// certificate fails here), read one HTTP request body (bounded by `options.limits`),
 /// invoke `handler(request_bytes, identity)`, and write the response. Returns the verified
 /// client identity that was observed (for test assertions).
 ///

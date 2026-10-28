@@ -14,7 +14,6 @@ use super::http1_framing::read_bytes;
 use super::http1_framing::reject_malformed_header_framing;
 use std::io::Write;
 
-
 /// One parsed HTTP/1.1 request: the request/header block (text up to and
 /// including the `\r\n\r\n` terminator) and the body bytes (the JSON-RPC
 /// payload). The header block is retained for the Tier-3 assertion extractor and
@@ -53,9 +52,7 @@ pub(super) fn read_http_request<S: Read>(
             let end = pos + terminator.len();
             break end;
         }
-        let allowance = max_header_bytes
-            .saturating_sub(buf.len())
-            .min(chunk.len());
+        let allowance = max_header_bytes.saturating_sub(buf.len()).min(chunk.len());
         if allowance == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -170,7 +167,7 @@ mod header_framing_tests {
     //! or re-join the offending bytes.
 
     fn read_req(bytes: &[u8]) -> std::io::Result<super::HttpRequest> {
-        let limits = crate::tls::ServerLimits::default();
+        let limits = crate::deployment_request::ServerLimits::default();
         super::read_http_request(
             &mut std::io::Cursor::new(bytes.to_vec()),
             limits.max_header_bytes,
@@ -230,7 +227,7 @@ mod content_length_framing_tests {
     use std::io;
 
     use super::read_http_request;
-    use crate::tls::ServerLimits;
+    use crate::deployment_request::ServerLimits;
 
     fn read(raw: &[u8]) -> io::Result<super::HttpRequest> {
         let mut stream = io::Cursor::new(raw.to_vec());
@@ -300,7 +297,7 @@ mod read_bound_tests {
     use std::io;
 
     use super::read_http_request;
-    use crate::tls::ServerLimits;
+    use crate::deployment_request::ServerLimits;
 
     const HEADER: &[u8] = b"POST /mcp HTTP/1.1\r\nMcp-Name: good\r\nContent-Length: 5\r\n\r\n";
 
@@ -308,7 +305,11 @@ mod read_bound_tests {
         stream: &mut io::Cursor<Vec<u8>>,
         max_header_bytes: usize,
     ) -> io::Result<super::HttpRequest> {
-        read_http_request(stream, max_header_bytes, ServerLimits::default().max_body_bytes)
+        read_http_request(
+            stream,
+            max_header_bytes,
+            ServerLimits::default().max_body_bytes,
+        )
     }
 
     #[test]

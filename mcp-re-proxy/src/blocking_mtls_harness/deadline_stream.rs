@@ -9,7 +9,6 @@ use std::io::Read;
 use std::io::Write;
 use std::time::Duration;
 
-
 /// A `Read`/`Write` wrapper that enforces an AGGREGATE wall-clock deadline across
 /// every READ on the inner stream — the server-side mirror of mcp-re-transport's
 /// `DeadlineStream` (MCPS-094, #4081) and bounded response read (MCPS-093).
@@ -141,7 +140,7 @@ mod aggregate_deadline_tests {
 
     use super::DeadlineStream;
     use super::ReadTimeout;
-    use crate::tls::ServerLimits;
+    use crate::deployment_request::ServerLimits;
 
     impl ReadTimeout for TricklingReader {
         fn set_read_timeout(&self, _timeout: Option<Duration>) -> io::Result<()> {

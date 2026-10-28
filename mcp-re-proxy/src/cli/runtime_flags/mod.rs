@@ -25,7 +25,7 @@ mod handshake_signing;
 pub(super) use connection_limits::MAX_INNER_READ_TIMEOUT_SECS;
 
 use crate::config_state::InFlightLimitRequest;
-use crate::tls::ServerLimits;
+use crate::deployment_request::ServerLimits;
 use admission_ceiling::AdmissionCeiling;
 
 /// The runtime inputs, as they accumulate across the argument list.

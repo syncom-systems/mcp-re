@@ -1047,7 +1047,7 @@ mod tests {
 
         // Assembled in code, which meets no parser: the same basis, for the same reason.
         let mut built = parse_request(&minimal_durable()).expect("parse");
-        built.limits = crate::tls::ServerLimits::default();
+        built.limits = crate::deployment_request::ServerLimits::default();
         built.in_flight_limit = crate::config_state::InFlightLimitRequest::FleetTotal(nz(1000));
         assert_eq!(
             crate::config_state::in_flight_limit::classify(&built),
