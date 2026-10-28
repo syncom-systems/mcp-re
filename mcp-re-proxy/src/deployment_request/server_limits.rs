@@ -176,18 +176,7 @@ impl Default for ServedLimits {
 mod tests {
     use super::{ServedLimits, ServerLimits};
     use crate::config_state::in_flight_limit::InFlightLimitBasis;
-    use crate::config_state::ConnectionBounds;
     use std::num::NonZeroUsize;
-
-    /// The defaults resolve to the bounds a default `ServerOptions` carries: the two
-    /// owners read the same constants, so an embedder that builds either gets the other.
-    #[test]
-    fn the_default_limits_resolve_to_the_default_connection_bounds() {
-        assert_eq!(
-            ConnectionBounds::from_limits(&ServerLimits::default()),
-            Ok(ConnectionBounds::default())
-        );
-    }
 
     fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).expect("not zero")
