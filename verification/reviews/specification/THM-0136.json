@@ -95,7 +95,7 @@
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:40625ffb05544cf0c883e56f9216c11ebcfaa823713156be1c51af423db73e40",
         "test_selection": "sha256:b1b1f7e494d4599b6196a78aeb0791fa8f66f4ea9ed9e75e44af96d51206516d",
-        "test_sources": "sha256:e97147d83edc83917c1ea1d38390aae044ed1841074f5cfc8f4b88cb3b306939",
+        "test_sources": "sha256:0ba44a46e8b8b71eb0e94cfc01852903e8e47641c0a8b95b0e01f14ea93a25ab",
         "trusted_assumptions": "sha256:88f4f91aeef8e86339d9ba8d38a4fe3fd4f30ce03f8b50749640944d00606780",
         "unit_id": "sha256:c4523a0a6a8e057dce1620fed220f9b0724282a9bdfd9895724f7bac8ad09ea6"
       },
@@ -115,7 +115,7 @@
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:0ccb62b229e3b1872b3064717150c7f1608968db3c91784589a5a3fe0082348f",
         "test_selection": "sha256:bd319493d3673222dafff45ff25bb72a68476f230649a77c94a3a5325acc2a24",
-        "test_sources": "sha256:49ac9e48a51d21d9469305317bebc9049b7c32c8e4b8fa5e35498a8c19aae72b",
+        "test_sources": "sha256:4cef769e281a7494dffa1e32cace6b461323efb945745e1af2f715036ff8cd1f",
         "trusted_assumptions": "sha256:88f4f91aeef8e86339d9ba8d38a4fe3fd4f30ce03f8b50749640944d00606780",
         "unit_id": "sha256:c4da5e193db752491edfd2e73e5ed1a0336299af79537e76d043b7789cfd3fe2"
       },
@@ -147,7 +147,7 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:75fe85e8a0e5e5755544c3ea5d39f4660a6c3f02f06abc01f50aee071cae8c98",
+  "review_digest": "sha256:b089c43c9178e9980e9c144eed0586fb344d2dd0f2c06851ad27c41fef455ec0",
   "reviewed_fingerprint": "sha256:b58fc9fc3c3122143716706ef5544fb9cb2af1b8f6090117519ae0cbe1ee16aa",
   "reviewer": "agent:claude-opus-5-5 (owner ruling of 2026-10-29 on #1263; prepared for owner ratification, not an owner signature)",
   "subject": "THM-0136"
