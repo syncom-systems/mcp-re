@@ -4,23 +4,35 @@
 # Rust compile, lint and test below is a Bazel action, under the toolchain MODULE.bazel
 # pins. Nothing here invokes Cargo.
 #
-# Gating policy:
-#   - BLOCKING: the `bazel` job — the BUILD semantic-drift gate, `bazel test //...`
-#     (every non-manual test target, the conformance suite and its drift guard among
-#     them, the feature-gated suites each in the flavor its tests need), the lint lane
-#     (clippy under //bazel:workspace_lints, warnings as errors), the format lane, the
-#     workspace-lints membership gate and its probe, and the ADR-MCPRE-061 clippy debt
-#     ratchet. Live-infra e2e tests skip themselves while their MCP_RE_TEST_* variables
-#     are unset.
-#   - BLOCKING: the `release-gates` job runs the ADR-MCPRE-051 §7 release gates as
-#     named Bazel test lanes, the load harness's Docker tests, and the saturation rig's
-#     liveness check.
-#   - BLOCKING: the `cargo` job (its id and check name are what the branch ruleset
-#     requires) runs the repository's structural gates; it builds nothing.
+# Gating policy. The branch ruleset requires three checks by name. Each is a job that
+# `needs:` the shards doing its work, runs `if: always()`, and passes only when every
+# shard succeeded and the run reached it inside the pre-merge budget
+# (scripts/pre_merge_budget.py). The shards run side by side, so the slowest one, not
+# their sum, sets the time.
+#   - REQUIRED "bazel semantic-drift gate + test parity" (`bazel`): `bazel-drift` — the
+#     BUILD semantic-drift gate, the target table, the workspace-lints membership gate
+#     and its probe, the ADR-MCPRE-061 clippy debt ratchet and the measured lane's
+#     self-test; `bazel-test-proxy`, `bazel-test-proxy-integration` and `bazel-test-rest` —
+#     every non-manual test target, in three shards whose union is `//...` by
+#     construction; and `bazel-lint` — the lint lane (clippy under
+#     //bazel:workspace_lints, warnings as errors) and the format lane. Live-infra e2e
+#     tests skip themselves while their MCP_RE_TEST_* variables are unset.
+#   - REQUIRED "feature-gated backend tests (Bazel)" (`release-gates`): the ADR-MCPRE-051
+#     §7 release gates as named Bazel test lanes, the load harness's Docker tests and the
+#     saturation rig's liveness check, in `release-race` and `release-harness`.
+#   - REQUIRED "Bazel build + test" (`required`): the repository's structural gates in
+#     `rust`, `gates-2` and `gates-3`, and the assurance platform's self-tests in
+#     `selftests` and `selftests-bazel`.
 #   - BLOCKING (ADR-MCPS-048 / MCPS-71): the `sdk-python` and `sdk-typescript` jobs
 #     build each SDK's published artifact — the wheel, the npm package — with its native
 #     module from Bazel, install it into a clean environment (fresh venv / empty npm
 #     project), and run the SDK test suite against it.
+#
+# The target is 4 minutes end to end and the budget 6. Every pull-request job carries
+# `timeout-minutes: 6`, and the three required checks measure the run itself: past the
+# budget they fail, past the target they pass with a warning annotation, and every run
+# records each job's time. `bazel-cache` runs on main only, after a merge, and saves the
+# cache every shard restores.
 #
 # Pre-merge: every pull request. post-merge.yml calls this workflow on main after a merge.
 # Public repository, so every job runs on a GitHub-hosted runner.
@@ -40,9 +52,14 @@ permissions:
   contents: read
 
 jobs:
+  # The structural gates, in three shards that run side by side. Each shard checks out the
+  # full history, because the ratchets read `origin/main`. None of them is a required check
+  # on its own: `required` below carries the required name and passes only when every shard
+  # passed, inside the pre-merge budget.
   rust:
-    name: Bazel build + test
+    name: structural gates (1/3)
     runs-on: ubuntu-latest
+    timeout-minutes: 6
     steps:
       # Full history: the module-size ratchet checks DISPOSITION TRANSITIONS against
       # `origin/main:config/module-size-debt.toml`, and at depth 1 that ref does not
@@ -361,6 +378,25 @@ jobs:
           python3 scripts/lifecycle_purity_gate.py --selftest
           python3 scripts/lifecycle_purity_gate.py
 
+
+
+
+
+
+  gates-2:
+    name: structural gates (2/3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      # Full history, as in `rust`: the ratchets and the closure records read it.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+
       # Merge readiness — the authority that decides whether a candidate may merge. ONLY
       # its selftest runs here, and that is the whole of what CI can establish about it:
       # the gate asks whether this commit's required lanes have COMPLETED, so a job
@@ -490,6 +526,25 @@ jobs:
           python3 scripts/merge_path_gate.py --selftest
           python3 scripts/merge_path_gate.py
 
+
+
+
+
+
+  gates-3:
+    name: structural gates (3/3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      # Full history, as in `rust`: the ratchets and the closure records read it.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+
       # A GATE'S VERDICT AND ITS EXIT STATUS ARE ONE FACT. Both are correct at the source
       # — `local_gate.sh` prints exactly one `LOCAL GATE:` line and exits non-zero — and
       # they come apart in the INVOCATION: `gate | tail` reports tail's status, and
@@ -502,6 +557,12 @@ jobs:
       # the difference rather than restating that 1 is not 0.
       - name: Gate exit-status wrapper (a verdict and a status are one fact)
         run: scripts/run_gate.sh --selftest
+
+      # The decision the three required checks make over their shards: anything but
+      # `success` from a shard fails, and so does a run past the budget or one that could not
+      # be measured.
+      - name: Pre-merge budget (selftest)
+        run: python3 scripts/pre_merge_budget.py --selftest
 
       # The TypeScript battery is measured on one prepared environment per PINNED Node
       # version. Those are build products, the nightly reclaim removes them, and the lane
@@ -560,88 +621,6 @@ jobs:
         run: |
           tools/verification/check-registries --selftest
           tools/verification/check-registries
-
-      # The assurance platform's own self-tests — the verdict algebra, the invalidation
-      # rules, the measured-input closure, the escape-hatch detector, the theorem loader
-      # and review model, the test and Verus lane adapters, and the views generator. They
-      # are what establishes that a `verify` verdict means what ADR-MCPRE-059 says it
-      # means, and every product claim rests on that. They ran in `local_gate.sh` and
-      # nowhere else, so nothing on the merge path established it. ~16s, python-only.
-      #
-      # Spelled out one per line rather than looped over a variable: `merge_path_gate.py`
-      # reads literal paths, and a name a workflow assembles at run time is a name it
-      # cannot see. A control that is enforced but not legible to the checker is how the
-      # next instance of this class would be missed.
-      - name: Assurance platform self-tests (ADR-MCPRE-059)
-        run: |
-          python3 tools/verification/_lanes.py --selftest
-          python3 tools/verification/test_verdict_algebra.py
-          python3 tools/verification/test_invalidation.py
-          python3 tools/verification/test_attest.py
-          python3 tools/verification/test_verus_lane.py
-          python3 tools/verification/test_test_lane.py
-          python3 tools/verification/test_ecosystems.py
-          python3 tools/verification/test_measured_inputs.py
-          python3 tools/verification/test_escape_hatches.py
-          python3 tools/verification/test_theorems.py
-          python3 tools/verification/test_theorem_review.py
-          python3 tools/verification/test_claim_corrections.py
-          python3 tools/verification/test_views.py
-          python3 tools/verification/test_evidence_bundle.py
-          python3 tools/verification/test_extraction_identity.py
-          python3 tools/verification/test_extraction_artifact.py
-          python3 tools/verification/test_compose.py
-          python3 tools/verification/test_scoped_verification.py
-          python3 tools/verification/test_lean_axioms.py
-          python3 tools/verification/test_lean_model.py
-          # Added by the v0.17 Slice B sweep. It was in NEITHER local_gate.sh nor any
-          # unconditional workflow: `mutation-probe.yml` names it, and that workflow is
-          # `paths:`-filtered, so the mutation lane's verdict semantics were established
-          # only on pull requests that happened to trip the filter. `merge_path_gate.py`
-          # could not see it, because "named by a workflow" was treated as coverage
-          # whatever the trigger. Both halves are fixed.
-          python3 tools/verification/test_mutation_lane.py
-          # ADR-MCPRE-068 Phase 0A. Listed here rather than left to a glob for the
-          # reason the comment above gives: `merge_path_gate.py` reads literal paths,
-          # so a suite a workflow assembles at run time is one it cannot see.
-          python3 tools/verification/test_evidence_class.py
-          # A cited control must be compiled by the target that cites it: a unit naming a
-          # feature-gated module's test in a target built without the feature measures nothing.
-          python3 tools/verification/test_feature_lanes.py
-          # ADR-MCPRE-068 Phase 0B. These two are not only self-tests of a lane's edges —
-          # they ARE the two lanes' liveness, because the ratification requires each to
-          # fail-close on zero execution and neither registry is yet large enough for a
-          # lane run to demonstrate that it can go red. The structural suite compiles a
-          # hostile construction that BUILDS and requires the runner to report FAIL; the
-          # measured suite runs a dead apparatus, a silent one and an irreproducible one.
-          # ~4s, one dependency-free crate between them.
-          python3 tools/verification/test_structural_lane.py
-          python3 tools/verification/test_measured_lane.py
-          # #1172. Which runs may close assurance and what closing requires, and that
-          # verification.yml's closure job calls the authority rather than counting axes.
-          tools/verification/assurance-closure --selftest
-          python3 tools/verification/test_assurance_closure.py
-          # #1173. A committed closure record is well formed, its digests are the digests
-          # of the identities it lists, and its target commit resolves to its target tree.
-          tools/verification/closure-record --selftest
-          python3 tools/verification/test_closure_record.py
-          tools/verification/closure-record --verify
-          # ADR-MCPRE-068 Phase 0C. The premise ontology, and the composition §7 found
-          # missing: which typed premises each declared root ultimately rests on. Both ends
-          # of that join carry `unit://` URIs, and comparing them verbatim reported that no
-          # root rests on any premise — an empty join reads exactly like a clean tree, so
-          # the suite asserts the count is non-zero rather than only that it runs.
-          python3 tools/verification/test_premise_class.py
-
-          # ADR-MCPRE-068 N3 — the severity derivation, Phase 0E. `effective_severity` is
-          # derived and never stored, which is only worth more than a stored field if the
-          # DERIVATION is what gets checked. Each control is a way to produce a number that
-          # is wrong: stopping at the root set (the reading the ratification rejected),
-          # propagating one hop, taking a minimum, defaulting an absent label to `none`, or
-          # letting a cycle make the answer depend on iteration order. The last control runs
-          # on the live registries and asserts the result is NON-EMPTY — an empty derivation
-          # would leave every fixture control above true and meaningless.
-          python3 tools/verification/test_assurance_graph.py
 
       # ADR-MCPRE-068 §9.4 — the class-transition ratchet. A downgrade from `proved` to
       # `tested` passes registry adequacy trivially: delete the formal URI, delete the
@@ -740,7 +719,7 @@ jobs:
         run: python3 tools/scitt_fetch_service_key.py --selftest
 
       # MCPRE-427 (#415 rev 2 §12.2). The hash/digest checks themselves run inside
-      # the `bazel` job's `bazel test //...` (corpus_pinning_test + the frozen runners,
+      # the `bazel-test-*` shards' `bazel test` (corpus_pinning_test + the frozen runners,
       # which fail closed before running a vector whose bytes drifted). This step
       # PUBLISHES the resulting digests into the job summary so a release packet —
       # and any reviewer — can quote the exact corpus that was tested, rather than
@@ -761,9 +740,280 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
+
+
+
+
+
+  selftests:
+    name: assurance platform self-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      # Full history, as in `rust`: the ratchets and the closure records read it.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+
+      # The assurance platform's own self-tests — the verdict algebra, the invalidation
+      # rules, the measured-input closure, the escape-hatch detector, the theorem loader
+      # and review model, the test and Verus lane adapters, and the views generator. They
+      # are what establishes that a `verify` verdict means what ADR-MCPRE-059 says it
+      # means, and every product claim rests on that. They ran in `local_gate.sh` and
+      # nowhere else, so nothing on the merge path established it.
+      #
+      # One job: measured, the suites now take about 2.5 minutes in sequence on CI. The two
+      # that drive Bazel run behind its cache, in `selftests-bazel` and `bazel-drift`.
+      #
+      # Spelled out one per line rather than looped over a variable: `merge_path_gate.py`
+      # reads literal paths, and a name a workflow assembles at run time is a name it
+      # cannot see. A control that is enforced but not legible to the checker is how the
+      # next instance of this class would be missed.
+      - name: Assurance platform self-tests (ADR-MCPRE-059)
+        run: |
+          python3 tools/verification/_lanes.py --selftest
+          python3 tools/verification/test_verdict_algebra.py
+          python3 tools/verification/test_theorems.py
+          python3 tools/verification/test_claim_corrections.py
+          python3 tools/verification/test_extraction_identity.py
+          python3 tools/verification/test_extraction_artifact.py
+          python3 tools/verification/test_compose.py
+          python3 tools/verification/test_scoped_verification.py
+          python3 tools/verification/test_lean_axioms.py
+          python3 tools/verification/test_lean_model.py
+          # ADR-MCPRE-068 Phase 0A. Listed here rather than left to a glob for the
+          # reason the comment above gives: `merge_path_gate.py` reads literal paths,
+          # so a suite a workflow assembles at run time is one it cannot see.
+          python3 tools/verification/test_evidence_class.py
+          python3 tools/verification/test_invalidation.py
+          python3 tools/verification/test_theorem_review.py
+          python3 tools/verification/test_views.py
+          python3 tools/verification/test_ecosystems.py
+          python3 tools/verification/test_measured_inputs.py
+          python3 tools/verification/test_attest.py
+          python3 tools/verification/test_verus_lane.py
+          python3 tools/verification/test_test_lane.py
+          python3 tools/verification/test_escape_hatches.py
+          python3 tools/verification/test_evidence_bundle.py
+          # Added by the v0.17 Slice B sweep. It was in NEITHER local_gate.sh nor any
+          # unconditional workflow: `mutation-probe.yml` names it, and that workflow is
+          # `paths:`-filtered, so the mutation lane's verdict semantics were established
+          # only on pull requests that happened to trip the filter. `merge_path_gate.py`
+          # could not see it, because "named by a workflow" was treated as coverage
+          # whatever the trigger. Both halves are fixed.
+          python3 tools/verification/test_mutation_lane.py
+          # A cited control must be compiled by the target that cites it: a unit naming a
+          # feature-gated module's test in a target built without the feature measures nothing.
+          python3 tools/verification/test_feature_lanes.py
+          # #1172. Which runs may close assurance and what closing requires, and that
+          # verification.yml's closure job calls the authority rather than counting axes.
+          tools/verification/assurance-closure --selftest
+          python3 tools/verification/test_assurance_closure.py
+          # #1173. A committed closure record is well formed, its digests are the digests
+          # of the identities it lists, and its target commit resolves to its target tree.
+          tools/verification/closure-record --selftest
+          python3 tools/verification/test_closure_record.py
+          tools/verification/closure-record --verify
+          # ADR-MCPRE-068 Phase 0C. The premise ontology, and the composition §7 found
+          # missing: which typed premises each declared root ultimately rests on. Both ends
+          # of that join carry `unit://` URIs, and comparing them verbatim reported that no
+          # root rests on any premise — an empty join reads exactly like a clean tree, so
+          # the suite asserts the count is non-zero rather than only that it runs.
+          python3 tools/verification/test_premise_class.py
+
+          # ADR-MCPRE-068 N3 — the severity derivation, Phase 0E. `effective_severity` is
+          # derived and never stored, which is only worth more than a stored field if the
+          # DERIVATION is what gets checked. Each control is a way to produce a number that
+          # is wrong: stopping at the root set (the reading the ratification rejected),
+          # propagating one hop, taking a minimum, defaulting an absent label to `none`, or
+          # letting a cycle make the answer depend on iteration order. The last control runs
+          # on the live registries and asserts the result is NON-EMPTY — an empty derivation
+          # would leave every fixture control above true and meaningless.
+          python3 tools/verification/test_assurance_graph.py
+
+
+
+
+
+
+  # The structural lane's self-test builds hostile constructions with Bazel in a scratch copy
+  # of the tree. On a runner without a Bazel cache it starts cold, so it runs here, behind the
+  # main cache and a cache of the scratch copy's own output base. The measured lane's
+  # self-test, the other half of ADR-MCPRE-068 Phase 0B, runs in `bazel-drift`.
+  selftests-bazel:
+    name: assurance platform self-tests (structural lane)
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: |
+          echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+
+      # The FFI closure (cryptoki-sys) builds bindings with libclang, same as the
+      # cargo jobs; install it so the Bazel build links on a clean runner.
+      - name: System build dependencies
+        # The bounds on the fallback are not decoration; they are what the two earlier
+        # attempts at this step were. With no bound at all, six jobs across four branches
+        # sat in `apt-get update` for 28-58 minutes each reporting `pending` — which says
+        # strictly less than a red would. With only `update` bounded, the `install` hung
+        # instead. `Acquire::http::Timeout` does not help either: it bounds INACTIVITY,
+        # and a transfer dribbling at 32 kB/s is never inactive.
+        #
+        # Nothing here is weakened. If the image ever stops shipping Clang the fallback
+        # installs it exactly as before; a package that genuinely cannot be installed
+        # still fails the step, and every gate below is untouched.
+        run: |
+          set -euo pipefail
+          # cryptoki-sys builds its FFI bindings with bindgen, which needs libclang at
+          # RUNTIME — the shared object, not the headers. The ubuntu-24.04 runner image
+          # already ships Clang 18.1.3, so `libclang-dev` was re-downloading a library
+          # the box already had: 28.8 MB fetched and ~292 MB unpacked, on every one of
+          # three jobs, every run.
+          #
+          # That download is also the single least reliable thing in this workflow.
+          # Measured on 2026-08-19 against the same Azure mirror, same file: 64.0 kB/s,
+          # then 43.1 kB/s, then 32.1 kB/s — 14min 57s for the fetch alone, with the
+          # unpack pushing past a 20-minute cap. Raising the cap is a race against a
+          # mirror that keeps getting slower; not needing the file wins it outright.
+          #
+          # So: find what is already installed and point bindgen at it. apt is the
+          # FALLBACK, not the default, and it keeps its bounds for the case where the
+          # image stops shipping Clang.
+          found=""
+          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
+            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
+              found="$dir"
+              break
+            fi
+          done
+
+          if [ -n "$found" ]; then
+            echo "LIBCLANG_PATH=$found" >> "$GITHUB_ENV"
+            echo "using the runner image's libclang in $found:"
+            ls -1 "$found"/libclang*.so* | sed 's/^/  /'
+          else
+            echo "no libclang on the image — falling back to apt (bounded)"
+            timeout 300 sudo apt-get update \
+              || echo "apt-get update did not finish in 300s; using the runner image's package index"
+            sudo apt-get install -y --no-install-recommends \
+              -o Acquire::Retries=3 \
+              -o Acquire::http::Timeout=30 \
+              libclang-dev
+          fi
+
+      # The Bazel output base and bazelisk download, restored from the newest cache main
+      # saved (same locks first, then any). Only a push to main saves one — the
+      # `bazel-cache` job — so the cache follows main instead of freezing at the first build under a
+      # lock hash, and a PR never uploads its own ~2.4 GB copy. The key names the locks
+      # the external repositories come from, and Cargo.lock, which gazelle_rust reads.
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
+            bazel-${{ runner.os }}-
+      # The structural lane builds in a scratch copy of the tree, which Bazel gives an
+      # output base of its own, named by the MD5 of the copy's path. It is cached apart
+      # from the main one, so restoring it costs this job alone.
+      - name: The structural lane's output base
+        id: lane
+        run: |
+          python3 - >> "$GITHUB_OUTPUT" <<'EOF'
+          import hashlib, os, sys
+          sys.path.insert(0, "tools/verification")
+          import _scratch
+          tree = os.path.realpath(_scratch.lane_scratch("structural") / "tree")
+          base = os.path.expanduser("~/.cache/bazel/_bazel_runner/") + hashlib.md5(tree.encode()).hexdigest()
+          print(f"output_base={base}")
+          EOF
+      - name: Restore the structural lane's output base
+        id: lanecache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.lane.outputs.output_base }}
+          key: bazel-structural-lane-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}
+
+
+      - name: Bazel version
+        run: bazel version
+      - name: Assurance platform self-tests (ADR-MCPRE-059) — the structural lane
+        run: |
+          # ADR-MCPRE-068 Phase 0B. This suite and the measured lane's (in
+          # `bazel-drift`) are not only self-tests of a lane's edges — they ARE the two
+          # lanes' liveness, because the ratification requires each to fail-close on zero
+          # execution and neither registry is yet large enough for a lane run to demonstrate
+          # that it can go red. The structural suite compiles a hostile construction that
+          # BUILDS and requires the runner to report FAIL; the measured suite runs a dead
+          # apparatus, a silent one and an irreproducible one.
+          python3 tools/verification/test_structural_lane.py
+
+      # Keyed by the locks alone, so the first run under new locks — on main or on a pull
+      # request — saves it and every later one restores it.
+      - name: Save the structural lane's output base (first run under these locks)
+        if: steps.lanecache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.lane.outputs.output_base }}
+          key: bazel-structural-lane-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}
+
+
+
+
+
+  # The branch ruleset requires a check named "Bazel build + test". The work it stands for
+  # is the seven shards above; this job is the check. It runs `if: always()` because a job
+  # whose `needs:` failed is SKIPPED, and a skipped required check reads as passing: the
+  # script fails on anything but `success` from any shard, and on a run that reached it
+  # after the pre-merge budget.
+  required:
+    name: Bazel build + test
+    if: always()
+    needs: [rust, gates-2, gates-3, selftests, selftests-bazel]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+      - name: Every shard passed, inside the pre-merge budget
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/pre_merge_budget.py --check "Bazel build + test"
+
+
+
+
+
+
   rfc9421-cross-verify:
     name: RFC 9421 third-party cross-verification (no-merge gate)
     runs-on: ubuntu-latest
+    timeout-minutes: 6
     # ADR-MCPRE-050 / MCPRE-99: the HTTP-profile corpus MUST validate through a
     # pinned, INDEPENDENT RFC 9421 implementation (python-cryptography Ed25519),
     # both ways — our signatures verify externally, and an externally produced
@@ -771,6 +1021,15 @@ jobs:
     # merge; this gate is required before full-profile parity is declared green.
     steps:
       - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: |
+          echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
 
       - name: Set up the pinned Python
         uses: actions/setup-python@v7
@@ -866,16 +1125,31 @@ jobs:
           scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
           //mcp-re-conformance:scitt_interop_test
 
-  release-gates:
-    name: feature-gated backend tests (Bazel)
+
+
+
+
+
+  release-race:
+    name: release gates — replay race, drain, inner plane, saturation liveness
     runs-on: ubuntu-latest
+    timeout-minutes: 6
     # The ADR-MCPRE-051 §7 release gates as NAMED, attributable lanes (MCPRE-123). Their
-    # tests also run inside the bazel job's `bazel test //...`; naming them makes each a
+    # tests also run inside the `bazel-test-*` shards' `bazel test`; naming them makes each a
     # gate whose failure is unambiguous. Each lane runs through run_test_lane.sh, which
     # refuses one that ran zero tests, with --nocache_test_results so a gate runs rather
     # than replays a cached result, and --test_output=all so the log names what ran.
     steps:
       - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: |
+          echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
 
       # cryptoki-sys's build script generates its FFI bindings with bindgen, which needs
       # libclang.
@@ -976,15 +1250,6 @@ jobs:
           scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
           //mcp-re-proxy:integration_async_test --test_arg=http_inner_test::
 
-      # §7 — the load harness's own tests: its smoke run, the in-process app_run
-      # checks, and one tiny ADR-051 run. They start a Redis wait-quorum fleet in Docker,
-      # which is why the target is `manual` and absent from `bazel test //...`, and why
-      # it runs here, on a runner with Docker.
-      - name: Release gate — load harness (Docker Redis)
-        run: >-
-          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
-          //mcp-re-proxy:tls_load_harness_bench
-
       # LIVENESS of the standardized capacity instrument, not a measurement.
       #
       # The saturation rig is a Bazel binary driven by a script, so no test target
@@ -1001,14 +1266,149 @@ jobs:
       - name: Release gate — saturation instrument liveness
         run: scripts/saturation_liveness.sh
 
-  bazel:
-    name: bazel semantic-drift gate + test parity
+
+
+
+
+
+  release-harness:
+    name: release gates — load harness
     runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: |
+          echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
+
+      # cryptoki-sys's build script generates its FFI bindings with bindgen, which needs
+      # libclang.
+      - name: System build dependencies
+        # The bounds on the fallback are not decoration; they are what the two earlier
+        # attempts at this step were. With no bound at all, six jobs across four branches
+        # sat in `apt-get update` for 28-58 minutes each reporting `pending` — which says
+        # strictly less than a red would. With only `update` bounded, the `install` hung
+        # instead. `Acquire::http::Timeout` does not help either: it bounds INACTIVITY,
+        # and a transfer dribbling at 32 kB/s is never inactive.
+        #
+        # Nothing here is weakened. If the image ever stops shipping Clang the fallback
+        # installs it exactly as before; a package that genuinely cannot be installed
+        # still fails the step, and every gate below is untouched.
+        run: |
+          set -euo pipefail
+          # cryptoki-sys builds its FFI bindings with bindgen, which needs libclang at
+          # RUNTIME — the shared object, not the headers. The ubuntu-24.04 runner image
+          # already ships Clang 18.1.3, so `libclang-dev` was re-downloading a library
+          # the box already had: 28.8 MB fetched and ~292 MB unpacked, on every one of
+          # three jobs, every run.
+          #
+          # That download is also the single least reliable thing in this workflow.
+          # Measured on 2026-08-19 against the same Azure mirror, same file: 64.0 kB/s,
+          # then 43.1 kB/s, then 32.1 kB/s — 14min 57s for the fetch alone, with the
+          # unpack pushing past a 20-minute cap. Raising the cap is a race against a
+          # mirror that keeps getting slower; not needing the file wins it outright.
+          #
+          # So: find what is already installed and point bindgen at it. apt is the
+          # FALLBACK, not the default, and it keeps its bounds for the case where the
+          # image stops shipping Clang.
+          found=""
+          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
+            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
+              found="$dir"
+              break
+            fi
+          done
+
+          if [ -n "$found" ]; then
+            echo "LIBCLANG_PATH=$found" >> "$GITHUB_ENV"
+            echo "using the runner image's libclang in $found:"
+            ls -1 "$found"/libclang*.so* | sed 's/^/  /'
+          else
+            echo "no libclang on the image — falling back to apt (bounded)"
+            timeout 300 sudo apt-get update \
+              || echo "apt-get update did not finish in 300s; using the runner image's package index"
+            sudo apt-get install -y --no-install-recommends \
+              -o Acquire::Retries=3 \
+              -o Acquire::http::Timeout=30 \
+              libclang-dev
+          fi
+
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
+            bazel-${{ runner.os }}-
+
+      # §7 — the load harness's own tests: its smoke run, the in-process app_run
+      # checks, and one tiny ADR-051 run. They start a Redis wait-quorum fleet in Docker,
+      # which is why the target is `manual` and absent from `bazel test //...`, and why
+      # it runs here, on a runner with Docker.
+      - name: Release gate — load harness (Docker Redis)
+        run: >-
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:tls_load_harness_bench
+
+
+
+
+
+
+  # The required check "feature-gated backend tests (Bazel)", over its two shards.
+  release-gates:
+    name: feature-gated backend tests (Bazel)
+    if: always()
+    needs: [release-race, release-harness]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+      - name: Every shard passed, inside the pre-merge budget
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/pre_merge_budget.py --check "feature-gated backend tests (Bazel)"
+
+
+
+
+
+
+  bazel-drift:
+    name: bazel — semantic drift, target table, lint policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
     # ADR-MCPS-048 / MCPS-70 — the enforcement that makes generation stick.
     # Runs on Linux so the platform-gated crates (seccompiler, landlock) compile
     # (they are cfg'd out on macOS); this is also the canonical hermetic target.
     steps:
       - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: |
+          echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
       - name: Set up the pinned Python
         uses: actions/setup-python@v7
         with:
@@ -1067,8 +1467,8 @@ jobs:
           fi
 
       # The Bazel output base and bazelisk download, restored from the newest cache main
-      # saved (same locks first, then any). Only a push to main saves one — see the last
-      # step — so the cache follows main instead of freezing at the first build under a
+      # saved (same locks first, then any). Only a push to main saves one — the
+      # `bazel-cache` job — so the cache follows main instead of freezing at the first build under a
       # lock hash, and a PR never uploads its own ~2.4 GB copy. The key names the locks
       # the external repositories come from, and Cargo.lock, which gazelle_rust reads.
       - name: Restore Bazel cache
@@ -1097,19 +1497,6 @@ jobs:
       - name: Rust target table matches the build graph
         run: tools/verification/rust-targets --check
 
-      # (2) The workspace test lane: every non-manual test target.
-      - name: Bazel test parity (//...)
-        run: bazel test //... --test_output=errors
-
-      # The Rust lint lane: clippy over every first-party target under the workspace lint
-      # policy (//bazel:workspace_lints) and .clippy.toml, warnings as errors.
-      - name: Rust lint lane (bazel build --config=lint //...)
-        run: bazel build --config=lint //...
-
-      # rustfmt over every first-party target, check-only: a mis-formatted file fails.
-      - name: Rust format lane (bazel build --config=rustfmt //...)
-        run: bazel build --config=rustfmt //...
-
       # ADR-MCPRE-061 Amendment 1 §3. The Group A zero-debt protections are ONE
       # `rust_lint_config`, which every `nt_rust_*` target carries by default. A target that
       # overrides it, or is written with a raw rule, is silently exempt, so the gate checks
@@ -1131,10 +1518,548 @@ jobs:
           python3 scripts/clippy_ratchet_gate.py --nesting-probe
           python3 scripts/clippy_ratchet_gate.py
 
+      # The measured lane's self-test runs the registered measurement, a `bazel test`, so it
+      # runs here, behind the main Bazel cache. The structural lane's runs in
+      # `selftests-bazel`; ADR-MCPRE-068 Phase 0B makes the pair the two lanes' liveness.
+      - name: Assurance platform self-tests (ADR-MCPRE-059) — the measured lane
+        run: python3 tools/verification/test_measured_lane.py
+
+
+
+
+
+
+  bazel-test-proxy:
+    name: bazel — test parity (proxy units)
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: |
+          echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+
+      # The FFI closure (cryptoki-sys) builds bindings with libclang, same as the
+      # cargo jobs; install it so the Bazel build links on a clean runner.
+      - name: System build dependencies
+        # The bounds on the fallback are not decoration; they are what the two earlier
+        # attempts at this step were. With no bound at all, six jobs across four branches
+        # sat in `apt-get update` for 28-58 minutes each reporting `pending` — which says
+        # strictly less than a red would. With only `update` bounded, the `install` hung
+        # instead. `Acquire::http::Timeout` does not help either: it bounds INACTIVITY,
+        # and a transfer dribbling at 32 kB/s is never inactive.
+        #
+        # Nothing here is weakened. If the image ever stops shipping Clang the fallback
+        # installs it exactly as before; a package that genuinely cannot be installed
+        # still fails the step, and every gate below is untouched.
+        run: |
+          set -euo pipefail
+          # cryptoki-sys builds its FFI bindings with bindgen, which needs libclang at
+          # RUNTIME — the shared object, not the headers. The ubuntu-24.04 runner image
+          # already ships Clang 18.1.3, so `libclang-dev` was re-downloading a library
+          # the box already had: 28.8 MB fetched and ~292 MB unpacked, on every one of
+          # three jobs, every run.
+          #
+          # That download is also the single least reliable thing in this workflow.
+          # Measured on 2026-08-19 against the same Azure mirror, same file: 64.0 kB/s,
+          # then 43.1 kB/s, then 32.1 kB/s — 14min 57s for the fetch alone, with the
+          # unpack pushing past a 20-minute cap. Raising the cap is a race against a
+          # mirror that keeps getting slower; not needing the file wins it outright.
+          #
+          # So: find what is already installed and point bindgen at it. apt is the
+          # FALLBACK, not the default, and it keeps its bounds for the case where the
+          # image stops shipping Clang.
+          found=""
+          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
+            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
+              found="$dir"
+              break
+            fi
+          done
+
+          if [ -n "$found" ]; then
+            echo "LIBCLANG_PATH=$found" >> "$GITHUB_ENV"
+            echo "using the runner image's libclang in $found:"
+            ls -1 "$found"/libclang*.so* | sed 's/^/  /'
+          else
+            echo "no libclang on the image — falling back to apt (bounded)"
+            timeout 300 sudo apt-get update \
+              || echo "apt-get update did not finish in 300s; using the runner image's package index"
+            sudo apt-get install -y --no-install-recommends \
+              -o Acquire::Retries=3 \
+              -o Acquire::http::Timeout=30 \
+              libclang-dev
+          fi
+
+      # The Bazel output base and bazelisk download, restored from the newest cache main
+      # saved (same locks first, then any). Only a push to main saves one — the
+      # `bazel-cache` job — so the cache follows main instead of freezing at the first build under a
+      # lock hash, and a PR never uploads its own ~2.4 GB copy. The key names the locks
+      # the external repositories come from, and Cargo.lock, which gazelle_rust reads.
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
+            bazel-${{ runner.os }}-
+
+      - name: Bazel version
+        run: bazel version
+
+      # (2) The workspace test lane: every non-manual test target.
+      - name: Bazel test parity (//mcp-re-proxy/... except its integration tests)
+        run: bazel test --test_output=errors -- //mcp-re-proxy/... -//mcp-re-proxy:integration_test -//mcp-re-proxy:integration_kms_test -//mcp-re-proxy:integration_async_test -//mcp-re-proxy:integration_async_ext_test -//mcp-re-proxy:integration_ext_test -//mcp-re-proxy:integration_live_test
+
+
+
+
+  bazel-test-proxy-integration:
+    name: bazel — test parity (proxy integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: |
+          echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+
+      # The FFI closure (cryptoki-sys) builds bindings with libclang, same as the
+      # cargo jobs; install it so the Bazel build links on a clean runner.
+      - name: System build dependencies
+        # The bounds on the fallback are not decoration; they are what the two earlier
+        # attempts at this step were. With no bound at all, six jobs across four branches
+        # sat in `apt-get update` for 28-58 minutes each reporting `pending` — which says
+        # strictly less than a red would. With only `update` bounded, the `install` hung
+        # instead. `Acquire::http::Timeout` does not help either: it bounds INACTIVITY,
+        # and a transfer dribbling at 32 kB/s is never inactive.
+        #
+        # Nothing here is weakened. If the image ever stops shipping Clang the fallback
+        # installs it exactly as before; a package that genuinely cannot be installed
+        # still fails the step, and every gate below is untouched.
+        run: |
+          set -euo pipefail
+          # cryptoki-sys builds its FFI bindings with bindgen, which needs libclang at
+          # RUNTIME — the shared object, not the headers. The ubuntu-24.04 runner image
+          # already ships Clang 18.1.3, so `libclang-dev` was re-downloading a library
+          # the box already had: 28.8 MB fetched and ~292 MB unpacked, on every one of
+          # three jobs, every run.
+          #
+          # That download is also the single least reliable thing in this workflow.
+          # Measured on 2026-08-19 against the same Azure mirror, same file: 64.0 kB/s,
+          # then 43.1 kB/s, then 32.1 kB/s — 14min 57s for the fetch alone, with the
+          # unpack pushing past a 20-minute cap. Raising the cap is a race against a
+          # mirror that keeps getting slower; not needing the file wins it outright.
+          #
+          # So: find what is already installed and point bindgen at it. apt is the
+          # FALLBACK, not the default, and it keeps its bounds for the case where the
+          # image stops shipping Clang.
+          found=""
+          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
+            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
+              found="$dir"
+              break
+            fi
+          done
+
+          if [ -n "$found" ]; then
+            echo "LIBCLANG_PATH=$found" >> "$GITHUB_ENV"
+            echo "using the runner image's libclang in $found:"
+            ls -1 "$found"/libclang*.so* | sed 's/^/  /'
+          else
+            echo "no libclang on the image — falling back to apt (bounded)"
+            timeout 300 sudo apt-get update \
+              || echo "apt-get update did not finish in 300s; using the runner image's package index"
+            sudo apt-get install -y --no-install-recommends \
+              -o Acquire::Retries=3 \
+              -o Acquire::http::Timeout=30 \
+              libclang-dev
+          fi
+
+      # The Bazel output base and bazelisk download, restored from the newest cache main
+      # saved (same locks first, then any). Only a push to main saves one — the
+      # `bazel-cache` job — so the cache follows main instead of freezing at the first build under a
+      # lock hash, and a PR never uploads its own ~2.4 GB copy. The key names the locks
+      # the external repositories come from, and Cargo.lock, which gazelle_rust reads.
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
+            bazel-${{ runner.os }}-
+
+      - name: Bazel version
+        run: bazel version
+
+      # (2) The workspace test lane: every non-manual test target.
+      - name: Bazel test parity (the proxy's integration tests)
+        run: bazel test --test_output=errors -- //mcp-re-proxy:integration_test //mcp-re-proxy:integration_kms_test //mcp-re-proxy:integration_async_test //mcp-re-proxy:integration_async_ext_test //mcp-re-proxy:integration_ext_test //mcp-re-proxy:integration_live_test
+
+  bazel-test-rest:
+    name: bazel — test parity (rest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: |
+          echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+
+      # The FFI closure (cryptoki-sys) builds bindings with libclang, same as the
+      # cargo jobs; install it so the Bazel build links on a clean runner.
+      - name: System build dependencies
+        # The bounds on the fallback are not decoration; they are what the two earlier
+        # attempts at this step were. With no bound at all, six jobs across four branches
+        # sat in `apt-get update` for 28-58 minutes each reporting `pending` — which says
+        # strictly less than a red would. With only `update` bounded, the `install` hung
+        # instead. `Acquire::http::Timeout` does not help either: it bounds INACTIVITY,
+        # and a transfer dribbling at 32 kB/s is never inactive.
+        #
+        # Nothing here is weakened. If the image ever stops shipping Clang the fallback
+        # installs it exactly as before; a package that genuinely cannot be installed
+        # still fails the step, and every gate below is untouched.
+        run: |
+          set -euo pipefail
+          # cryptoki-sys builds its FFI bindings with bindgen, which needs libclang at
+          # RUNTIME — the shared object, not the headers. The ubuntu-24.04 runner image
+          # already ships Clang 18.1.3, so `libclang-dev` was re-downloading a library
+          # the box already had: 28.8 MB fetched and ~292 MB unpacked, on every one of
+          # three jobs, every run.
+          #
+          # That download is also the single least reliable thing in this workflow.
+          # Measured on 2026-08-19 against the same Azure mirror, same file: 64.0 kB/s,
+          # then 43.1 kB/s, then 32.1 kB/s — 14min 57s for the fetch alone, with the
+          # unpack pushing past a 20-minute cap. Raising the cap is a race against a
+          # mirror that keeps getting slower; not needing the file wins it outright.
+          #
+          # So: find what is already installed and point bindgen at it. apt is the
+          # FALLBACK, not the default, and it keeps its bounds for the case where the
+          # image stops shipping Clang.
+          found=""
+          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
+            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
+              found="$dir"
+              break
+            fi
+          done
+
+          if [ -n "$found" ]; then
+            echo "LIBCLANG_PATH=$found" >> "$GITHUB_ENV"
+            echo "using the runner image's libclang in $found:"
+            ls -1 "$found"/libclang*.so* | sed 's/^/  /'
+          else
+            echo "no libclang on the image — falling back to apt (bounded)"
+            timeout 300 sudo apt-get update \
+              || echo "apt-get update did not finish in 300s; using the runner image's package index"
+            sudo apt-get install -y --no-install-recommends \
+              -o Acquire::Retries=3 \
+              -o Acquire::http::Timeout=30 \
+              libclang-dev
+          fi
+
+      # The Bazel output base and bazelisk download, restored from the newest cache main
+      # saved (same locks first, then any). Only a push to main saves one — the
+      # `bazel-cache` job — so the cache follows main instead of freezing at the first build under a
+      # lock hash, and a PR never uploads its own ~2.4 GB copy. The key names the locks
+      # the external repositories come from, and Cargo.lock, which gazelle_rust reads.
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
+            bazel-${{ runner.os }}-
+
+      - name: Bazel version
+        run: bazel version
+
+      # (2) The workspace test lane, in two shards whose union is `//...` by construction:
+      # this one is `//...` minus the proxy package, and `bazel-test-proxy` is that package.
+
+      - name: Bazel test parity (//... except //mcp-re-proxy/...)
+        run: bazel test --test_output=errors -- //... -//mcp-re-proxy/...
+
+
+
+
+
+
+  bazel-lint:
+    name: bazel — lint lane, format lane
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: |
+          echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+
+      # The FFI closure (cryptoki-sys) builds bindings with libclang, same as the
+      # cargo jobs; install it so the Bazel build links on a clean runner.
+      - name: System build dependencies
+        # The bounds on the fallback are not decoration; they are what the two earlier
+        # attempts at this step were. With no bound at all, six jobs across four branches
+        # sat in `apt-get update` for 28-58 minutes each reporting `pending` — which says
+        # strictly less than a red would. With only `update` bounded, the `install` hung
+        # instead. `Acquire::http::Timeout` does not help either: it bounds INACTIVITY,
+        # and a transfer dribbling at 32 kB/s is never inactive.
+        #
+        # Nothing here is weakened. If the image ever stops shipping Clang the fallback
+        # installs it exactly as before; a package that genuinely cannot be installed
+        # still fails the step, and every gate below is untouched.
+        run: |
+          set -euo pipefail
+          # cryptoki-sys builds its FFI bindings with bindgen, which needs libclang at
+          # RUNTIME — the shared object, not the headers. The ubuntu-24.04 runner image
+          # already ships Clang 18.1.3, so `libclang-dev` was re-downloading a library
+          # the box already had: 28.8 MB fetched and ~292 MB unpacked, on every one of
+          # three jobs, every run.
+          #
+          # That download is also the single least reliable thing in this workflow.
+          # Measured on 2026-08-19 against the same Azure mirror, same file: 64.0 kB/s,
+          # then 43.1 kB/s, then 32.1 kB/s — 14min 57s for the fetch alone, with the
+          # unpack pushing past a 20-minute cap. Raising the cap is a race against a
+          # mirror that keeps getting slower; not needing the file wins it outright.
+          #
+          # So: find what is already installed and point bindgen at it. apt is the
+          # FALLBACK, not the default, and it keeps its bounds for the case where the
+          # image stops shipping Clang.
+          found=""
+          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
+            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
+              found="$dir"
+              break
+            fi
+          done
+
+          if [ -n "$found" ]; then
+            echo "LIBCLANG_PATH=$found" >> "$GITHUB_ENV"
+            echo "using the runner image's libclang in $found:"
+            ls -1 "$found"/libclang*.so* | sed 's/^/  /'
+          else
+            echo "no libclang on the image — falling back to apt (bounded)"
+            timeout 300 sudo apt-get update \
+              || echo "apt-get update did not finish in 300s; using the runner image's package index"
+            sudo apt-get install -y --no-install-recommends \
+              -o Acquire::Retries=3 \
+              -o Acquire::http::Timeout=30 \
+              libclang-dev
+          fi
+
+      # The Bazel output base and bazelisk download, restored from the newest cache main
+      # saved (same locks first, then any). Only a push to main saves one — the
+      # `bazel-cache` job — so the cache follows main instead of freezing at the first build under a
+      # lock hash, and a PR never uploads its own ~2.4 GB copy. The key names the locks
+      # the external repositories come from, and Cargo.lock, which gazelle_rust reads.
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
+            bazel-${{ runner.os }}-
+
+      - name: Bazel version
+        run: bazel version
+
+
+      # The Rust lint lane: clippy over every first-party target under the workspace lint
+      # policy (//bazel:workspace_lints) and .clippy.toml, warnings as errors.
+      - name: Rust lint lane (bazel build --config=lint //...)
+        run: bazel build --config=lint //...
+
+      # rustfmt over every first-party target, check-only: a mis-formatted file fails.
+      - name: Rust format lane (bazel build --config=rustfmt //...)
+        run: bazel build --config=rustfmt //...
+
+  # The required check "bazel semantic-drift gate + test parity", over its three shards.
+  bazel:
+    name: bazel semantic-drift gate + test parity
+    if: always()
+    needs: [bazel-drift, bazel-test-proxy, bazel-test-proxy-integration, bazel-test-rest, bazel-lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+      - name: Every shard passed, inside the pre-merge budget
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/pre_merge_budget.py --check "bazel semantic-drift gate + test parity"
+
+
+
+
+
+
+  # The Bazel cache every PR shard restores. Saved only after a merge to main, by one job
+  # that builds everything the shards and the SDK jobs build — each shard builds a part, and
+  # a cache saved from one part would leave the others cold. It is not part of the pre-merge
+  # budget: it never runs on a pull request.
+  bazel-cache:
+    name: bazel cache (main)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: |
+          echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+
+      # The FFI closure (cryptoki-sys) builds bindings with libclang, same as the
+      # cargo jobs; install it so the Bazel build links on a clean runner.
+      - name: System build dependencies
+        # The bounds on the fallback are not decoration; they are what the two earlier
+        # attempts at this step were. With no bound at all, six jobs across four branches
+        # sat in `apt-get update` for 28-58 minutes each reporting `pending` — which says
+        # strictly less than a red would. With only `update` bounded, the `install` hung
+        # instead. `Acquire::http::Timeout` does not help either: it bounds INACTIVITY,
+        # and a transfer dribbling at 32 kB/s is never inactive.
+        #
+        # Nothing here is weakened. If the image ever stops shipping Clang the fallback
+        # installs it exactly as before; a package that genuinely cannot be installed
+        # still fails the step, and every gate below is untouched.
+        run: |
+          set -euo pipefail
+          # cryptoki-sys builds its FFI bindings with bindgen, which needs libclang at
+          # RUNTIME — the shared object, not the headers. The ubuntu-24.04 runner image
+          # already ships Clang 18.1.3, so `libclang-dev` was re-downloading a library
+          # the box already had: 28.8 MB fetched and ~292 MB unpacked, on every one of
+          # three jobs, every run.
+          #
+          # That download is also the single least reliable thing in this workflow.
+          # Measured on 2026-08-19 against the same Azure mirror, same file: 64.0 kB/s,
+          # then 43.1 kB/s, then 32.1 kB/s — 14min 57s for the fetch alone, with the
+          # unpack pushing past a 20-minute cap. Raising the cap is a race against a
+          # mirror that keeps getting slower; not needing the file wins it outright.
+          #
+          # So: find what is already installed and point bindgen at it. apt is the
+          # FALLBACK, not the default, and it keeps its bounds for the case where the
+          # image stops shipping Clang.
+          found=""
+          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
+            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
+              found="$dir"
+              break
+            fi
+          done
+
+          if [ -n "$found" ]; then
+            echo "LIBCLANG_PATH=$found" >> "$GITHUB_ENV"
+            echo "using the runner image's libclang in $found:"
+            ls -1 "$found"/libclang*.so* | sed 's/^/  /'
+          else
+            echo "no libclang on the image — falling back to apt (bounded)"
+            timeout 300 sudo apt-get update \
+              || echo "apt-get update did not finish in 300s; using the runner image's package index"
+            sudo apt-get install -y --no-install-recommends \
+              -o Acquire::Retries=3 \
+              -o Acquire::http::Timeout=30 \
+              libclang-dev
+          fi
+
+      # The Bazel output base and bazelisk download, restored from the newest cache main
+      # saved (same locks first, then any). Only a push to main saves one — the
+      # `bazel-cache` job — so the cache follows main instead of freezing at the first build under a
+      # lock hash, and a PR never uploads its own ~2.4 GB copy. The key names the locks
+      # the external repositories come from, and Cargo.lock, which gazelle_rust reads.
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
+            bazel-${{ runner.os }}-
+
+      - name: Bazel version
+        run: bazel version
+      - name: Build what the pre-merge jobs build
+        run: |
+          bazel test //... --test_output=errors
+          bazel build --config=lint //...
+          bazel build --config=rustfmt //...
+          bazel build //sdk/python:wheel //mcp-re-proxy:http_profile_proxy
+          bazel build -c opt //sdk/typescript:native //sdk/typescript:native_type_defs
+          bazel build //mcp-re-proxy:tls_load_harness_bench //mcp-re-proxy:async_drain_test
+          bazel build -c dbg //mcp-re-proxy:saturation_rig
+
       # After a green run on main only: what the next PR restores. Saving on success
       # alone keeps a cache from a run that failed halfway out of the chain.
       - name: Save Bazel cache (main)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v6
         with:
           path: |
@@ -1142,16 +2067,64 @@ jobs:
             ~/.cache/bazelisk
           key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
 
+      # The structural lane builds in a scratch copy of the tree, which Bazel gives an
+      # output base of its own, named by the MD5 of the copy's path. It is cached apart
+      # from the main one, so restoring it costs this job alone.
+      - name: The structural lane's output base
+        id: lane
+        run: |
+          python3 - >> "$GITHUB_OUTPUT" <<'EOF'
+          import hashlib, os, sys
+          sys.path.insert(0, "tools/verification")
+          import _scratch
+          tree = os.path.realpath(_scratch.lane_scratch("structural") / "tree")
+          base = os.path.expanduser("~/.cache/bazel/_bazel_runner/") + hashlib.md5(tree.encode()).hexdigest()
+          print(f"output_base={base}")
+          EOF
+      - name: Build the structural lane's output base
+        run: python3 tools/verification/test_structural_lane.py
+      - name: Save the structural lane's output base
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.lane.outputs.output_base }}
+          key: bazel-structural-lane-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}
+
+
+
+
+
+
   sdk-python:
     name: downloader — Python SDK wheel (Bazel)
     runs-on: ubuntu-latest
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
+
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: |
+          echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
 
       - name: Set up the pinned Python
         uses: actions/setup-python@v7
         with:
           python-version-file: .python-version
+      # The cache `bazel-cache` saves on main, so the build below starts warm.
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
+            bazel-${{ runner.os }}-
 
       # The wheel is Bazel's: the PyO3 binding is built by the same Rust toolchain and crate
       # universe as every other target, and packaged by rules_python's py_wheel.
@@ -1181,9 +2154,15 @@ jobs:
           /tmp/venv/bin/python -m pytest sdk/python/tests -q \
             --cov --cov-config=sdk/python/pyproject.toml --cov-report=term-missing
 
+
+
+
+
+
   sdk-typescript:
     name: downloader — TypeScript napi package (Bazel)
     runs-on: ubuntu-latest
+    timeout-minutes: 6
     # ADR-MCPS-048 / MCPS-71 — the npm downloader path. The native addon is Bazel's
     # (//sdk/typescript:native), built by the same Rust toolchain and crate universe as
     # every other target; the pinned @napi-rs/cli renders its loader from the type
@@ -1194,10 +2173,30 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # rules_swift (gazelle -> rules_apple -> rules_swift) registers a Swift toolchain whose
+      # repository probes the host's `swiftc` with test compiles, and Bazel re-runs that probe
+      # on every new server: 58-122s of analysis with no action running, measured, on a
+      # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
+      # the repository declares no toolchain and returns at once.
+      - name: Keep Swift off Bazel's PATH
+        run: |
+          echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
           node-version: "22"
+      # The cache `bazel-cache` saves on main, so the build below starts warm.
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
+            bazel-${{ runner.os }}-
 
       - name: Install JS dependencies
         run: npm ci
