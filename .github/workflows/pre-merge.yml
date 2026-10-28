@@ -12,10 +12,11 @@
 #   - REQUIRED "bazel semantic-drift gate + test parity" (`bazel`): `bazel-drift` — the
 #     BUILD semantic-drift gate and the target table; `bazel-test-proxy` and
 #     `bazel-test-rest` — every non-manual test target, in two shards whose union is
-#     `//...` by construction — with, in `bazel-test-rest`, the lint lane (clippy under
-#     //bazel:workspace_lints, warnings as errors), the format lane, the workspace-lints
-#     membership gate and its probe, and the ADR-MCPRE-061 clippy debt ratchet. Live-infra e2e tests skip themselves
-#     while their MCP_RE_TEST_* variables are unset.
+#     `//...` by construction — with, in `bazel-test-proxy`, the workspace-lints
+#     membership gate and its probe and the ADR-MCPRE-061 clippy debt ratchet, and in
+#     `bazel-test-rest`, the lint lane (clippy under //bazel:workspace_lints, warnings as
+#     errors) and the format lane. Live-infra e2e tests skip themselves while their
+#     MCP_RE_TEST_* variables are unset.
 #   - REQUIRED "feature-gated backend tests (Bazel)" (`release-gates`): the ADR-MCPRE-051
 #     §7 release gates as named Bazel test lanes, the load harness's Docker tests and the
 #     saturation rig's liveness check, in `release-race` and `release-harness`.
@@ -376,6 +377,7 @@ jobs:
           python3 scripts/lifecycle_purity_gate.py
 
 
+
   gates-2:
     name: structural gates (2/3)
     runs-on: ubuntu-latest
@@ -518,6 +520,7 @@ jobs:
         run: |
           python3 scripts/merge_path_gate.py --selftest
           python3 scripts/merge_path_gate.py
+
 
 
   gates-3:
@@ -730,6 +733,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
 
+
   selftests-1:
     name: assurance platform self-tests (1/2)
     runs-on: ubuntu-latest
@@ -777,6 +781,7 @@ jobs:
           python3 tools/verification/test_invalidation.py
           python3 tools/verification/test_theorem_review.py
           python3 tools/verification/test_views.py
+
 
 
   selftests-2:
@@ -840,12 +845,13 @@ jobs:
           python3 tools/verification/test_assurance_graph.py
 
 
-  # The two self-test suites that drive Bazel: the structural lane builds hostile
-  # constructions in a scratch copy of the tree, and the measured lane runs the registered
-  # measurement, a `bazel test`. On a runner without the Bazel cache each starts cold, so they
-  # run here, behind the same restore as the Bazel shards.
+
+  # The structural lane's self-test builds hostile constructions with Bazel in a scratch copy
+  # of the tree. On a runner without a Bazel cache it starts cold, so it runs here, behind the
+  # main cache and a cache of the scratch copy's own output base. The measured lane's
+  # self-test, the other half of ADR-MCPRE-068 Phase 0B, runs in `bazel-test-proxy`.
   selftests-bazel:
-    name: assurance platform self-tests (Bazel lanes)
+    name: assurance platform self-tests (structural lane)
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
@@ -922,19 +928,50 @@ jobs:
           restore-keys: |
             bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
             bazel-${{ runner.os }}-
+      # The structural lane builds in a scratch copy of the tree, which Bazel gives an
+      # output base of its own, named by the MD5 of the copy's path. It is cached apart
+      # from the main one, so restoring it costs this job alone.
+      - name: The structural lane's output base
+        id: lane
+        run: |
+          python3 - >> "$GITHUB_OUTPUT" <<'EOF'
+          import hashlib, os, sys
+          sys.path.insert(0, "tools/verification")
+          import _scratch
+          tree = os.path.realpath(_scratch.lane_scratch("structural") / "tree")
+          base = os.path.expanduser("~/.cache/bazel/_bazel_runner/") + hashlib.md5(tree.encode()).hexdigest()
+          print(f"output_base={base}")
+          EOF
+      - name: Restore the structural lane's output base
+        id: lanecache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.lane.outputs.output_base }}
+          key: bazel-structural-lane-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}
+
 
       - name: Bazel version
         run: bazel version
-      - name: Assurance platform self-tests (ADR-MCPRE-059) — the Bazel lanes
+      - name: Assurance platform self-tests (ADR-MCPRE-059) — the structural lane
         run: |
-          # ADR-MCPRE-068 Phase 0B. These two are not only self-tests of a lane's edges —
-          # they ARE the two lanes' liveness, because the ratification requires each to
-          # fail-close on zero execution and neither registry is yet large enough for a
-          # lane run to demonstrate that it can go red. The structural suite compiles a
-          # hostile construction that BUILDS and requires the runner to report FAIL; the
-          # measured suite runs a dead apparatus, a silent one and an irreproducible one.
+          # ADR-MCPRE-068 Phase 0B. This suite and the measured lane's (in
+          # `bazel-test-proxy`) are not only self-tests of a lane's edges — they ARE the two
+          # lanes' liveness, because the ratification requires each to fail-close on zero
+          # execution and neither registry is yet large enough for a lane run to demonstrate
+          # that it can go red. The structural suite compiles a hostile construction that
+          # BUILDS and requires the runner to report FAIL; the measured suite runs a dead
+          # apparatus, a silent one and an irreproducible one.
           python3 tools/verification/test_structural_lane.py
-          python3 tools/verification/test_measured_lane.py
+
+      # Keyed by the locks alone, so the first run under new locks — on main or on a pull
+      # request — saves it and every later one restores it.
+      - name: Save the structural lane's output base (first run under these locks)
+        if: steps.lanecache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.lane.outputs.output_base }}
+          key: bazel-structural-lane-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}
+
 
   # The branch ruleset requires a check named "Bazel build + test". The work it stands for
   # is the seven shards above; this job is the check. It runs `if: always()` because a job
@@ -961,6 +998,7 @@ jobs:
           NEEDS_JSON: ${{ toJSON(needs) }}
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/pre_merge_budget.py --check "Bazel build + test"
+
 
 
   rfc9421-cross-verify:
@@ -1068,6 +1106,7 @@ jobs:
         run: >-
           scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
           //mcp-re-conformance:scitt_interop_test
+
 
 
   release-race:
@@ -1198,6 +1237,7 @@ jobs:
         run: scripts/saturation_liveness.sh
 
 
+
   release-harness:
     name: release gates — load harness
     runs-on: ubuntu-latest
@@ -1278,6 +1318,7 @@ jobs:
           //mcp-re-proxy:tls_load_harness_bench
 
 
+
   # The required check "feature-gated backend tests (Bazel)", over its two shards.
   release-gates:
     name: feature-gated backend tests (Bazel)
@@ -1299,6 +1340,7 @@ jobs:
           NEEDS_JSON: ${{ toJSON(needs) }}
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/pre_merge_budget.py --check "feature-gated backend tests (Bazel)"
+
 
 
   bazel-drift:
@@ -1399,8 +1441,9 @@ jobs:
         run: tools/verification/rust-targets --check
 
 
+
   bazel-test-proxy:
-    name: bazel — test parity (proxy)
+    name: bazel — test parity (proxy), lint policy
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
@@ -1485,9 +1528,35 @@ jobs:
       - name: Bazel test parity (//mcp-re-proxy/...)
         run: bazel test --test_output=errors -- //mcp-re-proxy/...
 
+      # ADR-MCPRE-061 Amendment 1 §3. The Group A zero-debt protections are ONE
+      # `rust_lint_config`, which every `nt_rust_*` target carries by default. A target that
+      # overrides it, or is written with a raw rule, is silently exempt, so the gate checks
+      # every first-party Rust target in the graph; `--probe` proves the policy is ENFORCED
+      # by compiling a deliberate violation of each half. A policy merely attached is the
+      # configuration-enforces-nothing failure this repo has already hit twice.
+      - name: Workspace-lints gate (every Rust target carries the one lint authority)
+        run: |
+          python3 scripts/workspace_lints_gate.py
+          python3 scripts/workspace_lints_gate.py --probe
+
+      # ADR-MCPRE-061 §6.4. The adopted lints run over every production library and binary
+      # flavor, and each crate's count may only fall (config/clippy-debt.toml). The probes
+      # prove the lints are switched on and the nesting threshold sits where CLAUDE.md says.
+      - name: Clippy debt ratchet (ADR-MCPRE-061 §6)
+        run: |
+          python3 scripts/clippy_ratchet_gate.py --selftest
+          python3 scripts/clippy_ratchet_gate.py --activation-probe
+          python3 scripts/clippy_ratchet_gate.py --nesting-probe
+          python3 scripts/clippy_ratchet_gate.py
+
+      # The measured lane's self-test runs the registered measurement, a `bazel test`, so it
+      # runs here, behind the main Bazel cache. The structural lane's runs in
+      # `selftests-bazel`; ADR-MCPRE-068 Phase 0B makes the pair the two lanes' liveness.
+      - name: Assurance platform self-tests (ADR-MCPRE-059) — the measured lane
+        run: python3 tools/verification/test_measured_lane.py
 
   bazel-test-rest:
-    name: bazel — test parity (rest), lint, format, lint policy
+    name: bazel — test parity (rest), lint, format
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
@@ -1572,7 +1641,17 @@ jobs:
       # this one is `//...` minus the proxy package, and `bazel-test-proxy` is that package.
 
       - name: Bazel test parity (//... except //mcp-re-proxy/...)
-        run: bazel test --test_output=errors -- //... -//mcp-re-proxy/...
+        run: bazel test --test_output=errors --profile="$RUNNER_TEMP/rest.json.gz" -- //... -//mcp-re-proxy/...
+      - name: Profile of the test step (diagnostic)
+        run: |
+          python3 - "$RUNNER_TEMP/rest.json.gz" <<'EOF'
+          import gzip, json, sys
+          events = json.load(gzip.open(sys.argv[1])).get("traceEvents", [])
+          spans = sorted((e for e in events if e.get("dur")), key=lambda e: -e["dur"])
+          for e in spans[:40]:
+              print(f'{e["dur"] / 1e6:8.2f}s  {e.get("cat", "")[:28]:28}  {e.get("name", "")[:120]}')
+          EOF
+
 
       # The Rust lint lane: clippy over every first-party target under the workspace lint
       # policy (//bazel:workspace_lints) and .clippy.toml, warnings as errors.
@@ -1583,26 +1662,6 @@ jobs:
       - name: Rust format lane (bazel build --config=rustfmt //...)
         run: bazel build --config=rustfmt //...
 
-      # ADR-MCPRE-061 Amendment 1 §3. The Group A zero-debt protections are ONE
-      # `rust_lint_config`, which every `nt_rust_*` target carries by default. A target that
-      # overrides it, or is written with a raw rule, is silently exempt, so the gate checks
-      # every first-party Rust target in the graph; `--probe` proves the policy is ENFORCED
-      # by compiling a deliberate violation of each half. A policy merely attached is the
-      # configuration-enforces-nothing failure this repo has already hit twice.
-      - name: Workspace-lints gate (every Rust target carries the one lint authority)
-        run: |
-          python3 scripts/workspace_lints_gate.py
-          python3 scripts/workspace_lints_gate.py --probe
-
-      # ADR-MCPRE-061 §6.4. The adopted lints run over every production library and binary
-      # flavor, and each crate's count may only fall (config/clippy-debt.toml). The probes
-      # prove the lints are switched on and the nesting threshold sits where CLAUDE.md says.
-      - name: Clippy debt ratchet (ADR-MCPRE-061 §6)
-        run: |
-          python3 scripts/clippy_ratchet_gate.py --selftest
-          python3 scripts/clippy_ratchet_gate.py --activation-probe
-          python3 scripts/clippy_ratchet_gate.py --nesting-probe
-          python3 scripts/clippy_ratchet_gate.py
 
 
   # The required check "bazel semantic-drift gate + test parity", over its three shards.
@@ -1626,6 +1685,7 @@ jobs:
           NEEDS_JSON: ${{ toJSON(needs) }}
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/pre_merge_budget.py --check "bazel semantic-drift gate + test parity"
+
 
 
   # The Bazel cache every PR shard restores. Saved only after a merge to main, by one job
@@ -1734,6 +1794,29 @@ jobs:
             ~/.cache/bazelisk
           key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
 
+      # The structural lane builds in a scratch copy of the tree, which Bazel gives an
+      # output base of its own, named by the MD5 of the copy's path. It is cached apart
+      # from the main one, so restoring it costs this job alone.
+      - name: The structural lane's output base
+        id: lane
+        run: |
+          python3 - >> "$GITHUB_OUTPUT" <<'EOF'
+          import hashlib, os, sys
+          sys.path.insert(0, "tools/verification")
+          import _scratch
+          tree = os.path.realpath(_scratch.lane_scratch("structural") / "tree")
+          base = os.path.expanduser("~/.cache/bazel/_bazel_runner/") + hashlib.md5(tree.encode()).hexdigest()
+          print(f"output_base={base}")
+          EOF
+      - name: Build the structural lane's output base
+        run: python3 tools/verification/test_structural_lane.py
+      - name: Save the structural lane's output base
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.lane.outputs.output_base }}
+          key: bazel-structural-lane-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}
+
+
 
   sdk-python:
     name: downloader — Python SDK wheel (Bazel)
@@ -1785,6 +1868,7 @@ jobs:
         run: |
           /tmp/venv/bin/python -m pytest sdk/python/tests -q \
             --cov --cov-config=sdk/python/pyproject.toml --cov-report=term-missing
+
 
 
   sdk-typescript:
