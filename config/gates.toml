@@ -85,7 +85,7 @@ selftest = true
 [[script]]
 path = "scripts/clippy_ratchet_gate.py"
 stages = [1, 2]
-ci = ["pre-merge.yml:bazel-test-proxy"]
+ci = ["pre-merge.yml:bazel-drift"]
 selftest = true
 
 [[script]]
@@ -579,7 +579,7 @@ selftest = true
 [[script]]
 path = "scripts/workspace_lints_gate.py"
 stages = [1, 2]
-ci = ["pre-merge.yml:bazel-test-proxy", "pre-merge.yml:rust"]
+ci = ["pre-merge.yml:bazel-drift", "pre-merge.yml:rust"]
 selftest = true
 
 # Needs a live kind cluster and a 3 GB bench image, which no CI runner has.

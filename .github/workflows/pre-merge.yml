@@ -10,11 +10,10 @@
 # (scripts/pre_merge_budget.py). The shards run side by side, so the slowest one, not
 # their sum, sets the time.
 #   - REQUIRED "bazel semantic-drift gate + test parity" (`bazel`): `bazel-drift` — the
-#     BUILD semantic-drift gate and the target table; `bazel-test-proxy` and
+#     BUILD semantic-drift gate, the target table, the workspace-lints membership gate
+#     and its probe, and the ADR-MCPRE-061 clippy debt ratchet; `bazel-test-proxy` and
 #     `bazel-test-rest` — every non-manual test target, in two shards whose union is
-#     `//...` by construction — with, in `bazel-test-proxy`, the workspace-lints
-#     membership gate and its probe and the ADR-MCPRE-061 clippy debt ratchet, and in
-#     `bazel-test-rest`, the lint lane (clippy under //bazel:workspace_lints, warnings as
+#     `//...` by construction — with, in `bazel-test-rest`, the lint lane (clippy under //bazel:workspace_lints, warnings as
 #     errors) and the format lane. Live-infra e2e tests skip themselves while their
 #     MCP_RE_TEST_* variables are unset.
 #   - REQUIRED "feature-gated backend tests (Bazel)" (`release-gates`): the ADR-MCPRE-051
@@ -379,6 +378,7 @@ jobs:
 
 
 
+
   gates-2:
     name: structural gates (2/3)
     runs-on: ubuntu-latest
@@ -521,6 +521,7 @@ jobs:
         run: |
           python3 scripts/merge_path_gate.py --selftest
           python3 scripts/merge_path_gate.py
+
 
 
 
@@ -737,6 +738,7 @@ jobs:
 
 
 
+
   selftests-1:
     name: assurance platform self-tests (1/2)
     runs-on: ubuntu-latest
@@ -784,6 +786,7 @@ jobs:
           python3 tools/verification/test_invalidation.py
           python3 tools/verification/test_theorem_review.py
           python3 tools/verification/test_views.py
+
 
 
 
@@ -851,10 +854,11 @@ jobs:
 
 
 
+
   # The structural lane's self-test builds hostile constructions with Bazel in a scratch copy
   # of the tree. On a runner without a Bazel cache it starts cold, so it runs here, behind the
   # main cache and a cache of the scratch copy's own output base. The measured lane's
-  # self-test, the other half of ADR-MCPRE-068 Phase 0B, runs in `bazel-test-proxy`.
+  # self-test, the other half of ADR-MCPRE-068 Phase 0B, runs in `bazel-drift`.
   selftests-bazel:
     name: assurance platform self-tests (structural lane)
     runs-on: ubuntu-latest
@@ -969,7 +973,7 @@ jobs:
       - name: Assurance platform self-tests (ADR-MCPRE-059) — the structural lane
         run: |
           # ADR-MCPRE-068 Phase 0B. This suite and the measured lane's (in
-          # `bazel-test-proxy`) are not only self-tests of a lane's edges — they ARE the two
+          # `bazel-drift`) are not only self-tests of a lane's edges — they ARE the two
           # lanes' liveness, because the ratification requires each to fail-close on zero
           # execution and neither registry is yet large enough for a lane run to demonstrate
           # that it can go red. The structural suite compiles a hostile construction that
@@ -985,6 +989,7 @@ jobs:
         with:
           path: ${{ steps.lane.outputs.output_base }}
           key: bazel-structural-lane-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}
+
 
 
 
@@ -1013,6 +1018,7 @@ jobs:
           NEEDS_JSON: ${{ toJSON(needs) }}
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/pre_merge_budget.py --check "Bazel build + test"
+
 
 
 
@@ -1131,6 +1137,7 @@ jobs:
         run: >-
           scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
           //mcp-re-conformance:scitt_interop_test
+
 
 
 
@@ -1274,6 +1281,7 @@ jobs:
 
 
 
+
   release-harness:
     name: release gates — load harness
     runs-on: ubuntu-latest
@@ -1365,6 +1373,7 @@ jobs:
 
 
 
+
   # The required check "feature-gated backend tests (Bazel)", over its two shards.
   release-gates:
     name: feature-gated backend tests (Bazel)
@@ -1390,8 +1399,9 @@ jobs:
 
 
 
+
   bazel-drift:
-    name: bazel — semantic drift, target table
+    name: bazel — semantic drift, target table, lint policy
     runs-on: ubuntu-latest
     timeout-minutes: 4
     # ADR-MCPS-048 / MCPS-70 — the enforcement that makes generation stick.
@@ -1496,11 +1506,39 @@ jobs:
       - name: Rust target table matches the build graph
         run: tools/verification/rust-targets --check
 
+      # ADR-MCPRE-061 Amendment 1 §3. The Group A zero-debt protections are ONE
+      # `rust_lint_config`, which every `nt_rust_*` target carries by default. A target that
+      # overrides it, or is written with a raw rule, is silently exempt, so the gate checks
+      # every first-party Rust target in the graph; `--probe` proves the policy is ENFORCED
+      # by compiling a deliberate violation of each half. A policy merely attached is the
+      # configuration-enforces-nothing failure this repo has already hit twice.
+      - name: Workspace-lints gate (every Rust target carries the one lint authority)
+        run: |
+          python3 scripts/workspace_lints_gate.py
+          python3 scripts/workspace_lints_gate.py --probe
+
+      # ADR-MCPRE-061 §6.4. The adopted lints run over every production library and binary
+      # flavor, and each crate's count may only fall (config/clippy-debt.toml). The probes
+      # prove the lints are switched on and the nesting threshold sits where CLAUDE.md says.
+      - name: Clippy debt ratchet (ADR-MCPRE-061 §6)
+        run: |
+          python3 scripts/clippy_ratchet_gate.py --selftest
+          python3 scripts/clippy_ratchet_gate.py --activation-probe
+          python3 scripts/clippy_ratchet_gate.py --nesting-probe
+          python3 scripts/clippy_ratchet_gate.py
+
+      # The measured lane's self-test runs the registered measurement, a `bazel test`, so it
+      # runs here, behind the main Bazel cache. The structural lane's runs in
+      # `selftests-bazel`; ADR-MCPRE-068 Phase 0B makes the pair the two lanes' liveness.
+      - name: Assurance platform self-tests (ADR-MCPRE-059) — the measured lane
+        run: python3 tools/verification/test_measured_lane.py
+
+
 
 
 
   bazel-test-proxy:
-    name: bazel — test parity (proxy), lint policy
+    name: bazel — test parity (proxy)
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
@@ -1594,32 +1632,6 @@ jobs:
       - name: Bazel test parity (//mcp-re-proxy/...)
         run: bazel test --test_output=errors -- //mcp-re-proxy/...
 
-      # ADR-MCPRE-061 Amendment 1 §3. The Group A zero-debt protections are ONE
-      # `rust_lint_config`, which every `nt_rust_*` target carries by default. A target that
-      # overrides it, or is written with a raw rule, is silently exempt, so the gate checks
-      # every first-party Rust target in the graph; `--probe` proves the policy is ENFORCED
-      # by compiling a deliberate violation of each half. A policy merely attached is the
-      # configuration-enforces-nothing failure this repo has already hit twice.
-      - name: Workspace-lints gate (every Rust target carries the one lint authority)
-        run: |
-          python3 scripts/workspace_lints_gate.py
-          python3 scripts/workspace_lints_gate.py --probe
-
-      # ADR-MCPRE-061 §6.4. The adopted lints run over every production library and binary
-      # flavor, and each crate's count may only fall (config/clippy-debt.toml). The probes
-      # prove the lints are switched on and the nesting threshold sits where CLAUDE.md says.
-      - name: Clippy debt ratchet (ADR-MCPRE-061 §6)
-        run: |
-          python3 scripts/clippy_ratchet_gate.py --selftest
-          python3 scripts/clippy_ratchet_gate.py --activation-probe
-          python3 scripts/clippy_ratchet_gate.py --nesting-probe
-          python3 scripts/clippy_ratchet_gate.py
-
-      # The measured lane's self-test runs the registered measurement, a `bazel test`, so it
-      # runs here, behind the main Bazel cache. The structural lane's runs in
-      # `selftests-bazel`; ADR-MCPRE-068 Phase 0B makes the pair the two lanes' liveness.
-      - name: Assurance platform self-tests (ADR-MCPRE-059) — the measured lane
-        run: python3 tools/verification/test_measured_lane.py
 
 
   bazel-test-rest:
@@ -1732,6 +1744,7 @@ jobs:
 
 
 
+
   # The required check "bazel semantic-drift gate + test parity", over its three shards.
   bazel:
     name: bazel semantic-drift gate + test parity
@@ -1753,6 +1766,7 @@ jobs:
           NEEDS_JSON: ${{ toJSON(needs) }}
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/pre_merge_budget.py --check "bazel semantic-drift gate + test parity"
+
 
 
 
@@ -1897,6 +1911,7 @@ jobs:
 
 
 
+
   sdk-python:
     name: downloader — Python SDK wheel (Bazel)
     runs-on: ubuntu-latest
@@ -1956,6 +1971,7 @@ jobs:
         run: |
           /tmp/venv/bin/python -m pytest sdk/python/tests -q \
             --cov --cov-config=sdk/python/pyproject.toml --cov-report=term-missing
+
 
 
 
