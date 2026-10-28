@@ -663,6 +663,37 @@ alternate-constructors = "`of` is the view's only constructor and the fields are
 generated-or-deserialization = "no derive constructs a view; Clone and Copy copy one that `enforced()` produced"
 test-only-construction = "the view's tests obtain it through `enforced()` on a classified state; no test-gated constructor exists"
 
+[[probe]]
+id = "S86"
+unit = "proxy.admission_configuration_state_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside the view's module can assemble AdmissionBudgets, so the enforcer and the record verifier are never handed budgets taken under different skews"
+insertion_parent = "mcp-re-proxy/src/config_state/admission/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE PAIR OF BUDGETS. `budgets(skew)` derives the PEP's budget and the record verifier's from
+one skew; a literal could pair two budgets taken under different ones. Injected into
+`config_state::admission`, the view's parent and the module that builds the view, which can
+name the type and is refused the literal.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S86. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use super::enforced_admission::AdmissionBudgets;
+
+pub fn hostile() -> AdmissionBudgets {
+    AdmissionBudgets { enforcer: todo!(), record_verifier: todo!() } // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "both fields are bare-private to `config_state::admission::enforced_admission`; the probe sits in `config_state::admission`, which names the type and is refused the literal"
+alternate-constructors = "`EnforcedAdmission::budgets` is the only function returning the type. There is no `From`, `Default` or builder, and the projections return the two budgets by value, never `&mut`"
+generated-or-deserialization = "the derives are Debug/Clone/Copy; Clone and Copy copy a value `budgets` produced, and nothing decodes one"
+test-only-construction = "the view's tests obtain budgets through `budgets` on a classified state; no test-gated constructor exists"
+
 # --- ADR-MCPRE-068 Phase 1 — THM-0091's two seals ---------------------------------------
 #
 # The theorem's own STATEMENT asserted both of these before any control established either:

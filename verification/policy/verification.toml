@@ -8650,7 +8650,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::an_authority_key_that_cannot_verify_anything_is_refused",
   "//mcp-re-proxy:proxy_unit_test#config_state::admission::enforced_admission::tests::a_fail_closed_gate_projects_no_degraded_window",
   "//mcp-re-proxy:proxy_unit_test#config_state::admission::enforced_admission::tests::a_bounded_degraded_gate_projects_its_window_and_the_opt_in",
-  "//mcp-re-proxy:proxy_unit_test#config_state::admission::enforced_admission::tests::the_record_verifier_judges_under_the_gates_age_and_the_peps_skew",
+  "//mcp-re-proxy:proxy_unit_test#config_state::admission::enforced_admission::tests::both_budgets_carry_the_one_skew_they_were_taken_under",
 ]
 
 
@@ -8675,7 +8675,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.admission_configuration_state_sole_producer"
 class = "V0"
-description = "Both values on the admission path are the classifier's: `AdmissionState`'s `kind` is bare-private with a private enum type, and `EnforcedAdmission`'s posture and gate borrow are bare-private to its module, whose one constructor is `pub(super)` and called only by `AdmissionState::enforced()`. So the six facts a consumer reads about an enforcing deployment were projected together from ONE classified state rather than paired by the reader, and the view's existence is itself the enforcement fact. States nothing about which forms are RECOGNISED, which is `proxy.admission_configuration_state`'s."
+description = "Both values on the admission path are the classifier's: `AdmissionState`'s `kind` is bare-private with a private enum type, and `EnforcedAdmission`'s posture and gate borrow are bare-private to its module, whose one constructor is `pub(super)` and called only by `AdmissionState::enforced()`. So the six facts a consumer reads about an enforcing deployment were projected together from ONE classified state rather than paired by the reader, and the view's existence is itself the enforcement fact. The enforcer's and the record verifier's budgets are one `AdmissionBudgets`, private to the view's module and made only by `budgets` under one skew. States nothing about which forms are RECOGNISED, which is `proxy.admission_configuration_state`'s."
 paths = [
   "mcp-re-proxy/src/config_state/admission/mod.rs",
   "mcp-re-proxy/src/config_state/admission/enforced_admission.rs",

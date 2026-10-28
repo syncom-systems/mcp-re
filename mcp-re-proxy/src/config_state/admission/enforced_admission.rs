@@ -55,12 +55,25 @@ impl<'a> EnforcedAdmission<'a> {
         self.gate.currentness
     }
 
-    /// The PEP's §5.2 budget under this gate, with `max_clock_skew` the freshness owner's.
+    /// The two budgets the gate is applied under, both derived from `max_clock_skew`, the
+    /// freshness owner's skew. The PEP judges the assertion and the record verifier the
+    /// authoritative record, and they take the skew from this one call.
+    pub fn budgets(&self, max_clock_skew: MaxClockSkew) -> AdmissionBudgets {
+        AdmissionBudgets {
+            enforcer: self.enforcer_policy(max_clock_skew),
+            record_verifier: AdmissionStateCurrentness {
+                max_record_age: self.gate.currentness.max_age_secs(),
+                max_clock_skew: max_clock_skew.secs(),
+            },
+        }
+    }
+
+    /// The PEP's §5.2 budget under this gate.
     ///
     /// The two degraded fields are one projection of [`AdmissionAvailability`], never two
     /// settings to combine. N is the profile's budget, [`AdmissionPolicy::default`]'s, which
     /// no deployment states. The saturation cannot fire: P was narrowed from a positive `i64`.
-    pub fn enforcer_policy(&self, max_clock_skew: MaxClockSkew) -> AdmissionPolicy {
+    fn enforcer_policy(&self, max_clock_skew: MaxClockSkew) -> AdmissionPolicy {
         let (allow_degraded_mode, degraded_propagation_bound) = match self.gate.availability {
             AdmissionAvailability::FailClosed => (false, 0),
             AdmissionAvailability::BoundedDegraded { bound_secs } => {
@@ -74,19 +87,29 @@ impl<'a> EnforcedAdmission<'a> {
             ..AdmissionPolicy::default()
         }
     }
+}
 
-    /// The record verifier's currentness budget under this gate, with `max_clock_skew` the
-    /// freshness owner's — the same tolerance [`enforcer_policy`](Self::enforcer_policy)
-    /// hands the PEP, so the assertion and the authoritative record are judged under one
-    /// skew.
-    pub fn record_verifier_currentness(
-        &self,
-        max_clock_skew: MaxClockSkew,
-    ) -> AdmissionStateCurrentness {
-        AdmissionStateCurrentness {
-            max_record_age: self.gate.currentness.max_age_secs(),
-            max_clock_skew: max_clock_skew.secs(),
-        }
+/// The PEP's budget and the record verifier's, as one value taken under ONE clock skew.
+///
+/// A clock difference that admits an assertion must admit the record it is checked
+/// against, so the two never come from separate readings of the skew. The fields are
+/// private to this module and [`EnforcedAdmission::budgets`] is the only producer: no
+/// holder can pair an enforcer budget with a record budget taken under another skew.
+#[derive(Debug, Clone, Copy)]
+pub struct AdmissionBudgets {
+    enforcer: AdmissionPolicy,
+    record_verifier: AdmissionStateCurrentness,
+}
+
+impl AdmissionBudgets {
+    /// The PEP's §5.2 budget, for the `AdmissionEnforcer`.
+    pub fn enforcer(&self) -> AdmissionPolicy {
+        self.enforcer
+    }
+
+    /// The record verifier's currentness budget: the gate's record age and the same skew.
+    pub fn record_verifier(&self) -> AdmissionStateCurrentness {
+        self.record_verifier
     }
 }
 
@@ -120,7 +143,8 @@ mod tests {
         let policy = state
             .enforced()
             .expect("an enforcing state")
-            .enforcer_policy(skew(7));
+            .budgets(skew(7))
+            .enforcer();
         assert!(!policy.allow_degraded_mode);
         assert_eq!(policy.degraded_propagation_bound, 0);
         assert_eq!(policy.max_clock_skew, 7);
@@ -139,26 +163,27 @@ mod tests {
         let policy = state
             .enforced()
             .expect("an enforcing state")
-            .enforcer_policy(skew(5));
+            .budgets(skew(5))
+            .enforcer();
         assert!(policy.allow_degraded_mode);
         assert_eq!(policy.degraded_propagation_bound, 90);
         assert_eq!(policy.max_clock_skew, 5);
     }
 
-    /// The record verifier is handed the gate's own record age and the skew the PEP gets.
+    /// The record verifier is handed the gate's own record age, and both budgets carry the
+    /// one skew they were taken under.
     #[test]
-    fn the_record_verifier_judges_under_the_gates_age_and_the_peps_skew() {
+    fn both_budgets_carry_the_one_skew_they_were_taken_under() {
         let state = enforcing(AdmissionAvailabilityRequest::FailClosed);
         let gate = state.enforced().expect("an enforcing state");
-        let currentness = gate.record_verifier_currentness(skew(7));
+        let budgets = gate.budgets(skew(7));
+        let currentness = budgets.record_verifier();
         assert_eq!(
             currentness.max_record_age,
             gate.record_currentness().max_age_secs()
         );
         assert_eq!(currentness.max_record_age, 60, "the fixture's record age");
-        assert_eq!(
-            currentness.max_clock_skew,
-            gate.enforcer_policy(skew(7)).max_clock_skew
-        );
+        assert_eq!(currentness.max_clock_skew, 7);
+        assert_eq!(budgets.enforcer().max_clock_skew, 7);
     }
 }
