@@ -9789,6 +9789,23 @@ tested_symbols = [
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::a_full_observer_queue_changes_neither_dispatch_nor_success",
 ]
 
+# The success exit's order is held by types from outside the exit: its steps and their products
+# are private to `reply_assembly::success_exit`, so the reply region reaches the exit only through
+# `publish_success`, which runs every step. That is a compile-time fact about the module boundary,
+# witnessed here by S81; the order inside the exit is `proxy.audit_outcome_gate`'s, tested and
+# mutation-probed.
+[[unit]]
+id = "proxy.success_exit_order"
+class = "V0"
+description = "Outside `reply_assembly::success_exit` a cleared success cannot be served without its outcome committed and its retention completed: the serving step `serve_published` and the stage products `Committed` and `Retained` are private to the exit, `Committed` is made only by the outcome commitment and `Retained` only by completed retention, and the exit's only entry the reply region can call is `publish_success`, which runs every step. States nothing about the order inside the exit, or about whether a second success could be served by some other route, which are `proxy.audit_outcome_gate`'s."
+paths = ["mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs"]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://proxy/audit/success_exit_order",
+]
+
 
 [[unit]]
 id = "proxy.audit_posture"

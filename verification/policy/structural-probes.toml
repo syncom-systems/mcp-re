@@ -2772,14 +2772,14 @@ alternate-constructors = "the only construction of either value is `Answering::o
 generated-or-deserialization = "neither type derives anything: no Clone, Copy, Default, Serialize or Deserialize"
 test-only-construction = "none: the dispatched module's tests obtain both through `Answering::of`, from an exchange crossed by `ReadyForDispatch::dispatch`"
 
-# --- proxy.audit_outcome_gate: a cleared success is served only by the success exit's last step
+# --- proxy.success_exit_order: a cleared success is served only by the success exit's last step
 #
 # The success exit's steps each take the previous step's product, and the products and steps are
 # private to `reply_assembly::success_exit`. S81 tries to serve a cleared success from outside
 # it, skipping the outcome commitment and retention.
 [[probe]]
 id = "S81"
-unit = "proxy.audit_outcome_gate"
+unit = "proxy.success_exit_order"
 kind = "in-crate-source-injection"
 crate = "//mcp-re-proxy:mcp_re_proxy"
 invariant = "outside the success exit a cleared success cannot be served without its outcome committed and its retention completed"

@@ -288,6 +288,7 @@ attestations this view cannot see.
 | unit://proxy.startup_plan_legality | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.startup_plan_pool_ceiling | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.startup_plan_provenance | source, contracts or evidence | THM-0077 | _no consumer_ |
+| unit://proxy.success_exit_order | source, contracts or evidence | THM-0136 | _no consumer_ |
 | unit://proxy.sync_replay_retention_window | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.transport_binding_and_crl_state | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.transport_binding_application | source, contracts or evidence | THM-0034 | _no consumer_ |

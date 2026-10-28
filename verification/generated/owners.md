@@ -284,6 +284,7 @@ not an omission to hide.
 | proxy.startup_plan_legality | V0 | _none_ | 0 |
 | proxy.startup_plan_pool_ceiling | V0 | _none_ | 0 |
 | proxy.startup_plan_provenance | V0 | _none_ | 0 |
+| proxy.success_exit_order | V0 | _none_ | 0 |
 | proxy.sync_replay_retention_window | V0 | _none_ | 0 |
 | proxy.transport_binding_and_crl_state | V0 | _none_ | 0 |
 | proxy.transport_binding_application | V0 | _none_ | 0 |
