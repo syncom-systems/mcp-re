@@ -7819,8 +7819,8 @@ carried across the dispatch, never a re-read of the posture, so an exchange that
 under the required posture cannot reach the exit as not required.
 
 An outcome commitment that fails — rejection, unavailability, a wait past the bound, a dropped
-completion, a panic, a forged or stale receipt, an absent coordinate, a spent commitment
-budget — is a 500 `mcp-re.audit_commitment_unavailable` refusal after dispatch, stating
+completion, a panic, a forged or stale receipt, a spent commitment budget — is a 500
+`mcp-re.audit_commitment_unavailable` refusal after dispatch, stating
 `PossiblyExecuted`; it is signed, or is the unsigned last-resort body when the signed
 rejection cannot be built. Retention completion is attempted with that refusal, and an attempt
 that fails leaves the exchange's `.pending` marker while the refusal is still served. A
@@ -7858,11 +7858,18 @@ the 202's terminal entered only through the carrier the inner plane mints when t
 was delivered, whose event alone the publication reads — is THM-0101's claim, which this theorem depends on. This theorem says what
 must hold before a success terminal is reached under the required posture. The best-effort
 posture keeps its order and bytes and is claimed nothing here. Machine A's model is test-only.
-That both exits serve through the one success exit, and that exit's order, are source-measured
-(the source-scan tests in `success_exit.rs`, `accepted.rs` and `notification.rs`, and
-M615-M619): the compiler refuses neither a second exit nor another order, and the structural
-probes reach the witness types and the intent disposition, not the exit. Class V0: tested,
-mutation-probed and structurally probed, not proved.
+The exit's order is held by types from outside the exit: each step takes the product of the
+step before it, the products are private to the success exit and made only by that step —
+`Committed` by the outcome commitment, `Retained` by completed retention — and the exit's only
+entry the reply region can call is `publish_success`, which runs every step; structural probe
+S81 witnesses that the serving step cannot be called from beside the exit. Inside the exit the
+order is the body of `publish_success`, attacked by M616 and M618 and checked by
+`outcome_before_success_test`. That both exits serve through the one success exit is
+source-measured, not compiler-enforced: `served` and `ServedHttpResponse` are visible to the
+whole serving module, so `success_exit_is_the_only_success_served_call` scans the reply region
+for a second `served(` and M617 routes the 202 around the exit. The other structural probes
+reach the witness types and the intent disposition. Class V0: tested, mutation-probed and
+structurally probed, not proved.
 """
 owner = "proxy.audit_outcome_gate"
 review_requirement = "Owner security-specification review"
