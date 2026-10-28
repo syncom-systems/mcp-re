@@ -27,6 +27,8 @@ Stdlib only, and it imports nothing from this package: every typed loader import
 from __future__ import annotations
 
 import ast
+import copy
+import functools
 import re
 import subprocess
 import tomllib
@@ -75,10 +77,21 @@ def policy_files(root: Path = REPO_ROOT) -> list[Path]:
 
 
 def parse(text: str, where: str) -> dict:
+    """`text` parsed, as a document the caller owns.
+
+    Parsed once per distinct text and copied per call. A fingerprint reads the same
+    registries once per unit, and parsing them again each time was most of what measuring
+    cost; the copy keeps every caller's document its own, as a fresh parse would.
+    """
     try:
-        return tomllib.loads(text)
+        return copy.deepcopy(_parsed(text))
     except tomllib.TOMLDecodeError as exc:
         raise ManifestError(f"{where}: unparsable: {exc}") from exc
+
+
+@functools.lru_cache(maxsize=32)
+def _parsed(text: str) -> dict:
+    return tomllib.loads(text)
 
 
 def read(file: Path, where: str | None = None) -> dict:

@@ -42,7 +42,7 @@ off_merge_path = "an SLO control: the SLO is not part of pre-merge, post-merge o
 [[script]]
 path = "scripts/assurance_obligation_gate.py"
 stages = [1]
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-3"]
 selftest = true
 
 [[script]]
@@ -54,7 +54,7 @@ selftest = true
 [[script]]
 path = "scripts/bazel_gazelle_gate.py"
 stages = [1, 3]
-ci = ["pre-merge.yml:bazel", "pre-merge.yml:rust"]
+ci = ["pre-merge.yml:bazel-drift", "pre-merge.yml:rust"]
 selftest = true
 
 [[script]]
@@ -79,13 +79,13 @@ selftest = true
 [[script]]
 path = "scripts/claim_surface_gate.py"
 stages = [1]
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-3"]
 selftest = true
 
 [[script]]
 path = "scripts/clippy_ratchet_gate.py"
 stages = [1, 2]
-ci = ["pre-merge.yml:bazel"]
+ci = ["pre-merge.yml:bazel-drift"]
 selftest = true
 
 [[script]]
@@ -103,7 +103,7 @@ selftest = true
 [[script]]
 path = "scripts/control_census_gate.py"
 stages = [1]
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-3"]
 selftest = true
 
 [[script]]
@@ -149,7 +149,7 @@ selftest = true
 [[script]]
 path = "scripts/distribution_gate.py"
 stages = []
-ci = ["distribute.yml:resolve", "pre-merge.yml:rust"]
+ci = ["distribute.yml:resolve", "pre-merge.yml:gates-3"]
 selftest = true
 
 [[script]]
@@ -167,7 +167,7 @@ selftest = true
 [[script]]
 path = "scripts/evidence_class_ratchet.py"
 stages = [1]
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-3"]
 selftest = true
 
 [[script]]
@@ -197,7 +197,7 @@ selftest = true
 [[script]]
 path = "scripts/heavy_lane_disk_preflight.py"
 stages = [1, 4, 5]
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-2"]
 selftest = true
 
 [[script]]
@@ -249,20 +249,20 @@ off_merge_path = "an SLO measurement, not an admissibility control; run locally 
 [[script]]
 path = "scripts/merge_path_gate.py"
 stages = [1]
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-2"]
 selftest = true
 
 [[script]]
 path = "scripts/merge_readiness_gate.py"
 stages = []
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-2"]
 selftest = true
 not_a_control = "a merge-time authority over a candidate SHA, run by the merge operation rather than on a change"
 
 [[script]]
 path = "scripts/merge_verified_pr.py"
 stages = []
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-2"]
 selftest = true
 not_a_control = "performs a merge"
 
@@ -279,7 +279,7 @@ off_merge_path = "an architecture report with no verdict; --selftest only"
 [[script]]
 path = "scripts/module_size_gate.py"
 stages = [1]
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-2"]
 selftest = true
 
 [[script]]
@@ -291,13 +291,13 @@ selftest = true
 [[script]]
 path = "scripts/node_matrix_state.py"
 stages = [1]
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-3"]
 selftest = true
 
 [[script]]
 path = "scripts/node_runtime_gate.py"
 stages = [1]
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-2"]
 selftest = true
 
 [[script]]
@@ -310,6 +310,12 @@ selftest = true
 path = "scripts/owned_worker_gate.py"
 stages = [1]
 ci = ["pre-merge.yml:rust"]
+selftest = true
+
+[[script]]
+path = "scripts/pre_merge_budget.py"
+stages = []
+ci = ["pre-merge.yml:bazel", "pre-merge.yml:gates-3", "pre-merge.yml:release-gates", "pre-merge.yml:required"]
 selftest = true
 
 [[script]]
@@ -342,7 +348,7 @@ selftest = true
 [[script]]
 path = "scripts/python_runtime_gate.py"
 stages = [1]
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-2"]
 selftest = true
 
 [[script]]
@@ -354,13 +360,13 @@ selftest = true
 [[script]]
 path = "scripts/registry_approval_gate.py"
 stages = [1]
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-3"]
 selftest = true
 
 [[script]]
 path = "scripts/provider_neutral_closure_gate.py"
 stages = [1]
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-2"]
 selftest = true
 
 [[script]]
@@ -373,7 +379,7 @@ off_merge_path = "it guards the SLO runbooks' rehearsal claim: the SLO is not pa
 [[script]]
 path = "scripts/release_assurance_gate.py"
 stages = [1]
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-3"]
 selftest = true
 
 [[script]]
@@ -386,7 +392,7 @@ not_a_control = "drives a published installation through a signed call; its chec
 [[script]]
 path = "scripts/run_gate.sh"
 stages = [1]
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-3"]
 selftest = true
 not_a_control = "the wrapper that keeps a gate's verdict and its exit status one fact"
 
@@ -401,7 +407,8 @@ not_a_control = "the mutation probe for run_gate.sh; it proves the wrapper, not 
 path = "scripts/run_test_lane.sh"
 stages = []
 ci = [
-  "pre-merge.yml:release-gates",
+  "pre-merge.yml:release-race",
+  "pre-merge.yml:release-harness",
   "pre-merge.yml:rfc9421-cross-verify",
   "cloud-kms-live.yml:aws-kms-real",
   "cloud-kms-live.yml:gcp-kms-real",
@@ -421,7 +428,7 @@ not_a_control = "a topology measurement on this host, with no verdict"
 [[script]]
 path = "scripts/saturation_liveness.sh"
 stages = [2]
-ci = ["pre-merge.yml:release-gates"]
+ci = ["pre-merge.yml:release-harness"]
 selftest = false
 not_a_control = "a liveness check of the capacity instrument, not of the product"
 
@@ -544,7 +551,7 @@ selftest = true
 [[script]]
 path = "scripts/unit_closure_gate.py"
 stages = [1]
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-2"]
 selftest = true
 
 # Checks the verification runner's environment for that workflow's jobs; its scope IS
@@ -560,19 +567,19 @@ off_merge_path = "a runner-environment preflight whose scope is the verification
 [[script]]
 path = "scripts/verification_trigger_gate.py"
 stages = [1]
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-2"]
 selftest = true
 
 [[script]]
 path = "scripts/workflow_reader.py"
 stages = [1]
-ci = ["pre-merge.yml:rust"]
+ci = ["pre-merge.yml:gates-2"]
 selftest = true
 
 [[script]]
 path = "scripts/workspace_lints_gate.py"
 stages = [1, 2]
-ci = ["pre-merge.yml:bazel", "pre-merge.yml:rust"]
+ci = ["pre-merge.yml:bazel-drift", "pre-merge.yml:rust"]
 selftest = true
 
 # Needs a live kind cluster and a 3 GB bench image, which no CI runner has.
@@ -588,7 +595,7 @@ off_merge_path = "a kind-cluster Job-spec rehearsal; its wiring is policed by re
 [[script]]
 path = "tools/verification/assurance-closure"
 stages = [1]
-ci = ["assurance-closure.yml:closure", "pre-merge.yml:rust", "verification.yml:assurance-closure"]
+ci = ["assurance-closure.yml:closure", "pre-merge.yml:selftests-4", "verification.yml:assurance-closure"]
 selftest = true
 off_merge_path = "binding only at epic end, as a complete verification.yml run's continuation; the pull-request path stays the fast checks, which run its selftest and test_assurance_closure.py"
 
