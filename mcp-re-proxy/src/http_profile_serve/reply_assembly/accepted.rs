@@ -82,7 +82,7 @@ impl HttpProfileProxy {
         &self,
         acc: &Accepted<'_>,
         refusal: crate::refusal::Refusal,
-        progress: &ExchangeProgress,
+        progress: &mut ExchangeProgress,
         retention_owed: &RetentionDisposition,
     ) -> ServedHttpResponse {
         let rejection = self.refuse_accepted(acc, refusal, progress);

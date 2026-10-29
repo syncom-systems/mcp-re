@@ -86,7 +86,7 @@ impl HttpProfileProxy {
         &self,
         ans: &mut Answerable<'_>,
         refusal: Refusal,
-        progress: &ExchangeProgress,
+        progress: &mut ExchangeProgress,
     ) -> ServedHttpResponse {
         let owed = Self::disposition(progress, refusal.execution_refinement);
         self.responses.refuse(
