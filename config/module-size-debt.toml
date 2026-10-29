@@ -102,8 +102,11 @@ status = "unreviewed"
 # precondition does not hold and the entry is pinned at what it now measures.
 [[debt]]
 path = "mcp-re-proxy/src/tls.rs"
-baseline_prod_loc = 643
-baseline_sha = "b142a7a"
+# #1250: `ServerLimits`, the request's limits, moves to `deployment_request`, and
+# `ServerOptions` carries the narrower `ServedLimits` instead of the whole request bag:
+# 643 -> 518.
+baseline_prod_loc = 518
+baseline_sha = "8ad919901"
 status = "reviewed-exception"
 review_ref = "EX-004 in docs/architecture/review-dispositions.md"
 
