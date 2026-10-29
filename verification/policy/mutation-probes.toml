@@ -14163,11 +14163,11 @@ conjunct = "G2 precedes retention completion, so a G2 refusal is what retention 
 path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs"
 anchor = """
             Err(refusal) => Err(self
-                .refuse_retained(acc, refusal, permit.exchange(), &retention)
+                .refuse_retained(acc, refusal, permit.withdraw(), &retention)
                 .await),
 """
 weakening = """
-            Err(refusal) => Err(self.refuse_accepted(acc, refusal, permit.exchange())),
+            Err(refusal) => Err(self.refuse_accepted(acc, refusal, permit.withdraw())),
 """
 expect_red = [
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_outcome_failure_discharges_retention_with_the_refusal_served",

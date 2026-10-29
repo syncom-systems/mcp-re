@@ -53,7 +53,7 @@ impl HttpProfileProxy {
                 ex.now,
                 Some(ex.verified.evidence()),
                 Some(ex.actor_id.to_owned()),
-                Self::disposition(permit.exchange(), None),
+                Self::disposition(permit.withdraw(), None),
                 Some(owed.window().shared()),
             ),
         }

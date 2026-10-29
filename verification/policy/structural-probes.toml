@@ -2761,7 +2761,7 @@ fn hostile(cleared: &mut ExchangeProgress, other: &mut ExchangeProgress) {
 }
 """
 [probe.producer_paths]
-module-tree-visibility = "the permit's `exchange` field is private to `exchange_state::publication`; outside it the permit offers only `exchange(&self) -> &ExchangeProgress`, a shared borrow that cannot be swapped or assigned through"
+module-tree-visibility = "the permit's `exchange` field is private to `exchange_state::publication`; outside it the permit offers `withdraw(self) -> &mut ExchangeProgress`, which consumes the permit so nothing swapped through the borrow can then be published, and in tests `exchange(&self)`, a shared borrow"
 alternate-constructors = "`ExchangeProgress::may_publish` is the only producer and binds the permit to `self`; `publish(self)` takes no exchange argument, so there is no call that names a second exchange"
 generated-or-deserialization = "`PublishPermit` derives nothing: no Clone, Copy, Default, Serialize or Deserialize"
 test-only-construction = "none: the permit has no test constructor"
