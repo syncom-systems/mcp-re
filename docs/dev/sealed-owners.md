@@ -847,6 +847,38 @@ plan constructors take it whole. Before that, `from_validated` took a kid and an
 free arguments, and in-crate tests handed it values no deployment produces. S84 builds an
 authority from `startup_plan`, the authority's parent, and is refused with `E0451`.
 
+**One planned epoch, two readers of its store, by design** (owner ruling 2026-10-29, #1251).
+`ResponseAuthority` is the single configuration authority for the epoch: both planes take
+the same `TrustEpochPlan`, and a build that cannot read a planned store gets that plan's one
+refusal from either. Each plane then opens its own reader of the store. That is the intended
+shape, not a duplicate to fold, for three reasons:
+
+- **Different capabilities.** The trust plane's `TrustEpochSource` only reads. The signing
+  plane's `DelegatedEpochWatch` reads, and it also raises the counter past its high-water mark
+  through `EpochRaiser`, which is a write the trust plane must not hold.
+- **Different lifecycles.** The trust poller is a worker in the trust plane's `WorkerSet`
+  and stops with that plane. The epoch read sits on the rotation worker, which stops with the
+  signing plane. A shared reader would either outlive one owner or be torn down under the
+  other.
+- **Independent latency.** `RedisEpochReader` serializes reads behind one connection mutex.
+  On a shared connection, the rotation read would queue behind a trust poll stalled on a
+  half-open socket. That read's 8-second budget is spent out of the key's rotation overlap.
+
+Both planes fail closed on their own terms:
+
+| | trust plane | signing plane |
+|---|---|---|
+| store unreachable at boot | the eager first read refuses the source, so the plane refuses before any poller starts | the first epoch read refuses the plane, before any key is minted |
+| read failure while serving | the source goes unhealthy, and trust reverts to the bounded-`T` window | minting is refused, and the current key serves until its `exp` |
+| measured by | `an_unreachable_epoch_store_builds_no_source` (falsified by M627), `read_error_marks_unhealthy_and_emits_nothing` | `materialize_refuses_when_the_configured_shared_epoch_cannot_be_read`, `an_unreadable_shared_epoch_stops_the_loop_minting` |
+
+The two boot-refusal tests run in `//mcp-re-proxy:proxy_ext_unit_test`, the `redis_replay`
+lane.
+
+What differs between the planes is when each connects and how its refusal is worded. At
+boot, the operator sees the trust plane's refusal because that plane is materialized first.
+That is a difference in wording, not a correctness gap.
+
 ### The eighth: the trust-configuration pair, and a probe that must not measure the wrong privacy
 
 **Landed 2026-09-18, ADR-MCPRE-068 Phase 0D-10.** Two owners, one proposition — which trust

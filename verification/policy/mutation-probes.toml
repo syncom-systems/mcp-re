@@ -3160,6 +3160,28 @@ expect_red = [
 ]
 
 [[probe]]
+id = "M627-an-unreachable-epoch-store-builds-no-source"
+unit = "proxy.trust_epoch_source"
+conjunct = "no source is built over a store that does not answer"
+path = "mcp-re-proxy/src/trust_epoch.rs"
+anchor = """
+    let reader = RedisEpochReader::connect(url, epoch_key).map_err(|e| e.0)?;
+"""
+weakening = """
+    let reader = RedisEpochReader::connect_lazy(url, epoch_key).map_err(|e| e.0)?;
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_unreachable_epoch_store_builds_no_source",
+]
+note = """
+The lazy reader is a legitimate constructor, and the signing plane uses it: there the first
+epoch read happens in the plane's own startup refusal. Here nothing reads before the poller
+starts, so a lazy reader turns an unreachable store into a running push tier whose first poll
+fails, and the replica starts serving on the bounded-T fallback the operator configured a
+store to avoid. Runs only in the `redis_replay` lane, where the source is compiled.
+"""
+
+[[probe]]
 id = "M97-a-regression-is-a-change"
 unit = "proxy.trust_epoch_source"
 conjunct = "a change of the shared epoch — any change, a regressed counter included — flushes; rollback is not representable on this side"
