@@ -402,7 +402,7 @@ impl HttpProfileProxy {
         p: &mut ExchangeProgress,
         refined: Option<ExecutionDisposition>,
     ) -> ExecutionDisposition {
-        p.advance(ExchangeEvent::Refused);
+        p.refuse();
         match (p.retry_semantics(), refined) {
             (RetrySemantics::SafeNothingExecuted, Some(refined)) => refined,
             (RetrySemantics::SafeNothingExecuted, None) => ExecutionDisposition::NothingExecuted,

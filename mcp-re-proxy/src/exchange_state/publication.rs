@@ -13,6 +13,15 @@
 
 use super::{ExchangeProgress, ServedSuccess};
 
+impl ExchangeProgress {
+    /// Refuse the exchange: it enters the terminal its position decides, and a refusal
+    /// already entered latches an anomaly. The serving path asks for the refusal; which
+    /// terminal it reaches is the relation's answer, not the caller's.
+    pub(crate) fn refuse(&mut self) {
+        self.advance(super::ExchangeEvent::Refused);
+    }
+}
+
 /// A success [`may_publish`](super::ExchangeProgress::may_publish) cleared, bound to the
 /// exchange that cleared it until [`publish`](Self::publish) drives its tail there.
 #[must_use = "a cleared success is published or refused, never dropped"]
