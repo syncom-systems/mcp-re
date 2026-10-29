@@ -10311,7 +10311,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.trust_epoch_source"
 class = "V0"
-description = "How ONE replica turns reads of the shared trust-epoch counter into invalidation events: the first successful read is a baseline and emits nothing; any later read whose counter or advance generation differs — a regression included — queues one coarse flush and moves the baseline; a failed read emits nothing, marks the source unhealthy and holds the baseline, so an advance missed during an outage is caught on recovery; the poller reads at once and then on its cadence, a dead poller reports unhealthy, and the request path drains the queue without waiting on any read. An ABSENT key is a read failure, never epoch 0."
+description = "How ONE replica turns reads of the shared trust-epoch counter into invalidation events: the first successful read is a baseline and emits nothing; any later read whose counter or advance generation differs — a regression included — queues one coarse flush and moves the baseline; a failed read emits nothing, marks the source unhealthy and holds the baseline, so an advance missed during an outage is caught on recovery; the poller reads at once and then on its cadence, a dead poller reports unhealthy, and the request path drains the queue without waiting on any read. An ABSENT key is a read failure, never epoch 0. No source is built over a store that does not answer: the first read precedes the source, so a push tier configured against an unreachable store refuses at startup and no poller runs over it."
 paths = [
   # The source, the poller body and its supervision, the channel adapter, and the Redis
   # reader's absent-key rule, which is the one place a foreign read's MEANING is decided
@@ -10377,6 +10377,11 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::one_epoch_read_cannot_consume_the_rotation_overlap",
   "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_advance_onto_an_already_seen_counter_still_flushes",
   "//mcp-re-proxy:proxy_unit_test#trust_epoch::state::tests::equal_counters_under_different_generations_are_different_states",
+  # The startup half of fail-closed: the eager first read is what refuses an unreachable
+  # store, and the trust plane spawns its poller only over a source this returned. The
+  # signing plane holds its own reader of the same store and its own refusal, in
+  # `proxy.signing_plane_epoch_read_refusal`.
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_unreachable_epoch_store_builds_no_source",
 ]
 # The Redis reader and its two controls exist only under `redis_replay`. The selectors name
 # `proxy_ext_unit_test` so the fingerprint says the battery measured the crate that carries
