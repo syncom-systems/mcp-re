@@ -45,7 +45,7 @@ relation has not been represented.
 
 | field | reads | why it is a finding |
 |---|---|---|
-| `max_clock_skew` | 5 (`app.rs`) | validated by a residue clause; **no owner carries it**. It is only *mentioned* in `config_state/admission.rs` prose. It sets the verifier's freshness window and the replay plane's tolerance — change it with every owner state fixed and admission changes |
+| `max_clock_skew` | 5 (`app.rs`) | validated by a residue clause; **no owner carries it**. It is only *mentioned* in `config_state/admission/` prose. It sets the verifier's freshness window and the replay plane's tolerance — change it with every owner state fixed and admission changes |
 | `allow_group_readable_key_files` | 1 | no owner. An explicit opt-in that widens who may read a signing key; composition applies it directly to the key-file floor |
 | `max_client_cert_lifetime` | 2 | no owner. When no CRL is enforced this ceiling *is* the client-certificate revocation bound (`tls_plane::fleet_crl_bound` reasons about exactly that pairing) |
 | `trust_path` | 1 (`startup_plan.rs:276`) | no owner, and `TrustPlan` pairs it with a sealed `TrustRevocationState` in a struct of `pub` fields — any module can pair a validated revocation posture with an arbitrary authority key. This is the defect `sealed-owners.md` records for `AdmissionState`, one layer up |

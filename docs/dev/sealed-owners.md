@@ -53,7 +53,7 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `ReplayPlan` | `config_state/replay.rs` | `store() -> PlannedStore<'_>`, `tier()` |
 | `ContinuationControlState` | `config_state/continuation_control.rs` | `continuation_plan()`, `is_shared()` |
 | `ContinuationControlPlan` | `config_state/continuation_control.rs` | `shared_store() -> Option<&str>`, `shared()` |
-| `AdmissionState` | `config_state/admission.rs` | `enforced() -> Option<EnforcedAdmission<'_>>`, `is_enforced()`; the view's `enforcer_policy(MaxClockSkew)` |
+| `AdmissionState` | `config_state/admission/` | `enforced() -> Option<EnforcedAdmission<'_>>`, `is_enforced()`; the view's `budgets(MaxClockSkew)` |
 | `RetentionState` | `config_state/evidence.rs` | `directory() -> Option<&str>`, `is_on()` |
 | `McpTransportContractState` | `config_state/mcp_transport_contract.rs` | `versions() -> &[String]` (non-empty: `classify_and_validate` produces no state for a refused set) |
 | `TrustRevocationState` | `config_state/trust_revocation.rs` | `epoch_source() -> Option<EpochSource<'_>>`, `reload_cadence()`, `tier()`, `declared_window_secs()`, `push_channel_is_inert()`, `has_networked_epoch()` |
@@ -971,6 +971,7 @@ they supposedly project untouched, and every test would stay green.
 |---|---|---|
 | S20 | `AdmissionState` | a posture the classifier never reached |
 | S21 | `EnforcedAdmission` | admission records verified against an authority the deployment never named |
+| S86 | `AdmissionBudgets` | an enforcer and a record verifier judging under different skews |
 
 ```text
 cargo test -p mcp-re-proxy --lib -- config_state::admission
@@ -983,11 +984,14 @@ verify-structural --probe S20 --probe S21
 `enforced()` returns `None` where admission is not enforced, so the view's **existence** is
 itself the enforcement fact — which is why it has to be unforgeable.
 
-The view also projects the gate's §5.2 budget: `enforcer_policy(MaxClockSkew)` turns the
-availability rule into the two degraded fields as one cell and takes N from the profile's
-`AdmissionPolicy::default`. The admission capability builds the `AdmissionEnforcer` from that
-projection and the posture, and the root attaches the enforcer whole, so no consumer re-maps
-the availability or names N.
+The view also projects the gate's budgets: `budgets(MaxClockSkew)` returns `AdmissionBudgets`,
+the PEP's §5.2 budget and the record verifier's currentness budget taken under the one skew it
+is handed. The §5.2 half turns the availability rule into the two degraded fields as one cell
+and takes N from the profile's `AdmissionPolicy::default`; the record half is the gate's record
+age. `AdmissionBudgets`' fields are private to the view's module and `budgets` is its only
+producer (S86), so the enforcer and the record verifier cannot be handed different skews. The
+admission capability builds both from that one value, and the root attaches the enforcer whole,
+so no consumer re-maps the availability or names N.
 
 **Two facts recorded rather than fixed here**, both pre-existing and both Phase 0E's:
 

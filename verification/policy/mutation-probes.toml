@@ -7457,7 +7457,7 @@ the operator DID name, and says nothing about one they never gave.
 id = "M267-proxy-a-configuration-that-names-no-authority-is-refused"
 unit = "proxy.admission_configuration_state"
 conjunct = "a configuration that names no admission authority is refused rather than served as OFF"
-path = "mcp-re-proxy/src/config_state/admission.rs"
+path = "mcp-re-proxy/src/config_state/admission/mod.rs"
 anchor = """
         return Err(MISSING_ADMISSION_AUTHORITY.to_string());
 """
@@ -12955,7 +12955,7 @@ expect_red = [
 id = "M538-proxy-a-degraded-window-past-the-ceiling-names-a-state"
 unit = "proxy.admission_configuration_state"
 conjunct = "a degraded admission window past MAX_DEGRADED_ADMISSION_BOUND_SECS is refused, not clamped"
-path = "mcp-re-proxy/src/config_state/admission.rs"
+path = "mcp-re-proxy/src/config_state/admission/mod.rs"
 anchor = """
             if bound_secs.get() > MAX_DEGRADED_ADMISSION_BOUND_SECS =>
 """

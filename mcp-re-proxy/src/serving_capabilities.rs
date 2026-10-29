@@ -258,11 +258,8 @@ pub(crate) fn admission_currency(
         return Ok(Established::off(ADMISSION_OFF));
     };
     let enforcement = AdmissionEnforcement::from(gate.posture());
-    let (kid, key, url) = (
-        gate.authority_kid().to_string(),
-        gate.authority().clone(),
-        gate.record_store(),
-    );
+    let (kid, url) = (gate.authority_kid().to_string(), gate.record_store());
+    let budgets = gate.budgets(max_clock_skew);
     // The admission record is an INDEPENDENT endpoint; it has nothing to do with which
     // replay tier the deployment chose. Coupling it to the replay control runtime made
     // admission unimplementable on the CP/linearizable tier — the operator supplied
@@ -274,19 +271,14 @@ pub(crate) fn admission_currency(
     // record are verified under the same configured key — a second resolver here would be a
     // second trust root wearing the first one's name.
     let resolve_authority =
-        crate::admission_enforcer::fixed_authority_resolver(kid.clone(), key.clone());
+        crate::admission_enforcer::fixed_authority_resolver(kid.clone(), gate.authority().clone());
+    let verifier = crate::admission_source::AdmissionRecordVerifier::new(
+        std::sync::Arc::clone(&resolve_authority),
+        mcp_re_http_profile::PROFILE_TAG,
+        budgets.record_verifier(),
+    );
     let source = handle
-        .block_on(crate::redis_admission_source::RedisAdmissionSource::connect(
-            url,
-            crate::admission_source::AdmissionRecordVerifier::new(
-                std::sync::Arc::clone(&resolve_authority),
-                mcp_re_http_profile::PROFILE_TAG,
-                mcp_re_http_profile::authoritative_admission::record::AdmissionStateCurrentness {
-                    max_record_age: gate.record_currentness().max_age_secs(),
-                    max_clock_skew: max_clock_skew.secs(),
-                },
-            ),
-        ))
+        .block_on(crate::redis_admission_source::RedisAdmissionSource::connect(url, verifier))
         .map_err(|e| format!("connect redis admission source: {e}"))?;
     let line = format!(
         "admission currency = {} (authority {kid}, shared record over redis signed by that \
@@ -308,7 +300,7 @@ pub(crate) fn admission_currency(
     Ok(Established::on(
         crate::admission_enforcer::AdmissionEnforcer::new(
             std::sync::Arc::new(source),
-            gate.enforcer_policy(max_clock_skew),
+            budgets.enforcer(),
             enforcement,
             resolve_authority,
         ),

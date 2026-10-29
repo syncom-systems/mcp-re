@@ -605,17 +605,18 @@ id = "S21"
 unit = "proxy.admission_configuration_state_sole_producer"
 kind = "in-crate-source-injection"
 crate = "//mcp-re-proxy:mcp_re_proxy"
-invariant = "no code outside `config_state::admission` can assemble an EnforcedAdmission, so the six facts a consumer reads about an enforcing deployment were projected together from ONE classified state rather than paired by the reader"
+invariant = "no code outside `config_state::admission` can assemble an EnforcedAdmission, so the facts a consumer reads about an enforcing deployment were projected together from ONE classified state rather than paired by the reader"
 insertion_parent = "mcp-re-proxy/src/config_state/mod.rs"
 marker = "STRUCTURAL-PROBE-SITE"
 error_code = "E0451"
 note = """
 THE PROJECTION, AND IT IS THE SHARPER HALF — the same lesson S19 taught one owner earlier,
-with more at stake because there are six fields rather than one.
+with more at stake because the view carries six facts rather than one.
 
 `EnforcedAdmission` is the borrow view consumers read when admission is enforced: the
-posture, the authority kid, the authority key itself, the record store, the availability
-rule and the currentness rule. Each could individually be a legal value. What makes them
+posture, and a borrow of the validated gate holding the authority kid, the authority key
+itself, the record store, the availability rule and the currentness rule. Each could
+individually be a legal value. What makes them
 mean anything is that they were projected TOGETHER from one classified state — so a caller
 able to write the struct could hand a consumer an authority key from one deployment beside a
 posture from another, with the state they supposedly project untouched.
@@ -623,13 +624,75 @@ posture from another, with the state they supposedly project untouched.
 Sealing the state (S20) does not seal this: the view is a value in its own right, and a
 probe against the state alone would leave the route unwitnessed.
 """
-construction = "// ADR-MCPRE-068 structural probe S21. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\nuse crate::config_state::EnforcedAdmission;\n\npub fn hostile() -> EnforcedAdmission<'static> {\n    EnforcedAdmission {\n        posture: todo!(), // STRUCTURAL-PROBE-SITE\n        authority_kid: todo!(),\n        authority: todo!(),\n        record_store: todo!(),\n        availability: todo!(),\n        currentness: todo!(),\n    }\n}\n"
+construction = "// ADR-MCPRE-068 structural probe S21. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\nuse crate::config_state::EnforcedAdmission;\n\npub fn hostile() -> EnforcedAdmission<'static> {\n    EnforcedAdmission {\n        posture: todo!(), // STRUCTURAL-PROBE-SITE\n        gate: todo!(),\n    }\n}\n"
 
 [probe.producer_paths]
-module-tree-visibility = "all six fields are bare-private to `config_state::admission`. The parent re-exports the type so consumers can name the view, never its representation"
-alternate-constructors = "the view is produced only by `AdmissionState::enforced()`, which reads the classified kind and returns `Option<EnforcedAdmission<'_>>` \u2014 `None` where admission is not enforced, so the view's very existence is the enforcement fact. There is no `new`, `From`, `Default` or builder"
+module-tree-visibility = "both fields are bare-private to `config_state::admission::enforced_admission`, and the gate's type is private to `config_state::admission`. The parent re-exports the type so consumers can name the view, never its representation"
+alternate-constructors = "the view's one constructor, `of`, is `pub(super)`, so only `config_state::admission` can call it (S85), and its one caller there is `AdmissionState::enforced()`, which reads the classified kind and returns `Option<EnforcedAdmission<'_>>` \u2014 `None` where admission is not enforced, so the view's very existence is the enforcement fact. There is no `From`, `Default` or builder"
 generated-or-deserialization = "no derives that construct, and nothing decodes the view \u2014 it borrows out of a classified state, so it cannot outlive the state it projects, and no decoder could produce one that does"
 test-only-construction = "the owner's `#[cfg(test)] mod tests` obtains views through `enforced()`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+[[probe]]
+id = "S85"
+unit = "proxy.admission_configuration_state_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside `config_state::admission` can call the EnforcedAdmission constructor, so a view is never built around a posture and a gate a reader paired"
+insertion_parent = "mcp-re-proxy/src/config_state/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+note = """
+THE CONSTRUCTOR ROUTE, the one S21's literal does not reach. The view lives in its own
+module, so the admission machine builds it through `of`, which is `pub(super)`: callable from
+`config_state::admission` and nowhere else. Injected into `config_state`, the parent of the
+admission machine, where the view is re-exported.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S85. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::config_state::{AdmissionPosture, EnforcedAdmission};
+
+pub fn hostile() -> EnforcedAdmission<'static> {
+    EnforcedAdmission::of(AdmissionPosture::Required, todo!()) // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`of` is `pub(super)` in `config_state::admission::enforced_admission`, so it is visible to `config_state::admission` and its descendants only; the probe calls it from `config_state`"
+alternate-constructors = "`of` is the view's only constructor and the fields are private (S21); its one caller is `AdmissionState::enforced()`"
+generated-or-deserialization = "no derive constructs a view; Clone and Copy copy one that `enforced()` produced"
+test-only-construction = "the view's tests obtain it through `enforced()` on a classified state; no test-gated constructor exists"
+
+[[probe]]
+id = "S86"
+unit = "proxy.admission_configuration_state_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside the view's module can assemble AdmissionBudgets, so the enforcer and the record verifier are never handed budgets taken under different skews"
+insertion_parent = "mcp-re-proxy/src/config_state/admission/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE PAIR OF BUDGETS. `budgets(skew)` derives the PEP's budget and the record verifier's from
+one skew; a literal could pair two budgets taken under different ones. Injected into
+`config_state::admission`, the view's parent and the module that builds the view, which can
+name the type and is refused the literal.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S86. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use super::enforced_admission::AdmissionBudgets;
+
+pub fn hostile() -> AdmissionBudgets {
+    AdmissionBudgets { enforcer: todo!(), record_verifier: todo!() } // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "both fields are bare-private to `config_state::admission::enforced_admission`; the probe sits in `config_state::admission`, which names the type and is refused the literal"
+alternate-constructors = "`EnforcedAdmission::budgets` is the only function returning the type. There is no `From`, `Default` or builder, and the projections return the two budgets by value, never `&mut`"
+generated-or-deserialization = "the derives are Debug/Clone/Copy; Clone and Copy copy a value `budgets` produced, and nothing decodes one"
+test-only-construction = "the view's tests obtain budgets through `budgets` on a classified state; no test-gated constructor exists"
 
 # --- ADR-MCPRE-068 Phase 1 — THM-0091's two seals ---------------------------------------
 #
