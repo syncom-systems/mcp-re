@@ -362,7 +362,7 @@ fn run_validated(
     let serve_options = ServerOptions {
         identity_policy,
         peer_identity_provenance,
-        limits: values.limits.clone(),
+        limits: values.limits.served(in_flight_limit, topology.shards()),
         // The owner's resolved bounds: serving reads every timeout and limit here, not the request.
         connection_bounds: bounds,
         // The owner's sealed window; serving reads both bounds from it, not from the request.

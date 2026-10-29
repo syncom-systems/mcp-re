@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use crate::tls::ServerLimits;
+use crate::deployment_request::ServerLimits;
 
 /// The same one-day ceiling the parser puts on every timeout. `CoreAdmission::drain` declines
 /// to wait at all when `Instant::now().checked_add(grace)` fails, so an unrepresentable window

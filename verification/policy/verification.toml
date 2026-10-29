@@ -12750,10 +12750,11 @@ tested_symbols = [
 [[unit]]
 id = "proxy.startup_plan_pool_ceiling"
 class = "V0"
-description = "THE FLEET'S ADMISSION AGGREGATE SATURATES, AND THE INNER POOL IS RAISED ONLY WHEN IT MUST BE: `InFlightLimitBasis::fleet_ceiling` SATURATES rather than wrapping, both bases reach the fleet through the per-core ceiling every core enforces rather than through a second reading of the flags, a fleet total that does not divide evenly rounds each share UP and yields the aggregate the gate actually admits, and the inner pool is raised only where that aggregate exceeds its default and is never lowered. Says nothing about which basis the operator stated, which `proxy.in_flight_limit_basis` classifies."
+description = "THE FLEET'S ADMISSION AGGREGATE SATURATES, AND THE INNER POOL IS RAISED ONLY WHEN IT MUST BE: `InFlightLimitBasis::fleet_ceiling` SATURATES rather than wrapping, both bases reach the fleet — and the serving limits the composition root builds — through the per-core ceiling every core enforces rather than through a second reading of the flags, a fleet total that does not divide evenly rounds each share UP and yields the aggregate the gate actually admits, and the inner pool is raised only where that aggregate exceeds its default and is never lowered. Says nothing about which basis the operator stated, which `proxy.in_flight_limit_basis` classifies."
 paths = [
   "mcp-re-proxy/src/config_state/in_flight_limit.rs",
   "mcp-re-proxy/src/inner_plane_bound.rs",
+  "mcp-re-proxy/src/deployment_request/server_limits.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -12767,6 +12768,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::a_total_that_does_not_divide_evenly_rounds_each_share_up",
   "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::both_bases_reach_the_fleet_through_the_per_core_ceiling",
   "//mcp-re-proxy:proxy_unit_test#inner_plane_bound::tests::a_fleet_ceiling_equal_to_the_default_keeps_the_pool",
+  "//mcp-re-proxy:proxy_unit_test#deployment_request::server_limits::tests::the_served_limits_carry_the_sizes_and_each_cores_share",
+  "//mcp-re-proxy:proxy_unit_test#deployment_request::server_limits::tests::the_default_served_limits_are_the_unstated_requests",
 ]
 
 [[unit]]
