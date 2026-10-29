@@ -1147,4 +1147,31 @@ mod tests {
             "redacting the diagnostic must not change which URLs open"
         );
     }
+
+    /// No source is built over a store that does not answer. The trust plane spawns its
+    /// poller only over a source this returned, so the eager first read is what refuses a
+    /// push tier configured against an unreachable store at startup, instead of starting it
+    /// on the bounded-`T` fallback with a poller that has never read a baseline.
+    ///
+    /// The signing plane opens its own reader of the same store and refuses on its own read,
+    /// in `signing_plane::rotation_owner_tests`.
+    #[cfg(feature = "redis_replay")]
+    #[test]
+    fn an_unreachable_epoch_store_builds_no_source() {
+        // An ephemeral port, bound to learn it and released again: the URL parses, and the
+        // first read then fails to connect, without a hardcoded port.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("an ephemeral port");
+        let port = listener.local_addr().expect("the bound address").port();
+        drop(listener);
+        let Err(err) = redis_trust_epoch_source(
+            &format!("redis://127.0.0.1:{port}"),
+            DEFAULT_TRUST_EPOCH_KEY,
+        ) else {
+            panic!("a store that does not answer must not yield a source");
+        };
+        assert!(
+            err.starts_with("connect:"),
+            "the refusal must be the failed connection, not a parse error: {err}"
+        );
+    }
 }
