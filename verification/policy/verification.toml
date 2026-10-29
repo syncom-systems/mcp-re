@@ -4168,6 +4168,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::the_open_leg_path_is_legal_end_to_end_and_ends_somewhere_else",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::every_state_event_pair_has_a_decided_outcome",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::a_terminal_state_admits_nothing_at_all",
+  "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::advance_refused_enters_the_terminal_the_relation_picks",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::the_execution_threshold_partitions_the_pipeline_into_two_non_empty_halves",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::a_refusal_at_or_after_the_dispatch_can_only_reach_the_post_dispatch_terminal",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::the_notification_terminal_is_reachable_only_from_the_dispatch_and_reads_as_executed",
@@ -4261,6 +4262,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::a_refused_202_is_served_from_a_non_terminal_state",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::publication::tests::a_permit_from_may_publish_publishes_to_the_terminal",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::publication::tests::a_refused_publication_yields_no_permit",
+  "//mcp-re-proxy:proxy_unit_test#exchange_state::publication::tests::a_withdrawn_permit_leaves_its_exchange_to_the_refusal",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::publication::tests::a_permit_publishes_only_to_the_exchange_that_cleared_it",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::dispatched::tests::a_notification_yields_nothing_the_reply_assembler_takes",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::dispatched::tests::a_call_yields_the_call_with_the_id_it_answers",
@@ -4542,6 +4544,7 @@ tested_symbols = [
   "//mcp-re-proxy:integration_test#refusal_site_totality_test::the_retry_contract_is_derived_from_the_exchange_machine",
   # Each retry verdict the exchange machine can reach maps to exactly one wire disposition.
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::tests::every_retry_verdict_maps_to_its_one_wire_disposition",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::tests::a_refusal_disposition_enters_the_exchange_terminal",
   "//mcp-re-proxy:integration_test#refusal_site_totality_test::the_rules_would_catch_each_regression",
   # R11-461. A completion that did NOT land is its own answer: `NotConfigured` and
   # `Retained` both mean the store owes nothing further, `Failed` is neither, and the success

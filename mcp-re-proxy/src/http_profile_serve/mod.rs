@@ -540,7 +540,8 @@ mod tests {
             ExecutionDisposition::ApprovalSpentRetentionUnresolved,
         ];
         // Each verdict is asked of a fresh copy: a refusal enters the exchange's terminal.
-        let owed = |p: &ExchangeProgress, refined| HttpProfileProxy::disposition(&mut p.clone(), refined);
+        let owed =
+            |p: &ExchangeProgress, refined| HttpProfileProxy::disposition(&mut p.clone(), refined);
         assert_eq!(owed(&safe, None), ExecutionDisposition::NothingExecuted);
         for r in refinements {
             assert_eq!(owed(&safe, Some(r)), r);
@@ -572,7 +573,10 @@ mod tests {
         let mut dispatched = ExchangeProgress::new();
         dispatched.advance(ExchangeEvent::BackendDispatched);
         for (mut p, terminal) in [
-            (ExchangeProgress::new(), ExchangeState::RefusedBeforeDispatch),
+            (
+                ExchangeProgress::new(),
+                ExchangeState::RefusedBeforeDispatch,
+            ),
             (spent, ExchangeState::RefusedBeforeDispatch),
             (dispatched, ExchangeState::FailedAfterDispatch),
         ] {
