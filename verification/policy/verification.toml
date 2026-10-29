@@ -11353,6 +11353,7 @@ description = "Every remote-signer exchange is bounded by ONE shared deadline: i
 paths = [
   "mcp-re-proxy/src/remote_signer_call/wire_limits.rs",
   "mcp-re-proxy/src/aws_sts.rs",
+  "mcp-re-proxy/src/aws_sts/sts_protocol.rs",
   "mcp-re-proxy/src/aws_kms_keysource.rs",
   "mcp-re-proxy/src/gcp_kms_keysource.rs",
 ]
@@ -11574,7 +11575,7 @@ tested_symbols = [
 id = "proxy.aws_sts_credentials"
 class = "V0"
 description = "Acquiring AWS credentials by web-identity AssumeRole: an expiry that cannot be read is already-expired rather than unlimited, a stated expiry is never extended, a far-future one is truncated to the real session ceiling, concurrent callers perform one exchange between them, and a failed exchange is not repeated by every waiter, and a credential response past its read cap is refused rather than truncated."
-paths = ["mcp-re-proxy/src/aws_sts.rs"]
+paths = ["mcp-re-proxy/src/aws_sts.rs", "mcp-re-proxy/src/aws_sts/sts_protocol.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
@@ -11583,26 +11584,26 @@ evidence = [
   "mutation://proxy/aws_sts/credential_lifetime",
 ]
 tested_symbols = [
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_well_formed_response_yields_the_credentials_and_its_expiry",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_session_token_is_always_set_so_sigv4_sends_x_amz_security_token",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_well_formed_response_yields_the_credentials_and_its_expiry",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_session_token_is_always_set_so_sigv4_sends_x_amz_security_token",
   # The direction that matters. An unreadable expiry read as UNLIMITED is a credential used
   # forever; read as already-expired it costs an exchange.
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::an_unparseable_expiration_reads_as_already_expired_not_as_unlimited",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_missing_expiration_element_reads_as_already_expired",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_far_future_expiration_is_truncated_to_the_real_session_ceiling",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::an_unparseable_expiration_reads_as_already_expired_not_as_unlimited",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_missing_expiration_element_reads_as_already_expired",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_far_future_expiration_is_truncated_to_the_real_session_ceiling",
   "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_stated_expiry_is_never_extended_by_the_reuse_floor",
   "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_stated_expiry_already_past_is_not_extended_by_the_reuse_floor",
   # A credential response over its read cap is refused whole, never truncated into a
   # parseable prefix.
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_credential_read_past_its_cap_is_refused_not_truncated",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_credential_read_past_its_cap_is_refused_not_truncated",
   "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::an_unreadable_expiration_is_reused_briefly_rather_than_re_exchanged_every_call",
   # A field that is absent, empty, or echoed outside `Credentials` is not a credential.
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_response_without_credentials_is_refused",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::each_missing_credential_field_is_named",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::an_empty_credential_field_is_refused_rather_than_signed_with",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_value_echoed_outside_credentials_is_not_mistaken_for_one",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::xml_entities_decode_and_amp_is_decoded_last",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::form_encoding_escapes_what_a_jwt_and_an_arn_contain",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_response_without_credentials_is_refused",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::each_missing_credential_field_is_named",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::an_empty_credential_field_is_refused_rather_than_signed_with",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_value_echoed_outside_credentials_is_not_mistaken_for_one",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::xml_entities_decode_and_amp_is_decoded_last",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::form_encoding_escapes_what_a_jwt_and_an_arn_contain",
   "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::session_names_are_validated_against_the_sts_grammar",
   # Where the token is sent. A projected web-identity token handed to a re-pointed endpoint
   # is a credential leak, and it is refused at construction rather than at use.
@@ -14012,7 +14013,7 @@ tested_symbols = [
 id = "proxy.aws_web_identity_credential_exchange"
 class = "V0"
 description = "THE WEB-IDENTITY EXCHANGE AS A RUNNING EXCHANGE, MEASURED AGAINST A REAL STS PROTOCOL SPEAKER: the projected token is posted as an `AssumeRoleWithWebIdentity` form whose role ARN is percent-encoded and whose answer always carries a session token, the credential it returns is cached rather than re-exchanged per call, a credential inside the refresh margin is re-exchanged rather than served from cache, an answer that is not the document the protocol defines fails closed rather than yielding a partial credential, and the two request fields an operator can make un-sendable — the session name's STS grammar and the regional endpoint the token is posted to — are settled at construction rather than per call. It is the composition twin of `proxy.aws_sts_credentials`, which states the same lifetime algebra over the parser and the cache directly; what is added here is that the wiring in force performs it. It states nothing about where the projected token came from, nor about what the assumed role may do."
-paths = ["mcp-re-proxy/src/aws_sts.rs"]
+paths = ["mcp-re-proxy/src/aws_sts.rs", "mcp-re-proxy/src/aws_sts/sts_protocol.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"

@@ -378,8 +378,10 @@ growth_ref = "EX-001 growth authorization in docs/architecture/review-dispositio
 
 [[debt]]
 path = "mcp-re-proxy/src/aws_sts.rs"
-baseline_prod_loc = 783
-baseline_sha = "d1fc5fa"
+# EX-016's action: the STS wire codec moves to its own child, `aws_sts/sts_protocol.rs`:
+# 783 -> 636.
+baseline_prod_loc = 636
+baseline_sha = "32b75956f"
 status = "reviewed-action-required"
 review_ref = "EX-016 in docs/architecture/review-dispositions.md"
 
