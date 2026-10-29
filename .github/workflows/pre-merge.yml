@@ -15,8 +15,8 @@
 #     self-test; `bazel-test-proxy`, `bazel-test-proxy-integration` and `bazel-test-rest` —
 #     every non-manual test target, in three shards whose union is `//...` by
 #     construction; and `bazel-lint` and `bazel-lint-units` — the lint lane (clippy under
-#     //bazel:workspace_lints, warnings as errors) in two shards whose union is `//...` by
-#     construction, and the format lane. Live-infra e2e
+#     //bazel:workspace_lints, warnings as errors) and the format lane, together in two
+#     shards whose union is `//...` by construction. Live-infra e2e
 #     tests skip themselves while their MCP_RE_TEST_* variables are unset.
 #   - REQUIRED "feature-gated backend tests (Bazel)" (`release-gates`): the ADR-MCPRE-051
 #     §7 release gates as named Bazel test lanes, the load harness's Docker tests and the
@@ -53,8 +53,8 @@ permissions:
   contents: read
 
 env:
-  # The lint lane's split: the targets this query names are linted by `bazel-lint-units`,
-  # and `bazel-lint` lints `//...` less them. One query read by both shards, so their union
+  # The lint and format lanes' split: the targets this query names are checked by
+  # `bazel-lint-units`, and `bazel-lint` checks `//...` less them. One query read by both shards, so their union
   # is `//...` by construction. `manual` targets are left out, as `//...` leaves them out.
   LINT_UNIT_SHARD: 'attr(name, "_unit_test$", tests(//mcp-re-proxy/...)) except attr(tags, "\bmanual\b", //mcp-re-proxy/...)'
 
@@ -1832,7 +1832,7 @@ jobs:
 
 
   bazel-lint:
-    name: bazel — lint lane (rest), format lane
+    name: bazel — lint and format lanes (rest)
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
@@ -1923,11 +1923,14 @@ jobs:
         run: bazel version
 
 
-      # The Rust lint lane: clippy over every first-party target under the workspace lint
-      # policy (//bazel:workspace_lints) and .clippy.toml, warnings as errors. This shard
+      # The Rust lint lane, clippy under the workspace lint policy (//bazel:workspace_lints)
+      # and .clippy.toml with warnings as errors, and the format lane, rustfmt's check, in
+      # ONE invocation: each config only adds its aspect, so the two share one analysis
+      # and the rustfmt actions run beside clippy rather than after it (as a step after
+      # lint they were 51s; on a runner of their own, 149s of re-analysis). This shard
       # builds `//...` less the targets `LINT_UNIT_SHARD` names, and `bazel-lint-units`
-      # builds exactly those, so the two together are `//...`.
-      - name: Rust lint lane (bazel build --config=lint //... less the unit-test shard)
+      # builds exactly those, so for both lanes the two together are `//...`.
+      - name: Rust lint and format lanes (//... less the unit-test shard)
         run: |
           set -euo pipefail
           mapfile -t units < <(bazel query "$LINT_UNIT_SHARD")
@@ -1935,18 +1938,14 @@ jobs:
             echo "::error::LINT_UNIT_SHARD names no target; the other shard would lint nothing"
             exit 1
           fi
-          bazel build --config=lint -- //... "${units[@]/#/-}"
-
-      # rustfmt over every first-party target, check-only: a mis-formatted file fails.
-      - name: Rust format lane (bazel build --config=rustfmt //...)
-        run: bazel build --config=rustfmt //...
+          bazel build --config=lint --config=rustfmt -- //... "${units[@]/#/-}"
 
   # The proxy's four unit-test binaries, linted on a runner of their own. Each compiles the
   # whole crate as a test, so together they are about two fifths of the lint lane's CPU
   # (measured: 120 of 294 CPU-seconds after a proxy edit), and they need nothing but the
   # external crates the cache already holds. Setup is `bazel-lint`'s.
   bazel-lint-units:
-    name: bazel — lint lane (proxy unit tests)
+    name: bazel — lint and format lanes (proxy unit tests)
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
@@ -1997,7 +1996,7 @@ jobs:
             bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
             bazel-${{ runner.os }}-
 
-      - name: Rust lint lane (the targets LINT_UNIT_SHARD names)
+      - name: Rust lint and format lanes (the targets LINT_UNIT_SHARD names)
         run: |
           set -euo pipefail
           mapfile -t units < <(bazel query "$LINT_UNIT_SHARD")
@@ -2005,7 +2004,7 @@ jobs:
             echo "::error::LINT_UNIT_SHARD names no target; this shard would lint nothing"
             exit 1
           fi
-          bazel build --config=lint -- "${units[@]}"
+          bazel build --config=lint --config=rustfmt -- "${units[@]}"
 
   # The required check "bazel semantic-drift gate + test parity", over its shards.
   bazel:
