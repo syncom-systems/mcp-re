@@ -2889,6 +2889,15 @@ from `aws_sts.rs` (no `lib.rs` line),
 its tests with it, retargeting mutation probe M265's path and the moved `tested_symbols`.
 Authority (c)'s revocation gap waits on ruling `aws-credential-revocation-recovery`.
 
+**Performed for (d), 2026-10-29.** `aws_sts/sts_protocol.rs` holds the codec (171 production
+lines) and its twelve tests. The parent calls only `read_capped`, `form_encode` and
+`parse_assume_role_response`, each `pub(super)`. The value it builds,
+`CachedCredentials`, stays with authority (c), which owns the cache. The codec reads no
+clock: the exchange passes the instant a response is judged at, so the clock boundary still
+names `aws_sts.rs` alone. `aws_sts.rs` is now
+783 -> 636, still three authorities (a, b, c), so the file stays `reviewed-action-required`
+until (c)'s ruling decides its shape.
+
 
 ## EX-017 — Ruling 14.4 campaign waivers — **temporary CI representation, NOT a §14 census**
 

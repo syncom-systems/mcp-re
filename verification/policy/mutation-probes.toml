@@ -7415,7 +7415,7 @@ id = "M265-proxy-an-unreadable-sts-expiry-is-already-expired"
 unit = "proxy.aws_sts_credentials"
 theorem = "THM-0117"
 conjunct = "an expiry that cannot be read is already-expired rather than unlimited, and a far-future one is truncated to the real session ceiling"
-path = "mcp-re-proxy/src/aws_sts.rs"
+path = "mcp-re-proxy/src/aws_sts/sts_protocol.rs"
 anchor = """
         .map(|stated| stated.min(now + MAX_SESSION_LIFETIME))
         .unwrap_or(UNIX_EPOCH);
@@ -7424,9 +7424,9 @@ weakening = """
         .unwrap_or(now + MAX_SESSION_LIFETIME);
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::an_unparseable_expiration_reads_as_already_expired_not_as_unlimited",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_missing_expiration_element_reads_as_already_expired",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_far_future_expiration_is_truncated_to_the_real_session_ceiling",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::an_unparseable_expiration_reads_as_already_expired_not_as_unlimited",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_missing_expiration_element_reads_as_already_expired",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_far_future_expiration_is_truncated_to_the_real_session_ceiling",
 ]
 note = """
 THE DEFAULT ON AN UNREADABLE FIELD IS A LIFETIME. `UNIX_EPOCH` means already expired, so the

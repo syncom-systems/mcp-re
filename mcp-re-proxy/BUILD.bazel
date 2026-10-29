@@ -90,6 +90,7 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-063 Slice 1: the compatibility surface of the certificate identity
     # migration — the historical identity vocabulary, delegating to the authority.
     "src/aws_sts.rs",
+    "src/aws_sts/sts_protocol.rs",
     # ADR-MCPRE-063 Slice 1: the communication-assurance authority — certificate-chain
     # evidence to peer-identity evidence, and the generic identity-value invariant every
     # provenance shares. The X.509 parser reaches only the adapter.
