@@ -333,11 +333,12 @@ status = "unreviewed"
 # which inherits 882 registered lines as 498. EX-019 (#1248) then moved the writer thread,
 # queue admission, marker naming and enumeration to their owners; the file holds the stage
 # protocol alone.
+# The owner kept that remainder intact on 2026-10-29: EX-019's §14 record, no growth.
 [[debt]]
 path = "mcp-re-proxy/src/transparency/durability.rs"
 baseline_prod_loc = 264
 baseline_sha = "6c045ef7d"
-status = "reviewed-action-required"
+status = "reviewed-exception"
 review_ref = "EX-019 in docs/architecture/review-dispositions.md"
 
 # MCPRE-175 re-censused the PKCS#11 provider and found four subordinates inside it: the
@@ -570,9 +571,10 @@ path = "mcp-re-proxy/src/config_state/transport.rs"
 # MCPRE-207: EX-018's named action moves the CRL revocation machine to `crl_revocation.rs`
 # and the client-certificate lifetime ceiling to `client_credential_window.rs`: 419 (measured
 # at c939c2f) -> 263. `baseline_sha` names that parent.
+# The owner kept the binding machine intact on 2026-10-29: EX-018's §14 record, no growth.
 baseline_prod_loc = 263
 baseline_sha = "c939c2f"
-status = "reviewed-action-required"
+status = "reviewed-exception"
 review_ref = "EX-018 in docs/architecture/review-dispositions.md"
 
 [[debt]]
