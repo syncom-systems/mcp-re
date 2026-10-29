@@ -16,7 +16,7 @@
 #     every non-manual test target, in three shards whose union is `//...` by
 #     construction; and `bazel-lint` and `bazel-lint-units` — the lint lane (clippy under
 #     //bazel:workspace_lints, warnings as errors) in two shards whose union is `//...` by
-#     construction, and the format lane. Live-infra e2e
+#     construction; and `bazel-format`, the format lane. Live-infra e2e
 #     tests skip themselves while their MCP_RE_TEST_* variables are unset.
 #   - REQUIRED "feature-gated backend tests (Bazel)" (`release-gates`): the ADR-MCPRE-051
 #     §7 release gates as named Bazel test lanes, the load harness's Docker tests and the
@@ -1832,7 +1832,7 @@ jobs:
 
 
   bazel-lint:
-    name: bazel — lint lane (rest), format lane
+    name: bazel — lint lane (rest)
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
@@ -1937,6 +1937,40 @@ jobs:
           fi
           bazel build --config=lint -- //... "${units[@]/#/-}"
 
+  # The format lane, on a runner of its own: run after the lint lane in one job, it was
+  # that job's last 51s and the longest shard's tail. rustfmt compiles nothing, so the
+  # job needs no libclang. Setup is otherwise `bazel-lint`'s.
+  bazel-format:
+    name: bazel — format lane
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Keep Swift off Bazel's PATH
+        run: |
+          echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+
+      # The Bazel output base and bazelisk download, restored from the newest cache main
+      # saved (same locks first, then any). Only a push to main saves one — the
+      # `bazel-cache` job — so the cache follows main instead of freezing at the first build under a
+      # lock hash, and a PR never uploads its own ~2.4 GB copy. The key names the locks
+      # the external repositories come from, and Cargo.lock, which gazelle_rust reads.
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
+            bazel-${{ runner.os }}-
+
       # rustfmt over every first-party target, check-only: a mis-formatted file fails.
       - name: Rust format lane (bazel build --config=rustfmt //...)
         run: bazel build --config=rustfmt //...
@@ -2011,7 +2045,7 @@ jobs:
   bazel:
     name: bazel semantic-drift gate + test parity
     if: always()
-    needs: [bazel-drift, bazel-test-proxy, bazel-test-proxy-integration, bazel-test-rest, bazel-lint, bazel-lint-units]
+    needs: [bazel-drift, bazel-test-proxy, bazel-test-proxy-integration, bazel-test-rest, bazel-lint, bazel-lint-units, bazel-format]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
