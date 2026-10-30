@@ -140,7 +140,7 @@ redis = { version = "1.4", default-features = false, features = ["tls-rustls"] }
 # SHA-256 CertID companions — ALL already pinned transitively (via x509-parser),
 # so declaring them direct pulls ZERO new crates. SHA-256 CertIDs (no SHA-1 dep).
 x509-ocsp = { version = "0.2", features = ["builder"] }
-ureq = { version = "2", default-features = false }
+ureq = { version = "3", default-features = false }
 # The public Web PKI roots an outbound HTTPS agent authenticates a server against. ureq's own
 # `tls` feature reached them only through the 0.26 compatibility shim; the proxy installs
 # its own rustls connector over this crate instead (`outbound_fetch::public_roots`).
