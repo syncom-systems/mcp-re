@@ -77,7 +77,7 @@ jobs:
   # measured lane.
   scope:
     name: mutation probe scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       measure: ${{ steps.scope.outputs.measure }}
@@ -141,7 +141,7 @@ jobs:
     name: V0 evidence self-test (mutation probes)
     needs: scope
     if: needs.scope.outputs.measure == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The wall-clock bound. A pull request scoped to at most `--max-units` units fits well
     # inside it; a run that does not is cancelled, never extended, and the complete run covers
     # what it did not.
