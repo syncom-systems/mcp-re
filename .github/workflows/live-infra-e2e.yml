@@ -40,7 +40,7 @@ concurrency:
 jobs:
   redis-ocsp:
     name: redis + ocsp e2e
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A primary (6379) + replica (6380) topology is required for the #41
     # WAIT-quorum proof, which a single `services:` Redis container cannot express
     # (it cannot be started as a replica of another). Both are launched on
@@ -215,10 +215,10 @@ jobs:
 
   etcd:
     name: etcd replay e2e
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A single etcd node is sufficient: the cross-NODE property is proven by two
     # independent client connections to the SAME cluster (two modelled proxy nodes),
-    # exactly as cpstore_etcd_e2e_test documents. etcd is not in apt on ubuntu-latest,
+    # exactly as cpstore_etcd_e2e_test documents. etcd is not in apt on ubuntu-24.04,
     # so the official release tarball is fetched and started in a step (mirroring the
     # Redis job's "start in a step" pattern) rather than a service container — this
     # lets us pass the exact client-URL flags and poll readiness.
