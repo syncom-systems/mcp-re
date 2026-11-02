@@ -85,12 +85,16 @@ impl AuditPosture {
         self.observer = observer;
     }
 
-    /// The longest the intent crossing can hold an exchange before dispatch: zero under the
-    /// best-effort posture. A signing window must survive this wait as well as the dispatch.
-    pub(crate) fn pre_dispatch_wait(&self) -> Duration {
+    /// The longest the commitment crossings can hold an exchange between its signing window's
+    /// clock reading and its served success, besides the dispatch: the G1 wait before
+    /// dispatch plus the G2 wait after signing. Zero under the best-effort posture. A signing
+    /// window must survive these waits as well as the dispatch.
+    ///
+    /// Retention completion is not included: it states no bound (ADR-MCPRE-070 §14 item 11).
+    pub(crate) fn commitment_waits(&self) -> Duration {
         match &self.commitment {
             Commitment::BestEffort => Duration::ZERO,
-            Commitment::Required(crossing) => crossing.wait(),
+            Commitment::Required(crossing) => crossing.waits(),
         }
     }
 
@@ -143,7 +147,7 @@ mod tests {
     #[tokio::test]
     async fn only_best_effort_mints_not_required() {
         let posture = AuditPosture::best_effort(None);
-        assert_eq!(posture.pre_dispatch_wait(), Duration::ZERO);
+        assert_eq!(posture.commitment_waits(), Duration::ZERO);
         let disposition = posture
             .intent(None, ExecutionIntent::new("actor-a", 1))
             .await
@@ -157,7 +161,11 @@ mod tests {
     async fn the_required_posture_never_yields_not_required() {
         let committing = eligible([Step::Commit]);
         let posture = required(&committing, Duration::from_millis(200));
-        assert_eq!(posture.pre_dispatch_wait(), Duration::from_millis(200));
+        assert_eq!(
+            posture.commitment_waits(),
+            Duration::from_millis(400),
+            "G1 and G2"
+        );
         let coordinate = crate::audit_record::record_to(
             &None,
             None,
@@ -199,7 +207,7 @@ mod tests {
             Arc::new(crate::audit_sink::CollectingAuditSink::new());
         posture.observe_with(Some(sink));
         assert!(posture.observer().is_some());
-        assert_eq!(posture.pre_dispatch_wait(), Duration::from_millis(5));
+        assert_eq!(posture.commitment_waits(), Duration::from_millis(10));
     }
 
     fn accepted() -> Option<ExchangeCoordinate> {

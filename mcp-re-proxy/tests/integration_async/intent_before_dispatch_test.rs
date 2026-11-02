@@ -634,11 +634,12 @@ pub(crate) mod required {
         }
     }
 
-    /// The signing window must survive the intent's bounded wait as well as the dispatch:
-    /// a window that covers only the dispatch is refused BEFORE the reserve and before any
-    /// intent is produced, where refusing is free; one that covers both serves.
+    /// The signing window must survive the intent's and the outcome's bounded waits as well
+    /// as the dispatch: a 20 s window over a 15 s bound survives the dispatch and G1 but not
+    /// G2 after them, and is refused BEFORE the reserve and before any intent is produced,
+    /// where refusing is free and nothing executed (#1224). One that covers all three serves.
     #[test]
-    fn the_window_must_survive_the_commitment_wait() {
+    fn the_window_must_survive_the_commitment_waits() {
         let serve_with = |bound: Duration| {
             let reference = ReferenceCommitment::surviving_process_loss([]);
             let calls = Arc::new(AtomicUsize::new(0));
@@ -653,21 +654,24 @@ pub(crate) mod required {
                 reference.requests(),
             )
         };
-        let (kind, calls, asked) = serve_with(Duration::from_secs(30));
-        assert_eq!(
-            kind,
-            ResponseKind::VerifiedRejection {
-                wire_code: Some("mcp-re.delegated_signing_unavailable".into()),
-                bound: true,
-                execution: ExecutionContract::default(),
-            }
-        );
-        assert_eq!(
-            (calls, asked),
-            (0, 0),
-            "refused before any intent was produced"
-        );
-        let (kind, calls, asked) = serve_with(Duration::from_secs(10));
+        for bound in [30, 15] {
+            let (kind, calls, asked) = serve_with(Duration::from_secs(bound));
+            assert_eq!(
+                kind,
+                ResponseKind::VerifiedRejection {
+                    wire_code: Some("mcp-re.delegated_signing_unavailable".into()),
+                    bound: true,
+                    execution: ExecutionContract::default(),
+                },
+                "bound {bound}s"
+            );
+            assert_eq!(
+                (calls, asked),
+                (0, 0),
+                "bound {bound}s: refused before any intent was produced"
+            );
+        }
+        let (kind, calls, asked) = serve_with(Duration::from_secs(5));
         assert_eq!((kind, calls, asked), (ResponseKind::Success, 1, 2));
     }
 

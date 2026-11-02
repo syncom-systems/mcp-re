@@ -46,8 +46,9 @@ impl DispatchCompletionBound {
         Some(started.saturating_add(Self::whole_seconds(d)))
     }
 
-    /// This bound, for a dispatch that may begin up to `wait` later than the instant it is
-    /// measured from: the plane's own bound plus a pre-dispatch wait (ADR-MCPRE-070 G1).
+    /// This bound, extended by `wait`: the plane's own bound plus the commitment waits that
+    /// lie between the instant it is measured from and the served success (ADR-MCPRE-070 G1,
+    /// G2).
     ///
     /// `Unstated` stays `Unstated`. A sum that does not fit a `Duration` is `Unstated` too:
     /// no completion instant can be stated for it, so the window question it feeds refuses
