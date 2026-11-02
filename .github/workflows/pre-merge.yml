@@ -863,6 +863,13 @@ jobs:
       # on every new server: 58-122s of analysis with no action running, measured, on a
       # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
       # the repository declares no toolchain and returns at once.
+      # The Bazel cache is a 3.7 GB archive extracted beside itself, which is close to the
+      # ~14 GB a hosted ubuntu-24.04 runner leaves free: some restores died with "No space
+      # left on device". The image's Android SDK is unused here; it is deleted in the
+      # BACKGROUND, so the deletion overlaps the cache download instead of the critical path.
+      - name: Free runner disk for the Bazel cache (background)
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: (sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc >/dev/null 2>&1 &)
       - name: Keep Swift off Bazel's PATH
         run: |
           echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
@@ -1034,6 +1041,13 @@ jobs:
       # on every new server: 58-122s of analysis with no action running, measured, on a
       # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
       # the repository declares no toolchain and returns at once.
+      # The Bazel cache is a 3.7 GB archive extracted beside itself, which is close to the
+      # ~14 GB a hosted ubuntu-24.04 runner leaves free: some restores died with "No space
+      # left on device". The image's Android SDK is unused here; it is deleted in the
+      # BACKGROUND, so the deletion overlaps the cache download instead of the critical path.
+      - name: Free runner disk for the Bazel cache (background)
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: (sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc >/dev/null 2>&1 &)
       - name: Keep Swift off Bazel's PATH
         run: |
           echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
@@ -1154,6 +1168,13 @@ jobs:
       # on every new server: 58-122s of analysis with no action running, measured, on a
       # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
       # the repository declares no toolchain and returns at once.
+      # The Bazel cache is a 3.7 GB archive extracted beside itself, which is close to the
+      # ~14 GB a hosted ubuntu-24.04 runner leaves free: some restores died with "No space
+      # left on device". The image's Android SDK is unused here; it is deleted in the
+      # BACKGROUND, so the deletion overlaps the cache download instead of the critical path.
+      - name: Free runner disk for the Bazel cache (background)
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: (sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc >/dev/null 2>&1 &)
       - name: Keep Swift off Bazel's PATH
         run: |
           echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
@@ -1290,6 +1311,13 @@ jobs:
       # on every new server: 58-122s of analysis with no action running, measured, on a
       # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
       # the repository declares no toolchain and returns at once.
+      # The Bazel cache is a 3.7 GB archive extracted beside itself, which is close to the
+      # ~14 GB a hosted ubuntu-24.04 runner leaves free: some restores died with "No space
+      # left on device". The image's Android SDK is unused here; it is deleted in the
+      # BACKGROUND, so the deletion overlaps the cache download instead of the critical path.
+      - name: Free runner disk for the Bazel cache (background)
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: (sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc >/dev/null 2>&1 &)
       - name: Keep Swift off Bazel's PATH
         run: |
           echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
@@ -1413,6 +1441,13 @@ jobs:
       # on every new server: 58-122s of analysis with no action running, measured, on a
       # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
       # the repository declares no toolchain and returns at once.
+      # The Bazel cache is a 3.7 GB archive extracted beside itself, which is close to the
+      # ~14 GB a hosted ubuntu-24.04 runner leaves free: some restores died with "No space
+      # left on device". The image's Android SDK is unused here; it is deleted in the
+      # BACKGROUND, so the deletion overlaps the cache download instead of the critical path.
+      - name: Free runner disk for the Bazel cache (background)
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: (sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc >/dev/null 2>&1 &)
       - name: Keep Swift off Bazel's PATH
         run: |
           echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
@@ -1548,6 +1583,13 @@ jobs:
       # on every new server: 58-122s of analysis with no action running, measured, on a
       # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
       # the repository declares no toolchain and returns at once.
+      # The Bazel cache is a 3.7 GB archive extracted beside itself, which is close to the
+      # ~14 GB a hosted ubuntu-24.04 runner leaves free: some restores died with "No space
+      # left on device". The image's Android SDK is unused here; it is deleted in the
+      # BACKGROUND, so the deletion overlaps the cache download instead of the critical path.
+      - name: Free runner disk for the Bazel cache (background)
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: (sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc >/dev/null 2>&1 &)
       - name: Keep Swift off Bazel's PATH
         run: |
           echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
@@ -1646,6 +1688,13 @@ jobs:
       # on every new server: 58-122s of analysis with no action running, measured, on a
       # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
       # the repository declares no toolchain and returns at once.
+      # The Bazel cache is a 3.7 GB archive extracted beside itself, which is close to the
+      # ~14 GB a hosted ubuntu-24.04 runner leaves free: some restores died with "No space
+      # left on device". The image's Android SDK is unused here; it is deleted in the
+      # BACKGROUND, so the deletion overlaps the cache download instead of the critical path.
+      - name: Free runner disk for the Bazel cache (background)
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: (sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc >/dev/null 2>&1 &)
       - name: Keep Swift off Bazel's PATH
         run: |
           echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
@@ -1741,6 +1790,13 @@ jobs:
       # on every new server: 58-122s of analysis with no action running, measured, on a
       # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
       # the repository declares no toolchain and returns at once.
+      # The Bazel cache is a 3.7 GB archive extracted beside itself, which is close to the
+      # ~14 GB a hosted ubuntu-24.04 runner leaves free: some restores died with "No space
+      # left on device". The image's Android SDK is unused here; it is deleted in the
+      # BACKGROUND, so the deletion overlaps the cache download instead of the critical path.
+      - name: Free runner disk for the Bazel cache (background)
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: (sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc >/dev/null 2>&1 &)
       - name: Keep Swift off Bazel's PATH
         run: |
           echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
@@ -1843,6 +1899,13 @@ jobs:
       # on every new server: 58-122s of analysis with no action running, measured, on a
       # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
       # the repository declares no toolchain and returns at once.
+      # The Bazel cache is a 3.7 GB archive extracted beside itself, which is close to the
+      # ~14 GB a hosted ubuntu-24.04 runner leaves free: some restores died with "No space
+      # left on device". The image's Android SDK is unused here; it is deleted in the
+      # BACKGROUND, so the deletion overlaps the cache download instead of the critical path.
+      - name: Free runner disk for the Bazel cache (background)
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: (sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc >/dev/null 2>&1 &)
       - name: Keep Swift off Bazel's PATH
         run: |
           echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
@@ -1951,6 +2014,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The Bazel cache is a 3.7 GB archive extracted beside itself, which is close to the
+      # ~14 GB a hosted ubuntu-24.04 runner leaves free: some restores died with "No space
+      # left on device". The image's Android SDK is unused here; it is deleted in the
+      # BACKGROUND, so the deletion overlaps the cache download instead of the critical path.
+      - name: Free runner disk for the Bazel cache (background)
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: (sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc >/dev/null 2>&1 &)
       - name: Keep Swift off Bazel's PATH
         run: |
           echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
@@ -2050,6 +2120,13 @@ jobs:
       # on every new server: 58-122s of analysis with no action running, measured, on a
       # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
       # the repository declares no toolchain and returns at once.
+      # The Bazel cache is a 3.7 GB archive extracted beside itself, which is close to the
+      # ~14 GB a hosted ubuntu-24.04 runner leaves free: some restores died with "No space
+      # left on device". The image's Android SDK is unused here; it is deleted in the
+      # BACKGROUND, so the deletion overlaps the cache download instead of the critical path.
+      - name: Free runner disk for the Bazel cache (background)
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: (sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc >/dev/null 2>&1 &)
       - name: Keep Swift off Bazel's PATH
         run: |
           echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
@@ -2187,6 +2264,13 @@ jobs:
       # on every new server: 58-122s of analysis with no action running, measured, on a
       # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
       # the repository declares no toolchain and returns at once.
+      # The Bazel cache is a 3.7 GB archive extracted beside itself, which is close to the
+      # ~14 GB a hosted ubuntu-24.04 runner leaves free: some restores died with "No space
+      # left on device". The image's Android SDK is unused here; it is deleted in the
+      # BACKGROUND, so the deletion overlaps the cache download instead of the critical path.
+      - name: Free runner disk for the Bazel cache (background)
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: (sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc >/dev/null 2>&1 &)
       - name: Keep Swift off Bazel's PATH
         run: |
           echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
@@ -2259,6 +2343,13 @@ jobs:
       # on every new server: 58-122s of analysis with no action running, measured, on a
       # runner image that ships Swift. Nothing here builds Swift; with no `swiftc` on PATH
       # the repository declares no toolchain and returns at once.
+      # The Bazel cache is a 3.7 GB archive extracted beside itself, which is close to the
+      # ~14 GB a hosted ubuntu-24.04 runner leaves free: some restores died with "No space
+      # left on device". The image's Android SDK is unused here; it is deleted in the
+      # BACKGROUND, so the deletion overlaps the cache download instead of the critical path.
+      - name: Free runner disk for the Bazel cache (background)
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: (sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc >/dev/null 2>&1 &)
       - name: Keep Swift off Bazel's PATH
         run: |
           echo "PATH=$(echo "$PATH" | tr ':' '\n' | grep -v swift | paste -sd: -)" >> "$GITHUB_ENV"
