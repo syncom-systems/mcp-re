@@ -65,7 +65,7 @@ jobs:
   # passed, inside the pre-merge budget.
   rust:
     name: structural gates (1/3)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     steps:
       # Full history: the module-size ratchet checks DISPOSITION TRANSITIONS against
@@ -392,7 +392,7 @@ jobs:
 
   gates-2:
     name: structural gates (2/3)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     steps:
       # Full history, as in `rust`: the ratchets and the closure records read it.
@@ -540,7 +540,7 @@ jobs:
 
   gates-3:
     name: structural gates (3/3)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     steps:
       # Full history, as in `rust`: the ratchets and the closure records read it.
@@ -754,7 +754,7 @@ jobs:
 
   selftests:
     name: assurance platform self-tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     steps:
       # Full history, as in `rust`: the ratchets and the closure records read it.
@@ -853,7 +853,7 @@ jobs:
   # self-test, the other half of ADR-MCPRE-068 Phase 0B, runs in `bazel-drift`.
   selftests-bazel:
     name: assurance platform self-tests (structural lane)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
@@ -995,7 +995,7 @@ jobs:
     name: Bazel build + test
     if: always()
     needs: [rust, gates-2, gates-3, selftests, selftests-bazel]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
       contents: read
@@ -1019,7 +1019,7 @@ jobs:
 
   rfc9421-cross-verify:
     name: RFC 9421 third-party cross-verification (no-merge gate)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     # ADR-MCPRE-050 / MCPRE-99: the HTTP-profile corpus MUST validate through a
     # pinned, INDEPENDENT RFC 9421 implementation (python-cryptography Ed25519),
@@ -1139,7 +1139,7 @@ jobs:
 
   release-race:
     name: release gates — replay race, drain, inner plane, saturation liveness
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     # The ADR-MCPRE-051 §7 release gates as NAMED, attributable lanes (MCPRE-123). Their
     # tests also run inside the `bazel-test-*` shards' `bazel test`; naming them makes each a
@@ -1280,7 +1280,7 @@ jobs:
 
   release-harness:
     name: release gates — load harness
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
@@ -1376,7 +1376,7 @@ jobs:
     name: feature-gated backend tests (Bazel)
     if: always()
     needs: [release-race, release-harness]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
       contents: read
@@ -1400,7 +1400,7 @@ jobs:
 
   bazel-drift:
     name: bazel — semantic drift, target table, lint policy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     # ADR-MCPS-048 / MCPS-70 — the enforcement that makes generation stick.
     # Runs on Linux so the platform-gated crates (seccompiler, landlock) compile
@@ -1538,7 +1538,7 @@ jobs:
 
   bazel-test-proxy:
     name: bazel — test parity (proxy units)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
@@ -1636,7 +1636,7 @@ jobs:
 
   bazel-test-proxy-integration:
     name: bazel — test parity (proxy integration)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
@@ -1731,7 +1731,7 @@ jobs:
 
   bazel-test-rest:
     name: bazel — test parity (rest)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
@@ -1833,7 +1833,7 @@ jobs:
 
   bazel-lint:
     name: bazel — lint and format lanes (rest)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
@@ -1946,7 +1946,7 @@ jobs:
   # external crates the cache already holds. Setup is `bazel-lint`'s.
   bazel-lint-units:
     name: bazel — lint and format lanes (proxy unit tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
@@ -2011,7 +2011,7 @@ jobs:
     name: bazel semantic-drift gate + test parity
     if: always()
     needs: [bazel-drift, bazel-test-proxy, bazel-test-proxy-integration, bazel-test-rest, bazel-lint, bazel-lint-units]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
       contents: read
@@ -2040,7 +2040,7 @@ jobs:
   bazel-cache:
     name: bazel cache (main)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
@@ -2177,7 +2177,7 @@ jobs:
 
   sdk-python:
     name: downloader — Python SDK wheel (Bazel)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
@@ -2242,7 +2242,7 @@ jobs:
 
   sdk-typescript:
     name: downloader — TypeScript napi package (Bazel)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 6
     # ADR-MCPS-048 / MCPS-71 — the npm downloader path. The native addon is Bazel's
     # (//sdk/typescript:native), built by the same Rust toolchain and crate universe as
