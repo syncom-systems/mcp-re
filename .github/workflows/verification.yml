@@ -122,7 +122,13 @@ jobs:
           set -euo pipefail
           measures() { grep -q "^id = \"$1\." verification/policy/verification.toml; }
           if measures sdk_python; then ./scripts/prepare_python_matrix.sh; fi
-          if measures sdk_typescript; then ./scripts/prepare_node_matrix.sh; fi
+          if measures sdk_typescript; then
+            # The mTLS cases mint their X.509 material with tools/gen_mtls_test_material.py
+            # on this job's `python3`, the pinned interpreter, which carries no
+            # `cryptography`; without it every such case is skipped and the battery FAILS.
+            python3 -m pip install --quiet -r tools/requirements-mtls-test-material.txt
+            ./scripts/prepare_node_matrix.sh
+          fi
 
       - name: Structural and measured lane self-tests
         run: |
