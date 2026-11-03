@@ -9754,7 +9754,7 @@ tested_symbols = [
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::w3_retention_commit_failure_after_intent_leaves_no_pending_and_no_dispatch",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::g1_failure_rescinds_the_reservation",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::an_intent_refusal_leaves_no_pending_marker",
-  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::the_window_must_survive_the_commitment_wait",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::the_window_must_survive_the_commitment_waits",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::the_installer_refuses_a_volatile_authority_and_an_illegal_bound",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::required_over_a_loopback_http_backend_dispatches_only_after_commit",
 ]
