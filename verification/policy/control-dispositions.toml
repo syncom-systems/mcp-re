@@ -15115,6 +15115,15 @@ root_relationship = "under THM-0090: server authentication for every credential-
 record = "docs/architecture/control-dispositions.md#np-290"
 
 [[proposition]]
+id = "NP-292"
+title = "A serving shard is pinned inside the CPUs the process is allowed to run on"
+carrier = "mcp-re-proxy/src/async_fleet/cpu_placement.rs"
+likely_owner = "none. proxy.fleet_topology_provenance holds the carrier in its paths as closure, not claim."
+consequence = "medium"
+root_relationship = "none: pinning is a tail-latency optimization, never a correctness or security property (#1196)"
+record = "docs/architecture/control-dispositions.md#np-292"
+
+[[proposition]]
 id = "NP-291"
 title = "Under the required audit posture a success is served with the signature window fixed before G2, and a verifying client refuses it once that window has lapsed"
 carrier = "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs (served after G2 and retention, never re-signed) and mcp-re-http-profile/src/verify/floor/params.rs (the client's window rule)"
@@ -15555,3 +15564,27 @@ control = "src/lib.rs#config_state::request_target::tests::the_classifier_refuse
 decision = "new-proposition"
 proposition = "NP-141"
 recorded = "2026-10-27"
+
+[[disposition]]
+id = "CD-20608"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_fleet::cpu_placement::tests::shards_map_onto_the_allowed_cpus_in_order_and_wrap"
+decision = "new-proposition"
+proposition = "NP-292"
+recorded = "2026-11-03"
+
+[[disposition]]
+id = "CD-20609"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_fleet::cpu_placement::tests::no_known_cpu_places_nothing"
+decision = "new-proposition"
+proposition = "NP-292"
+recorded = "2026-11-03"
+
+[[disposition]]
+id = "CD-20610"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_fleet::cpu_placement::tests::a_restricted_mask_keeps_every_shard_inside_it"
+decision = "new-proposition"
+proposition = "NP-292"
+recorded = "2026-11-03"
