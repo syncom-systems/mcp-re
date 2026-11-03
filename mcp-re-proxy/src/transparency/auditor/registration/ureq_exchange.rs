@@ -75,44 +75,45 @@ impl HttpExchange for UreqExchange {
             .ok_or_else(|| {
                 "the registration budget was spent before this exchange began".to_owned()
             })?;
+        // The agent's own bound is the time this exchange has left.
         let agent = self.service.agent(remaining);
-        let mut call = agent
-            .request(request.method, &request.url)
-            .timeout(remaining);
+        let mut call = ureq::http::Request::builder()
+            .method(request.method)
+            .uri(&request.url);
         for (name, value) in &request.headers {
-            call = call.set(name, value);
+            call = call.header(name, value);
         }
+        // A STATUS is an answer, not a failure: the agent hands back every status as a
+        // response, so a `403` cannot read as "never asked", which is the one confusion this
+        // layer must not create.
         let outcome = if request.body.is_empty() {
-            call.call()
+            call.body(()).map(|call| agent.run(call))
         } else {
-            call.send_bytes(&request.body)
+            call.body(request.body).map(|call| agent.run(call))
         };
-        match outcome {
-            Ok(response) => read(response),
-            // A STATUS is an answer, not a failure. `ureq` reports every non-2xx as an
-            // error; folding that into a transport failure here would make a `403` read
-            // as "never asked", which is the one confusion this layer must not create.
-            Err(ureq::Error::Status(_, response)) => read(response),
-            Err(e) => Err(e.to_string()),
-        }
+        outcome
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())
+            .and_then(read)
     }
 }
 
 /// One `ureq` response as a value, headers lowercased and body read.
-fn read(response: ureq::Response) -> Result<HttpResponse, String> {
-    let status = response.status();
+fn read(response: ureq::http::Response<ureq::Body>) -> Result<HttpResponse, String> {
+    let status = response.status().as_u16();
     let headers: Vec<(String, String)> = response
-        .headers_names()
+        .headers()
         .iter()
-        .filter_map(|name| {
-            response
-                .header(name)
-                .map(|value| (name.to_ascii_lowercase(), value.to_owned()))
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.as_str().to_ascii_lowercase(), value.to_owned()))
         })
         .collect();
     let mut body = Vec::new();
     std::io::Read::read_to_end(
-        &mut std::io::Read::take(response.into_reader(), MAX_ANSWER_BYTES + 1),
+        &mut std::io::Read::take(response.into_body().into_reader(), MAX_ANSWER_BYTES + 1),
         &mut body,
     )
     .map_err(|e| format!("the response body could not be read: {e}"))?;
@@ -150,10 +151,9 @@ mod tests {
     /// The socket path, against a real listener: a non-2xx STATUS comes back as a
     /// response with its headers and body, not as a transport failure.
     ///
-    /// This is the lane the seam above cannot establish. `ureq` reports every non-2xx as
-    /// an `Err`, and a transport that passed that through would make a `429` — which the
-    /// protocol reads as *come back later* — indistinguishable from a connection that was
-    /// never made.
+    /// This is the lane the seam above cannot establish. A transport that turned a non-2xx
+    /// into an `Err` would make a `429` — which the protocol reads as *come back later* —
+    /// indistinguishable from a connection that was never made.
     #[test]
     fn a_status_answer_survives_the_socket_as_a_response() {
         use std::io::Read;

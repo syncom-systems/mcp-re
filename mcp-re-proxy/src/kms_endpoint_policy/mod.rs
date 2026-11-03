@@ -57,8 +57,8 @@ pub(crate) use endpoint::KmsEndpoint;
 /// fail-closed check then passes self-consistently.
 ///
 /// So the authority must be a LITERAL `host[:port]` — text a URL parser reads the same way
-/// a reader does. `ureq` resolves a request URL with `url::Url::parse` and connects to its
-/// `host_str()`, which reads `https://cloudkms.googleapis.com@evil.example.com` as host
+/// a reader does. `ureq` parses a request URL as an `http::Uri` and connects to its
+/// authority's host, which reads `https://cloudkms.googleapis.com@evil.example.com` as host
 /// `evil.example.com` with the recognisable half demoted to userinfo, and reads
 /// `http://localhost:80@evil.example.com` the same way — so userinfo (`@`) is refused, and
 /// so is any host carrying percent- or IDNA-encoding or a separator a parser resolves
@@ -174,7 +174,7 @@ fn split_host_port<'a>(
 /// Whether the host names the machine a reader thinks it names.
 ///
 /// A bracketed host's contents must parse as an address — `[foo-bar]` and `[gggg::1]` are
-/// bracket-shaped but are not IPv6 literals, and `url::Url::parse` refuses both. Admitting
+/// bracket-shaped but are not IPv6 literals, and a URL parser refuses both. Admitting
 /// them here would only move the failure to the first request.
 ///
 /// The unbracketed host is held to letters, digits, `.`, `-` and `_`. That is every
@@ -629,14 +629,12 @@ mod tests {
                 continue;
             };
             admitted += 1;
-            let request = ureq::get(endpoint);
-            let parsed = request.request_url().unwrap_or_else(|e| {
-                panic!("{endpoint} is admitted but the client refuses it: {e}")
-            });
+            let (read_host, read_port) = client_reads(endpoint)
+                .unwrap_or_else(|| panic!("{endpoint} is admitted but the client refuses it"));
             let (host, port) = super::split_authority(&authority, &locator())
                 .unwrap_or_else(|e| panic!("{endpoint}: {e}"));
             if let Some(inner) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
-                let read = parsed.host().trim_matches(|c| c == '[' || c == ']');
+                let read = read_host.trim_matches(|c| c == '[' || c == ']');
                 assert_eq!(
                     Ipv6Addr::from_str(inner).ok(),
                     Ipv6Addr::from_str(read).ok(),
@@ -644,7 +642,7 @@ mod tests {
                 );
             } else {
                 assert_eq!(
-                    parsed.host(),
+                    read_host.to_ascii_lowercase(),
                     host.to_ascii_lowercase(),
                     "{endpoint}: the client reads a different host"
                 );
@@ -655,7 +653,7 @@ mod tests {
                 None => Some(80),
             };
             assert_eq!(
-                parsed.as_url().port_or_known_default(),
+                Some(read_port),
                 written,
                 "{endpoint}: the client reads a different port"
             );
@@ -684,15 +682,13 @@ mod tests {
                 None,
             ),
         ] {
-            let request = ureq::get(endpoint);
-            let parsed = request
-                .request_url()
-                .unwrap_or_else(|e| panic!("{endpoint} must still parse in the client: {e}"));
-            let port_differs = text_port.is_some_and(|p| {
-                parsed.as_url().port().map(|n| n.to_string()).as_deref() != Some(p)
-            });
+            let (read_host, read_port) = client_reads(endpoint)
+                .unwrap_or_else(|| panic!("{endpoint} must still parse in the client"));
+            let port_differs = text_port.is_some_and(|p| read_port.to_string() != p);
             assert!(
-                parsed.host() != text_host || port_differs,
+                read_host != text_host
+                    || port_differs
+                    || connects_elsewhere(&read_host, read_port, text_host),
                 "{endpoint}: the probe failed to see the client rewrite the text"
             );
             assert!(
@@ -700,6 +696,61 @@ mod tests {
                 "{endpoint} is read differently by the client and must be refused"
             );
         }
+
+        // Userinfo demotes the recognisable half: the client connects to the host after the
+        // `@`, which is why the rule refuses every authority carrying one.
+        for endpoint in [
+            "https://cloudkms.googleapis.com@evil.example.com",
+            "https://kms.us-east-1.amazonaws.com@evil.example.com/",
+            "https://sts.eu-north-1.amazonaws.com@evil.example.com",
+            "http://localhost:80@evil.example.com",
+            "http://127.0.0.1:8080@evil.example.com",
+            "http://localhost@evil.example.com",
+            "https://user:pass@evil.example.com",
+            "https://@evil.example.com",
+        ] {
+            assert_eq!(
+                client_reads(endpoint).map(|(host, _)| host).as_deref(),
+                Some("evil.example.com"),
+                "{endpoint}: the client reads another host"
+            );
+            assert!(
+                super::kms_endpoint_authority(endpoint).is_err(),
+                "{endpoint}"
+            );
+        }
+    }
+
+    /// The `host` and port the client connects to for `endpoint`: ureq parses a request URL
+    /// as an `http::Uri`, resolves its authority's host, and takes the explicit port or the
+    /// scheme's default. `None` when the client refuses the URL.
+    #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
+    fn client_reads(endpoint: &str) -> Option<(String, u16)> {
+        let uri: ureq::http::Uri = endpoint.parse().ok()?;
+        let authority = uri.authority()?;
+        let default = match uri.scheme_str()? {
+            "https" => 443,
+            "http" => 80,
+            _ => return None,
+        };
+        Some((
+            authority.host().to_owned(),
+            authority.port_u16().unwrap_or(default),
+        ))
+    }
+
+    /// Whether the address the client's resolver yields for a numeric `host` is spelled
+    /// differently from `text`: `127.1` and `2130706433` are names to the URL parser and
+    /// `127.0.0.1` to the resolver it hands them to. Resolved without DNS, because every
+    /// host asked about here is numeric.
+    #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
+    fn connects_elsewhere(host: &str, port: u16, text: &str) -> bool {
+        use std::net::ToSocketAddrs;
+        (host, port)
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut addrs| addrs.next())
+            .is_some_and(|addr| addr.ip().to_string() != text)
     }
 
     /// A stand-in for the projected whole the predicates below carry into their refusals.

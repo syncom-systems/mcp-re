@@ -141,9 +141,9 @@ redis = { version = "1.4", default-features = false, features = ["tls-rustls"] }
 # so declaring them direct pulls ZERO new crates. SHA-256 CertIDs (no SHA-1 dep).
 x509-ocsp = { version = "0.2", features = ["builder"] }
 ureq = { version = "3", default-features = false }
-# The public Web PKI roots an outbound HTTPS agent authenticates a server against. ureq's own
-# `tls` feature reached them only through the 0.26 compatibility shim; the proxy installs
-# its own rustls connector over this crate instead (`outbound_fetch::public_roots`).
+# The public Web PKI roots an outbound HTTPS agent authenticates a server against. ureq is
+# built without a TLS feature; the proxy installs its own rustls connector over this crate
+# (`outbound_fetch::public_roots`).
 webpki-roots = "1"
 # ADR-MCPS-028 (AWS KMS Ed25519 signer, feature `aws_kms_keysource`): SigV4 request
 # signing uses HMAC-SHA256 over RustCrypto primitives (sha2 is already in-closure),

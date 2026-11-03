@@ -36,9 +36,10 @@ pub(crate) const MAX_ERROR_BODY_BYTES: u64 = 8 * 1024;
 /// would replace a partial diagnostic with none. The read result is discarded for the same
 /// reason: a truncated or failed read yields whatever arrived, which beats reporting a
 /// second failure about the first one's body.
-pub(crate) fn read_error_body(resp: ureq::Response) -> String {
+pub(crate) fn read_error_body(resp: ureq::http::Response<ureq::Body>) -> String {
     let mut buf = Vec::new();
     let _ = resp
+        .into_body()
         .into_reader()
         .take(MAX_ERROR_BODY_BYTES)
         .read_to_end(&mut buf);
@@ -49,13 +50,19 @@ pub(crate) fn read_error_body(resp: ureq::Response) -> String {
 mod tests {
     use super::*;
 
+    fn response_with(status: u16, body: Vec<u8>) -> ureq::http::Response<ureq::Body> {
+        ureq::http::Response::builder()
+            .status(status)
+            .body(ureq::Body::builder().data(body))
+            .expect("a response over a plain body")
+    }
+
     /// The cap is a BOUND on what a remote can make this process buffer, so the property is
     /// that a long body is truncated — not that the constant equals its own literal.
     #[test]
     fn an_over_long_error_body_is_truncated_to_the_cap() {
         let huge = "x".repeat((MAX_ERROR_BODY_BYTES as usize) * 2);
-        let response = ureq::Response::new(500, "Internal Server Error", &huge)
-            .expect("a response over a plain body");
+        let response = response_with(500, huge.into_bytes());
         assert_eq!(
             read_error_body(response).len(),
             MAX_ERROR_BODY_BYTES as usize,
@@ -67,7 +74,7 @@ mod tests {
     #[test]
     fn a_short_error_body_is_returned_intact() {
         let body = r#"{"__type":"ThrottlingException"}"#;
-        let response = ureq::Response::new(400, "Bad Request", body).expect("a response");
+        let response = response_with(400, body.as_bytes().to_vec());
         assert_eq!(read_error_body(response), body);
     }
 

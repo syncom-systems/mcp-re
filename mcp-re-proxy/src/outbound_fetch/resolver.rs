@@ -16,7 +16,13 @@
 //! would let a rebinding race pick the internal address out of a mixed answer, so an
 //! attacker returning one internal and one public address gets nothing.
 
+use std::fmt;
 use std::net::SocketAddr;
+
+use ureq::config::Config;
+use ureq::http::Uri;
+use ureq::unversioned::resolver::{DefaultResolver, ResolvedSocketAddrs, Resolver};
+use ureq::unversioned::transport::NextTimeout;
 
 use super::resolved_ip_is_public;
 
@@ -28,8 +34,7 @@ pub(super) trait BaseResolver: Send + Sync {
     fn resolve(&self, netloc: &str) -> std::io::Result<Vec<SocketAddr>>;
 }
 
-/// The production base resolver: the OS resolver, exactly as `ureq`'s default
-/// `StdResolver` would use. The vetting wrapper is what makes it safe.
+/// The production base resolver: the OS resolver, through `std`'s `ToSocketAddrs`. The vetting wrapper is what makes it safe.
 pub(super) struct StdBaseResolver;
 
 impl BaseResolver for StdBaseResolver {
@@ -39,7 +44,7 @@ impl BaseResolver for StdBaseResolver {
     }
 }
 
-/// A `ureq` [`Resolver`](ureq::Resolver) that closes the DNS-rebinding hole (#128).
+/// A `ureq` [`Resolver`] that closes the DNS-rebinding hole (#128).
 ///
 /// `pub(super)` because [`super::VettedDestination`] installs it; nothing outside this
 /// authority chooses whether a fetch is vetted.
@@ -93,9 +98,34 @@ impl VettingResolver {
     }
 }
 
-impl ureq::Resolver for VettingResolver {
-    fn resolve(&self, netloc: &str) -> std::io::Result<Vec<SocketAddr>> {
-        self.resolve_vetted(netloc)
+/// The resolver an agent's connection asks: the URL's `host:port`, resolved and vetted as
+/// above. Every vetted address is checked before any is handed over; ureq then tries at most
+/// the first [`ResolvedSocketAddrs`] can hold, all of which passed.
+impl Resolver for VettingResolver {
+    fn resolve(
+        &self,
+        uri: &Uri,
+        _config: &Config,
+        _timeout: NextTimeout,
+    ) -> Result<ResolvedSocketAddrs, ureq::Error> {
+        let netloc = uri
+            .scheme()
+            .zip(uri.authority())
+            .and_then(|(scheme, authority)| DefaultResolver::host_and_port(scheme, authority))
+            .ok_or_else(|| ureq::Error::BadUri(format!("no host and port in {uri}")))?;
+        let mut pinned = self.empty();
+        // Every address was vetted above; the first that does not fit ends the copy.
+        let _full = self
+            .resolve_vetted(&netloc)?
+            .into_iter()
+            .try_for_each(|addr| pinned.try_push(addr));
+        Ok(pinned)
+    }
+}
+
+impl fmt::Debug for VettingResolver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VettingResolver").finish_non_exhaustive()
     }
 }
 

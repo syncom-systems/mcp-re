@@ -257,12 +257,14 @@ fn live_lease_ttl_is_bounded_window_not_absolute_epoch() {
 fn post_json(base_url: &str, path: &str, body: &Value) -> Value {
     let url = format!("{}/{}", base_url.trim_end_matches('/'), path);
     let bytes = serde_json::to_vec(body).expect("serialize etcd request");
-    let resp = ureq::AgentBuilder::new()
+    let resp = ureq::Agent::config_builder()
+        .proxy(None)
+        .timeout_global(Some(std::time::Duration::from_secs(10)))
         .build()
+        .new_agent()
         .post(&url)
-        .timeout(std::time::Duration::from_secs(10))
-        .set("Content-Type", "application/json")
-        .send_bytes(&bytes)
+        .header("Content-Type", "application/json")
+        .send(&bytes[..])
         .unwrap_or_else(|e| panic!("etcd POST {path}: {e}"));
     // Bounded read, mirroring the production bounded-read idiom in
     // `aws_kms_keysource.rs` / `async_etcd_store.rs`: a misconfigured/hostile
@@ -273,7 +275,8 @@ fn post_json(base_url: &str, path: &str, body: &Value) -> Value {
     // `into_string()` read.
     const MAX_TEST_RESPONSE_BYTES: u64 = 256 * 1024;
     let mut buf = Vec::new();
-    resp.into_reader()
+    resp.into_body()
+        .into_reader()
         .take(MAX_TEST_RESPONSE_BYTES + 1)
         .read_to_end(&mut buf)
         .unwrap_or_else(|e| panic!("etcd {path} read response: {e}"));

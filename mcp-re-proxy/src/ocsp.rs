@@ -90,7 +90,7 @@ use x509_parser::extensions::ParsedExtension;
 use x509_parser::prelude::FromDer;
 use x509_parser::time::ASN1Time;
 
-use crate::outbound_fetch::VettedDestination;
+use crate::outbound_fetch::{FetchWith, RequestBound, VettedDestination};
 
 /// The `id-kp-OCSPSigning` extended-key-usage OID (`1.3.6.1.5.5.7.3.9`,
 /// RFC 6960 §4.2.2.2). A delegated responder certificate — one carried in the
@@ -413,11 +413,11 @@ impl OcspChecker {
         let response = destination
             .agent(self.timeout)
             .post(destination.url())
-            .set("Content-Type", "application/ocsp-request")
-            .set("Accept", "application/ocsp-response")
-            .timeout(self.timeout)
-            .send_bytes(request_der)
-            .map_err(|e| OcspError::Http(e.kind().to_string()))?;
+            .header("Content-Type", "application/ocsp-request")
+            .header("Accept", "application/ocsp-response")
+            .bounded_by(self.timeout)
+            .fetch_with(request_der)
+            .map_err(|e| OcspError::Http(e.kind().to_owned()))?;
         // Bound the response body read so a hostile/oversized responder reply
         // cannot exhaust memory; a well-formed OCSP response is small.
         let mut body = Vec::new();

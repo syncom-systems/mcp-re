@@ -42,7 +42,7 @@
 mod sts_protocol;
 
 use crate::kms_endpoint_policy::KmsEndpoint;
-use crate::outbound_fetch::CredentialEgress;
+use crate::outbound_fetch::{CredentialEgress, Failure, FetchWith, RequestBound};
 use crate::remote_signer_call::read_error_body;
 use crate::remote_signer_call::NETWORK_TIMEOUT;
 use std::sync::Mutex;
@@ -582,20 +582,20 @@ impl WebIdentityCredentialSource {
         let response = self
             .egress
             .post("")
-            .set("Content-Type", "application/x-www-form-urlencoded")
-            .set("Accept", "application/xml")
-            .timeout(NETWORK_TIMEOUT)
-            .send_string(&body);
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Accept", "application/xml")
+            .bounded_by(NETWORK_TIMEOUT)
+            .fetch_with(body.as_bytes());
         let xml = match response {
             Ok(resp) => {
                 let body = read_capped(resp.into_reader(), MAX_STS_RESPONSE_BYTES, "STS response")?;
                 Zeroizing::new(String::from_utf8_lossy(&body).into_owned())
             }
-            Err(ureq::Error::Status(code, resp)) => {
+            Err(Failure::Status(code, resp)) => {
                 return Err(KeyError::NotFound(format!(
                     "aws-kms: AssumeRoleWithWebIdentity for {} failed: HTTP {code}: {}",
                     self.config.role_arn,
-                    read_error_body(resp)
+                    read_error_body(*resp)
                 )));
             }
             Err(e) => {
@@ -738,7 +738,7 @@ mod tests {
     ///
     /// Whoever receives this pod's projected service-account token can assume the IRSA role
     /// and obtain KMS `Sign` on the root response-signing key. `ureq` connects to the host
-    /// `url::Url::parse` reads, which for every string below is `evil.example.com`. Checked
+    /// its `http::Uri` reads, which for every userinfo string below is `evil.example.com`. Checked
     /// in `from_env` as well as at the CLI because `AwsKmsConfig` is public and an embedder
     /// reaches `from_web_identity` without meeting a parser.
     #[test]

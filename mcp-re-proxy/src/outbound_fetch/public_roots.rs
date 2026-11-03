@@ -3,25 +3,27 @@
 //!
 //! One fact: **an HTTPS destination is authenticated against the public Web PKI roots the
 //! `webpki-roots` 1.x crate ships, by rustls on the *ring* provider, presenting no client
-//! certificate.** That is the configuration ureq's own `tls` feature installed, but ureq 2
-//! reaches those roots only through the `webpki-roots` 0.26 compatibility shim. Owning the
-//! connector here names the root set this proxy trusts on the wire and keeps the shim out of
-//! the build graph.
+//! certificate.** ureq is built without any TLS feature, so the connector that speaks TLS is
+//! this one, installed by [`VettedDestination::agent`](super::VettedDestination::agent) after
+//! ureq's own TCP connector. Owning it here names the root set this proxy trusts on the wire.
 //!
-//! An agent built without a connector refuses every `https` URL, so a destination whose
-//! agent did not come from [`VettedDestination::agent`](super::VettedDestination::agent)
+//! An agent built without this connector refuses every `https` URL (ureq reports
+//! `TlsRequired`), so a destination whose agent did not come from `VettedDestination::agent`
 //! cannot speak TLS under some other root set by omission.
 
 use std::fmt;
 use std::io::{self, Read, Write};
-use std::net::TcpStream;
 use std::sync::{Arc, OnceLock};
 
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
-use ureq::ReadWrite;
+use ureq::unversioned::transport::{
+    Buffers, ConnectionDetails, Connector, Either, LazyBuffers, NextTimeout, Transport,
+    TransportAdapter,
+};
 
 /// A rustls connector over one root set.
+#[derive(Clone)]
 pub(super) struct RootedConnector {
     /// `None` when the provider offers no safe protocol version; every HTTPS connection is
     /// then refused rather than attempted under weaker terms.
@@ -30,9 +32,9 @@ pub(super) struct RootedConnector {
 
 impl RootedConnector {
     /// The connector every outbound agent installs: the public Web PKI roots, built once.
-    pub(super) fn public() -> Arc<Self> {
-        static PUBLIC: OnceLock<Arc<RootedConnector>> = OnceLock::new();
-        Arc::clone(PUBLIC.get_or_init(|| Arc::new(Self::over(public_roots()))))
+    pub(super) fn public() -> Self {
+        static PUBLIC: OnceLock<RootedConnector> = OnceLock::new();
+        PUBLIC.get_or_init(|| Self::over(public_roots())).clone()
     }
 
     fn over(roots: RootCertStore) -> Self {
@@ -45,16 +47,16 @@ impl RootedConnector {
     }
 
     /// Complete the handshake over `io` for `dns_name`, or say why it did not complete.
-    fn handshake(
+    fn handshake<S: Read + Write>(
         &self,
         dns_name: &str,
-        mut io: Box<dyn ReadWrite>,
-    ) -> io::Result<StreamOwned<ClientConnection, Box<dyn ReadWrite>>> {
+        mut io: S,
+    ) -> io::Result<StreamOwned<ClientConnection, S>> {
         let config = self
             .config
             .clone()
             .ok_or_else(|| io::Error::other("no safe TLS protocol version is available"))?;
-        // ureq hands over an IPv6 literal in brackets; a TLS server name never has them.
+        // A URL carries an IPv6 literal in brackets; a TLS server name never has them.
         let host = dns_name
             .strip_prefix('[')
             .and_then(|inner| inner.strip_suffix(']'))
@@ -67,14 +69,41 @@ impl RootedConnector {
     }
 }
 
-impl ureq::TlsConnector for RootedConnector {
+impl fmt::Debug for RootedConnector {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RootedConnector").finish_non_exhaustive()
+    }
+}
+
+/// The TLS stage of an agent's connector chain: an `https` URL over a transport that is not
+/// already TLS is wrapped in a session authenticated by this connector; anything else passes
+/// through unchanged.
+impl Connector<Box<dyn Transport>> for RootedConnector {
+    type Out = Either<Box<dyn Transport>, TlsTransport>;
+
     fn connect(
         &self,
-        dns_name: &str,
-        io: Box<dyn ReadWrite>,
-    ) -> Result<Box<dyn ReadWrite>, ureq::Error> {
-        let stream = self.handshake(dns_name, io)?;
-        Ok(Box::new(TlsStream(stream)))
+        details: &ConnectionDetails,
+        chained: Option<Box<dyn Transport>>,
+    ) -> Result<Option<Self::Out>, ureq::Error> {
+        let Some(transport) = chained else {
+            return Ok(None);
+        };
+        if !details.needs_tls() || transport.is_tls() {
+            return Ok(Some(Either::A(transport)));
+        }
+        let host = details
+            .uri
+            .host()
+            .ok_or(ureq::Error::Tls("an https URL without a host"))?;
+        let mut io = TransportAdapter::new(transport, Arc::clone(&details.current_time));
+        io.set_timeout(details.timeout);
+        let stream = self.handshake(host, io)?;
+        let buffers = LazyBuffers::new(
+            details.config.input_buffer_size(),
+            details.config.output_buffer_size(),
+        );
+        Ok(Some(Either::B(TlsTransport { buffers, stream })))
     }
 }
 
@@ -85,39 +114,51 @@ fn public_roots() -> RootCertStore {
 }
 
 /// An established session over the agent's transport.
-struct TlsStream(StreamOwned<ClientConnection, Box<dyn ReadWrite>>);
+pub(super) struct TlsTransport {
+    buffers: LazyBuffers,
+    stream: StreamOwned<ClientConnection, TransportAdapter>,
+}
 
-impl ReadWrite for TlsStream {
-    fn socket(&self) -> Option<&TcpStream> {
-        self.0.get_ref().socket()
+impl Transport for TlsTransport {
+    fn buffers(&mut self) -> &mut dyn Buffers {
+        &mut self.buffers
+    }
+
+    fn transmit_output(&mut self, amount: usize, timeout: NextTimeout) -> Result<(), ureq::Error> {
+        self.stream.sock.set_timeout(timeout);
+        let output = self.buffers.output().get(..amount).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "output beyond the buffer")
+        })?;
+        self.stream.write_all(output)?;
+        Ok(())
+    }
+
+    fn await_input(&mut self, timeout: NextTimeout) -> Result<bool, ureq::Error> {
+        self.stream.sock.set_timeout(timeout);
+        let input = self.buffers.input_append_buf();
+        let amount = self.stream.read(input)?;
+        self.buffers.input_appended(amount);
+        Ok(amount > 0)
+    }
+
+    fn is_open(&mut self) -> bool {
+        self.stream.sock.get_mut().is_open()
+    }
+
+    fn is_tls(&self) -> bool {
+        true
     }
 }
 
-impl Read for TlsStream {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.0.read(buf)
-    }
-}
-
-impl Write for TlsStream {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.0.flush()
-    }
-}
-
-impl fmt::Debug for TlsStream {
+impl fmt::Debug for TlsTransport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("TlsStream").finish()
+        f.debug_struct("TlsTransport").finish_non_exhaustive()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
 
     use rcgen::{
         BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair,
@@ -184,8 +225,8 @@ mod tests {
         port
     }
 
-    fn dial(port: u16) -> Box<dyn ReadWrite> {
-        Box::new(TcpStream::connect(("127.0.0.1", port)).expect("connect"))
+    fn dial(port: u16) -> TcpStream {
+        TcpStream::connect(("127.0.0.1", port)).expect("connect")
     }
 
     /// The mirror of the refusal below: the same server, under a root set that holds its CA,

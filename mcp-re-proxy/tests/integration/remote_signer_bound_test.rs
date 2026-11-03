@@ -4,7 +4,7 @@
 //! The bound was DECLARED and measured nowhere. `wire_limits.rs`'s only control over it,
 //! `the_network_timeout_is_short_enough_to_refuse_rather_than_queue`, asserts
 //! `NETWORK_TIMEOUT <= Duration::from_secs(10)` — a comparison between two literals written
-//! in the same file. Delete every `.timeout(NETWORK_TIMEOUT)` from the AWS and GCP
+//! in the same file. Delete every `.bounded_by(NETWORK_TIMEOUT)` from the AWS and GCP
 //! transports and it stays green, as does every other control in the three units that cite
 //! G18 (r11 `R11-534`, `R11-535`, `R11-536`).
 //!
@@ -13,8 +13,8 @@
 //!
 //! # Why a source scan and not a type
 //!
-//! `ureq`'s builder is foreign and its `timeout` is optional by construction — a request
-//! without one compiles and blocks on the default. Nothing this project owns can make an
+//! `ureq`'s builder is foreign and a per-request bound is optional by construction — a
+//! request without one compiles and waits on the agent's. Nothing this project owns can make an
 //! unbounded remote-signer request unconstructible, so this is EVIDENCE about which
 //! requests this crate BUILDS, never unconstructibility. That is also why the count rule
 //! below is stated as an equality rather than a presence check: a presence check passes as
@@ -34,12 +34,16 @@ const TRANSPORTS: &[&str] = &["aws_sts.rs", "aws_kms_keysource.rs", "gcp_kms_key
 /// The shared bound, by name.
 const BOUND: &str = "NETWORK_TIMEOUT";
 
-/// Applying a per-request deadline, by name.
-const TIMEOUT_CALL: &str = ".timeout(";
+/// Applying a per-request deadline, by name: `outbound_fetch::RequestBound`.
+const TIMEOUT_CALL: &str = ".bounded_by(";
+
+/// ureq's own per-request deadline, which `bounded_by` wraps. A transport naming it directly
+/// sets a bound the rule above does not count.
+const RAW_TIMEOUT_CALLS: &[&str] = &[".timeout_global(", ".timeout_per_call(", ".timeout("];
 
 /// Putting bytes on the wire, by name. Every one of these must be preceded by a bounded
 /// builder in the same file.
-const DISPATCHES: &[&str] = &[".call()", ".send_string(", ".send_bytes(", ".send_json("];
+const DISPATCHES: &[&str] = &[".fetch()", ".fetch_with(", ".call()", ".send("];
 
 /// Strip `//` line comments so a doc comment NAMING the bound cannot satisfy a rule about
 /// calling it — the same trap `client_verifier_posture_test` guards against.
@@ -86,7 +90,7 @@ fn dispatch_count(source: &str) -> usize {
 }
 
 /// **The rule.** In every remote-signer transport, each dispatch is matched by one
-/// `.timeout(NETWORK_TIMEOUT)`, and no other duration appears.
+/// `.bounded_by(NETWORK_TIMEOUT)`, and no other duration appears.
 ///
 /// An equality and not a presence check: a presence check is satisfied by one bounded
 /// request in a file that also makes three unbounded ones.
@@ -104,14 +108,21 @@ fn every_remote_signer_dispatch_is_bounded_by_the_shared_timeout() {
         assert_eq!(
             count_of(&source, &format!("{TIMEOUT_CALL}{BOUND})")),
             dispatches,
-            "{file}: every dispatch must carry .timeout({BOUND}); an unmatched dispatch is \
-             a remote-signer exchange with no bound at all"
+            "{file}: every dispatch must carry .bounded_by({BOUND}); an unmatched dispatch \
+             is a remote-signer exchange with no bound of its own"
         );
         assert_eq!(
             count_of(&source, TIMEOUT_CALL),
             dispatches,
-            "{file}: a `.timeout(` that is not `{BOUND}` is a SECOND bound — G18 claims one"
+            "{file}: a `.bounded_by(` that is not `{BOUND}` is a SECOND bound — G18 claims one"
         );
+        for raw in RAW_TIMEOUT_CALLS {
+            assert_eq!(
+                count_of(&source, raw),
+                0,
+                "{file}: `{raw}` is a deadline outside `.bounded_by({BOUND})` — a SECOND bound"
+            );
+        }
         measured += dispatches;
     }
     assert!(measured >= 5, "the transports made {measured} bounded dispatches, fewer than the five measured at this rule's writing — a transport has gone missing from TRANSPORTS");
@@ -147,28 +158,28 @@ fn every_credential_egress_a_transport_builds_carries_the_shared_timeout() {
 /// must also demonstrate it still detects each regression.
 #[test]
 fn the_rules_would_catch_each_regression() {
-    let bounded = "let r = a.post(\"\").timeout(NETWORK_TIMEOUT).send_string(&b);";
+    let bounded = "let r = a.post(\"\").bounded_by(NETWORK_TIMEOUT).fetch_with(&b);";
     assert_eq!(dispatch_count(bounded), 1, "a real dispatch must be seen");
     assert_eq!(
-        count_of(bounded, ".timeout(NETWORK_TIMEOUT)"),
+        count_of(bounded, ".bounded_by(NETWORK_TIMEOUT)"),
         1,
         "a real bound must be seen"
     );
 
     // The regression the equality exists for: a dispatch with no timeout at all.
-    let unbounded = "let r = a.post(\"\").send_string(&b);";
+    let unbounded = "let r = a.post(\"\").fetch_with(&b);";
     assert_eq!(dispatch_count(unbounded), 1);
     assert_eq!(
-        count_of(unbounded, ".timeout(NETWORK_TIMEOUT)"),
+        count_of(unbounded, ".bounded_by(NETWORK_TIMEOUT)"),
         0,
         "an unbounded dispatch must NOT read as bounded"
     );
 
     // The regression the second equality exists for: a bound that is not the shared one.
-    let literal = "let r = a.post(\"\").timeout(Duration::from_secs(600)).call();";
+    let literal = "let r = a.post(\"\").bounded_by(Duration::from_secs(600)).call();";
     assert_eq!(count_of(literal, TIMEOUT_CALL), 1);
     assert_eq!(
-        count_of(literal, ".timeout(NETWORK_TIMEOUT)"),
+        count_of(literal, ".bounded_by(NETWORK_TIMEOUT)"),
         0,
         "a literal duration must NOT read as the shared bound"
     );
@@ -176,12 +187,16 @@ fn the_rules_would_catch_each_regression() {
     // A doc comment naming the bound must not satisfy a rule about applying it.
     assert_eq!(
         count_of(
-            &code_only("/// Bounded by `.timeout(NETWORK_TIMEOUT)`."),
-            ".timeout("
+            &code_only("/// Bounded by `.bounded_by(NETWORK_TIMEOUT)`."),
+            ".bounded_by("
         ),
         0,
         "a comment naming the call must not read as the call"
     );
+
+    // ureq's own deadline, set directly, is seen as one.
+    let raw = "let r = a.post(\"\").config().timeout_global(Some(d)).build().send(&b);";
+    assert_eq!(count_of(raw, RAW_TIMEOUT_CALLS[0]), 1);
 
     // And a transport that vanished must fail rather than pass vacuously.
     assert_eq!(dispatch_count(""), 0, "an empty file makes no dispatches");

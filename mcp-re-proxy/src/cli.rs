@@ -3455,11 +3455,10 @@ mod tests {
 
     /// R9-C001 — an authority a URL parser reads differently from the text it shows.
     ///
-    /// `ureq` resolves a request URL with `url::Url::parse` and connects to its
-    /// `host_str()`, which reads `https://cloudkms.googleapis.com@evil.example.com` as host
-    /// `evil.example.com` with the recognisable half demoted to userinfo. Verified against
-    /// url 2.5.8 (what ureq 2.12.1 links): every string below resolves to
-    /// `evil.example.com`. That host receives the root-key trust bootstrap — and on GCP a
+    /// `ureq` parses a request URL as an `http::Uri` and connects to its authority's host,
+    /// which reads `https://cloudkms.googleapis.com@evil.example.com` as host
+    /// `evil.example.com` with the recognisable half demoted to userinfo. Every string below
+    /// is read that way; `kms_endpoint_policy`'s client-parser differential measures it. That host receives the root-key trust bootstrap — and on GCP a
     /// live workload-identity bearer token authorizing `asymmetricSign` on the ROOT
     /// response-signing key.
     ///
