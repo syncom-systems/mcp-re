@@ -13614,8 +13614,9 @@ tested_symbols = [
 id = "proxy.fleet_topology_provenance"
 class = "V0"
 description = "AN EXPLICITLY CONFIGURED FLEET TOPOLOGY IS RESOLVED UNCHANGED: a stated shard count and a stated worker depth survive topology resolution exactly as stated, including the explicit `1`, so the RESOLVER cannot disagree with the operator about the shape it was told to take. It is the provenance half of the resolver ONLY. What the automatic path computes when nothing was stated — a shard per cpu, the depth it adds on top, and the floor of one shard of one worker — is a throughput and availability policy rather than a security posture, and it stays in the ADR-069 census under NP-147. THE NAMED EXCEPTION IS WITHDRAWN, because the behaviour it named is gone. It read: under delegated TLS custody `CorePool::for_core` raises a resolved depth of 1 to a multi-worker pool, so a stated `1` reaches the resolver intact but does not reach the runtime. Owner Ruling 7 made that silent widening a REFUSAL, and relation X10 makes it at configuration, so a stated `1` now either reaches the runtime as stated (exported key) or refuses the deployment (delegated custody) — it is never converted. What survives is that a DERIVED depth of 1 is still raised, which is the resolver filling in rather than overriding and is `proxy.delegated_tls_depth_refusal`'s to state. This unit still claims nothing about the per-shard runtime builder."
-# CLOSURE, NOT CLAIM. `core_runtime.rs` and `reuseport.rs` are here because `mod core_runtime;`
-# and `mod reuseport;` in the file above resolve to them and UC-1 requires a measured file's own modules to be measured —
+# CLOSURE, NOT CLAIM. `core_runtime.rs`, `cpu_placement.rs` and `reuseport.rs` are here because
+# `mod core_runtime;`, `mod cpu_placement;` and `mod reuseport;` in the file above resolve to them
+# and UC-1 requires a measured file's own modules to be measured —
 # a unit that fingerprinted the topology function while its sibling module could be
 # rewritten under a standing attestation would be measuring half of what it names. This
 # unit claims nothing about the per-shard runtime builder.
@@ -13623,6 +13624,7 @@ paths = [
   "mcp-re-proxy/src/async_fleet/resolved_topology.rs",
   "mcp-re-proxy/src/async_fleet/mod.rs",
   "mcp-re-proxy/src/async_fleet/core_runtime.rs",
+  "mcp-re-proxy/src/async_fleet/cpu_placement.rs",
   "mcp-re-proxy/src/async_fleet/reuseport.rs",
 ]
 exported_contracts = []
