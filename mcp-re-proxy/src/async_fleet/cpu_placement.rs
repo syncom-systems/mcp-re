@@ -12,7 +12,9 @@
 //! shard's single CPU on a platform where the mask is inherited per thread.
 //!
 //! Pinning is a tail-latency optimization, never a correctness property: every failure is
-//! ignored, and a set that cannot be read falls back to the online CPUs.
+//! ignored. A mask that cannot be read places nothing — pinning onto the online CPUs instead
+//! could put a shard outside the very mask that was unreadable. Every CPU number placed or
+//! pinned is below `CPU_SETSIZE`, the bound `cpu_set_t` can represent.
 
 /// The CPUs serving shards are placed on, in ascending order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,8 +23,8 @@ pub(super) struct CpuPlacement {
 }
 
 impl CpuPlacement {
-    /// The CPUs this process may run on now: its affinity mask on Linux, falling back to the
-    /// online CPUs when the mask cannot be read. Empty off Linux, where nothing is pinned.
+    /// The CPUs this process may run on now: its affinity mask on Linux. Empty when the mask
+    /// cannot be read, and off Linux; nothing is pinned then.
     pub(super) fn of_this_process() -> Self {
         CpuPlacement {
             allowed: allowed_cpus(),
@@ -44,26 +46,22 @@ impl CpuPlacement {
     }
 }
 
-/// The calling thread's affinity mask, as CPU numbers; the online CPUs when it cannot be read.
+/// The calling thread's affinity mask, as CPU numbers below `CPU_SETSIZE`; empty when it
+/// cannot be read.
 #[cfg(target_os = "linux")]
 fn allowed_cpus() -> Vec<usize> {
     // SAFETY: `set` is a zeroed, fully-owned `cpu_set_t`; `sched_getaffinity(0, ..)` writes
     // the calling thread's mask into it and does not retain the pointer; `CPU_ISSET` reads one
     // bit of it for an index below `CPU_SETSIZE`.
-    let allowed: Vec<usize> = unsafe {
+    unsafe {
         let mut set: libc::cpu_set_t = std::mem::zeroed();
         if libc::sched_getaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &mut set) != 0 {
-            return online_cpus();
+            return Vec::new();
         }
-        let size = usize::try_from(libc::CPU_SETSIZE).unwrap_or(0);
-        (0..size)
+        (0..cpu_set_size())
             .filter(|&cpu| libc::CPU_ISSET(cpu, &set))
             .collect()
-    };
-    if allowed.is_empty() {
-        return online_cpus();
     }
-    allowed
 }
 
 /// No portable affinity mask: nothing is placed.
@@ -72,26 +70,22 @@ fn allowed_cpus() -> Vec<usize> {
     Vec::new()
 }
 
-/// `0..n` for the `n` online CPUs: `sysconf(_SC_NPROCESSORS_ONLN)`, then
-/// `available_parallelism`, then 1.
+/// How many CPU numbers a `cpu_set_t` represents: every valid index is below it.
 #[cfg(target_os = "linux")]
-fn online_cpus() -> Vec<usize> {
-    // SAFETY: `sysconf` takes an int name and returns a long; no pointers involved.
-    let n = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
-    let n = usize::try_from(n)
-        .ok()
-        .filter(|&n| n > 0)
-        .or_else(|| std::thread::available_parallelism().ok().map(|x| x.get()))
-        .unwrap_or(1);
-    (0..n).collect()
+fn cpu_set_size() -> usize {
+    usize::try_from(libc::CPU_SETSIZE).unwrap_or(0)
 }
 
-/// Pin the calling thread to `cpu` (`sched_setaffinity`). The result is ignored.
+/// Pin the calling thread to `cpu` (`sched_setaffinity`). A CPU number a `cpu_set_t` cannot
+/// represent is not pinned; the call's result is ignored.
 #[cfg(target_os = "linux")]
 fn pin_current_thread_to(cpu: usize) {
+    if cpu >= cpu_set_size() {
+        return;
+    }
     // SAFETY: `cpu_set` is a zeroed, fully-owned `cpu_set_t`; `CPU_SET` sets one bit for a
-    // CPU number the kernel reported in this thread's mask; `sched_setaffinity(0, ...)`
-    // applies it to the calling thread and does not retain the pointer.
+    // CPU number below `CPU_SETSIZE`, checked above; `sched_setaffinity(0, ...)` applies it
+    // to the calling thread and does not retain the pointer.
     unsafe {
         let mut cpu_set: libc::cpu_set_t = std::mem::zeroed();
         libc::CPU_SET(cpu, &mut cpu_set);
@@ -131,7 +125,8 @@ mod tests {
     }
 
     /// The placement is read from the actual mask: a thread restricted to one CPU (what
-    /// `taskset` does to a process) places every shard on that CPU.
+    /// `taskset` does to a process) places every shard on that CPU. A CPU number beyond
+    /// `CPU_SETSIZE` is refused rather than written past the set.
     #[cfg(target_os = "linux")]
     #[test]
     fn a_restricted_mask_keeps_every_shard_inside_it() {
@@ -141,6 +136,7 @@ mod tests {
         };
         let mask = vec![first];
         let read = std::thread::spawn(move || {
+            pin_current_thread_to(usize::MAX);
             pin_current_thread_to(first);
             CpuPlacement::of_this_process()
         })
