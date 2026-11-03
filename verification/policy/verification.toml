@@ -9466,6 +9466,9 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::a_record_line_is_byte_identical_to_v0_18_1",
   # A run that stops numbering says so on the stream rather than going quiet.
   "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::an_exhausted_run_says_so_once",
+  # The stderr stream's order is offer order under each event's own seq, not seq order:
+  # THM-0070's emission-order property is the collector's (#1211).
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::the_stream_is_in_offer_order_and_keeps_each_events_own_seq",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::tests::the_ceiling_a_record_is_admitted_at_is_chosen_by_its_attribution",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::writer::tests::a_burst_that_stops_still_reports_what_it_cost",
   # "One record in, one line out" is a DELIVERY claim: whatever the record says, the stream
