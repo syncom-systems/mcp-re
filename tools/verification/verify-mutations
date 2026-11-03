@@ -32,6 +32,7 @@ copied or its build cannot run, PASS otherwise.
 
 Usage:
     tools/verification/verify-mutations [--probe ID]... [--unit ID]... [--keep-tree]
+    tools/verification/verify-mutations --compose DIR --shards N
 """
 
 from __future__ import annotations
@@ -639,6 +640,51 @@ def report_timings(timings: list[tuple[str, float]], total: float) -> None:
     print(f"  time {total:7.1f}s  lane total, {len(timings)} probe(s)")
 
 
+VERDICT_LINE = re.compile(r"^VERDICT: (\S+)\s*$", re.MULTILINE)
+
+
+def compose(directory: Path, shards: int) -> int:
+    """One verdict from the shard outputs a sharded run left in `directory`.
+
+    The shards are `shard-0.log` .. `shard-<N-1>.log`, N being the count the scope decided
+    on, never the count of files present: a shard that was cancelled, timed out or crashed
+    before writing leaves no file or no verdict line, and either is a shard that measured
+    nothing. So the composition is PASS only when every expected shard stated exactly one
+    verdict and it was PASS; anything else is FAIL, with each shortfall named.
+    """
+    if shards < 1:
+        print("FAIL: --compose needs --shards N with N >= 1; a composition of no shard measured nothing")
+        print("VERDICT: FAIL")
+        return 1
+    expected = {f"shard-{i}.log" for i in range(shards)}
+    present = {p.name for p in directory.glob("*.log")} if directory.is_dir() else set()
+    problems = [f"{name}: missing — the shard stated nothing" for name in sorted(expected - present)]
+    problems += [f"{name}: not a shard the scope decided on" for name in sorted(present - expected)]
+    for index in range(shards):
+        path = directory / f"shard-{index}.log"
+        if not path.is_file():
+            continue
+        text = path.read_text(errors="replace")
+        verdicts = VERDICT_LINE.findall(text)
+        if len(verdicts) != 1:
+            problems.append(f"{path.name}: {len(verdicts)} verdict line(s), not exactly one")
+            continue
+        summary = [line for line in text.splitlines() if line.startswith("verify-mutations: PASS")]
+        if verdicts[0] != "PASS":
+            problems.append(f"{path.name}: VERDICT {verdicts[0]}")
+        else:
+            print(f"  ok   {path.name}: {summary[-1] if summary else 'PASS'}")
+    if problems:
+        for problem in problems:
+            print(f"  FAIL {problem}")
+        print(f"\nFAIL: {len(problems)} shortfall(s) across {shards} shard(s)")
+        print("VERDICT: FAIL")
+        return 1
+    print(f"\nverify-mutations: PASS — all {shards} shard(s) stated PASS")
+    print("VERDICT: PASS")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--probe", action="append", default=[], help="only these probe ids")
@@ -656,7 +702,22 @@ def main() -> int:
             "defect in the environment the run is supposed to have"
         ),
     )
+    parser.add_argument(
+        "--compose",
+        metavar="DIR",
+        type=Path,
+        help="apply nothing; compose the outputs of a sharded run, `shard-<i>.log` in DIR",
+    )
+    parser.add_argument(
+        "--shards", type=int, default=0, help="with --compose: how many shards the scope decided on"
+    )
     args = parser.parse_args()
+    if args.compose is not None:
+        if args.unit or args.probe:
+            print("FAIL: --compose applies no probe, so it takes no --unit or --probe")
+            print("VERDICT: FAIL")
+            return 1
+        return compose(args.compose, args.shards)
 
     try:
         probes = load_probes()

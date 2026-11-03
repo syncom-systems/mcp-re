@@ -12,6 +12,15 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Changed — the signing window covers the outcome commitment's wait
+
+Under `--audit-commitment required`, the pre-dispatch signing-window check now covers the
+outcome commitment's (G2) bounded wait as well as the dispatch and the intent commitment's
+(G1) wait. A request whose window would lapse during G2 is refused with
+`mcp-re.delegated_signing_unavailable` (503) before the backend is reached, instead of being
+executed and then refused by the client. Retention completion states no bound and stays
+outside the check (ADR-MCPRE-070 §14 item 11, #1224).
+
 ### Added — installation and distribution
 
 Each release is now installable without cloning the repository, compiling Rust or running

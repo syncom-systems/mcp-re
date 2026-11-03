@@ -25,9 +25,11 @@
 //! so a pipeline that recorded the crossing before asking the questions that could still
 //! refuse would be rejected by the machine rather than merely recorded oddly.
 //!
-//! The signing window is asked to survive the intent's bounded wait as well as the
-//! dispatch's, because both now lie between the window's single clock reading and the
-//! reply it will sign.
+//! The signing window is asked to survive the intent's and the outcome's bounded waits as
+//! well as the dispatch's: the first two lie between the window's single clock reading and
+//! the reply it signs, and the outcome's between that signature and the served success.
+//! Retention completion follows the signature too and states no bound, so it is not asked
+//! about (ADR-MCPRE-070 §14 item 11).
 
 use mcp_re_core::McpReError;
 
@@ -132,14 +134,14 @@ impl HttpProfileProxy {
             Ok(prepared) => progress.establish(prepared),
             Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
         };
-        // The signing window must still be admissible at the worst instant this dispatch
-        // can complete at, after the intent crossing's own bounded wait — asked HERE because
-        // this is the first point where the bound exists and the last where refusing is
-        // free. The capability is already held, so a refusal drops it and returns everything
-        // it took.
+        // The signing window must still be admissible at the worst instant this exchange's
+        // success can be committed at: the dispatch's completion, after the intent crossing's
+        // bounded wait and before the outcome crossing's — asked HERE because this is the
+        // first point where the bound exists and the last where refusing is free. The
+        // capability is already held, so a refusal drops it and returns everything it took.
         let completion = prepared
             .completion_bound()
-            .after(self.audit.pre_dispatch_wait());
+            .after(self.audit.commitment_waits());
         if !signing_window::covers(&window, completion) {
             return Err(self.refuse_accepted(
                 acc,
