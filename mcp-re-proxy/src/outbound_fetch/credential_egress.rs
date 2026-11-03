@@ -79,12 +79,12 @@ impl CredentialEgress {
     /// metadata-server token fetch. A build whose only credential egress posts carries no
     /// method nothing calls.
     #[cfg(feature = "gcp_kms_keysource")]
-    pub(crate) fn get(&self, path: &str) -> ureq::Request {
+    pub(crate) fn get(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
         self.agent.get(&self.url_for(path))
     }
 
     /// A POST against `path` on the vetted authority.
-    pub(crate) fn post(&self, path: &str) -> ureq::Request {
+    pub(crate) fn post(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
         self.agent.post(&self.url_for(path))
     }
 

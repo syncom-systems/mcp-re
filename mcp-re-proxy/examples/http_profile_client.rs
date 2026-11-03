@@ -48,7 +48,11 @@ fn main() {
     // unset, both default to the canonical target (single-replica mode).
     let post_a = std::env::var("HPP_POST_A").unwrap_or_else(|_| target.clone());
     let post_b = std::env::var("HPP_POST_B").unwrap_or_else(|_| post_a.clone());
-    let agent = ureq::AgentBuilder::new().build();
+    let agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .proxy(None)
+        .build()
+        .new_agent();
     let now = hpp_common::now_unix();
     let resolver = hpp_common::resolver();
     // ADR-MCPRE-052: the client enrols ONLY the root; the credential the response carries
@@ -208,26 +212,26 @@ fn main() {
 fn post(agent: &ureq::Agent, url: &str, request: &HttpRequest) -> HttpResponse {
     let mut r = agent.post(url);
     for (k, v) in &request.headers {
-        r = r.set(k, v);
+        r = r.header(k, v);
     }
-    match r.send_bytes(&request.body) {
+    match r.send(&request.body[..]) {
         Ok(resp) => read_response(resp),
-        Err(ureq::Error::Status(_code, resp)) => read_response(resp),
         Err(e) => panic!("transport error to {url}: {e}"),
     }
 }
 
 /// Reconstruct the profile `HttpResponse` from a ureq response. Header names +
 /// values are read BEFORE consuming the body reader.
-fn read_response(resp: ureq::Response) -> HttpResponse {
-    let status = resp.status();
+fn read_response(resp: ureq::http::Response<ureq::Body>) -> HttpResponse {
+    let status = resp.status().as_u16();
     let headers: Vec<(String, String)> = resp
-        .headers_names()
+        .headers()
         .iter()
-        .filter_map(|name| resp.header(name).map(|v| (name.clone(), v.to_owned())))
+        .filter_map(|(name, v)| v.to_str().ok().map(|v| (name.to_string(), v.to_owned())))
         .collect();
     let mut body = Vec::new();
-    resp.into_reader()
+    resp.into_body()
+        .into_reader()
         .take(1024 * 1024)
         .read_to_end(&mut body)
         .expect("read response body");

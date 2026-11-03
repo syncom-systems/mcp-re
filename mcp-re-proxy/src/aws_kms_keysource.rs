@@ -47,6 +47,7 @@ use crate::kms_keysource::Ed25519SpkiDer;
 use crate::kms_keysource::KmsEd25519Backend;
 use crate::kms_keysource::RawEd25519Message;
 use crate::kms_keysource::RawEd25519Signature;
+use crate::outbound_fetch::{Failure, FetchWith, RequestBound};
 use crate::remote_signer_call::read_error_body;
 use crate::remote_signer_call::RemoteSignerFailure;
 
@@ -171,16 +172,16 @@ impl UreqKmsClient {
         let mut req = self
             .egress
             .post("")
-            .set("Host", &self.authority)
-            .set("Content-Type", KMS_CONTENT_TYPE)
-            .set("X-Amz-Target", target)
-            .set("X-Amz-Date", &signed.amz_date)
-            .set("Authorization", &signed.authorization)
-            .timeout(NETWORK_TIMEOUT);
+            .header("Host", &self.authority)
+            .header("Content-Type", KMS_CONTENT_TYPE)
+            .header("X-Amz-Target", target)
+            .header("X-Amz-Date", &signed.amz_date)
+            .header("Authorization", &signed.authorization)
+            .bounded_by(NETWORK_TIMEOUT);
         if let Some(token) = &signed.security_token {
-            req = req.set("X-Amz-Security-Token", token);
+            req = req.header("X-Amz-Security-Token", token.as_str());
         }
-        read_kms_response(req.send_bytes(body))
+        read_kms_response(req.fetch_with(body))
     }
 }
 
@@ -211,9 +212,7 @@ impl KmsHttpClient for UreqKmsClient {
 /// arbitrarily large body and grow memory without bound on the blocking signing thread.
 /// Capping only the success path left that trivially bypassable — the same endpoint controls
 /// this path by returning any non-2xx status, and `into_string()` reads ~10 MiB.
-fn read_kms_response(
-    outcome: Result<ureq::Response, ureq::Error>,
-) -> Result<Vec<u8>, RemoteSignerFailure> {
+fn read_kms_response(outcome: Result<ureq::Body, Failure>) -> Result<Vec<u8>, RemoteSignerFailure> {
     match outcome {
         Ok(resp) => {
             // A GetPublicKey/Sign JSON response is well under a KB; cap at 256 KiB like
@@ -237,9 +236,9 @@ fn read_kms_response(
             Ok(buf)
         }
         // Bounded like the GCP sibling's `read_error_body`.
-        Err(ureq::Error::Status(code, resp)) => Err(RemoteSignerFailure::status_body(
+        Err(Failure::Status(code, resp)) => Err(RemoteSignerFailure::status_body(
             code,
-            read_error_body(resp),
+            read_error_body(*resp),
         )),
         Err(e) => Err(RemoteSignerFailure::transport(format!("transport: {e}"))),
     }
@@ -1130,11 +1129,9 @@ mod tests {
     #[test]
     fn a_kms_body_over_the_cap_is_refused_and_one_at_the_cap_is_accepted() {
         let cap = MAX_KMS_RESPONSE_BYTES as usize;
-        let over = read_kms_response(Ok(
-            ureq::Response::new(200, "OK", &"a".repeat(cap + 1)).unwrap()
-        ));
+        let over = read_kms_response(Ok(ureq::Body::builder().data("a".repeat(cap + 1))));
         assert!(format!("{over:?}").contains("exceeds"), "{over:?}");
-        let at = read_kms_response(Ok(ureq::Response::new(200, "OK", &"a".repeat(cap)).unwrap()))
+        let at = read_kms_response(Ok(ureq::Body::builder().data("a".repeat(cap))))
             .expect("a body of exactly the cap is accepted");
         assert_eq!(at.len(), cap);
     }

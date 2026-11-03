@@ -89,6 +89,14 @@ mod public_roots;
 ))]
 mod resolver;
 
+#[cfg(feature = "gcp_kms_keysource")]
+pub(crate) use binding::Fetch;
+#[cfg(any(
+    feature = "online_ocsp",
+    feature = "aws_kms_keysource",
+    feature = "gcp_kms_keysource"
+))]
+pub(crate) use binding::{Failure, FetchWith, RequestBound};
 #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
 pub use credential_egress::CredentialEgress;
 

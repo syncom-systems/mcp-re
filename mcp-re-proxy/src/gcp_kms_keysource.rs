@@ -60,8 +60,8 @@ use crate::kms_keysource::Ed25519SpkiDer;
 use crate::kms_keysource::KmsEd25519Backend;
 use crate::kms_keysource::RawEd25519Message;
 use crate::kms_keysource::RawEd25519Signature;
-use crate::remote_signer_call::read_error_body;
-use crate::remote_signer_call::RemoteSignerFailure;
+use crate::outbound_fetch::{Failure, Fetch, FetchWith, RequestBound};
+use crate::remote_signer_call::{read_error_body, RemoteSignerFailure};
 
 /// The only Cloud KMS key algorithm this adapter accepts.
 const ALGORITHM_ED25519: &str = "EC_SIGN_ED25519";
@@ -451,9 +451,9 @@ impl MetadataServerTokenSource {
         let body = match self
             .egress
             .get("computeMetadata/v1/instance/service-accounts/default/token")
-            .set("Metadata-Flavor", "Google")
-            .timeout(NETWORK_TIMEOUT)
-            .call()
+            .header("Metadata-Flavor", "Google")
+            .bounded_by(NETWORK_TIMEOUT)
+            .fetch()
         {
             Ok(resp) => {
                 // The response body IS the credential. Held in `Zeroizing` from the
@@ -744,14 +744,14 @@ impl UreqGcpClient {
         match self
             .egress
             .get(&self.public_key_path)
-            .set("Authorization", auth)
-            .timeout(NETWORK_TIMEOUT)
-            .call()
+            .header("Authorization", auth)
+            .bounded_by(NETWORK_TIMEOUT)
+            .fetch()
         {
             Ok(resp) => read_body(resp).map_err(RemoteSignerFailure::rendered),
-            Err(ureq::Error::Status(code, resp)) => Err(RemoteSignerFailure::status_body(
+            Err(Failure::Status(code, resp)) => Err(RemoteSignerFailure::status_body(
                 code,
-                read_error_body(resp),
+                read_error_body(*resp),
             )),
             Err(e) => Err(RemoteSignerFailure::transport(e.to_string())),
         }
@@ -765,15 +765,15 @@ impl UreqGcpClient {
         match self
             .egress
             .post(&self.sign_path)
-            .set("Authorization", auth)
-            .set("Content-Type", "application/json")
-            .timeout(NETWORK_TIMEOUT)
-            .send_bytes(body)
+            .header("Authorization", auth)
+            .header("Content-Type", "application/json")
+            .bounded_by(NETWORK_TIMEOUT)
+            .fetch_with(body)
         {
             Ok(resp) => read_body(resp).map_err(RemoteSignerFailure::rendered),
-            Err(ureq::Error::Status(code, resp)) => Err(RemoteSignerFailure::status_body(
+            Err(Failure::Status(code, resp)) => Err(RemoteSignerFailure::status_body(
                 code,
-                read_error_body(resp),
+                read_error_body(*resp),
             )),
             Err(e) => Err(RemoteSignerFailure::transport(e.to_string())),
         }
@@ -792,7 +792,7 @@ impl GcpKmsTransport for UreqGcpClient {
     }
 }
 
-fn read_body(resp: ureq::Response) -> Result<Vec<u8>, KeyError> {
+fn read_body(resp: ureq::Body) -> Result<Vec<u8>, KeyError> {
     let mut buf = Vec::new();
     resp.into_reader()
         .take(256 * 1024)
@@ -2028,7 +2028,7 @@ mod tests {
     /// An endpoint whose authority a URL parser reads differently from the text must never
     /// reach a Cloud KMS request.
     ///
-    /// `ureq` resolves the URL with `url::Url::parse` and connects to its `host_str()`, so
+    /// `ureq` parses the URL as an `http::Uri` and connects to its authority's host, so
     /// `https://cloudkms.googleapis.com@evil.example.com` reaches `evil.example.com` while
     /// reading as Cloud KMS. That host receives a live workload-identity bearer token
     /// authorizing `asymmetricSign` on the ROOT response-signing key, and answers

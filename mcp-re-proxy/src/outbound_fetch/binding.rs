@@ -13,6 +13,9 @@
 
 use std::time::Duration;
 
+use ureq::unversioned::resolver::DefaultResolver;
+use ureq::unversioned::transport::{Connector, DefaultConnector};
+
 use super::public_roots::RootedConnector;
 use super::resolver::VettingResolver;
 use super::{Provenance, VettedDestination};
@@ -30,21 +33,162 @@ impl VettedDestination {
     /// literal-address block is.
     ///
     /// The agent carries `timeout` as its overall request bound, so a request built from it
-    /// is bounded even when the call site sets no `.timeout(..)` of its own (a per-request
-    /// timeout overrides it). The bound covers connect and I/O, not name resolution. Its TLS
-    /// authenticates a server against the public Web PKI roots, through the connector
-    /// `public_roots` owns.
+    /// is bounded even when the call site sets no timeout of its own (a per-request
+    /// `timeout_global` overrides it). No proxy is consulted, whatever the environment says:
+    /// the connection goes to the vetted destination itself. A non-2xx status is a response,
+    /// not an error, so its caller reads the body under its own bound. The time bound covers
+    /// connect and I/O, not name resolution. Its TLS authenticates a server against the
+    /// public Web PKI roots, through the connector `public_roots` owns, chained after ureq's
+    /// own TCP connector.
     pub fn agent(&self, timeout: Duration) -> ureq::Agent {
-        let builder = ureq::AgentBuilder::new()
-            .redirects(0)
-            .timeout(timeout)
-            .tls_connector(RootedConnector::public());
-        let builder = match self.provenance {
-            Provenance::CertificateDerived => builder.resolver(VettingResolver::std()),
-            Provenance::OperatorConfigured => builder,
-        };
-        builder.build()
+        let config = ureq::Agent::config_builder()
+            .max_redirects(0)
+            .http_status_as_error(false)
+            .proxy(None)
+            .timeout_global(Some(timeout))
+            .build();
+        let connector = DefaultConnector::new().chain(RootedConnector::public());
+        match self.provenance {
+            Provenance::CertificateDerived => {
+                ureq::Agent::with_parts(config, connector, VettingResolver::std())
+            }
+            Provenance::OperatorConfigured => {
+                ureq::Agent::with_parts(config, connector, DefaultResolver::default())
+            }
+        }
     }
+}
+
+/// A per-request time bound on a request built from an agent [`VettedDestination::agent`]
+/// handed out. It replaces the agent's own bound for that request.
+#[cfg(any(
+    feature = "online_ocsp",
+    feature = "aws_kms_keysource",
+    feature = "gcp_kms_keysource"
+))]
+pub(crate) trait RequestBound {
+    fn bounded_by(self, timeout: Duration) -> Self;
+}
+
+#[cfg(any(
+    feature = "online_ocsp",
+    feature = "aws_kms_keysource",
+    feature = "gcp_kms_keysource"
+))]
+impl<B> RequestBound for ureq::RequestBuilder<B> {
+    fn bounded_by(self, timeout: Duration) -> Self {
+        ureq::RequestBuilder::config(self)
+            .timeout_global(Some(timeout))
+            .build()
+    }
+}
+
+/// Why a fetched request yielded no body to read: the remote answered with a failure
+/// status, whose response is kept so its body can be read under the caller's bound, or no
+/// answer arrived.
+#[cfg(any(
+    feature = "online_ocsp",
+    feature = "aws_kms_keysource",
+    feature = "gcp_kms_keysource"
+))]
+#[derive(Debug)]
+pub(crate) enum Failure {
+    Status(u16, Box<ureq::http::Response<ureq::Body>>),
+    Transport(ureq::Error),
+}
+
+#[cfg(any(
+    feature = "online_ocsp",
+    feature = "aws_kms_keysource",
+    feature = "gcp_kms_keysource"
+))]
+impl Failure {
+    /// The class of the failure, without ureq's rendering of it: that rendering can carry
+    /// the request URL, and an operator-configured URL may carry userinfo.
+    #[cfg(feature = "online_ocsp")]
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            Failure::Status(..) => "http status",
+            Failure::Transport(ureq::Error::Timeout(_)) => "timeout",
+            Failure::Transport(ureq::Error::HostNotFound) => "host not found",
+            Failure::Transport(ureq::Error::ConnectionFailed) => "connection failed",
+            Failure::Transport(ureq::Error::Io(_)) => "i/o failure",
+            Failure::Transport(ureq::Error::Tls(_) | ureq::Error::TlsRequired) => "tls failure",
+            Failure::Transport(ureq::Error::BadUri(_)) => "bad url",
+            Failure::Transport(_) => "transport failure",
+        }
+    }
+}
+
+#[cfg(any(
+    feature = "online_ocsp",
+    feature = "aws_kms_keysource",
+    feature = "gcp_kms_keysource"
+))]
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Failure::Status(code, _) => write!(f, "status code {code}"),
+            Failure::Transport(error) => error.fmt(f),
+        }
+    }
+}
+
+/// [`FetchWith`] for a request that carries no body.
+#[cfg(feature = "gcp_kms_keysource")]
+pub(crate) trait Fetch {
+    /// The request as built, with no body.
+    fn fetch(self) -> Result<ureq::Body, Failure>;
+}
+
+#[cfg(feature = "gcp_kms_keysource")]
+impl Fetch for ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+    fn fetch(self) -> Result<ureq::Body, Failure> {
+        answered(self.call())
+    }
+}
+
+/// Sending a request built from an agent [`VettedDestination::agent`] handed out, and
+/// drawing the line between a result and a refusal: a 4xx or 5xx is a [`Failure::Status`].
+///
+/// The agent answers every status as a response, so a caller reads a refusal's body under
+/// its own bound. A 3xx is not on the failure side: no agent follows a redirect, so one
+/// reaches its caller as a body, which that caller parses or refuses.
+#[cfg(any(
+    feature = "online_ocsp",
+    feature = "aws_kms_keysource",
+    feature = "gcp_kms_keysource"
+))]
+pub(crate) trait FetchWith {
+    /// The request as built, carrying `body`.
+    fn fetch_with(self, body: &[u8]) -> Result<ureq::Body, Failure>;
+}
+
+#[cfg(any(
+    feature = "online_ocsp",
+    feature = "aws_kms_keysource",
+    feature = "gcp_kms_keysource"
+))]
+impl FetchWith for ureq::RequestBuilder<ureq::typestate::WithBody> {
+    fn fetch_with(self, body: &[u8]) -> Result<ureq::Body, Failure> {
+        answered(self.send(body))
+    }
+}
+
+#[cfg(any(
+    feature = "online_ocsp",
+    feature = "aws_kms_keysource",
+    feature = "gcp_kms_keysource"
+))]
+fn answered(
+    outcome: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+) -> Result<ureq::Body, Failure> {
+    let response = outcome.map_err(Failure::Transport)?;
+    let status = response.status();
+    if status.is_client_error() || status.is_server_error() {
+        return Err(Failure::Status(status.as_u16(), Box::new(response)));
+    }
+    Ok(response.into_body())
 }
 
 #[cfg(test)]
@@ -97,10 +241,12 @@ mod tests {
         let outcome = destination
             .agent(Duration::from_secs(5))
             .post(destination.url())
-            .timeout(Duration::from_secs(5))
-            .send_string("");
+            .config()
+            .timeout_global(Some(Duration::from_secs(5)))
+            .build()
+            .send("");
         assert_eq!(
-            outcome.map(|response| response.status()).ok(),
+            outcome.map(|response| response.status().as_u16()).ok(),
             Some(302),
             "the responder's own redirect must be what the caller sees"
         );
@@ -140,8 +286,10 @@ mod tests {
             let _ = destination
                 .agent(Duration::from_secs(5))
                 .post(destination.url())
-                .timeout(Duration::from_secs(2))
-                .send_string("");
+                .config()
+                .timeout_global(Some(Duration::from_secs(2)))
+                .build()
+                .send("");
             std::thread::sleep(Duration::from_millis(200));
             reached.load(Ordering::SeqCst)
         }
@@ -179,7 +327,7 @@ mod tests {
             let outcome = destination
                 .agent(Duration::from_millis(300))
                 .post(destination.url())
-                .send_string("");
+                .send("");
             let _ = tx.send(outcome);
         });
         let outcome = rx

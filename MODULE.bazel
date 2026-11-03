@@ -358,7 +358,7 @@ crate.spec(
 )
 crate.spec(
     package = "ureq",
-    version = "2",
+    version = "3",
     default_features = False,
     repositories = ["crates_mcp_re"],
 )
