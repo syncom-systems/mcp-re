@@ -179,10 +179,18 @@ def workflow_jobs() -> list[tuple[str, str, set[str]]]:
     workflows are heavily commented, and explaining why a step exists means naming what it
     runs: a comment in `ci.yml` reading "`tools/verification/verify --manifests` fails on the
     same fact" once made the CARGO job look like it invoked the umbrella.
+
+    A name carrying an expression (`mutation probe shard ${{ matrix.shard }}`) is a template,
+    not a check name: GitHub reports one check per expansion, and none of them is the string
+    the workflow states. Such a job is a shard whose lane is carried by the job that composes
+    its shards, so it is not returned; were it returned, a deferral that skips the shards
+    would read as a required check that is missing.
     """
     jobs: list[tuple[str, str, set[str]]] = []
     for path in sorted(WORKFLOWS.glob("*.yml")):
         for job in read(path).jobs.values():
+            if "${{" in job.name:
+                continue
             invoked = {
                 script
                 for command in job.commands()
