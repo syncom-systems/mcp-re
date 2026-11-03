@@ -29,7 +29,7 @@ permissions:
 jobs:
   inventory:
     name: test inventory (compiled)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Set up the pinned Python

@@ -581,10 +581,10 @@ pub(crate) mod test_support {
 
     /// The trust plan a deployment in this posture projects.
     ///
-    /// Through the boundary and then through `TrustPlan::from_validated`, so the plan's
-    /// revocation posture, its derived reload cadence and its document all come from ONE
-    /// accepted deployment. The literal this replaced could pair any state with any
-    /// cadence, and did: it named a 30s reload beside a state carrying 5s.
+    /// Through the boundary and then through `response_authority_plans`, so the plan's
+    /// revocation posture, its derived reload cadence, its document and its response
+    /// authority all come from ONE accepted deployment. The literal this replaced could pair
+    /// any state with any cadence, and did: it named a 30s reload beside a state carrying 5s.
     pub(crate) fn trust_plan(
         tier: crate::revocation_tier::RevocationTier,
         reload_secs: Option<u64>,
@@ -594,12 +594,7 @@ pub(crate) mod test_support {
         config.request_signer_currency = currency_posture(tier, reload_secs, epoch);
         let validated = super::validation::ValidatedDeployment::try_from(config)
             .expect("the requested trust posture is a legal deployment");
-        let epoch_plan = crate::startup_plan::TrustEpochPlan::from_validated(&validated);
-        crate::startup_plan::TrustPlan::from_validated(
-            &validated,
-            "response-kid".to_string(),
-            epoch_plan,
-        )
+        crate::startup_plan::response_authority_plans(&validated).0
     }
 
     /// The CRL state a deployment with these files and cadence reaches.

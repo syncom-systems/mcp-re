@@ -113,6 +113,12 @@ def _structural_problems(reg: Registries, root: Path) -> list[str]:
         if unit is None:
             out.append(f"{where}: unit {probe['unit']!r} is not declared in verification.toml")
             continue
+        if not any(str(e).startswith("structural://") for e in unit.get("evidence", [])):
+            out.append(
+                f"{where}: unit {probe['unit']!r} declares no structural:// evidence, so the "
+                f"refusal it witnesses is one no claim rests on and no fingerprint covers"
+            )
+            continue
         problem = provenance_problem(probe, unit, root)
         if problem:
             out.append(f"{where}: {problem}")

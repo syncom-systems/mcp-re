@@ -32,7 +32,6 @@ use crate::tls::assertion_header;
 use crate::tls::routing_header_rejection;
 use crate::tls::served_channel_peer;
 use crate::tls::wall_clock_unix;
-use crate::tls::ServerLimits;
 use crate::tls::ServerOptions;
 use crate::transport::RequestHeaders;
 
@@ -55,16 +54,28 @@ pub(super) fn serve_one<H>(
 where
     H: FnOnce(&[u8], Option<AuthenticatedChannelPeer>, Option<&str>) -> Vec<u8>,
 {
-    apply_socket_timeouts(&tcp, &options.limits)?;
+    apply_socket_timeouts(&tcp, &options.connection_bounds)?;
     let conn = ServerConnection::new(config).map_err(|e| io::Error::other(e.to_string()))?;
     // AGGREGATE wall-clock deadline over the WHOLE read phase (handshake + header/
     // body), the server-side mirror of mcp-re-transport's `DeadlineStream`
     // (MCPS-094/093): a peer trickling bytes just under `read_timeout` cannot hold
     // this serve thread without bound (slow-loris). Reads go through the wrapper;
     // writes delegate straight to the socket (bounded by `write_timeout`).
-    let mut stream = StreamOwned::new(conn, DeadlineStream::new(tcp, &options.limits));
+    let bounds = &options.connection_bounds;
+    let mut stream = StreamOwned::new(
+        conn,
+        DeadlineStream::new(
+            tcp,
+            Some(bounds.request_deadline()),
+            Some(bounds.read_timeout()),
+        ),
+    );
 
-    let request = read_http_request(&mut stream, &options.limits)?;
+    let request = read_http_request(
+        &mut stream,
+        options.limits.max_header_bytes,
+        options.limits.max_body_bytes,
+    )?;
     // THE ESTABLISHMENT BOUNDARY (ADR-MCPRE-063 Slice 4). The read above is what drove
     // the rustls handshake to completion — a `ServerConnection` exists before that and
     // proves nothing — so this is the first point at which the mechanism can be asked
@@ -94,10 +105,13 @@ where
     Ok(peer)
 }
 
-/// Apply the configured read/write timeouts to a freshly-accepted socket.
-fn apply_socket_timeouts(tcp: &TcpStream, limits: &ServerLimits) -> io::Result<()> {
-    tcp.set_read_timeout(limits.read_timeout)?;
-    tcp.set_write_timeout(limits.write_timeout)?;
+/// Apply the owner's read/write timeouts to a freshly-accepted socket.
+fn apply_socket_timeouts(
+    tcp: &TcpStream,
+    bounds: &crate::config_state::ConnectionBounds,
+) -> io::Result<()> {
+    tcp.set_read_timeout(Some(bounds.read_timeout()))?;
+    tcp.set_write_timeout(Some(bounds.write_timeout()))?;
     Ok(())
 }
 

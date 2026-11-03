@@ -2889,6 +2889,21 @@ from `aws_sts.rs` (no `lib.rs` line),
 its tests with it, retargeting mutation probe M265's path and the moved `tested_symbols`.
 Authority (c)'s revocation gap waits on ruling `aws-credential-revocation-recovery`.
 
+**Performed for (d), 2026-10-29.** `aws_sts/sts_protocol.rs` holds the codec (171 production
+lines) and its twelve tests. The parent calls only `read_capped`, `form_encode` and
+`parse_assume_role_response`, each `pub(super)`. The value it builds,
+`CachedCredentials`, stays with authority (c), which owns the cache. The codec reads no
+clock: the exchange passes the instant a response is judged at, so the clock boundary still
+names `aws_sts.rs` alone. `aws_sts.rs` is now
+783 -> 636, still three authorities (a, b, c), so the file stays `reviewed-action-required`
+until (c)'s ruling decides its shape.
+
+**Ruling `aws-credential-revocation-recovery` (owner, 2026-10-29).** Preserve the existing
+bounded, fail-closed recovery semantics: the cache, single flight, the unknown-expiry floor,
+the failure cool-off and poison recovery stay exactly as they behave today. The ruling
+decides the shape, so the remaining action is responsibility separation only, with no
+change to recovery policy.
+
 
 ## EX-017 — Ruling 14.4 campaign waivers — **temporary CI representation, NOT a §14 census**
 
@@ -2983,7 +2998,7 @@ return to 209 during the remediation campaign.
 
 ---
 
-## EX-018 — `mcp-re-proxy/src/config_state/transport.rs` — **census complete, disposition: ACTION REQUIRED, no exception sought**
+## EX-018 — `mcp-re-proxy/src/config_state/transport.rs` — **census complete; action performed; the remainder is a §14 reviewed exception (2026-10-29)**
 
 The twelve questions (ADR-MCPRE-061 §8), answered for the file as a unit (finding
 `4232fb9da5d69c46`).
@@ -3043,3 +3058,174 @@ every refusal sentence and test body moved byte for byte. The unit
 measured at `c939c2f`), still over the 200-line trigger. Whether one authority of that size
 is kept whole is a census question this action did not ask, so the register entry stays
 `reviewed-action-required` at the new baseline until a census records it.
+
+### §14 reviewed exception (owner ruling, 2026-10-29)
+
+**Status:** `reviewed-exception` at the registered baseline, **263**. No growth is
+authorized: the ratchet holds the file at 263, and any increase needs its own census and
+its own `growth-authorization` line.
+
+**Authority:** the owner's ruling of 2026-10-29 closing the 2026-10-27 architecture
+remediation campaign: *keep `config_state/transport.rs` intact at its current baseline;
+record the ADR-MCPRE-061 exception; no growth authorization.* This record states the B-case
+the ruling rests on. It is an agent record made under that ruling, not an owner signature.
+
+**Question 2 is ONE.** After MCPRE-207 the file holds authority (a) alone: which
+peer-identity form the deployment is in, whether that form can be deployed, and which
+certificate field binds the verified signer to the channel.
+
+- **Why decomposition would damage the reasoning.** The classifier's answer and the form
+  refusals are one relation. `classify_binding` reaches an `Exact*` state only when
+  `binding_kind_refusals` is empty, and `binding_kind_refusals` is exhaustive over
+  `PeerIdentityEvidenceRequest` so that a new form has no state until its arm is written.
+  The per-form material checks (`ingress_assertion_refusal`, `attested_ingress_refusal`,
+  `verification_keys_refusal`) are the remaining columns of the same table. Splitting them
+  out would put the legality of a form in one file and the state that form may reach in
+  another, with the exhaustive match as the only thing tying them together.
+- **What invariant requires locality.** *No form that is not the one deployable form
+  reaches a channel-binding state*, together with *a form's material is checked by the
+  owner that admits the form*. Both are read off this file top to bottom, beside the
+  module's state table.
+- **Why the subordinates cannot be separated.** No subordinate check has a reader outside
+  this file. The cross-module surface is `classify_and_validate_binding` (the classifier),
+  `undeployable_transport_binding_refusal` (the one deployability decision, which the
+  Mode-C materializer's documentation names instead of restating) and
+  `ingress_assertion_violation` (spliced into `validation::legality_violations`). The
+  classifier's readers are `app.rs` and `validation::refusable_machines`. Each is a projection of the machine, not a separable
+  authority.
+- **Compensating evidence.** `//mcp-re-proxy:proxy_unit_test`
+  (`config_state::transport::tests`) and the clause-precedence tests in
+  `config_refusal_precedence_test`, both claimed by unit
+  `proxy.transport_binding_and_crl_state`.
+
+Every refusal is a sentence an operator reads, and the 263 lines are mostly those sentences
+and the reasons beside them. Trimming them to the threshold would remove the argument this
+record cites.
+
+## EX-019 — `mcp-re-proxy/src/transparency/durability.rs` — **census complete; action performed; the remainder is a §14 reviewed exception (2026-10-29)**
+
+The twelve questions (ADR-MCPRE-061 §8), answered for the file as a unit at `6c045ef7`
+(498 production lines, `unreviewed`; #1248).
+
+1. **Owns.** WHEN the deployment becomes answerable for retaining an exchange — the
+   `reserve` → `commit_to_dispatch` → `complete` stage protocol — AND the lifecycle of the
+   writer thread AND admission to its queue AND which marker files are on disk AND a second
+   retention path with no execution boundary. Four "and"s.
+2. **Authorities.** Five:
+   - (a) the writer thread's lifecycle: `open_bounded`'s spawn, the bounded `Drop`,
+     `writer_lost`, `WRITER_JOIN_POLL` and the two test hooks that stand in for a dead or
+     silent writer;
+   - (b) queue admission and fault mapping: `submit` (a full queue is retryable
+     backpressure, a disconnected one a retired store, a dropped acknowledgement unresolved
+     before dispatch) and the permit acquisition, written out twice (`reserve`, `retain`);
+   - (c) the stage protocol: `reserve`, `commit_to_dispatch`, `complete`;
+   - (d) marker naming and enumeration: `marker_path`, `marker_digest`, `markers_at`,
+     `pending_reservations`, `stale_reservations`, with the two stage extensions held in
+     `reserved_before_dispatch.rs` and `dispatch_committed.rs`;
+   - (e) `retain`, which writes a hop with no reservation and no crossing.
+3. **Decides.** (c) what each stage writes and what its failure means (`Store`,
+   `Unresolved`, `AlreadyCompleted`); (b) which of three faults a failed hand-off is, and
+   that admission is refused before dispatch.
+4. **Executes.** Spawning and reclaiming the writer thread (a); a `read_dir` of the root (d).
+   Every filesystem write is the writer's (`durable_writer.rs`).
+5. **Transports.** Write jobs and their acknowledgements between request futures and the
+   writer thread; the `RetainedArchive` projection, handed out through `archive()`.
+6. **Reconstructs.** Nothing another owner decided: an object's path is asked of the
+   archive. But the marker naming rule is in four places (question 10).
+7. **Ordering-only relationships.** None across calls: the stage order is held by
+   `ReservedBeforeDispatch` → `DispatchCommitted`, each consumed by the next stage. Inside
+   `open_bounded`, the writable open precedes the read projection by statement order, and
+   says why.
+8. **Test-only interface.** Four `pub` items with no production caller:
+   `pending_reservations` (integration tests only), `stale_reservations` (this file's tests
+   only), `retain` (this file's tests only) and `archive()` (tests only — the auditor opens
+   its own read-only archive, `auditor/run.rs`).
+9. **Unreachable.** None found.
+10. **Represented twice.** The permit acquisition and its refusal (`reserve`, `retain`). The
+    marker naming rule: the path is built by `marker_path` here, parsed back by
+    `marker_digest` here, and its two extensions are constants in two other files.
+11. **Constructible inconsistency.** `marker_path` and `markers_at` take the stage as a
+    `&str`, so a marker can be named, or enumerated, at a stage the protocol does not have.
+12. **Lanes.** `//mcp-re-proxy:proxy_unit_test` (`transparency::durability::tests`);
+    `//mcp-re-proxy:integration_async_test` (`outcome_before_success_test`,
+    `mrt_continuation_serving_test`, `transparency_e2e_test`); mutation probe M138.
+
+### Disposition
+
+Action required, by responsibility:
+
+- (a) moves to `transparency/writer_thread.rs` as `WriterThread`: the thread, the one sender
+  this side holds, and the bounded reclamation on drop.
+- (b) moves to `transparency/retention_queue.rs` as `RetentionQueue`, over a `WriterThread`:
+  admission, which becomes one method so the permit is acquired in one place, and the
+  acknowledged hand-off with its fault mapping. (a) and (b) share only the sender, and each
+  is describable without the other: how long teardown waits for a thread, and whether a job
+  may reach it and what its failure was.
+- (d) splits by who needs it. The naming rule becomes a closed type,
+  `transparency/marker_stage.rs::MarkerStage`, which names a stage's marker and reads one
+  back; the two extensions leave `reserved_before_dispatch.rs` and `dispatch_committed.rs`.
+  Enumeration moves to `RetainedArchive`, the read projection: which markers are on disk is
+  a fact about the directory, and an auditor holding only a read-only archive can ask it.
+- (e) becomes `#[cfg(test)]`, and with it `RetainedHopRecord::of`, which only it called. It is a
+  second retention contract with no execution boundary; the reason its doc gave for it,
+  importing a hop, has no caller and no fixture.
+- `archive()` is removed. Tests read the directory the way the auditor does,
+  `RetainedArchive::open_read_only`.
+- `EvidenceRetention` keeps (c).
+
+### Performed (2026-10-28, #1248)
+
+All of the above. No behaviour changed. Moved docs and function bodies keep their wording
+except where they named the type they left, and the stage protocol's code differs only in
+asking `RetentionQueue` to admit and submit and `RetainedArchive` for marker names. Measured with `module_size_gate.py`:
+
+| file | production lines |
+|---|---|
+| `durability.rs` | 264 (498 before) |
+| `retention_queue.rs` | 131 |
+| `writer_thread.rs` | 105 |
+| `marker_stage.rs` | 60 |
+| `retained_archive.rs` | 174 (116 before) |
+
+M138 follows `submit` to `retention_queue.rs`, unchanged. The unit
+`proxy.retention_commitment` measures the three new files and claims their seven tests; the
+enumeration test moves to `retained_archive::tests` under its existing disposition.
+
+`durability.rs` now holds authority (c) alone, at 264 production lines, still over the
+200-line trigger. The remainder is the three stages and the argument for their order, and
+this census found no further seam in it; whether it is kept whole as a reviewed exception is
+recorded separately, so the register entry stays `reviewed-action-required` at the new
+baseline until then.
+
+### §14 reviewed exception (owner ruling, 2026-10-29)
+
+**Status:** `reviewed-exception` at the registered baseline, **264**. No growth is
+authorized: the ratchet holds the file at 264, and any increase needs its own census and
+its own `growth-authorization` line.
+
+**Authority:** the owner's ruling of 2026-10-29 closing the 2026-10-27 architecture
+remediation campaign: *keep `transparency/durability.rs` intact at its current baseline;
+record the ADR-MCPRE-061 exception; no growth authorization.* This record states the B-case
+the ruling rests on. It is an agent record made under that ruling, not an owner signature.
+
+**Question 2 is ONE.** After #1248 the file holds authority (c) alone: the
+`reserve` -> `commit_to_dispatch` -> `complete` stage protocol, which decides at what
+instant the deployment becomes answerable for retaining an exchange.
+
+- **Why decomposition would damage the reasoning.** The guarantee is an ORDER: admission
+  before dispatch, durability before the response. The module documentation states it once
+  and the three stages implement it in sequence, each consuming the previous stage's
+  token (`ReservedBeforeDispatch` -> `DispatchCommitted`). A stage in a separate file would
+  leave the order argument in one place and the steps it constrains in another.
+- **What invariant requires locality.** *A reservation contributes at most two queued
+  jobs at any instant*, which bounds the queue at `2K` for `K` reservations and is carried
+  by `durability_bounds::write_queue_capacity`. It holds only because of what all three
+  stages emit together; no stage alone states it.
+- **Why the subordinates cannot be separated.** EX-019's census moved every other
+  authority out: the writer thread, queue admission, marker naming and enumeration. What
+  remains has no second reader and nothing a fourth file could own.
+- **Compensating evidence.** `//mcp-re-proxy:proxy_unit_test`
+  (`transparency::durability::tests`), `//mcp-re-proxy:integration_async_test`
+  (`outcome_before_success_test`, `mrt_continuation_serving_test`,
+  `transparency_e2e_test`) and mutation probe M138, under unit
+  `proxy.retention_commitment`.

@@ -8,7 +8,7 @@
 //! as it holds the connection open. `--client-crl-reload-secs` rebuilds the verifier,
 //! but the rebuilt verifier only ever reaches NEW connections.
 //!
-//! Bounding that with [`ServerLimits::max_connection_age`](crate::tls::ServerLimits)
+//! Bounding that with [`ServerLimits::max_connection_age`](crate::deployment_request::ServerLimits)
 //! makes the exposure finite, and binding session resumption to the trust epoch
 //! ([`tls_auth_epoch`](crate::tls_auth_epoch)) stops a resumed handshake from restoring
 //! a peer chain built under trust that has since changed. Neither

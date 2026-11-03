@@ -188,8 +188,18 @@ def project_of(path: str, eco: Ecosystem) -> str | None:
     Walking UP rather than reading the first segment is what lets a project live anywhere in
     the tree: `sdk/python` and `mcp-re-proxy` are both projects, and only one of them is a
     top-level directory.
+
+    Answered once per directory and ecosystem for the tree being read, because a
+    fingerprint asks it for every path of every unit.
     """
-    current = (REPO_ROOT / path).parent
+    parent = (REPO_ROOT / path).parent
+    return _tree.current().memo(
+        f"project_of:{eco.name}:{parent}", lambda: _nearest_project(parent, eco)
+    )
+
+
+def _nearest_project(start: Path, eco: Ecosystem) -> str | None:
+    current = start
     while True:
         try:
             rel = current.relative_to(REPO_ROOT)

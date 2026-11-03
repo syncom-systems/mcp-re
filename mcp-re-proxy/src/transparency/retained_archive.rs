@@ -20,23 +20,26 @@
 //! independently describable, and the second one's consumer needs none of the first's
 //! authority.
 //!
-//! So [`super::attest_chain`] takes this projection, and `EvidenceRetention` holds one and
-//! hands it out. An auditor opens one directly and never constructs a retention authority
-//! at all.
+//! So [`super::attest_chain`] takes this projection. An auditor opens one directly and never
+//! constructs a retention authority at all; `EvidenceRetention` holds one over the root it
+//! created, and asks it for the names it writes.
 //!
 //! # What it adds to the object archive underneath
 //!
-//! Exactly one thing: the record SCHEMA. The bytes come back re-addressed by
+//! Two things. The record SCHEMA: the bytes come back re-addressed by
 //! [`crate::retained_evidence::FsRetainedArchive`] — the check that a name determines its
 //! bytes lives there and is not repeated here — and this owner turns them into a
 //! [`RetainedHop`], or refuses. A chain with a gap is refused rather than reconstructed
-//! from what happens to be present.
+//! from what happens to be present. And the MARKERS: which exchanges crossed the execution
+//! threshold without a retained hop, and which reservations were left behind, named by
+//! [`super::marker_stage::MarkerStage`] — the same rule the write side names them by.
 
 use mcp_re_http_profile::chain::RetainedHop;
 use mcp_re_http_profile::scitt::EvidenceDigest;
 
 use crate::retained_evidence::FsRetainedArchive;
 
+use super::marker_stage::MarkerStage;
 use super::retained_record::RetainedHopRecord;
 use super::RetentionError;
 
@@ -79,6 +82,61 @@ impl RetainedArchive {
         self.objects
             .object_path(digest)
             .map_err(|_| RetentionError::Malformed("evidence digest is not a token"))
+    }
+
+    /// The path of the marker at `stage` for the exchange whose request digest is `digest`.
+    ///
+    /// Refused unless the digest is a token, because the name is the object path plus the
+    /// stage extension; asked here for the same reason as [`object_path`](Self::object_path).
+    pub(super) fn marker_path(
+        &self,
+        digest: &EvidenceDigest,
+        stage: MarkerStage,
+    ) -> Result<std::path::PathBuf, RetentionError> {
+        Ok(stage.path_for(self.object_path(digest)?))
+    }
+
+    /// The digest tokens of every COMMITTED marker currently on disk.
+    ///
+    /// The reconciliation read, and it reads one stage only. A committed-stage marker
+    /// records an exchange that crossed the execution threshold and whose outcome was
+    /// never retained, and a fact recorded where nothing can enumerate it is not a record
+    /// an auditor can act on: this is how the audit lane asks which calls crossed without
+    /// landing a hop. It is a fact about the directory, so it is read here, with no write
+    /// authority, and works on a read-only mount or a snapshot.
+    ///
+    /// Reserved-stage markers are deliberately NOT here. They record obligations accepted
+    /// by exchanges that never committed, so counting them would be counting refused calls
+    /// as calls that may have run — the collapse the stage split exists to remove. They
+    /// have their own enumerator, [`stale_reservations`](Self::stale_reservations), and it
+    /// answers a different question.
+    pub fn pending_reservations(&self) -> Result<Vec<String>, RetentionError> {
+        self.markers_at(MarkerStage::Committed)
+    }
+
+    /// The digest tokens of every RESERVED marker currently on disk.
+    ///
+    /// Cleanup debt, and nothing else. Each one is an obligation that was accepted by an
+    /// exchange which then did not commit, and whose rescind did not land — a queue that
+    /// was full when the reservation dropped, or a process that died between the two.
+    ///
+    /// An auditor must not read this as indeterminacy. That is the whole reason the stage
+    /// has its own name on disk: a residue that says *nothing ran* is answerable by
+    /// deleting it, and one that says *something may have* is not.
+    pub fn stale_reservations(&self) -> Result<Vec<String>, RetentionError> {
+        self.markers_at(MarkerStage::Reserved)
+    }
+
+    /// The digest tokens of every marker at one stage.
+    fn markers_at(&self, stage: MarkerStage) -> Result<Vec<String>, RetentionError> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(self.objects.root()).map_err(RetentionError::Store)? {
+            let entry = entry.map_err(RetentionError::Store)?;
+            let name = entry.file_name();
+            found.extend(name.to_str().and_then(|name| stage.digest_in(name)));
+        }
+        found.sort();
+        Ok(found)
     }
 
     /// Read back one retained exchange.
@@ -143,6 +201,27 @@ mod tests {
             serving.is_err(),
             "the serving constructor must still prove the archive writable at startup"
         );
+    }
+
+    /// Enumeration reads a name only when it is a stage extension over a digest token, and
+    /// it reads with no more than a read-only archive.
+    #[test]
+    fn an_enumerated_marker_is_a_well_formed_token() {
+        let root = std::env::temp_dir().join(format!(
+            "mcp-re-retained-archive-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&root).expect("create");
+        std::fs::write(root.join(".pending"), b"").expect("write");
+        std::fs::write(root.join("not-a-digest.pending"), b"").expect("write");
+
+        let found = RetainedArchive::open_read_only(&root)
+            .expect("open")
+            .pending_reservations();
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(found.expect("list").is_empty());
     }
 
     /// A missing hop is absent, not an error — the caller decides.

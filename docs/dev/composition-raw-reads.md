@@ -45,7 +45,7 @@ relation has not been represented.
 
 | field | reads | why it is a finding |
 |---|---|---|
-| `max_clock_skew` | 5 (`app.rs`) | validated by a residue clause; **no owner carries it**. It is only *mentioned* in `config_state/admission.rs` prose. It sets the verifier's freshness window and the replay plane's tolerance — change it with every owner state fixed and admission changes |
+| `max_clock_skew` | 5 (`app.rs`) | validated by a residue clause; **no owner carries it**. It is only *mentioned* in `config_state/admission/` prose. It sets the verifier's freshness window and the replay plane's tolerance — change it with every owner state fixed and admission changes |
 | `allow_group_readable_key_files` | 1 | no owner. An explicit opt-in that widens who may read a signing key; composition applies it directly to the key-file floor |
 | `max_client_cert_lifetime` | 2 | no owner. When no CRL is enforced this ceiling *is* the client-certificate revocation bound (`tls_plane::fleet_crl_bound` reasons about exactly that pairing) |
 | `trust_path` | 1 (`startup_plan.rs:276`) | no owner, and `TrustPlan` pairs it with a sealed `TrustRevocationState` in a struct of `pub` fields — any module can pair a validated revocation posture with an arbitrary authority key. This is the defect `sealed-owners.md` records for `AdmissionState`, one layer up |
@@ -217,10 +217,13 @@ when the server identity took it, and `target_uri` when `RequestTarget` became i
 
 - ~~The resolved shard count is established twice (`app.rs` and `serve_fleet`)~~. **Done**:
   `app.rs` resolves it once and the fleet sizes from that value.
-- `ServerLimits` still carries `max_connection_age` into the runtime as a plain duration,
-  beside a `ServerOptions` lifetime that now comes from `ClientCredentialWindow`. The
-  relation holds because layer A refused the deployments where it would not, which is the
-  seal working at the boundary it was drawn at — not a reason to widen it downstream.
+- ~~`ServerLimits` still carries `max_connection_age` into the runtime as a plain duration~~.
+  **Done** (#1250): `ServerOptions` carries `ServedLimits` — the two size ceilings and each
+  core's share of the in-flight basis — not the request's whole `ServerLimits`. The
+  timeouts, the connection ceiling, the drain window and the connection age reach serving
+  only from their owners, `ConnectionBounds` and `ClientCredentialWindow`, so no serving
+  value holds a second copy of them. The in-flight ceiling is no longer a request field
+  that the root overwrote.
 - The PKCS#11 PIN file is held to the strict `0600`/`0400` rule whichever
   `KeyFileAccessPolicy` resolves, so an fsGroup-mounted PIN is refused where an
   fsGroup-mounted key is accepted. Refusing more is not a fail-open; loosening it is an

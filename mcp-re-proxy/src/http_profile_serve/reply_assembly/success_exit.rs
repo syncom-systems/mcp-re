@@ -102,7 +102,7 @@ impl HttpProfileProxy {
                 observed,
             }),
             Err(refusal) => Err(self
-                .refuse_retained(acc, refusal, permit.exchange(), &retention)
+                .refuse_retained(acc, refusal, permit.withdraw(), &retention)
                 .await),
         }
     }
@@ -143,7 +143,7 @@ impl HttpProfileProxy {
             mcp_re_core::McpReError::EvidenceRetentionIndeterminate,
             500,
         );
-        Err(self.refuse_accepted(acc, refusal, permit.exchange()))
+        Err(self.refuse_accepted(acc, refusal, permit.withdraw()))
     }
 
     /// Offer the record, reach the terminal the permit names, and serve the bytes.

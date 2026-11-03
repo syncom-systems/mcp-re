@@ -13,6 +13,15 @@
 
 use super::{ExchangeProgress, ServedSuccess};
 
+impl ExchangeProgress {
+    /// Refuse the exchange: it enters the terminal its position decides, and a refusal
+    /// already entered latches an anomaly. The serving path asks for the refusal; which
+    /// terminal it reaches is the relation's answer, not the caller's.
+    pub(crate) fn refuse(&mut self) {
+        self.advance(super::ExchangeEvent::Refused);
+    }
+}
+
 /// A success [`may_publish`](super::ExchangeProgress::may_publish) cleared, bound to the
 /// exchange that cleared it until [`publish`](Self::publish) drives its tail there.
 #[must_use = "a cleared success is published or refused, never dropped"]
@@ -27,9 +36,17 @@ impl<'x, D> PublishPermit<'x, D> {
         Self { exchange, served }
     }
 
-    /// The cleared exchange, for the steps between the decision and the terminal: a refusal
-    /// there reads the state it serves from, and drops the permit unpublished.
+    /// The cleared exchange, read between the decision and the terminal.
+    #[cfg(test)]
     pub(crate) fn exchange(&self) -> &ExchangeProgress {
+        self.exchange
+    }
+
+    /// Give the cleared exchange back to a refusal between the decision and the terminal.
+    ///
+    /// Consumes the permit, so nothing done through the returned borrow can then be
+    /// published: the refusal enters its own terminal on the exchange, unpublished.
+    pub(crate) fn withdraw(self) -> &'x mut ExchangeProgress {
         self.exchange
     }
 
@@ -113,6 +130,20 @@ mod tests {
         );
         assert!(other.may_publish(acknowledged()).is_err());
         assert_eq!(other.state(), ExchangeState::Dispatched);
+    }
+
+    /// A refusal between the decision and the terminal withdraws the permit and refuses the
+    /// exchange it cleared: the exchange ends `FailedAfterDispatch`, never at the success
+    /// terminal the permit named, and coherent.
+    #[test]
+    fn a_withdrawn_permit_leaves_its_exchange_to_the_refusal() {
+        let mut p = dispatched();
+        let permit = p
+            .may_publish(acknowledged())
+            .expect("a coherent 202 is cleared");
+        permit.withdraw().advance(ExchangeEvent::Refused);
+        assert_eq!(p.state(), ExchangeState::FailedAfterDispatch);
+        assert_eq!(p.anomaly(), None);
     }
 
     /// A refused publication yields no permit, so nothing exists that could publish it.

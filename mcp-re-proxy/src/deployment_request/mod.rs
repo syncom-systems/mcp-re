@@ -25,6 +25,7 @@ mod peer_identity;
 mod request_signer_currency;
 mod revocation;
 mod secret_string;
+mod server_limits;
 mod signing_source;
 mod storage;
 
@@ -49,6 +50,7 @@ pub use revocation::{
     RevocationListRequest,
 };
 pub use secret_string::SecretString;
+pub use server_limits::{ServedLimits, ServerLimits};
 pub use signing_source::{
     AwsKmsChannelKeyRequest, AwsKmsSigningSourceRequest, ChannelCredentialRequest,
     ChannelKeyRequest, DelegatedChannelKeyRequest, ExportedChannelKeyRequest,
@@ -63,8 +65,6 @@ pub use storage::{
 };
 
 use std::time::Duration;
-
-use crate::tls::ServerLimits;
 
 /// A deployment as REQUESTED: every field an operator can state, and nothing decided.
 ///

@@ -53,7 +53,7 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `ReplayPlan` | `config_state/replay.rs` | `store() -> PlannedStore<'_>`, `tier()` |
 | `ContinuationControlState` | `config_state/continuation_control.rs` | `continuation_plan()`, `is_shared()` |
 | `ContinuationControlPlan` | `config_state/continuation_control.rs` | `shared_store() -> Option<&str>`, `shared()` |
-| `AdmissionState` | `config_state/admission.rs` | `enforced() -> Option<EnforcedAdmission<'_>>`, `is_enforced()`; the view's `enforcer_policy(MaxClockSkew)` |
+| `AdmissionState` | `config_state/admission/` | `enforced() -> Option<EnforcedAdmission<'_>>`, `is_enforced()`; the view's `budgets(MaxClockSkew)` |
 | `RetentionState` | `config_state/evidence.rs` | `directory() -> Option<&str>`, `is_on()` |
 | `McpTransportContractState` | `config_state/mcp_transport_contract.rs` | `versions() -> &[String]` (non-empty: `classify_and_validate` produces no state for a refused set) |
 | `TrustRevocationState` | `config_state/trust_revocation.rs` | `epoch_source() -> Option<EpochSource<'_>>`, `reload_cadence()`, `tier()`, `declared_window_secs()`, `push_channel_is_inert()`, `has_networked_epoch()` |
@@ -68,6 +68,7 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `ShardTopologyRequest` | `config_state/topology.rs` | `shards()`, `workers_per_shard()` |
 | `ResolvedTopology` | `async_fleet/resolved_topology.rs` | `shards() -> NonZeroUsize`, `depth() -> NonZeroUsize` |
 | `TrustPlan` | `trust_plan.rs` | `revocation()`, `document_path()`, `response_kid()`, `reload()`, `epoch()` |
+| `ResponseAuthority` | `startup_plan/response_authority.rs` | `kid()`, `epoch()` — the root issuer kid and the shared trust epoch, read once for both the trust plan and the signing plan, whose constructors take it whole. `response_authority_plans` is the only producer. Structural: S84 (`proxy.response_authority_sole_producer`) |
 | `ChannelEstablishmentPlan` | `startup_plan/channel_establishment_plan.rs` | `currency_bound()`, `credential_window()`, `handshake_capacity()`, `crl_paths()`, `crl_reload_cadence_secs()` — the revocation posture and the window are projected as the bound they make together, never as two terms. `from_validated` is the only producer. Structural: S82, S83 (`proxy.channel_establishment_plan_sole_producer`) |
 | `TlsListenerSecurityState` | `tls_listener_state/` (a module TREE) | `epoch()`, `build_exported_key_config()`, `build_delegated_config()`, `build_delegated_resolver_config()` |
 | `PeerIdentityValue` | `communication_assurance/peer_identity_value.rs` | `as_str()` |
@@ -123,7 +124,8 @@ keeping:
 - **`TrustEpochPlan` deliberately did NOT move.** It is shared with `SigningPlan`, so
   relocating it into a trust-only module would make trust the authority over a fact
   signing also consumes — the CF-09 defect this tree already closed. It stays in
-  `startup_plan` as the shared composition input, and `TrustPlan` takes it as an argument.
+  `startup_plan` as the shared composition input. `TrustPlan` takes it inside a
+  `ResponseAuthority`, beside the issuer kid, and the signing plan takes the same authority.
 - **The move made the seal bite.** A `startup_plan` test was reading `trust.epoch` and
   `trust.response_kid` directly; once the fields were private to the owner's module that
   stopped compiling, and the test now relates the two plans through `epoch()` and
@@ -838,6 +840,45 @@ writing the next one:
 | provenance closed | the value's bytes or pairing are the owner's | S07, S09–S11, S12/S13 |
 | co-provenance | separately legal parts cannot be combined by a caller | S14 |
 
+S14 covers the posture and the locator. The issuer kid and the epoch are the trust plan's
+other two facts, and they are shared with the signing plan, so their seal is one level up:
+`ResponseAuthority` holds both, its only producer is `response_authority_plans`, and both
+plan constructors take it whole. Before that, `from_validated` took a kid and an epoch as two
+free arguments, and in-crate tests handed it values no deployment produces. S84 builds an
+authority from `startup_plan`, the authority's parent, and is refused with `E0451`.
+
+**One planned epoch, two readers of its store, by design** (owner ruling 2026-10-29, #1251).
+`ResponseAuthority` is the single configuration authority for the epoch: both planes take
+the same `TrustEpochPlan`, and a build that cannot read a planned store gets that plan's one
+refusal from either. Each plane then opens its own reader of the store. That is the intended
+shape, not a duplicate to fold, for three reasons:
+
+- **Different capabilities.** The trust plane's `TrustEpochSource` only reads. The signing
+  plane's `DelegatedEpochWatch` reads, and it also raises the counter past its high-water mark
+  through `EpochRaiser`, which is a write the trust plane must not hold.
+- **Different lifecycles.** The trust poller is a worker in the trust plane's `WorkerSet`
+  and stops with that plane. The epoch read sits on the rotation worker, which stops with the
+  signing plane. A shared reader would either outlive one owner or be torn down under the
+  other.
+- **Independent latency.** `RedisEpochReader` serializes reads behind one connection mutex.
+  On a shared connection, the rotation read would queue behind a trust poll stalled on a
+  half-open socket. That read's 8-second budget is spent out of the key's rotation overlap.
+
+Both planes fail closed on their own terms:
+
+| | trust plane | signing plane |
+|---|---|---|
+| store unreachable at boot | the eager first read refuses the source, so the plane refuses before any poller starts | the first epoch read refuses the plane, before any key is minted |
+| read failure while serving | the source goes unhealthy, and trust reverts to the bounded-`T` window | minting is refused, and the current key serves until its `exp` |
+| measured by | `an_unreachable_epoch_store_builds_no_source` (falsified by M627), `read_error_marks_unhealthy_and_emits_nothing` | `materialize_refuses_when_the_configured_shared_epoch_cannot_be_read`, `an_unreadable_shared_epoch_stops_the_loop_minting` |
+
+The two boot-refusal tests run in `//mcp-re-proxy:proxy_ext_unit_test`, the `redis_replay`
+lane.
+
+What differs between the planes is when each connects and how its refusal is worded. At
+boot, the operator sees the trust plane's refusal because that plane is materialized first.
+That is a difference in wording, not a correctness gap.
+
 ### The eighth: the trust-configuration pair, and a probe that must not measure the wrong privacy
 
 **Landed 2026-09-18, ADR-MCPRE-068 Phase 0D-10.** Two owners, one proposition — which trust
@@ -962,6 +1003,7 @@ they supposedly project untouched, and every test would stay green.
 |---|---|---|
 | S20 | `AdmissionState` | a posture the classifier never reached |
 | S21 | `EnforcedAdmission` | admission records verified against an authority the deployment never named |
+| S86 | `AdmissionBudgets` | an enforcer and a record verifier judging under different skews |
 
 ```text
 cargo test -p mcp-re-proxy --lib -- config_state::admission
@@ -974,11 +1016,14 @@ verify-structural --probe S20 --probe S21
 `enforced()` returns `None` where admission is not enforced, so the view's **existence** is
 itself the enforcement fact — which is why it has to be unforgeable.
 
-The view also projects the gate's §5.2 budget: `enforcer_policy(MaxClockSkew)` turns the
-availability rule into the two degraded fields as one cell and takes N from the profile's
-`AdmissionPolicy::default`. The admission capability builds the `AdmissionEnforcer` from that
-projection and the posture, and the root attaches the enforcer whole, so no consumer re-maps
-the availability or names N.
+The view also projects the gate's budgets: `budgets(MaxClockSkew)` returns `AdmissionBudgets`,
+the PEP's §5.2 budget and the record verifier's currentness budget taken under the one skew it
+is handed. The §5.2 half turns the availability rule into the two degraded fields as one cell
+and takes N from the profile's `AdmissionPolicy::default`; the record half is the gate's record
+age. `AdmissionBudgets`' fields are private to the view's module and `budgets` is its only
+producer (S86), so the enforcer and the record verifier cannot be handed different skews. The
+admission capability builds both from that one value, and the root attaches the enforcer whole,
+so no consumer re-maps the availability or names N.
 
 **Two facts recorded rather than fixed here**, both pre-existing and both Phase 0E's:
 

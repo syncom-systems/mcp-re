@@ -157,7 +157,7 @@ declared evidence and leaves the census by being named in the registry.
 **Covers:** `assurance_obligation_gate.py`, `claim_surface_gate.py`, `clippy_ratchet_gate.py`,
 `control_census_gate.py`, `evidence_class_ratchet.py`, `finding_ledger_gate.py`, `merge_path_gate.py`,
 `module_size_gate.py`, `os_entropy_census_gate.py`, `registry_approval_gate.py`,
-`release_assurance_gate.py`, `distribution_gate.py` (added 2026-10-23: it decides whether a tag may be distributed, from the same committed release-assurance record; it checks no security property of the tree), `rehearsal_claim_gate.py`, `slo_invocation_gate.py`,
+`release_assurance_gate.py`, `distribution_gate.py` (added 2026-10-23: it decides whether a tag may be distributed, from the same committed release-assurance record; it checks no security property of the tree), `pre_merge_budget.py` (added 2026-10-28: it decides whether a required check's shards all passed inside the pre-merge time budget; it checks no security property of the tree), `rehearsal_claim_gate.py`, `slo_invocation_gate.py`,
 `slo_evidence_identity.py`, `unit_closure_gate.py`, `verification_trigger_gate.py`,
 `adr051_slo_gate.py`, `slo_gate.py`.
 **Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 2.
@@ -4363,9 +4363,9 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 
 ## NP-220 — the crossing reconciliation read reports only well-formed exchange digests
 
-**Controls:** `mcp-re-proxy` `lib#transparency::durability::tests::an_enumerated_marker_is_a_well_formed_token`.
-**Carrier:** mcp-re-proxy/src/transparency/durability.rs (markers_at, marker_digest).
-**Statement.** *EvidenceRetention::pending_reservations (and stale_reservations at its own stage) reports a marker only when the file stem at that stage's suffix parses as an EvidenceDigest token. A file named '.pending' or 'not-a-digest.pending' is never reported as a crossing.*
+**Controls:** `mcp-re-proxy` `lib#transparency::retained_archive::tests::an_enumerated_marker_is_a_well_formed_token`.
+**Carrier:** mcp-re-proxy/src/transparency/retained_archive.rs (markers_at) and marker_stage.rs (MarkerStage::digest_in).
+**Statement.** *RetainedArchive::pending_reservations (and stale_reservations at its own stage) reports a marker only when the file stem at that stage's suffix parses as an EvidenceDigest token. A file named '.pending' or 'not-a-digest.pending' is never reported as a crossing.*
 **If false.** An auditor asking which calls crossed the execution threshold without landing a hop is shown entries that name no exchange: phantom indeterminate calls from stray or planted files, reported as answerability debt.
 **Likely owner:** proxy.retention_commitment owns the file, but THM-0088's statement is WHEN responsibility was accepted and crossed, and says nothing about what the enumeration may return. proxy.retained_record_at_the_store (THM-0112) 'claims nothing about how the object is NAMED'.
 **Severity:** `medium`.
@@ -5052,4 +5052,15 @@ this one covers request signers too. No theorem depends on it.
 **Severity:** `high`.
 **Root relationship.** The no-false-success half of ADR-MCPRE-070 O5; beside THM-0136, not under it.
 **Recorded:** 2026-10-21, owner ruling O5 (epic #1201 final authority closure).
+
+## NP-292 — a serving shard is pinned inside the CPUs the process is allowed to run on
+
+**Controls:** `mcp-re-proxy/src/async_fleet/cpu_placement.rs` (3) —
+`tests::{shards_map_onto_the_allowed_cpus_in_order_and_wrap, no_known_cpu_places_nothing, a_restricted_mask_keeps_every_shard_inside_it}`. The third is `#[cfg(target_os = "linux")]` and runs only in a Linux lane.
+**Statement.** *Shard `i` is pinned to the `i`-th CPU of the affinity mask the process was started with, wrapping when shards outnumber them; when the mask cannot be read, nothing is pinned, and no CPU number at or above `CPU_SETSIZE` is ever pinned.*
+**If false.** Shards are pinned outside an operator's `taskset` mask or cgroup cpuset, onto capacity the operator reserved for co-located work.
+**Likely owner:** none. `proxy.fleet_topology_provenance` holds the carrier as closure, not claim.
+**Severity:** `medium`, the vocabulary's floor; the consequence is tail latency only.
+**Root relationship.** None: pinning is a tail-latency optimization, never a correctness or security property (#1196).
+**Recorded:** 2026-11-03.
 

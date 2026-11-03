@@ -37,7 +37,7 @@ use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use crate::deployment_request::DeploymentRequest;
-use crate::tls::ServerLimits;
+use crate::deployment_request::ServerLimits;
 
 mod refusal;
 

@@ -653,7 +653,7 @@ impl ExchangeProgress {
     /// must never err in. So the state each event establishes is taken as a floor.
     ///
     /// Monotone by construction — `ExchangeState` is ordered along the pipeline, and this
-    /// only ever moves toward the end of it.
+    /// only moves toward its end. A legal `Refused` floors at the terminal `transition` picks.
     ///
     /// # Both checks run in every build
     ///
@@ -687,7 +687,7 @@ impl ExchangeProgress {
         if transition(self.request, event).is_err() {
             self.latch("the serving path drove an illegal exchange transition");
         }
-        if let Some(floor) = event.establishes() {
+        if let Some(floor) = event.establishes().or(transition(self.request, event).ok()) {
             if floor > self.request {
                 self.request = floor;
             }
@@ -1324,6 +1324,33 @@ mod tests {
             refused.retry_semantics(),
             RetrySemantics::RequiresNewElicitation
         );
+    }
+
+    /// The serving path refuses through `advance`, and a refusal there enters the terminal
+    /// the relation picks at every non-terminal state of the pipeline, with the tuple still
+    /// coherent and the retry verdict unchanged. A second refusal finds a terminal: it
+    /// latches, moves nothing, and the verdict goes to full strength.
+    #[test]
+    fn advance_refused_enters_the_terminal_the_relation_picks() {
+        let mut progress = ExchangeProgress::new();
+        let mut reached = Vec::new();
+        for (event, _) in PIPELINE {
+            let want = transition(progress.state(), ExchangeEvent::Refused).unwrap();
+            let mut refused = progress.clone();
+            let verdict = refused.retry_semantics();
+            refused.advance(ExchangeEvent::Refused);
+            assert_eq!(refused.state(), want, "from {:?}", progress.state());
+            assert_eq!(refused.anomaly(), None, "from {:?}", progress.state());
+            assert_eq!(refused.retry_semantics(), verdict);
+            refused.advance(ExchangeEvent::Refused);
+            assert_eq!(refused.state(), want);
+            assert!(refused.anomaly().is_some());
+            assert_eq!(refused.retry_semantics(), RetrySemantics::NotRetrySafe);
+            reached.push(want);
+            progress.apply(*event).unwrap();
+        }
+        assert!(reached.contains(&ExchangeState::RefusedBeforeDispatch));
+        assert!(reached.contains(&ExchangeState::FailedAfterDispatch));
     }
 
     /// Negative control for the test above: the same pre-dispatch refusal on an exchange

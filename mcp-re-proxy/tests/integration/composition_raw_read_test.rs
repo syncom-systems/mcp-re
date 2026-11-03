@@ -70,8 +70,10 @@ const ORDINARY: &[(&str, &str)] = &[
     (
         "limits",
         "the resource ceilings, already normalized by layer A, including the handshake \
-         signing capacity the channel plan carries. The one member that WAS a decision — \
-         max_connection_age — is owned by ClientCredentialWindow and read from there",
+         signing capacity the channel plan carries. Serving receives only ServedLimits: the \
+         two size ceilings no owner holds, and each core's share of the in-flight basis. The \
+         timeouts, connection ceiling and drain window are ConnectionBounds', and \
+         max_connection_age is ClientCredentialWindow's",
     ),
     ("route", "the request path this deployment answers on"),
     (

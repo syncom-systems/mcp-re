@@ -31,7 +31,6 @@ use mcp_re_proxy::config_snapshot::ServerConfigSnapshot;
 use mcp_re_proxy::config_state::ClientCredentialWindow;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 
-use mcp_re_proxy::ServerLimits;
 use mcp_re_proxy::ServerOptions;
 
 use rcgen::BasicConstraints;
@@ -231,7 +230,6 @@ fn spawn(snapshot: Arc<ServerConfigSnapshot>) -> Server {
                     })
                 };
             let options = ServerOptions {
-                limits: ServerLimits::default(),
                 ..ServerOptions::new(
                     window(),
                     mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")

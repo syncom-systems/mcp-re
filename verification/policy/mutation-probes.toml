@@ -3160,6 +3160,28 @@ expect_red = [
 ]
 
 [[probe]]
+id = "M627-an-unreachable-epoch-store-builds-no-source"
+unit = "proxy.trust_epoch_source"
+conjunct = "no source is built over a store that does not answer"
+path = "mcp-re-proxy/src/trust_epoch.rs"
+anchor = """
+    let reader = RedisEpochReader::connect(url, epoch_key).map_err(|e| e.0)?;
+"""
+weakening = """
+    let reader = RedisEpochReader::connect_lazy(url, epoch_key).map_err(|e| e.0)?;
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_unreachable_epoch_store_builds_no_source",
+]
+note = """
+The lazy reader is a legitimate constructor, and the signing plane uses it: there the first
+epoch read happens in the plane's own startup refusal. Here nothing reads before the poller
+starts, so a lazy reader turns an unreachable store into a running push tier whose first poll
+fails, and the replica starts serving on the bounded-T fallback the operator configured a
+store to avoid. Runs only in the `redis_replay` lane, where the source is compiled.
+"""
+
+[[probe]]
 id = "M97-a-regression-is-a-change"
 unit = "proxy.trust_epoch_source"
 conjunct = "a change of the shared epoch — any change, a regressed counter included — flushes; rollback is not representable on this side"
@@ -3921,7 +3943,7 @@ conjunct = "a capacity refusal is retry-safe, which is only true while it is dis
 # The weakening restores the code as it shipped: every `try_send` failure answered as a full
 # queue. Under it the serving path answers a permanently dead writer with 503 — the status
 # that tells a client to keep trying — forever.
-path = "mcp-re-proxy/src/transparency/durability.rs"
+path = "mcp-re-proxy/src/transparency/retention_queue.rs"
 anchor = """
                 std::sync::mpsc::TrySendError::Disconnected(_) => {
                     RetentionError::StoreRetired(std::io::Error::new(
@@ -3932,6 +3954,7 @@ weakening = """
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#transparency::durability::tests::a_dead_writer_is_a_terminal_fault_and_a_full_queue_is_not",
+  "//mcp-re-proxy:proxy_unit_test#transparency::retention_queue::tests::a_retired_writer_is_a_retired_store_and_not_backpressure",
 ]
 
 [[probe]]
@@ -7392,7 +7415,7 @@ id = "M265-proxy-an-unreadable-sts-expiry-is-already-expired"
 unit = "proxy.aws_sts_credentials"
 theorem = "THM-0117"
 conjunct = "an expiry that cannot be read is already-expired rather than unlimited, and a far-future one is truncated to the real session ceiling"
-path = "mcp-re-proxy/src/aws_sts.rs"
+path = "mcp-re-proxy/src/aws_sts/sts_protocol.rs"
 anchor = """
         .map(|stated| stated.min(now + MAX_SESSION_LIFETIME))
         .unwrap_or(UNIX_EPOCH);
@@ -7401,9 +7424,9 @@ weakening = """
         .unwrap_or(now + MAX_SESSION_LIFETIME);
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::an_unparseable_expiration_reads_as_already_expired_not_as_unlimited",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_missing_expiration_element_reads_as_already_expired",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_far_future_expiration_is_truncated_to_the_real_session_ceiling",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::an_unparseable_expiration_reads_as_already_expired_not_as_unlimited",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_missing_expiration_element_reads_as_already_expired",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_far_future_expiration_is_truncated_to_the_real_session_ceiling",
 ]
 note = """
 THE DEFAULT ON AN UNREADABLE FIELD IS A LIFETIME. `UNIX_EPOCH` means already expired, so the
@@ -7456,7 +7479,7 @@ the operator DID name, and says nothing about one they never gave.
 id = "M267-proxy-a-configuration-that-names-no-authority-is-refused"
 unit = "proxy.admission_configuration_state"
 conjunct = "a configuration that names no admission authority is refused rather than served as OFF"
-path = "mcp-re-proxy/src/config_state/admission.rs"
+path = "mcp-re-proxy/src/config_state/admission/mod.rs"
 anchor = """
         return Err(MISSING_ADMISSION_AUTHORITY.to_string());
 """
@@ -8884,10 +8907,10 @@ unit = "proxy.startup_plan_provenance"
 theorem = "THM-0077"
 conjunct = "the issuer kid in the minted credential is the one that was PLANNED, not one the signing plan re-derived from configuration"
 path = "mcp-re-proxy/src/startup_plan/mod.rs"
-anchor = "                issuer_kid: response_kid,\n"
-weakening = "                issuer_kid: {\n                    let _ = &response_kid;\n                    config.state().delegated_signing().issuer_kid().to_string()\n                },\n"
+anchor = "                issuer_kid: authority.kid().to_string(),\n"
+weakening = "                issuer_kid: {\n                    let _ = &authority;\n                    config.state().delegated_signing().issuer_kid().to_string()\n                },\n"
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_issuer_kid_in_the_credential_is_the_one_that_was_planned",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::response_authority::tests::the_issuer_kid_in_the_credential_is_the_one_that_was_planned",
 ]
 note = """
 THE WEAKENING RESTORES THE DEFECT VERBATIM, which is why it is the falsifier for this unit.
@@ -12954,7 +12977,7 @@ expect_red = [
 id = "M538-proxy-a-degraded-window-past-the-ceiling-names-a-state"
 unit = "proxy.admission_configuration_state"
 conjunct = "a degraded admission window past MAX_DEGRADED_ADMISSION_BOUND_SECS is refused, not clamped"
-path = "mcp-re-proxy/src/config_state/admission.rs"
+path = "mcp-re-proxy/src/config_state/admission/mod.rs"
 anchor = """
             if bound_secs.get() > MAX_DEGRADED_ADMISSION_BOUND_SECS =>
 """
@@ -14140,11 +14163,11 @@ conjunct = "G2 precedes retention completion, so a G2 refusal is what retention 
 path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs"
 anchor = """
             Err(refusal) => Err(self
-                .refuse_retained(acc, refusal, permit.exchange(), &retention)
+                .refuse_retained(acc, refusal, permit.withdraw(), &retention)
                 .await),
 """
 weakening = """
-            Err(refusal) => Err(self.refuse_accepted(acc, refusal, permit.exchange())),
+            Err(refusal) => Err(self.refuse_accepted(acc, refusal, permit.withdraw())),
 """
 expect_red = [
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_outcome_failure_discharges_retention_with_the_refusal_served",
