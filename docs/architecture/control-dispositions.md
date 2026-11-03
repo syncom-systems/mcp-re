@@ -5053,3 +5053,14 @@ this one covers request signers too. No theorem depends on it.
 **Root relationship.** The no-false-success half of ADR-MCPRE-070 O5; beside THM-0136, not under it.
 **Recorded:** 2026-10-21, owner ruling O5 (epic #1201 final authority closure).
 
+## NP-292 — a serving shard is pinned inside the CPUs the process is allowed to run on
+
+**Controls:** `mcp-re-proxy/src/async_fleet/cpu_placement.rs` (3) —
+`tests::{shards_map_onto_the_allowed_cpus_in_order_and_wrap, no_known_cpu_places_nothing, a_restricted_mask_keeps_every_shard_inside_it}`. The third is `#[cfg(target_os = "linux")]` and runs only in a Linux lane.
+**Statement.** *Shard `i` is pinned to the `i`-th CPU of the affinity mask the process was started with, wrapping when shards outnumber them; when the mask cannot be read, nothing is pinned, and no CPU number at or above `CPU_SETSIZE` is ever pinned.*
+**If false.** Shards are pinned outside an operator's `taskset` mask or cgroup cpuset, onto capacity the operator reserved for co-located work.
+**Likely owner:** none. `proxy.fleet_topology_provenance` holds the carrier as closure, not claim.
+**Severity:** `medium`, the vocabulary's floor; the consequence is tail latency only.
+**Root relationship.** None: pinning is a tail-latency optimization, never a correctness or security property (#1196).
+**Recorded:** 2026-11-03.
+
