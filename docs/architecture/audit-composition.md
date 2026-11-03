@@ -2,8 +2,8 @@
 
 # ADR-MCPRE-066 — Audit composition: two authorities, one record
 
-**Status:** **ACCEPTED** 2026-08-25 — refined B, after two grill rounds. Not yet implemented;
-implementation order is §9.
+**Status:** **ACCEPTED** 2026-08-25 — refined B, after two grill rounds. **Implemented:** the
+three slices of §9 are merged (Slice 0 #643, Slice 1 #647, Slice 2 #649).
 **Discussion:** [#638](https://github.com/matssun/mcp-re/discussions/638).
 **Characterization:** issue #637.
 **Predecessor:** ADR-MCPRE-065 (discussion #629), whose §10 deferred exactly this question
@@ -339,8 +339,9 @@ written, and its failure is the most useful result in this record.**
 
 ### P1 — request/response applicability without an ambiguous `Option`? **SURVIVES**
 
-Three `AuditSink` implementors exist, all in-crate (`StderrAuditSink`, `NoAuditSink`,
-`CollectingAuditSink`); no external implementor constrains the shape.
+Two `AuditSink` implementors exist, both in-crate (`StderrAuditSink`, `CollectingAuditSink`);
+the no-emission posture is the absent sink (`MaybeAuditSink` is `None`), not a third
+implementor. No external implementor constrains the shape.
 
 More importantly, `event_type` **already** discriminates request records from response records.
 The record-kind split is therefore a re-expression of a distinction the data carries today, not
@@ -483,21 +484,25 @@ remains un-contracted.
 
 ### R2-P3 — what does the change cost existing consumers? **Measurably little**
 
-- **No external `AuditSink` implementor exists.** Three, all in-crate: `StderrAuditSink`,
-  `NoAuditSink`, `CollectingAuditSink`.
-- **The line format is pinned by exactly one test, and only its prefix** — `app.rs:1439,1450`
-  assert `stderr.contains("audit seq=0 ")` and a `format!("audit seq={} ", BATCH - 1)`. Adding
-  a field does not break it.
-- **`CollectingAuditSink::records()` is consumed by two e2e test functions**
-  (`delegated_client_server_e2e_test.rs:711,743`), asserting on `record.event.event_type` and
+- **No external `AuditSink` implementor exists.** Two, both in-crate: `StderrAuditSink` and
+  `CollectingAuditSink`; no emission is the absent sink, `None`.
+- **The line format is pinned by prefix in the teardown test, and in full by one sink test** —
+  `app.rs` `a_record_enqueued_immediately_before_teardown_still_reaches_stderr` asserts
+  `stderr.contains("audit seq=0 ")` and a `format!("audit seq={} ", BATCH - 1)`, and
+  `audit_sink/stderr.rs` `a_record_line_is_byte_identical_to_v0_18_1` pins one whole line.
+  Adding a field breaks only the second, which is that test's purpose.
+- **`CollectingAuditSink::records()` is consumed by the e2e test functions**
+  (`delegated_client_server_e2e_test.rs`, e.g.
+  `an_accepted_request_emits_accepted_then_signed_with_the_resolved_actor`), asserting on `record.event.event_type` and
   neighbours. Those become pattern matches on a record kind. Contained.
 - For a line-oriented log consumer, an added `key=value` field is additive.
 
 ### R2-P4 — what has to migrate? **Nothing inside the artifact**
 
 The product **never persists an audit record.** There is no file sink, no object-store sink, no
-Redis sink — `StderrAuditSink` writes to stderr, `NoAuditSink` discards, `CollectingAuditSink`
-is a test double. Records already written live in an operator's log pipeline, outside the
+Redis sink — `StderrAuditSink` writes to stderr, an absent sink (`None`) discards, and
+`CollectingAuditSink` is a test double. ADR-MCPRE-070's required commitment posture commits
+events to a provider; this repository ships no production durable provider. Records already written live in an operator's log pipeline, outside the
 artifact entirely.
 
 This resolves round 1's open question 5. R3's "an absent facet means a legacy record" is a
@@ -532,11 +537,12 @@ Slice 0   typed Refusal — preserve authority provenance across the stage bound
               v
 Slice 1   the authorization audit facet
           NotConfigured | Authorized | Refused, projected from the live sealed product
-          PR #647 (issue #646)
+          MERGED a904b19 (#647, issue #646)
               v
 Slice 2   close the remaining untyped audit escape hatches; containment becomes structural
           INCLUDING the deferred HttpProfileError -> McpReError projection and the
           wire_code derivation that makes room for it
+          MERGED de629b4 (#649)
               v
           only afterwards may wiring a production evaluator be considered
 ```
