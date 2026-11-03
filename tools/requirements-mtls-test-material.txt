@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# The one dependency of tools/gen_mtls_test_material.py, which the TypeScript SDK's mTLS
+# cases run to mint their X.509 material. Pinned exactly, at the version sdk/python/uv.lock
+# resolves, so both SDKs' mTLS batteries mint their material with the same implementation.
+cryptography==50.0.1
