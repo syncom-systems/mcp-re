@@ -31,6 +31,14 @@
 # inside a 30 minute timeout. A platform change, a larger scope, or a scope that cannot be
 # computed applies NO probe here and is deferred to the complete run (weekly, or dispatch).
 # `scripts/verification_trigger_gate.py` enforces the triggers, the cap and the timeout.
+#
+# SHARDED: a probe costs about 28 s after its target's first build, which costs about 230 s,
+# so one job applies at most 20 units' probes only when they are few. The selected units are
+# packed, in id order so a shard's units share their crate's build, into shards of at most 25
+# probes, each its own job under the same 30 minute bound. The weekly complete run is sharded
+# the same way, which is the only way its 568 probes fit the bound at all. The check the
+# merge-readiness gate reads is `verdict`, which composes every shard's verdict line and is
+# green only when each of the shards the scope decided on reported PASS.
 
 name: mutation probe
 
@@ -81,7 +89,8 @@ jobs:
     timeout-minutes: 10
     outputs:
       measure: ${{ steps.scope.outputs.measure }}
-      args: ${{ steps.scope.outputs.args }}
+      shards: ${{ steps.scope.outputs.shards }}
+      shard-count: ${{ steps.scope.outputs.shard-count }}
     steps:
       # Depth 2: a pull request checks out its MERGE commit, and `select-units` measures the
       # change against that commit's first parent.
@@ -102,49 +111,82 @@ jobs:
         id: scope
         run: |
           set -euo pipefail
+          units="$RUNNER_TEMP/mutation-units"
           case "${{ github.event_name }}" in
             schedule|workflow_dispatch)
-              echo "complete run: a ${{ github.event_name }} event applies every probe"
-              { echo "args="; echo "measure=true"; } >> "$GITHUB_OUTPUT"
-              exit 0 ;;
+              echo "complete run: a ${{ github.event_name }} event applies every probe" > "$RUNNER_TEMP/why"
+              python3 -c 'import tomllib; print("\n".join(sorted({p["unit"] for p in tomllib.load(open("verification/policy/mutation-probes.toml", "rb"))["probe"]})))' > "$units"
+              { echo "mode=complete"; echo "count=$(wc -l < "$units")"; } >> "$GITHUB_OUTPUT" ;;
             *)
               if git rev-parse -q --verify HEAD^2 >/dev/null; then
                 base=HEAD^1
               else
                 base='${{ github.event.pull_request.base.sha }}'
+              fi
+              case "$base" in HEAD^1) ;; *) git fetch -q --no-tags --depth=1 origin "$base" || true ;; esac
+              # A scope that cannot be computed is DEFERRED to the complete run, never widened to it.
+              if ! python3 tools/verification/select-units --base "$base" --out "$units" \
+                  --lane mutation --max-units 20 --github-output > "$RUNNER_TEMP/why"; then
+                echo "select-units: deferred - the scope could not be computed; verified by the weekly run instead" > "$RUNNER_TEMP/why"
+                : > "$units"
+                { echo "mode=deferred"; echo "count=0"; } >> "$GITHUB_OUTPUT"
               fi ;;
           esac
-          case "$base" in HEAD^1) ;; *) git fetch -q --no-tags --depth=1 origin "$base" || true ;; esac
-          units="$RUNNER_TEMP/mutation-units"
-          # A scope that cannot be computed is DEFERRED to the complete run, never widened to it.
-          if ! python3 tools/verification/select-units --base "$base" --out "$units" \
-              --lane mutation --max-units 20 --github-output > "$RUNNER_TEMP/why"; then
-            echo "select-units: deferred - the scope could not be computed; verified by the weekly run instead" > "$RUNNER_TEMP/why"
-            : > "$units"
-            { echo "mode=deferred"; echo "count=0"; } >> "$GITHUB_OUTPUT"
-          fi
           cat "$RUNNER_TEMP/why"
           mode=$(sed -n 's/^mode=//p' "$GITHUB_OUTPUT" | tail -1)
           count=$(sed -n 's/^count=//p' "$GITHUB_OUTPUT" | tail -1)
-          echo "args=$(sed 's/^/--unit /' "$units" | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
-          if [ "$mode" = "scoped" ] && [ "$count" != "0" ]; then
+          if { [ "$mode" = "scoped" ] || [ "$mode" = "complete" ]; } && [ "$count" != "0" ]; then
             echo "measure=true" >> "$GITHUB_OUTPUT"
           else
-            echo "measure=false" >> "$GITHUB_OUTPUT"
+            { echo "measure=false"; echo "shards=[]"; echo "shard-count=0"; } >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          # The shards: the selected units in id order, so the units of one crate share a shard
+          # and its build, packed into shards of at most 25 probes. An SDK unit's probes are
+          # UNAVAILABLE here (no SDK matrix is built), so they ride with the first shard rather
+          # than forming a shard that would measure nothing.
+          python3 - "$units" >> "$GITHUB_OUTPUT" <<'EOF'
+          import json, math, sys, tomllib
+          probes = tomllib.load(open("verification/policy/mutation-probes.toml", "rb"))["probe"]
+          weight = {}
+          for probe in probes:
+              weight[probe["unit"]] = weight.get(probe["unit"], 0) + 1
+          units = sorted(set(open(sys.argv[1]).read().split()))
+          sdk = [u for u in units if u.startswith(("sdk_python.", "sdk_typescript."))]
+          rest = [u for u in units if u not in sdk]
+          load = sum(weight.get(u, 0) for u in rest)
+          per = math.ceil(load / math.ceil(load / 25)) if load else 0
+          bins = [[0, []]]
+          for unit in rest:
+              if bins[-1][1] and bins[-1][0] + weight.get(unit, 0) > per:
+                  bins.append([0, []])
+              bins[-1][0] += weight.get(unit, 0)
+              bins[-1][1].append(unit)
+          bins[0][1] += sdk
+          for i, b in enumerate(bins):
+              print(f"shard {i}: {b[0]} probe(s) over {len(b[1])} unit(s)", file=sys.stderr)
+          shards = [{"shard": i, "args": " ".join(f"--unit {u}" for u in b[1])} for i, b in enumerate(bins)]
+          print("shards=" + json.dumps(shards, separators=(",", ":")))
+          print(f"shard-count={len(shards)}")
+          EOF
       - name: The scope this check decided
         run: |
           cat "$RUNNER_TEMP/why" 2>/dev/null || true
-          echo "measure=${{ steps.scope.outputs.measure }}; a deferred scope skips the probe job, and the complete run (weekly, or dispatched) applies every probe."
+          echo "measure=${{ steps.scope.outputs.measure }} over ${{ steps.scope.outputs.shard-count }} shard(s); a deferred scope skips the probe jobs, and the complete run (weekly, or dispatched) applies every probe."
 
+  # One shard of the selected units. Its own green is not the lane's: `verdict` is.
   probe:
-    name: V0 evidence self-test (mutation probes)
+    name: mutation probe shard ${{ matrix.shard }}
     needs: scope
     if: needs.scope.outputs.measure == 'true'
     runs-on: ubuntu-24.04
-    # The wall-clock bound. A pull request scoped to at most `--max-units` units fits well
-    # inside it; a run that does not is cancelled, never extended, and the complete run covers
-    # what it did not.
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.scope.outputs.shards) }}
+    # The wall-clock bound, per shard. A shard holds at most 25 probes, which fits well inside
+    # it; a shard that does not is cancelled, never extended, and `verdict` reports the lane
+    # failed because that shard stated no verdict.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -165,7 +207,7 @@ jobs:
 
       # Unpiped, and the verdict line is read from the exit status: a gate read through a
       # pipe reports the pipe's status, which has already turned a failed gate green once
-      # in this repository.
+      # in this repository. The output also goes to a file, which `verdict` composes.
       #
       # `--skip-unprepared` because this job deliberately builds no SDK matrix. A probe over
       # an `sdk_python.*` or `sdk_typescript.*` unit needs a maturin wheel and a four-runtime
@@ -176,4 +218,43 @@ jobs:
       # prepared environment in a lane that was supposed to have one is a defect.
       - name: Apply every probe this environment can run
         if: needs.scope.outputs.measure == 'true'
-        run: tools/verification/verify-mutations --skip-unprepared ${{ needs.scope.outputs.args }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/shard"
+          log="$RUNNER_TEMP/shard/shard-${{ matrix.shard }}.log"
+          status=0
+          tools/verification/verify-mutations --skip-unprepared ${{ matrix.args }} > "$log" 2>&1 || status=$?
+          cat "$log"
+          exit "$status"
+      - name: Keep this shard's output for the verdict
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/shard/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # THE LANE'S CHECK. It runs whenever the scope decided to measure, whatever the shards did,
+  # and composes their output: green only when every shard the scope decided on stated exactly
+  # one verdict and that verdict was PASS. A cancelled or crashed shard states none, so it
+  # cannot read as measured.
+  verdict:
+    name: V0 evidence self-test (mutation probes)
+    needs: [scope, probe]
+    if: always() && needs.scope.outputs.measure == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+      - name: Collect every shard's output
+        uses: actions/download-artifact@v8
+        with:
+          pattern: mutation-shard-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/shards
+      - name: Compose the shards' verdicts
+        run: tools/verification/verify-mutations --compose "$RUNNER_TEMP/shards" --shards ${{ needs.scope.outputs.shard-count }}
