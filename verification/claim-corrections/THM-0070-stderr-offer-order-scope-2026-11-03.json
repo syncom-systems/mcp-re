@@ -1,0 +1,25 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_claim"
+  ],
+  "corrections": [
+    {
+      "field": "scope",
+      "id": "C1",
+      "new": "Delivery integrity, not content (THM-0069) and not durability: the sink is in-process, so a\nrecord that was emitted may still be lost with the process. It establishes nothing about\nwhether a record SHOULD have been written for a given outcome, which is the totality\nproposition below.\n\nThe emission-order property is the collector's. The stderr sink writes lines in the order\nthey are offered, and a record's `seq` is allocated when its event is produced, before the\noffer, so lines from concurrent producers can reach the stream out of `seq` order. Position\nis still carried by every line: a consumer orders a run by `seq`, and a gap is a gap whatever\nthe arrival order.\n",
+      "old": "Delivery integrity, not content (THM-0069) and not durability: the sink is in-process, so a\nrecord that was emitted may still be lost with the process. It establishes nothing about\nwhether a record SHOULD have been written for a given outcome, which is the totality\nproposition below.\n",
+      "reason": "#1211 (ADR-MCPRE-070 §16 item 5, F5): the statement's order property is the collector's, and the only order control is on CollectingAuditSink. The stderr sink offers lines in call order under seq allocated at production (#1202), so concurrent producers can reach the stream out of seq order. The scope now says which sink the order property covers; witness audit_sink::stderr::tests::the_stream_is_in_offer_order_and_keeps_each_events_own_seq."
+    }
+  ],
+  "from_fingerprint": "sha256:dd38b842fb857af412fae0c08d241373fd6f7dcec05c3ac7802ca72b7e5269e1",
+  "packet": "verification/reviews/packets/thm-0070-stderr-offer-order-scope-2026-11-03.md",
+  "product_behavior_unchanged": true,
+  "reason": "PRECISION. The statement already scopes emission order to the collector; the added scope paragraph names what was never established for the stderr sink, and removes no property any control measured. The security consequence (a gap is visible in the sequence) is unchanged and still holds on stderr, where every line carries (run, seq). Statement, security consequence, severity, depends_on and review requirement are byte-identical.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18: a precision correction that leaves the accepted promise intact is not an owner escalation. A correction record is not an approval: it does not make the specification-review axis fresh, and release-mode establishment still asks for the owner.",
+  "severity_after": "medium",
+  "severity_before": "medium",
+  "subject": "THM-0070",
+  "to_fingerprint": "sha256:7660e7caa07f925319cdae3ef1843082c1e24923f2a2e41af3a2571902db3e8a"
+}
