@@ -77,7 +77,7 @@ jobs:
   # itself verify anything and makes no coverage claim.
   fidelity-notice:
     name: cloud-kms fidelity notice (nightly-real-only)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The `secrets` context is NOT available in a job-level `if:`, so secret PRESENCE
     # is computed here (where `secrets` IS allowed, in step env) and exported as job
     # outputs that the real-endpoint jobs gate on via `needs`. No secret VALUE is ever
@@ -110,7 +110,7 @@ jobs:
 
   aws-kms-real:
     name: aws kms live (real endpoint, nightly-real-only)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Gate: run ONLY when the AWS backend secrets are present (via the fidelity-notice
     # job output, since `secrets` is not usable in `if:`). Never on a bare PR.
     needs: fidelity-notice
@@ -195,7 +195,7 @@ jobs:
 
   gcp-kms-real:
     name: gcp cloud kms live (real endpoint, nightly-real-only)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: fidelity-notice
     if: ${{ github.event_name != 'pull_request' && needs.fidelity-notice.outputs.has_gcp == 'true' }}
     env:
