@@ -14006,18 +14006,34 @@ expect_red = [
 [[probe]]
 id = "M611-proxy-the-signing-window-survives-the-intent-wait"
 unit = "proxy.audit_intent_gate"
-conjunct = "the signing window is asked to survive the intent crossing's bounded wait as well as the dispatch"
+conjunct = "the signing window is asked to survive the commitment crossings' bounded waits as well as the dispatch"
 path = "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
 anchor = """
         let completion = prepared
             .completion_bound()
-            .after(self.audit.pre_dispatch_wait());
+            .after(self.audit.commitment_waits());
 """
 weakening = """
         let completion = prepared.completion_bound();
 """
 expect_red = [
-  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::the_window_must_survive_the_commitment_wait",
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::the_window_must_survive_the_commitment_waits",
+]
+
+[[probe]]
+id = "M628-proxy-the-signing-window-survives-the-outcome-wait"
+unit = "proxy.audit_intent_gate"
+conjunct = "the commitment waits a signing window must survive include G2's bounded wait after signing, not only G1's"
+path = "mcp-re-proxy/src/audit_commitment/intent.rs"
+anchor = """
+        self.bound.get().saturating_add(self.bound.get())
+"""
+weakening = """
+        self.bound.get()
+"""
+expect_red = [
+  "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::the_window_must_survive_the_commitment_waits",
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_required_posture_never_yields_not_required",
 ]
 
 [[probe]]

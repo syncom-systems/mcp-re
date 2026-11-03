@@ -55,9 +55,12 @@ impl IntentCommitment {
         &self.provider
     }
 
-    /// The longest this crossing can hold the request before dispatch.
-    pub(super) fn wait(&self) -> Duration {
-        self.bound.get()
+    /// The longest the two crossings this commitment owns can hold an exchange: G1 before
+    /// dispatch, and G2 after the reply is signed, each within `bound` — G2's bound is the one
+    /// [`commit`](Self::commit) hands it. Saturating: a sum that does not fit is
+    /// `Duration::MAX`, which no signing window survives.
+    pub(super) fn waits(&self) -> Duration {
+        self.bound.get().saturating_add(self.bound.get())
     }
 
     /// G1 for the exchange `coordinate` names.
