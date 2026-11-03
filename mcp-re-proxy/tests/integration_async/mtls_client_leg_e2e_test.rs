@@ -237,7 +237,8 @@ fn server_config_args() -> mcp_re_proxy::deployment_request::DeploymentRequest {
     .collect();
     mcp_re_proxy::cli::parse_args(&args)
         .expect("parse server config")
-        .into_inner()
+        .config()
+        .clone()
 }
 
 fn server_resolver() -> ActorResolver {
@@ -333,8 +334,10 @@ fn spawn_server(server_ca: &Ca, client_ca: &Ca) -> RunningServer {
     .expect("server tls config");
 
     let options = ServerOptions {
-        target_uri: TARGET.to_string(),
-        ..ServerOptions::new(window())
+        ..ServerOptions::new(
+            window(),
+            mcp_re_proxy::config_state::RequestTarget::new(TARGET).expect("an absolute target"),
+        )
     };
 
     let shutdown = Arc::new(AtomicBool::new(false));

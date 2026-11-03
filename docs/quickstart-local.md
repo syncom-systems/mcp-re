@@ -29,10 +29,10 @@ test binary, so it is selected by a name filter rather than by being its own
 `--test` target:
 
 ```sh
-cargo test -p mcp-re-proxy --test integration -- mtls_transport_binding_test::
-cargo test -p mcp-re-proxy --test integration_async --features async_serve -- mtls_client_leg_e2e_test::
-cargo test -p mcp-re-proxy --test integration_async --features async_serve -- delegated_client_server_e2e_test::
-cargo test -p mcp-re-proxy --test integration_async --features async_serve -- verified_context_carrier_test::
+bazel test --test_output=all --nocache_test_results //mcp-re-proxy:integration_test --test_arg=mtls_transport_binding_test::
+bazel test --test_output=all --nocache_test_results //mcp-re-proxy:integration_async_test --test_arg=mtls_client_leg_e2e_test::
+bazel test --test_output=all --nocache_test_results //mcp-re-proxy:integration_async_test --test_arg=delegated_client_server_e2e_test::
+bazel test --test_output=all --nocache_test_results //mcp-re-proxy:integration_async_test --test_arg=verified_context_carrier_test::
 ```
 
 A name filter that matches nothing exits **0**, so a typo in one of these reports

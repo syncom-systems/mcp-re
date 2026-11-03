@@ -76,6 +76,10 @@ jobs:
           # step needs the token, and it is not left in the git config.
           fetch-depth: 0
           persist-credentials: false
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
 
       # The release candidate is a commit of `main`. The steps below run the target's own
       # `tools/verification/release-assurance`, so this guard is what makes "the target's

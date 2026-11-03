@@ -85,6 +85,14 @@ The client-side proxy is the path that requires no application change at all.
 
 MCP-RE is not part of the official MCP specification unless and until it is accepted through the MCP governance and SEP process.
 
+## Install
+
+Apple Silicon macOS: `brew install syncom-systems/mcp-re/mcp-re`. Linux x86-64: a binary
+archive and a container image (`ghcr.io/syncom-systems/mcp-re-proxy`), both attested. A
+Docker Compose reference lives in [`deploy/compose`](deploy/compose/README.md). Details,
+verification and upgrade: [`docs/installation.md`](docs/installation.md); building from
+source: [`docs/source-build.md`](docs/source-build.md).
+
 ## Quickstart — see MCP-RE fail closed
 
 Run the single-node HTTP-profile demo and watch the **real `mcp-re-proxy` PEP**
@@ -281,8 +289,10 @@ Build with (the high-assurance backends, and the cloud KMS key sources beside PK
 bazel build -c opt //mcp-re-proxy:mcp_re_proxy_ext_bin
 ```
 
-The deploy images carry `//mcp-re-proxy:mcp_re_proxy_deploy_bin`
-(`scripts/stage_image_binaries.sh`).
+The release archives and the container image carry `//mcp-re-proxy:mcp_re_proxy_deploy_bin`
+(`scripts/stage_image_binaries.sh`): the Redis replay tier, both cloud KMS signers and
+registration, without PKCS#11, etcd or online OCSP. Build it to run what a release runs;
+`mcp_re_proxy_ext_bin` is the flavor with those three instead of registration.
 
 **Every MCP-RE deployment uses the high-assurance profile** with a replay durability
 tier and its store, so all proxy nodes share replay state. This is not only a
@@ -435,6 +445,7 @@ conformance, reference implementation, demos, and non-goals):
 - **One-page overview:** [`docs/MCP-RE-IN-ONE-PAGE.md`](docs/MCP-RE-IN-ONE-PAGE.md) —
   what MCP-RE is, the threat it addresses, where it sits relative to EMA/OAuth, and
   what the current release proves.
+- **Install:** [`docs/installation.md`](docs/installation.md), [`docs/source-build.md`](docs/source-build.md)
 - **Quickstarts:** [`docs/quickstart-local.md`](docs/quickstart-local.md)
   (local fail-closed demo, no cloud) and
   [`docs/quickstart-gcp-kms.md`](docs/quickstart-gcp-kms.md) (live GCP Cloud KMS).

@@ -37,6 +37,7 @@ import _registries
 import _toolchains
 from _toolchains import unresolved_pins
 from _registries import REPO_ROOT
+import _tree
 from _registries import ManifestError
 
 VERIFICATION_TOML = _registries.path("verification")
@@ -391,7 +392,12 @@ def aggregate_verdict(formal_verdicts, hygiene_verdicts=()) -> str:
 
 
 def _load(path: Path) -> dict:
-    return _registries.read(path, path.relative_to(REPO_ROOT).as_posix())
+    """The registry at `path`, read from the current source tree."""
+    rel = path.relative_to(REPO_ROOT).as_posix()
+    tree = _tree.current()
+    if not tree.is_file(rel):
+        raise ManifestError(f"{rel}: missing")
+    return _registries.parse(tree.read(rel).decode("utf-8"), rel)
 
 
 #: Keys a unit may no longer declare because the fact has ONE authority elsewhere. Named
@@ -491,8 +497,13 @@ def validate_edges(
             require(ewhere, edge, {"sealed_by", "rationale"})
 
 
-def load_verification() -> dict:
-    """Load and validate `verification/policy/verification.toml`."""
+def load_verification(*, tree_checks: bool = True) -> dict:
+    """Load and validate `verification/policy/verification.toml`.
+
+    `tree_checks=False` validates the DOCUMENT only: what each declared path, gate control
+    and in-crate selector resolves to is a question about a checkout, and a caller measuring
+    a commit it does not check out has no checkout that commit describes.
+    """
     doc = _load(VERIFICATION_TOML)
     where = "verification.toml"
     reject_unknown(where, doc, _VERIFICATION_TOP)
@@ -540,8 +551,8 @@ def load_verification() -> dict:
         if unit["id"] in seen_ids:
             raise ManifestError(f"{uwhere}: duplicate unit id {unit['id']!r}")
         seen_ids.add(unit["id"])
-        for declared in unit["paths"]:
-            if not list(REPO_ROOT.glob(declared)):
+        for declared in unit["paths"] if tree_checks else ():
+            if not _tree.current().files(declared):
                 raise ManifestError(
                     f"{uwhere}: path {declared!r} matches nothing. A unit whose source "
                     f"cannot be located has unknown provenance, which is dirty, not empty."
@@ -633,9 +644,10 @@ def load_verification() -> dict:
                 f"{uwhere}: declares `tested_symbols` but no test:// evidence entry "
                 f"claims them, so nothing consumes what the lane would measure."
             )
-        _validate_gate_controls(uwhere, unit)
-        _validate_rust_test_packages(uwhere, unit)
-        _validate_in_crate_selectors(uwhere, unit)
+        if tree_checks:
+            _validate_gate_controls(uwhere, unit)
+            _validate_rust_test_packages(uwhere, unit)
+            _validate_in_crate_selectors(uwhere, unit)
         # `mutation://` is a claim about a NEGATIVE battery, which only exists on top of a
         # positive one: the probes' `expect_red` names members of `tested_symbols`. A unit
         # claiming mutation evidence without test evidence would declare controls that are
@@ -652,7 +664,7 @@ def load_verification() -> dict:
     return doc
 
 
-def load_assumptions() -> dict:
+def load_assumptions(*, tree_checks: bool = True) -> dict:
     """Load and validate the trusted-assumption registry."""
     doc = _load(ASSUMPTIONS_TOML)
     where = "assumptions.toml"
@@ -683,7 +695,8 @@ def load_assumptions() -> dict:
                     f"`boundary://<id>`. A scope the tooling cannot resolve trusts the "
                     f"assumption nowhere while reading as a registration."
                 )
-        _validate_sites(awhere, entry)
+        if tree_checks:
+            _validate_sites(awhere, entry)
         _require_boundary_edge(awhere, entry)
         # ADR-MCPRE-068 §7. Computable from ONE record in isolation, which is what keeps it
         # loader-stage and therefore merge-fatal: a malformed premise declaration is a lie
@@ -733,7 +746,7 @@ def _validate_sites(where: str, entry: dict) -> None:
         if site in seen:
             raise ManifestError(f"{where}: site {site!r} is registered twice in one entry.")
         seen.add(site)
-        if not (REPO_ROOT / path).is_file():
+        if not _tree.current().is_file(path):
             raise ManifestError(
                 f"{where}: site {site!r} names {path}, which does not exist. A registration "
                 f"against a missing file registers nothing while reading as a registration."
@@ -773,7 +786,7 @@ def _require_boundary_edge(where: str, entry: dict) -> None:
     )
 
 
-def load_trust_boundaries() -> dict:
+def load_trust_boundaries(*, tree_checks: bool = True) -> dict:
     """Load and validate the declared trust boundaries."""
     doc = _load(TRUST_BOUNDARIES_TOML)
     where = "trust-boundaries.toml"
@@ -786,14 +799,14 @@ def load_trust_boundaries() -> dict:
         cls = entry.get("max_class_without_assumption")
         if cls is not None and cls not in CLASSES:
             raise ManifestError(f"{bwhere}: max_class_without_assumption {cls!r} invalid")
-        for pattern in entry.get("paths", []):
+        for pattern in entry.get("paths", []) if tree_checks else ():
             # A boundary path that matches nothing SILENTLY NARROWS the boundary. Unlike a
             # unit path, `expand_paths` globs these, so a stale entry raises nothing and the
             # code it used to name simply stops being inside the boundary — and
             # `boundary_class_violations` stops seeing units that cross it. That is an
             # over-read produced by a rename, which is exactly what happened when MCPRE-175
             # turned `pkcs11_keysource.rs` and `async_replay.rs` into owner subtrees.
-            if not any(REPO_ROOT.glob(str(pattern))):
+            if not _tree.current().files(str(pattern)):
                 raise ManifestError(
                     f"{bwhere}: path {pattern!r} matches nothing. A boundary that names no "
                     f"file bounds no unit's class, so a stale entry reads as a registered "
@@ -803,13 +816,8 @@ def load_trust_boundaries() -> dict:
 
 
 def expand_paths(patterns) -> set[str]:
-    """The repo-relative files a `paths` list names, with its globs expanded."""
-    out: set[str] = set()
-    for pattern in patterns:
-        for path in REPO_ROOT.glob(pattern):
-            if path.is_file():
-                out.add(path.relative_to(REPO_ROOT).as_posix())
-    return out
+    """The repo-relative files a `paths` list names in the current tree, globs expanded."""
+    return _tree.expand(patterns)
 
 
 #: The classes whose evidence comes from a whole-crate run rather than from a battery over

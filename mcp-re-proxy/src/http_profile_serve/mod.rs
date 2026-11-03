@@ -100,6 +100,8 @@ mod answering_commitment;
 /// The last three questions before the backend is reached, in the order that keeps the
 /// durable record honest.
 mod dispatch_commitment;
+/// Retention reserved, intent committed, crossing recorded: D7's order, stated once.
+mod dispatch_obligations;
 
 /// Everything after the backend has acted — where no exit can claim nothing happened.
 mod reply_assembly;
@@ -375,7 +377,7 @@ impl HttpProfileProxy {
         &self,
         ex: &mut Exchange<'_>,
         refusal: Refusal,
-        progress: &ExchangeProgress,
+        progress: &mut ExchangeProgress,
     ) -> ServedHttpResponse {
         let owed = Self::disposition(progress, refusal.execution_refinement);
         self.responses.refuse(
@@ -397,9 +399,10 @@ impl HttpProfileProxy {
     /// allowlist, stops the next post-dispatch exit from silently not being on it — and a
     /// refusing OWNER refines only where an ordinary retry was correct or retention is unresolved.
     fn disposition(
-        p: &ExchangeProgress,
+        p: &mut ExchangeProgress,
         refined: Option<ExecutionDisposition>,
     ) -> ExecutionDisposition {
+        p.refuse();
         match (p.retry_semantics(), refined) {
             (RetrySemantics::SafeNothingExecuted, Some(refined)) => refined,
             (RetrySemantics::SafeNothingExecuted, None) => ExecutionDisposition::NothingExecuted,
@@ -492,18 +495,10 @@ impl HttpProfileProxy {
         // a state entered only on the way out would leave a cancelled or panicking dispatch
         // claiming nothing happened.
         progress.advance(ExchangeEvent::BackendDispatched);
-        let (outcome, window, owed, intent) = ready.dispatch().await.into_parts();
+        let dispatched = ready.dispatch().await;
         let outstanding = admitted.envelope.outstanding();
-        self.answer_dispatched(
-            &acc,
-            &mut progress,
-            outstanding,
-            outcome,
-            &window,
-            &owed,
-            intent,
-        )
-        .await
+        self.answer_dispatched(&acc, &mut progress, outstanding, dispatched)
+            .await
     }
 }
 
@@ -520,6 +515,7 @@ pub(super) fn served(resp: HttpResponse) -> ServedHttpResponse {
 mod tests {
     use super::*;
     use crate::exchange_state::ContinuationState;
+    use crate::exchange_state::ExchangeState;
 
     #[test]
     fn every_retry_verdict_maps_to_its_one_wire_disposition() {
@@ -543,12 +539,12 @@ mod tests {
             ExecutionDisposition::NothingExecutedRetentionUnresolved,
             ExecutionDisposition::ApprovalSpentRetentionUnresolved,
         ];
-        assert_eq!(
-            HttpProfileProxy::disposition(&safe, None),
-            ExecutionDisposition::NothingExecuted
-        );
+        // Each verdict is asked of a fresh copy: a refusal enters the exchange's terminal.
+        let owed =
+            |p: &ExchangeProgress, refined| HttpProfileProxy::disposition(&mut p.clone(), refined);
+        assert_eq!(owed(&safe, None), ExecutionDisposition::NothingExecuted);
         for r in refinements {
-            assert_eq!(HttpProfileProxy::disposition(&safe, Some(r)), r);
+            assert_eq!(owed(&safe, Some(r)), r);
         }
         for refined in std::iter::once(None).chain(refinements.into_iter().map(Some)) {
             let expected = match refined {
@@ -558,11 +554,40 @@ mod tests {
                 ) => ExecutionDisposition::ApprovalSpentRetentionUnresolved,
                 _ => ExecutionDisposition::ApprovalSpentNothingExecuted,
             };
-            assert_eq!(HttpProfileProxy::disposition(&spent, refined), expected);
+            assert_eq!(owed(&spent, refined), expected);
             assert_eq!(
-                HttpProfileProxy::disposition(&dispatched, refined),
+                owed(&dispatched, refined),
                 ExecutionDisposition::PossiblyExecuted
             );
+        }
+    }
+
+    /// Deriving a refusal's wire disposition is what enters the refusal terminal, so every
+    /// refusal exit that states a retry contract leaves its exchange refused. Before the
+    /// threshold that is `RefusedBeforeDispatch`, past it `FailedAfterDispatch`; and an
+    /// exchange already refused cannot be refused a second time into a weaker contract.
+    #[test]
+    fn a_refusal_disposition_enters_the_exchange_terminal() {
+        let mut spent = ExchangeProgress::new();
+        spent.observe_continuation(ContinuationState::Consumed);
+        let mut dispatched = ExchangeProgress::new();
+        dispatched.advance(ExchangeEvent::BackendDispatched);
+        for (mut p, terminal) in [
+            (
+                ExchangeProgress::new(),
+                ExchangeState::RefusedBeforeDispatch,
+            ),
+            (spent, ExchangeState::RefusedBeforeDispatch),
+            (dispatched, ExchangeState::FailedAfterDispatch),
+        ] {
+            let _ = HttpProfileProxy::disposition(&mut p, None);
+            assert_eq!(p.state(), terminal);
+            assert_eq!(
+                HttpProfileProxy::disposition(&mut p, None),
+                ExecutionDisposition::PossiblyExecuted,
+                "a second refusal of {terminal:?} reports the unknown at full strength"
+            );
+            assert_eq!(p.state(), terminal);
         }
     }
 }

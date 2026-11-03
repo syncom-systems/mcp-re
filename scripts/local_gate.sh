@@ -32,6 +32,21 @@ done
 if (( FROM > LAST )); then LAST="$FROM"; fi
 if (( LAST >= 5 )); then WITH_KIND=1; fi
 
+# Every gate below runs on `python3`, and some verdicts are that interpreter's own — the
+# format-control table is compared with its `unicodedata`. So the gate runs the interpreter
+# `.python-version` names, not whichever `python3` this machine resolves first: uv finds
+# the pinned release and its directory goes first on PATH.
+PYTHON_PIN="$(tr -d '[:space:]' < .python-version)"
+if PINNED_PYTHON="$(uv python find --no-project "$PYTHON_PIN" 2>/dev/null)"; then
+  PATH="$(dirname "$PINNED_PYTHON"):$PATH"
+  export PATH
+fi
+if [[ "$(python3 -c 'import platform; print(platform.python_version())' 2>/dev/null)" != "$PYTHON_PIN" ]]; then
+  echo "python3 is not the pinned ${PYTHON_PIN} (.python-version); provide it with: uv python install ${PYTHON_PIN}" >&2
+  printf 'LOCAL GATE: FAIL (the pinned Python %s is not available)\n' "$PYTHON_PIN"
+  exit 1
+fi
+
 STAGE=0
 run() { # run <label> <command...>
   local label="$1"; shift

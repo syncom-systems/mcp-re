@@ -11,7 +11,7 @@ fails when the Rust table differs, in either direction.
 
 The table states the Unicode version it was generated for. An interpreter that ships another
 version cannot say whether the table is right, so that is a failure rather than a pass:
-regenerate under the interpreter the repository pins (`python-version` in ci.yml).
+regenerate under the interpreter the repository pins (`.python-version`).
 
     python3 scripts/format_control_table_gate.py
     python3 scripts/format_control_table_gate.py --selftest

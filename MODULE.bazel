@@ -36,12 +36,25 @@ bazel_dep(name = "rules_python", version = "1.7.0")
 # The Python SDK's native module (`mcp_re_sdk._core`) is a PyO3 extension.
 bazel_dep(name = "rules_rust_pyo3", version = "0.70.0")
 
-# The interpreter the PyO3 toolchain configures the SDK's native module against. The
-# module is abi3, so this names the build interpreter, not the set it runs on.
+# The repository's one interpreter, `.python-version`: the PyO3 toolchain configures the
+# SDK's native module against it, and every Bazel `py_test` runs on it. rules_python 1.7.0
+# knows no 3.14 past 3.14.0, so the release is named here, from python-build-standalone
+# with the checksums of its SHA256SUMS. `scripts/python_runtime_gate.py` fails the build
+# when this version and `.python-version` differ.
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.single_version_override(
+    python_version = "3.14.7",
+    sha256 = {
+        "aarch64-apple-darwin": "0211ccf04c5e0a0feb0b9bf1148030e1f6a31b8eae624f13919a7752a4e3dc79",
+        "aarch64-unknown-linux-gnu": "08a224bc0bcadfee3eab55db618343e6ba221f3595000e0894aae163648abc9d",
+        "x86_64-apple-darwin": "18b12f5836c6a5cee8223f1759d26bd3174c1271bb3b7882dc09e2d961f3c863",
+        "x86_64-unknown-linux-gnu": "0056208b5fdfcec939bc5b3908f5e7c89d11c6e2f1fdf02c9cc6aa98d10c5d05",
+    },
+    urls = ["https://github.com/astral-sh/python-build-standalone/releases/download/20260929/cpython-{python_version}+20260929-{platform}-install_only.tar.gz"],
+)
 python.toolchain(
     is_default = True,
-    python_version = "3.12",
+    python_version = "3.14.7",
 )
 
 register_toolchains(

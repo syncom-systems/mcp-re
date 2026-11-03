@@ -16,20 +16,19 @@
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::OutstandingId;
 
-use crate::async_inner::DispatchedOutcome;
 use crate::async_serve::ServedHttpResponse;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
 use crate::exchange_state::ExchangeProgress;
 use crate::exchange_state::OpenLeg;
 use crate::refusal::Refusal;
-use crate::request_stages::RetentionDisposition;
+use crate::request_stages::PostDispatch;
 
 use super::receipt::Accepted;
 use super::reply::ReplyClass;
 use super::reply::ValidatedReply;
-use super::signing_window::SigningWindow;
 use super::HttpProfileProxy;
+use dispatched::DispatchedCall;
 
 /// The bodyless 202 terminal a one-way message reaches.
 mod notification;
@@ -104,21 +103,22 @@ impl HttpProfileProxy {
     /// produces the answer, and not by the caller — an `Err` arm in `handle` returns the
     /// binding its stage produced and nothing else, which `refusal_provenance_gate` enforces
     /// against THM-0081.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) async fn assemble_reply(
+    ///
+    /// It takes a [`DispatchedCall`], which only a request with an `id` yields, so a
+    /// notification has nothing to pass here. The reply comes back with what the exchange
+    /// still owes, for the success exit to discharge.
+    async fn assemble_reply(
         &self,
         acc: &Accepted<'_>,
         progress: &mut ExchangeProgress,
-        outcome: DispatchedOutcome,
-        outstanding: &OutstandingId,
-        window: &SigningWindow,
-        retention: &RetentionDisposition,
-    ) -> Result<SignedReply, ServedHttpResponse> {
+        call: DispatchedCall<'_>,
+    ) -> Result<(SignedReply, PostDispatch), ServedHttpResponse> {
+        let (outcome, outstanding, owed) = call.into_parts();
         let inner_bytes = match self.inner_async.observe_reply(progress, outcome) {
             Ok(bytes) => progress.establish(bytes),
             Err(refusal) => {
                 return Err(self
-                    .refuse_retained(acc, refusal, progress, retention)
+                    .refuse_retained(acc, refusal, progress, owed.retention())
                     .await)
             }
         };
@@ -131,12 +131,15 @@ impl HttpProfileProxy {
             Ok(read) => read,
             Err(refusal) => {
                 return Err(self
-                    .refuse_retained(acc, refusal, progress, retention)
+                    .refuse_retained(acc, refusal, progress, owed.retention())
                     .await)
             }
         };
         let (response, response_base) =
-            match self.responses.sign_reply(acc.exchange(), validated, window) {
+            match self
+                .responses
+                .sign_reply(acc.exchange(), validated, owed.window())
+            {
                 Ok((response, base)) => (response, progress.establish(base)),
                 // SIGNING failed, so there is no signed terminal to retain. The marker stays,
                 // and it is the true statement: this exchange crossed and no durable retained
@@ -145,7 +148,7 @@ impl HttpProfileProxy {
             };
         self.record_continuation_leg(acc, progress, &class, response_base)
             .await?;
-        Ok(SignedReply { response, class })
+        Ok((SignedReply { response, class }, owed))
     }
 
     /// VALIDATED then CLASSIFIED — two facts about the same bytes, kept apart.

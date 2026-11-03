@@ -7,7 +7,7 @@
 //! disables" mapping and the upper bound that keeps an out-of-range value from disabling
 //! the control by overflowing downstream.
 
-use crate::tls::ServerLimits;
+use crate::deployment_request::ServerLimits;
 use std::time::Duration;
 
 /// The maximum accepted timeout in seconds: 1 day. Generous for any legitimate inner yet

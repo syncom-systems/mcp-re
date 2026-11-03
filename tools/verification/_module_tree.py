@@ -122,8 +122,13 @@ def declarations(text: str) -> list[Declaration]:
     #: Open braces: the inline module each one opened (an index into `out`), or None.
     braces: list[int | None] = []
     pos = 0
+    # The first declaration at or after `pos` stays the first one until `pos` passes its
+    # start, so it is searched for again only then; searching on every token re-scanned the
+    # rest of the file once per token.
+    decl = _DECL.search(code, pos)
     while True:
-        decl = _DECL.search(code, pos)
+        if decl is not None and decl.start() < pos:
+            decl = _DECL.search(code, pos)
         token = _TOKENS.search(code, pos)
         if token is None and decl is None:
             break

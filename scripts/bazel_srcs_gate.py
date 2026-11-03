@@ -43,7 +43,6 @@ Run:  python3 scripts/bazel_srcs_gate.py
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import sys
@@ -55,6 +54,7 @@ sys.path.insert(0, str(REPO / "tools" / "verification"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import _module_tree  # noqa: E402
+import _rust_targets  # noqa: E402
 from workflow_reader import glob_matches  # noqa: E402
 
 def balanced(text: str, start: int, opener: str, closer: str) -> str:
@@ -124,7 +124,7 @@ def check_library(root: Path, label: str, row: dict) -> list[str]:
 def check_libraries(root: Path) -> tuple[list[str], int]:
     """Every library target in the table against its module tree. Returns the findings and
     how many libraries were checked."""
-    rows = json.loads((root / TARGET_TABLE).read_text(encoding="utf-8"))["targets"]
+    rows = _rust_targets.rows_at(root)
     findings: list[str] = []
     libraries = sorted(label for label, row in rows.items() if row["kind"] == "rust_library")
     for label in libraries:
@@ -133,7 +133,7 @@ def check_libraries(root: Path) -> tuple[list[str], int]:
 
 
 GUARD = Path("mcp-re-conformance") / "tests" / "audit_vocabulary_guard_test.rs"
-TARGET_TABLE = Path("verification") / "generated" / "rust-targets.json"
+TARGET_TABLE = Path(_rust_targets.TABLE_RELATIVE)
 
 
 def _rust_slice_const(text: str, name: str) -> str:
@@ -183,7 +183,7 @@ def check_source_trees(root: Path) -> tuple[list[str], int]:
     not_scanned = set(_first_strings(_rust_slice_const(guard, "NOT_SCANNED")))
     kinds = set(re.findall(r'"([^"]+)"', _rust_slice_const(guard, "CRATE_KINDS")))
     dirs = re.findall(r'"([^"]+)"', _rust_slice_const(guard, "COMPILED_SOURCE_DIRS"))
-    rows = json.loads((root / TARGET_TABLE).read_text(encoding="utf-8"))["targets"]
+    rows = _rust_targets.rows_at(root)
 
     findings: list[str] = []
     crate_packages = {row["package"] for row in rows.values() if row["kind"] in kinds}
@@ -246,7 +246,7 @@ def selftest() -> int:
             _module_tree.materialize_fixture(root, {f"thing/src/{rel}": text for rel, text in files.items()})
             (root / TARGET_TABLE).parent.mkdir(parents=True)
             (root / TARGET_TABLE).write_text(
-                json.dumps({"targets": {"//thing:thing": library, **(extra_rows or {})}})
+                _rust_targets.fixture({"//thing:thing": library, **(extra_rows or {})})
             )
             found, checked = check_libraries(root)
         if checked == 0:
@@ -321,7 +321,7 @@ def selftest() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / TARGET_TABLE).parent.mkdir(parents=True)
-        (root / TARGET_TABLE).write_text(json.dumps({"targets": {}}))
+        (root / TARGET_TABLE).write_text(_rust_targets.fixture({}))
         if check_libraries(root)[1] != 0:
             print("SELFTEST FAILED [an empty table]: it reported libraries checked")
             ok = False
@@ -361,7 +361,7 @@ def _selftest_source_trees() -> bool:
                 f'filegroup(\n    name = "guard_src_files",\n    srcs = {srcs},\n)\n'
             )
             (root / TARGET_TABLE).parent.mkdir(parents=True)
-            (root / TARGET_TABLE).write_text(json.dumps({"targets": rows or {"//pkg:lib": library}}))
+            (root / TARGET_TABLE).write_text(_rust_targets.fixture(rows or {"//pkg:lib": library}))
             found, checked = check_source_trees(root)
         if checked == 0:
             print(f"SELFTEST FAILED [{name}]: no file was checked — a vacuous pass")

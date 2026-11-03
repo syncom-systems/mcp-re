@@ -9,7 +9,7 @@
 //!             │                                   ── Unavailable ──────> 503
 //!             │                                   ── Uncertain ────────> 503
 //!             └─ CommitmentWitness::redeem        ── refused ──────────> 500
-//!                  └─ Redeemed<Intent>: the crossing may proceed
+//!                  └─ OwedOutcome: the crossing may proceed, owing G2 for this exchange
 //! ```
 //!
 //! One bounded attempt, no retry loop. Every failure is a refusal BEFORE the backend is
@@ -28,14 +28,14 @@ use std::time::Duration;
 
 use mcp_re_core::McpReError;
 
-use crate::audit_record::{AuditRecord, ExchangeCoordinate, ExecutionIntent};
+use crate::audit_record::{ExchangeCoordinate, ExecutionIntent};
 use crate::refusal::Refusal;
 
-use super::outcome::CommittedOutcome;
-use super::{CommitmentBound, CommitmentFailure, EstablishedProvider, Intent, Redeemed};
+use super::outcome::OwedOutcome;
+use super::{CommitmentBound, CommitmentFailure, EstablishedProvider, Intent};
 
-/// The required posture's crossings: an established provider that may serve them, and how
-/// long the request path waits for each. G1 is here; G2 is [`super::outcome`].
+/// The required posture's intent crossing: an established provider that may serve it, and how
+/// long the request path waits. G1 is here; it hands G2 ([`super::outcome`]) both.
 #[derive(Debug)]
 pub(super) struct IntentCommitment {
     provider: Arc<EstablishedProvider>,
@@ -65,11 +65,14 @@ impl IntentCommitment {
     /// `coordinate` is what the exchange's `request.accepted` established (D9). `None` means
     /// no accepted event could be numbered — no run could be drawn, or the run is exhausted —
     /// and an intent with no exchange to name is never produced or fabricated.
+    ///
+    /// What it yields is the outcome the exchange now owes, carrying this provider, this bound
+    /// and this coordinate, so G2 commits for the same exchange without reading any of them.
     pub(super) async fn commit(
         &self,
         coordinate: Option<ExchangeCoordinate>,
         intent: ExecutionIntent<'_>,
-    ) -> Result<Redeemed<Intent>, Refusal> {
+    ) -> Result<OwedOutcome, Refusal> {
         let coordinate = coordinate.ok_or_else(cannot_commit)?;
         let event = intent.produce(coordinate).map_err(|_| cannot_commit())?;
         let witness = self
@@ -77,20 +80,15 @@ impl IntentCommitment {
             .commit::<Intent>(&event, self.bound)
             .await
             .map_err(|failure| refusal_for(&failure))?;
-        witness
+        let redeemed = witness
             .redeem(&event, &self.provider)
-            .map_err(|_| cannot_commit())
-    }
-}
-
-impl IntentCommitment {
-    /// G2 for this exchange, over the provider and bound G1 used.
-    pub(super) async fn outcome(
-        &self,
-        coordinate: Option<ExchangeCoordinate>,
-        observed: AuditRecord,
-    ) -> Result<CommittedOutcome, Refusal> {
-        super::outcome::commit(&self.provider, self.bound, coordinate, observed).await
+            .map_err(|_| cannot_commit())?;
+        Ok(OwedOutcome::new(
+            Arc::clone(&self.provider),
+            self.bound,
+            coordinate,
+            redeemed,
+        ))
     }
 }
 
@@ -155,7 +153,7 @@ mod tests {
         Refusal::new(McpReError::AuditCommitmentUnavailable, status)
     }
 
-    async fn run(authority: &Arc<ReferenceAuthority>) -> Result<Redeemed<Intent>, Refusal> {
+    async fn run(authority: &Arc<ReferenceAuthority>) -> Result<OwedOutcome, Refusal> {
         crossing(authority, 200)
             .commit(Some(coordinate()), ExecutionIntent::new("actor-a", 10))
             .await
@@ -165,10 +163,11 @@ mod tests {
     async fn commit_gives_a_redeemed_intent_for_this_exchange() {
         let authority = reference([Step::Commit]);
         let coordinate = coordinate();
-        let redeemed = crossing(&authority, 200)
+        let owed = crossing(&authority, 200)
             .commit(Some(coordinate), ExecutionIntent::new("actor-a", 10))
             .await
             .expect("committed");
+        let redeemed = owed.intent();
         let journaled = authority.journaled();
         assert_eq!(journaled.len(), 1, "exactly one event was committed");
         assert_eq!(journaled[0].0, redeemed.binding().id());

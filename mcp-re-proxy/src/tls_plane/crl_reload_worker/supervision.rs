@@ -103,14 +103,13 @@ mod tests {
 
     /// A plan that configures a reload cadence, so the posture has a promise to retract.
     fn plan_with_cadence(cadence_secs: u64) -> ChannelEstablishmentPlan {
-        ChannelEstablishmentPlan {
-            client_revocation: crate::config_state::test_support::crl_plan(
-                &["/crl.pem"],
-                Some(cadence_secs),
-            ),
-            credential_window: crate::config_state::test_support::credential_window(3600, 300),
-            handshake_signing: crate::delegated_tls::HandshakeSignCapacity::default(),
-        }
+        crate::startup_plan::channel_plan(
+            &["/crl.pem"],
+            Some(cadence_secs),
+            3600,
+            300,
+            crate::delegated_tls::HandshakeSignCapacity::default(),
+        )
     }
 
     /// THE defect this file carried: the supervisor printed and changed nothing, so the

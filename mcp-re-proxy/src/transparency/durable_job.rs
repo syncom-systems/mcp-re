@@ -107,10 +107,10 @@ pub(super) enum JobKind {
     /// Publish, then unlink `clear_marker` once the publication is durable. Whatever
     /// survives a failure STAYS.
     ///
-    /// The post-dispatch disposition, and the one with no execution boundary at all
-    /// ([`EvidenceRetention::retain`]). The marker's own removal is deliberately not made
-    /// durable: a lost unlink leaves a stale marker, which over-reports indeterminacy —
-    /// the safe direction, here.
+    /// The post-dispatch disposition. With no `clear_marker` it has no execution boundary
+    /// at all, which only a test retains through. The marker's own removal is deliberately
+    /// not made durable: a lost unlink leaves a stale marker, which over-reports
+    /// indeterminacy — the safe direction, here.
     Publish {
         path: PathBuf,
         bytes: Vec<u8>,

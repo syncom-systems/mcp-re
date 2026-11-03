@@ -232,7 +232,7 @@ impl TlsPlane {
     ) -> Result<TlsPlane, String> {
         let (material, server_chain, client_ca) = credential.into_parts();
         let established = material.exposure();
-        let crl_paths = plan.client_revocation.paths();
+        let crl_paths = plan.crl_paths();
         let crls = load_and_check_crls(crl_paths, &client_ca, crl_reference.for_paths(crl_paths)?)?;
         // Cloned because the initial build below consumes the original; the reload
         // re-reads only the CRLs, never this.
@@ -245,7 +245,7 @@ impl TlsPlane {
         // delegated handshake-signature bucket.
         let rebuild_state = Arc::new(TlsListenerSecurityState::new(
             client_ca,
-            plan.handshake_signing,
+            plan.handshake_capacity(),
         ));
 
         // The same construction a CRL reload performs, so the serving config a reload
@@ -376,10 +376,7 @@ pub(crate) fn fleet_crl_bound(
     plan: &crate::startup_plan::ChannelEstablishmentPlan,
     maintenance: CrlMaintenance,
 ) -> String {
-    match crate::config_state::credential_currency_bound(
-        &plan.client_revocation,
-        &plan.credential_window,
-    ) {
+    match plan.currency_bound() {
         CredentialCurrencyBound::CredentialLifetime { window_secs } => {
             format!("short-lived-cert only (exposure_window {window_secs}s); no client CRL")
         }
@@ -535,11 +532,13 @@ mod custody_agreement_tests {
     use crate::startup_plan::ChannelEstablishmentPlan;
 
     fn plan() -> ChannelEstablishmentPlan {
-        ChannelEstablishmentPlan {
-            client_revocation: crate::config_state::test_support::crl_plan(&[], None),
-            credential_window: crate::config_state::test_support::credential_window(3600, 300),
-            handshake_signing: crate::delegated_tls::HandshakeSignCapacity::default(),
-        }
+        plan_with_capacity(crate::delegated_tls::HandshakeSignCapacity::default())
+    }
+
+    fn plan_with_capacity(
+        capacity: crate::delegated_tls::HandshakeSignCapacity,
+    ) -> ChannelEstablishmentPlan {
+        crate::startup_plan::channel_plan(&[], None, 3600, 300, capacity)
     }
 
     /// The snapshot the plane serves carries the custody of the material it was built
@@ -617,9 +616,9 @@ mod custody_agreement_tests {
             inner: signer,
             calls: std::sync::atomic::AtomicUsize::new(0),
         });
-        let mut plan = plan();
-        plan.handshake_signing =
-            crate::delegated_tls::HandshakeSignCapacity::new(1, 2).expect("in bounds");
+        let plan = plan_with_capacity(
+            crate::delegated_tls::HandshakeSignCapacity::new(1, 2).expect("in bounds"),
+        );
         let plane = TlsPlane::materialize(
             &plan,
             EstablishedChannelCredential::from_parts_for_tests(
@@ -767,34 +766,32 @@ mod fleet_crl_bound_tests {
     use super::CrlMaintenance;
     use crate::startup_plan::ChannelEstablishmentPlan;
 
-    /// A plan in the posture under test. The postures are enumerated as VARIANTS, so a
-    /// combination layer A refuses — a cadence with no CRLs — cannot be written here at
-    /// all. The old `(has_crls, lifetime, cadence)` triple could name it, and did.
+    /// A plan in the posture under test, projected from a validated deployment, so a
+    /// combination layer A refuses — a cadence with no CRLs — fails the fixture rather than
+    /// reaching the bound. The old `(has_crls, lifetime, cadence)` triple could name it,
+    /// and did.
     fn plan(
-        client_revocation: crate::startup_plan::ClientRevocationPlan,
+        crl_paths: &[&str],
+        cadence_secs: Option<u64>,
         cert_lifetime_secs: u64,
     ) -> ChannelEstablishmentPlan {
-        ChannelEstablishmentPlan {
-            client_revocation,
-            // The connection age is the default 300s, or the lifetime where that is
-            // shorter: a fixture cannot name an age that outlives the credential, because
-            // no deployment can.
-            credential_window: crate::config_state::test_support::credential_window(
-                cert_lifetime_secs,
-                cert_lifetime_secs.min(300),
-            ),
-            handshake_signing: crate::delegated_tls::HandshakeSignCapacity::default(),
-        }
+        // The connection age is the default 300s, or the lifetime where that is shorter: a
+        // fixture cannot name an age that outlives the credential, because no deployment
+        // can.
+        crate::startup_plan::channel_plan(
+            crl_paths,
+            cadence_secs,
+            cert_lifetime_secs,
+            cert_lifetime_secs.min(300),
+            crate::delegated_tls::HandshakeSignCapacity::default(),
+        )
     }
 
     /// With no CRL the ONLY bound is the certificate lifetime, and the line has to say so
     /// rather than imply a revocation mechanism exists.
     #[test]
     fn without_a_crl_the_bound_is_the_certificate_lifetime() {
-        let bound = fleet_crl_bound(
-            &plan(crate::config_state::test_support::crl_plan(&[], None), 3600),
-            CrlMaintenance::NotScheduled,
-        );
+        let bound = fleet_crl_bound(&plan(&[], None, 3600), CrlMaintenance::NotScheduled);
         assert!(bound.contains("exposure_window 3600s"), "got: {bound}");
         assert!(bound.contains("no client CRL"), "got: {bound}");
     }
@@ -806,10 +803,7 @@ mod fleet_crl_bound_tests {
     #[test]
     fn a_reload_cadence_bounds_established_connections_not_only_handshakes() {
         let bound = fleet_crl_bound(
-            &plan(
-                crate::config_state::test_support::crl_plan(&["/crl.pem"], Some(300)),
-                3600,
-            ),
+            &plan(&["/crl.pem"], Some(300), 3600),
             CrlMaintenance::Maintained { cadence_secs: 300 },
         );
         assert!(bound.contains("bounded 300s"), "got: {bound}");
@@ -823,13 +817,7 @@ mod fleet_crl_bound_tests {
     #[test]
     fn a_cadence_nothing_is_keeping_is_not_claimed_as_the_bound() {
         for maintenance in [CrlMaintenance::Stopped, CrlMaintenance::Degraded] {
-            let bound = fleet_crl_bound(
-                &plan(
-                    crate::config_state::test_support::crl_plan(&["/crl.pem"], Some(300)),
-                    3600,
-                ),
-                maintenance,
-            );
+            let bound = fleet_crl_bound(&plan(&["/crl.pem"], Some(300), 3600), maintenance);
             assert!(bound.contains("nextUpdate"), "got: {bound}");
             assert!(!bound.contains("bounded 300s"), "got: {bound}");
         }
@@ -839,13 +827,7 @@ mod fleet_crl_bound_tests {
     /// never the cert lifetime, which does not apply once a CRL is present.
     #[test]
     fn without_a_cadence_the_bound_is_the_crls_own_expiry() {
-        let bound = fleet_crl_bound(
-            &plan(
-                crate::config_state::test_support::crl_plan(&["/crl.pem"], None),
-                60,
-            ),
-            CrlMaintenance::NotScheduled,
-        );
+        let bound = fleet_crl_bound(&plan(&["/crl.pem"], None, 60), CrlMaintenance::NotScheduled);
         assert!(bound.contains("nextUpdate"), "got: {bound}");
         assert!(
             !bound.contains("exposure_window"),

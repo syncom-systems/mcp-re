@@ -64,7 +64,8 @@ fn base() -> DeploymentRequest {
     .collect();
     cli::parse_args(&argv)
         .expect("baseline parses")
-        .into_inner()
+        .config()
+        .clone()
 }
 
 #[test]

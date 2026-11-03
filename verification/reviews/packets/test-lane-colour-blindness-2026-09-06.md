@@ -69,7 +69,12 @@ sends a reader to the test files; unreadable sends them to the lane.
 
 Red-verified 2026-09-06: with the ANSI strip removed the suite goes red; restored, green.
 All fourteen `tools/verification/test_*.py` suites re-run, 0 failures — a change to any of
-them means running all of them, because they hand-load each other.
+them means running all of them. The reason is shared state, not imports: no suite imports
+another, and each runs as its own process. Every suite loads the live registries at import
+time, and the same tool is loaded under different module names (`verify` is `verify_tool`
+in `test_evidence_bundle.py` and `verify_cli` in `test_measured_inputs.py`), so a change to
+a shared loader or tool reaches all of them. (Corrected 2026-10-27, #1252: this line said
+the suites hand-load each other.)
 
 ## 5. Consequence for the graph
 

@@ -78,6 +78,7 @@ pub(crate) mod kms_endpoint;
 pub mod mcp_transport_contract;
 pub mod replay;
 pub mod replica_clock;
+pub mod request_target;
 pub mod server_identity;
 pub mod topology;
 pub mod transport;
@@ -106,6 +107,7 @@ pub use key_file_access::{foreign_owner, FOREIGN_OWNER};
 pub use mcp_transport_contract::McpTransportContractState;
 pub use replay::ReplayState;
 pub use replica_clock::ReplicaClockDivergence;
+pub use request_target::RequestTarget;
 pub use topology::{DeploymentTopology, ShardTopologyRequest};
 pub use transport::ChannelBindingState;
 pub use trust_document::TrustDocumentSource;
@@ -149,6 +151,7 @@ struct RecognisedStates {
     key_file_access: KeyFileAccessPolicy,
     mcp_transport_contract: McpTransportContractState,
     replay: ReplayState,
+    request_target: RequestTarget,
     retention: RetentionState,
     server_identity: server_identity::ServerIdentityFacts,
     shard_topology: ShardTopologyRequest,
@@ -223,6 +226,11 @@ impl DeploymentConfigState {
         self.states.freshness
     }
 
+    /// The configured `@target-uri`, absolute by construction: what the signature base and
+    /// the audience cover, and the origin form every request's arrival path is checked against.
+    pub fn request_target(&self) -> &RequestTarget {
+        &self.states.request_target
+    }
     /// Which basis the admission limit is expressed in, with the default already applied.
     ///
     /// A resolved fact rather than a posture: the control is on in both variants, and the
@@ -404,7 +412,8 @@ pub(crate) mod test_support {
         let owned: Vec<String> = argv.into_iter().map(str::to_string).collect();
         crate::cli::parse_args(&owned)
             .unwrap_or_else(|e| panic!("{source:?} config must parse: {e}"))
-            .into_inner()
+            .config()
+            .clone()
     }
 
     /// The two custody states the disk projection is a function of.
@@ -572,10 +581,10 @@ pub(crate) mod test_support {
 
     /// The trust plan a deployment in this posture projects.
     ///
-    /// Through the boundary and then through `TrustPlan::from_validated`, so the plan's
-    /// revocation posture, its derived reload cadence and its document all come from ONE
-    /// accepted deployment. The literal this replaced could pair any state with any
-    /// cadence, and did: it named a 30s reload beside a state carrying 5s.
+    /// Through the boundary and then through `response_authority_plans`, so the plan's
+    /// revocation posture, its derived reload cadence, its document and its response
+    /// authority all come from ONE accepted deployment. The literal this replaced could pair
+    /// any state with any cadence, and did: it named a 30s reload beside a state carrying 5s.
     pub(crate) fn trust_plan(
         tier: crate::revocation_tier::RevocationTier,
         reload_secs: Option<u64>,
@@ -585,12 +594,7 @@ pub(crate) mod test_support {
         config.request_signer_currency = currency_posture(tier, reload_secs, epoch);
         let validated = super::validation::ValidatedDeployment::try_from(config)
             .expect("the requested trust posture is a legal deployment");
-        let epoch_plan = crate::startup_plan::TrustEpochPlan::from_validated(&validated);
-        crate::startup_plan::TrustPlan::from_validated(
-            &validated,
-            "response-kid".to_string(),
-            epoch_plan,
-        )
+        crate::startup_plan::response_authority_plans(&validated).0
     }
 
     /// The CRL state a deployment with these files and cadence reaches.
@@ -703,7 +707,8 @@ pub(crate) mod test_support {
         .collect();
         cli::parse_args(&argv)
             .expect("the baseline parses")
-            .into_inner()
+            .config()
+            .clone()
     }
 }
 
@@ -775,6 +780,8 @@ mod tests {
             replay: replay::classify_and_validate(&test_support::legal_linearizable_config())
                 .0
                 .expect("the linearizable fixture names a CP store endpoint"),
+            request_target: RequestTarget::new("https://proxy.internal:8600/mcp")
+                .expect("an absolute target"),
             retention: test_support::retention_at("/var/lib/mcp-re/evidence".to_string()),
             channel_credential_custody: test_support::channel_custody_delegated_pkcs11("tls"),
             trust_revocation: test_support::revocation_posture(

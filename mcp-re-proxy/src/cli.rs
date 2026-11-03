@@ -218,7 +218,6 @@ pub fn parse_args(args: &[String]) -> Result<ValidatedDeployment, String> {
 #[cfg(test)]
 mod tests {
     use super::DeploymentRequest;
-    use super::ValidatedDeployment;
     use crate::config_state::validation::unsafe_config_violations;
     use crate::deployment_request::AuditSinkKind;
     use crate::deployment_request::AuthzKind;
@@ -230,7 +229,7 @@ mod tests {
 
     /// The request `parse_args` validated, for asserting what the parser put in each field.
     fn parse_request(args: &[String]) -> Result<DeploymentRequest, String> {
-        super::parse_args(args).map(ValidatedDeployment::into_inner)
+        super::parse_args(args).map(|validated| validated.config().clone())
     }
 
     /// The full, valid set of Mode-C flags (attestor key + ingress identity +
@@ -1048,7 +1047,7 @@ mod tests {
 
         // Assembled in code, which meets no parser: the same basis, for the same reason.
         let mut built = parse_request(&minimal_durable()).expect("parse");
-        built.limits = crate::tls::ServerLimits::default();
+        built.limits = crate::deployment_request::ServerLimits::default();
         built.in_flight_limit = crate::config_state::InFlightLimitRequest::FleetTotal(nz(1000));
         assert_eq!(
             crate::config_state::in_flight_limit::classify(&built),

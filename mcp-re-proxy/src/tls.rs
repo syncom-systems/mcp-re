@@ -26,7 +26,6 @@
 //! [`crate::tls_listener_state`] (MCPRE-137, ADR-MCPRE-062).
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use mcp_re_core::json_rpc_error_object;
 use mcp_re_core::McpReError;
@@ -44,128 +43,6 @@ use crate::communication_assurance::AuthenticatedChannelPeer;
 use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
 use crate::transport::IdentityPolicy;
 use crate::transport::RequestHeaders;
-
-/// Resource limits applied to every served connection — the blocking server's
-/// defense against slow-loris, oversized-request, and connection-exhaustion
-/// denial of service. Every limit fails closed: a connection that exceeds one is
-/// dropped (or never accepted), never served partially.
-///
-/// The three timeouts, the connection ceiling and the drain window are the REQUEST: a
-/// disabled one is representable so the boundary can refuse it by name. The async serving
-/// path reads them from [`ServerOptions::connection_bounds`], which holds them resolved and
-/// in force; the blocking harness reads them here.
-#[derive(Debug, Clone)]
-pub struct ServerLimits {
-    /// Maximum bytes accepted before the end-of-headers marker. Caps header
-    /// floods and unterminated header streams.
-    pub max_header_bytes: usize,
-    /// Maximum request body (`Content-Length`, and bytes actually read). Caps
-    /// oversized payloads.
-    pub max_body_bytes: usize,
-    /// Per-socket read timeout (covers a stalled TLS handshake and slow-loris
-    /// body trickling, since reading drives the handshake). `None` disables.
-    pub read_timeout: Option<Duration>,
-    /// AGGREGATE wall-clock deadline over the WHOLE server read phase (TLS
-    /// handshake + HTTP header block + body), the server-side mirror of
-    /// mcp-re-transport's `DeadlineStream` (MCPS-094) and bounded response read
-    /// (MCPS-093). The per-socket `read_timeout` bounds each INDIVIDUAL read, but a
-    /// peer trickling one byte just under that timeout resets the per-read
-    /// inactivity timer on every byte and can extend a single connection's total
-    /// lifetime without bound (slow-loris below the per-read threshold), holding a
-    /// serve thread. This caps the TOTAL handshake+request read wall-clock; once it
-    /// elapses the next read fails closed (the connection is dropped). `None`
-    /// disables the aggregate bound, preserving the per-read-only semantics.
-    pub request_deadline: Option<Duration>,
-    /// Per-socket write timeout. `None` disables.
-    pub write_timeout: Option<Duration>,
-    /// Maximum simultaneously-served connections in the threaded [`serve`] loop.
-    /// Connections beyond the cap are dropped (TCP-accepted then closed) rather
-    /// than queued unboundedly.
-    pub max_concurrent_connections: usize,
-    /// MCPRE-114 (ADR-MCPRE-051 §1): per-core bounded ADMISSION control — the
-    /// maximum number of requests being served CONCURRENTLY on one core (async
-    /// serving path). A request that arrives while the ceiling is full is rejected
-    /// fail-closed with `503 Service Unavailable` BEFORE the handler runs, rather
-    /// than queued without bound — so tail latency stays bounded under overload
-    /// instead of degrading unboundedly. `None` disables the ceiling (unbounded
-    /// in-flight; the historical behavior). Bounds only the async
-    /// (`async_serve`) path; the blocking loop bounds concurrency via
-    /// `max_concurrent_connections`.
-    ///
-    /// # RESOLVED, not requested
-    ///
-    /// On the validated path this is not what an operator wrote. The admission limit is
-    /// stated once, in
-    /// [`DeploymentRequest::in_flight_limit`](crate::deployment_request::DeploymentRequest::in_flight_limit), which can express
-    /// per-core, fleet-wide, or nothing at all; the boundary resolves that to a basis and
-    /// the composition root writes the per-core answer HERE. Setting this field on a
-    /// `DeploymentRequest` therefore states nothing — it is overwritten.
-    ///
-    /// The fail-safe default remains, and is the same constant the basis resolves an
-    /// unstated limit to, so a `ServerLimits` built directly — by a test, or an embedder
-    /// driving `async_serve` with no `DeploymentRequest` — is bounded on exactly the same terms.
-    pub max_in_flight_requests: Option<usize>,
-    /// MCPRE-115 (ADR-MCPRE-051 §6): the BOUNDED GRACE WINDOW for graceful drain on
-    /// the async serving path. On shutdown each per-core [`serve`] loop stops
-    /// accepting and then waits up to this long for its IN-FLIGHT requests to
-    /// complete before returning (after which the runtime is dropped and any
-    /// still-running request is abandoned). Each in-flight request is ALSO bounded by
-    /// `request_deadline`, so with `drain_grace >= request_deadline` every admitted
-    /// request finishes within the window — zero abandoned. Size it UNDER the
-    /// deployment's k8s `terminationGracePeriodSeconds` and AT OR ABOVE
-    /// `request_deadline`: `request_deadline <= drain_grace < terminationGracePeriodSeconds`.
-    /// Idle keep-alive connections carry no in-flight request and do not extend the
-    /// drain — an idle drain returns promptly.
-    pub drain_grace: Duration,
-    /// The requested maximum age of one mTLS connection. The boundary resolves it with
-    /// the certificate lifetime into
-    /// [`ClientCredentialWindow`](crate::config_state::ClientCredentialWindow), and the
-    /// serving path reads [`ServerOptions::client_credential_window`], never this field.
-    pub max_connection_age: Option<Duration>,
-    /// The rate and burst of the listener's delegated handshake-signature budget. Read
-    /// once, by [`ChannelEstablishmentPlan`](crate::startup_plan::ChannelEstablishmentPlan).
-    pub tls_handshake_signing: crate::delegated_tls::HandshakeSignCapacity,
-}
-
-impl Default for ServerLimits {
-    fn default() -> Self {
-        ServerLimits {
-            max_header_bytes: 64 * 1024,
-            max_body_bytes: 16 * 1024 * 1024,
-            read_timeout: Some(crate::config_state::connection_bounds::DEFAULT_TIMEOUT),
-            request_deadline: Some(crate::config_state::connection_bounds::DEFAULT_TIMEOUT),
-            write_timeout: Some(crate::config_state::connection_bounds::DEFAULT_TIMEOUT),
-            max_concurrent_connections:
-                crate::config_state::connection_bounds::DEFAULT_MAX_CONNECTIONS,
-            // A DEFENSIBLE per-core ceiling rather than the unbounded historical
-            // default. Unbounded meant one peer holding a valid client certificate
-            // could multiplex unbounded HTTP/2 streams, each buffering up to
-            // `max_body_bytes` BEFORE the verify gate — attacker-controlled memory
-            // with zero authenticated requests, and it also left hyper's HTTP/2
-            // `max_concurrent_streams` unset.
-            //
-            // MATCHED TO `max_concurrent_connections` on purpose. That cap already
-            // admitted 256 concurrent connections per core, so one in-flight request
-            // per admitted connection tightens nothing that was previously allowed —
-            // it just stops the H2 multiplexer exceeding it. A smaller number would be
-            // a throughput policy rather than a memory bound, and it would shed inside
-            // the ADR-MCPRE-051 §7 envelope (concurrency 128), which is a load-shaping
-            // decision no default should make silently.
-            max_in_flight_requests: Some(
-                crate::config_state::in_flight_limit::DEFAULT_PER_CORE_IN_FLIGHT,
-            ),
-            // >= request_deadline (so every admitted request can finish) and, in
-            // production, < k8s terminationGracePeriodSeconds.
-            drain_grace: crate::config_state::connection_bounds::DEFAULT_DRAIN_GRACE,
-            // Bounds how long a peer keeps serving on a certificate validated only at
-            // its handshake. 300s is well inside the 1h certificate-lifetime
-            // ceiling and short enough that a CRL reload takes effect within one
-            // cadence, while being long enough that re-handshake cost is negligible.
-            max_connection_age: Some(Duration::from_secs(300)),
-            tls_handshake_signing: crate::delegated_tls::HandshakeSignCapacity::default(),
-        }
-    }
-}
 
 /// The trusted-ingress Tier-3 (ADR-MCPS-023, issue #71) assertion header. A single
 /// HTTP header carrying the LB-signed, request-bound ingress assertion (the
@@ -186,8 +63,9 @@ pub struct ServerOptions {
     /// Where the request's verified transport identity is taken from. Mutually
     /// exclusive by construction.
     pub peer_identity_provenance: PeerIdentityProvenance,
-    /// Connection resource limits (DoS defense).
-    pub limits: ServerLimits,
+    /// The limits serving reads that no other owner holds: the two size ceilings and the
+    /// per-core in-flight ceiling.
+    pub limits: crate::deployment_request::ServedLimits,
     /// The read, write and request-deadline timeouts, the connection ceiling and the drain
     /// window, every one in force. The async serving path reads these here and never from
     /// [`Self::limits`], so it has no disabled-bound arm to take.
@@ -220,29 +98,32 @@ pub struct ServerOptions {
     pub ocsp_checker: Option<crate::ocsp::OcspChecker>,
     /// The canonical RFC 9421 `@target-uri` this deployment binds requests to
     /// (ADR-MCPRE-050). Client and server MUST agree on it byte-for-byte; the
-    /// verifier checks it against the request evidence block's audience tuple. Empty
-    /// when unset (the audience/target check then fails closed).
-    pub target_uri: String,
+    /// verifier checks it against the request evidence block's audience tuple, and the
+    /// serve loop checks each request's arrival path against its origin form.
+    pub target: crate::config_state::RequestTarget,
 }
 
 impl ServerOptions {
-    /// Options with every field at its default except the required window.
+    /// Options with every field at its default except the required window and target.
     ///
     /// `pub` because it replaces the public `Default` for out-of-crate embedders
-    /// (`serve_once` callers): a window is required, so no inhabitant leaves currency
-    /// unexamined. The composition root keeps an exhaustive literal, so an omitted
+    /// (`serve_once` callers): a window and a target are required, so no inhabitant leaves
+    /// currency unexamined or the arrival-path check unanswerable. The composition root keeps an exhaustive literal, so an omitted
     /// revocation index or custody flag stays a compile error there.
-    pub fn new(client_credential_window: crate::config_state::ClientCredentialWindow) -> Self {
+    pub fn new(
+        client_credential_window: crate::config_state::ClientCredentialWindow,
+        target: crate::config_state::RequestTarget,
+    ) -> Self {
         ServerOptions {
             identity_policy: IdentityPolicy::RECOMMENDED,
             peer_identity_provenance: PeerIdentityProvenance::default(),
-            limits: ServerLimits::default(),
+            limits: crate::deployment_request::ServedLimits::default(),
             connection_bounds: crate::config_state::ConnectionBounds::default(),
             client_credential_window,
             client_revocation: None,
             #[cfg(feature = "online_ocsp")]
             ocsp_checker: None,
-            target_uri: String::new(),
+            target,
         }
     }
 }
@@ -564,13 +445,13 @@ mod currency_policy_tests {
         for secs in [3600, 1800] {
             let expected = Duration::from_secs(secs);
             assert!(matches!(
-                currency_policy(&ServerOptions::new(window(secs))),
+                currency_policy(&ServerOptions::new(window(secs), crate::config_state::RequestTarget::new("https://localhost/").expect("an absolute target"))),
                 CredentialCurrencyPolicy::Ceiling(d) if d == expected
             ));
             assert!(matches!(
                 currency_policy(&ServerOptions {
                     client_revocation: Some(Arc::clone(&revocation)),
-                    ..ServerOptions::new(window(secs))
+                    ..ServerOptions::new(window(secs), crate::config_state::RequestTarget::new("https://localhost/").expect("an absolute target"))
                 }),
                 CredentialCurrencyPolicy::CeilingAndRevocation(d, _) if d == expected
             ));
@@ -586,7 +467,11 @@ mod currency_policy_tests {
         let (revocation, publisher) = shared();
         let options = ServerOptions {
             client_revocation: Some(Arc::clone(&revocation)),
-            ..ServerOptions::new(window(3600))
+            ..ServerOptions::new(
+                window(3600),
+                crate::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            )
         };
         let before = currency_policy(&options);
         assert!(
@@ -649,7 +534,11 @@ mod routing_header_tests {
         .expect("a legal credential window");
         let asserting = super::ServerOptions {
             peer_identity_provenance: PeerIdentityProvenance::IngressAssertion,
-            ..super::ServerOptions::new(window)
+            ..super::ServerOptions::new(
+                window,
+                crate::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            )
         };
         let name = super::MCP_INGRESS_ASSERTION_HEADER;
         let one = RequestHeaders::from_pairs([(name, "token-a")]);
@@ -664,7 +553,11 @@ mod routing_header_tests {
 
         let channel = super::ServerOptions {
             peer_identity_provenance: PeerIdentityProvenance::ChannelCredential,
-            ..super::ServerOptions::new(window)
+            ..super::ServerOptions::new(
+                window,
+                crate::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            )
         };
         assert_eq!(super::assertion_header(&channel, &one), None);
     }
@@ -1081,6 +974,7 @@ mod channel_peer_resolution_tests {
     //! stake here is provenance rather than parsing.
 
     use super::*;
+    use std::time::Duration;
 
     use crate::communication_assurance::mechanism_verified_credential::EstablishmentPath;
     use crate::communication_assurance::CertificateIdentitySource;
@@ -1103,7 +997,11 @@ mod channel_peer_resolution_tests {
         ServerOptions {
             identity_policy: policy,
             peer_identity_provenance: PeerIdentityProvenance::ChannelCredential,
-            ..ServerOptions::new(window())
+            ..ServerOptions::new(
+                window(),
+                crate::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            )
         }
     }
 
@@ -1258,7 +1156,11 @@ mod channel_peer_resolution_tests {
         let options = ServerOptions {
             identity_policy: IdentityPolicy::UriSan,
             peer_identity_provenance: PeerIdentityProvenance::IngressAssertion,
-            ..ServerOptions::new(window())
+            ..ServerOptions::new(
+                window(),
+                crate::config_state::RequestTarget::new("https://localhost/")
+                    .expect("an absolute target"),
+            )
         };
         assert!(
             resolve_channel_peer(Some(&acceptance), &options, wall_clock_unix())

@@ -188,7 +188,7 @@ mod tests {
 
     use super::*;
     use crate::config_state::ClientCredentialWindow;
-    use crate::tls::ServerLimits;
+    use crate::deployment_request::ServerLimits;
 
     fn admission(options: &ServerOptions) -> CoreAdmission {
         let pool = crate::async_fleet::CorePool::for_core(
@@ -221,6 +221,8 @@ mod tests {
                         Duration::from_millis(50),
                     )
                     .expect("a legal credential window"),
+                    crate::config_state::RequestTarget::new("https://x/")
+                        .expect("an absolute target"),
                 )
             });
             let admission = admission(&options);

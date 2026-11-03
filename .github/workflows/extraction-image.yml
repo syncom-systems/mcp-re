@@ -54,6 +54,10 @@ jobs:
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v7
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
 
       - name: Containerd image store, so an image id is the manifest digest the lock records
         run: |

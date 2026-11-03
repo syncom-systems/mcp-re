@@ -23,24 +23,11 @@ use crate::config_state::validation::ValidatedDeployment;
 /// Planning composes the facts the owners state; it does not restate their semantics.
 pub use crate::config_state::replay::{PlannedStore, ReplayPlan};
 
-/// The trust plan and the signing plan, produced together: the one producer of both.
-///
-/// Both planes consume the root issuer kid delegated credentials chain to (ADR-MCPRE-052)
-/// and the shared trust epoch (CF-09). Each is read here once, from what layer A decided —
-/// the kid from [`DelegatedSigningFacts`](crate::config_state::DelegatedSigningFacts), the
-/// epoch from the classified trust-revocation state — and handed to both plans, so trust
-/// never enrolls as a request signer a kid other than the one signing mints under, and the
-/// two follow one epoch. `SigningPlan`'s constructor is private to this module and
-/// `TrustPlan`'s is reached only from here in production.
-pub fn response_authority_plans(config: &ValidatedDeployment) -> (TrustPlan, SigningPlan) {
-    let response_kid = config.state().delegated_signing().issuer_kid().to_string();
-    let epoch = TrustEpochPlan::from_validated(config);
-    let trust = TrustPlan::from_validated(config, response_kid.clone(), epoch.clone());
-    (
-        trust,
-        SigningPlan::from_validated(config, response_kid, epoch),
-    )
-}
+/// The root issuer kid and the shared trust epoch, decided once for the trust plan and the
+/// signing plan, sealed in its own module with the one function that produces both plans.
+mod response_authority;
+
+pub use response_authority::{response_authority_plans, ResponseAuthority};
 
 /// The trust plan and its reload posture live with their OWNER — the trust subtree —
 /// and are re-exported here so no consumer import path breaks.
@@ -188,22 +175,18 @@ pub struct SigningPlan {
 }
 
 impl SigningPlan {
-    /// Project the plan from the validated configuration and the two shared decisions.
+    /// Project the plan from the validated configuration and the response authority.
     ///
-    /// Infallible: the epoch source and `0 < overlap < ttl` are layer A's clauses. The kid
-    /// and the epoch are passed in, by [`response_authority_plans`] alone.
-    fn from_validated(
-        config: &ValidatedDeployment,
-        response_kid: String,
-        epoch: TrustEpochPlan,
-    ) -> SigningPlan {
+    /// Infallible: the epoch source and `0 < overlap < ttl` are layer A's clauses. Private
+    /// to this module and its descendants; [`response_authority_plans`] is the one caller.
+    fn from_validated(config: &ValidatedDeployment, authority: ResponseAuthority) -> SigningPlan {
         let values = config.config();
         let facts = config.state().delegated_signing();
         let rotation = facts.rotation_window();
         let identity = config.state().server_identity().actor();
         SigningPlan {
             custody: mcp_re_http_profile::CustodyConfig {
-                issuer_kid: response_kid,
+                issuer_kid: authority.kid().to_string(),
                 iss: identity.subject.clone(),
                 profile: mcp_re_http_profile::PROFILE_TAG.to_string(),
                 aud: values.audience.clone(),
@@ -216,7 +199,7 @@ impl SigningPlan {
                 // The owner's sealed TTL/overlap pair, projected whole.
                 window: rotation,
             },
-            epoch,
+            epoch: authority.epoch().clone(),
         }
     }
 
@@ -256,45 +239,14 @@ impl SigningPlan {
 /// its own validated state, not a value planning rebuilds from the state's paths.
 pub use crate::config_state::crl_revocation::ClientRevocationPlan;
 
-/// What must hold for this node to establish authenticated channels (ADR-MCPRE-056 §8).
-///
-/// Three classified states, none of them protocol vocabulary: the custody of this node's
-/// own channel credential, the currency posture it holds peer credentials to, and the
-/// window a peer credential authorizes traffic for. The mechanism that consumes them is
-/// `TlsPlane`, and it is the plane — not the plan — that is entitled to say rustls
-/// (ADR-MCPRE-067 §5, §6). The certificate lifetime and the connection-age bound used to
-/// travel here as two `Option<Duration>` inputs, with a doc comment claiming their
-/// compatibility "was settled at layer A" — which was not true: relation X5 compared the
-/// connection age against the ceiling CONSTANT and never against the configured lifetime.
-/// `ClientCredentialWindow` states the relation over the chosen values and owns both, so
-/// the plan carries one fact instead of two durations that could disagree.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChannelEstablishmentPlan {
-    /// The offline peer-credential revocation posture.
-    pub client_revocation: ClientRevocationPlan,
-    /// How long a client credential authorizes traffic, and how long one connection may
-    /// serve on a single handshake — the pair that makes the exposure window honest.
-    pub credential_window: crate::config_state::ClientCredentialWindow,
-    /// The capacity of the listener's handshake-signature budget: a global ceiling on the
-    /// signing backend, not a per-peer allowance.
-    pub handshake_signing: crate::delegated_tls::HandshakeSignCapacity,
-}
+/// What this node needs to establish authenticated channels, sealed in its own module:
+/// `from_validated` is its only producer, so the plan's facts come from one validated
+/// deployment and reach the TLS plane as projections.
+mod channel_establishment_plan;
 
-impl ChannelEstablishmentPlan {
-    /// Project the plan from the retained classification and the validated inputs.
-    ///
-    /// **Infallible, deliberately.** Whether this binary has a PKCS#11, AWS or GCP backend
-    /// for delegated custody is a fact about the BUILD, and making this fallible for it
-    /// would collapse the A/B split: the request is coherent either way, and only
-    /// materialization can say whether this executable can serve it.
-    pub fn from_validated(config: &ValidatedDeployment) -> ChannelEstablishmentPlan {
-        ChannelEstablishmentPlan {
-            client_revocation: config.state().crl_revocation().client_revocation_plan(),
-            credential_window: config.state().client_credential_window(),
-            handshake_signing: config.config().limits.tls_handshake_signing,
-        }
-    }
-}
+#[cfg(test)]
+pub(crate) use channel_establishment_plan::channel_plan;
+pub use channel_establishment_plan::ChannelEstablishmentPlan;
 
 /// What the MRTR continuation store must establish (ADR-MCPS-047, CF-12).
 ///
@@ -359,7 +311,7 @@ mod tests {
     }
 
     fn parse(extra: &[&str]) -> Result<DeploymentRequest, String> {
-        crate::cli::parse_args(&base_argv(extra)).map(ValidatedDeployment::into_inner)
+        crate::cli::parse_args(&base_argv(extra)).map(|validated| validated.config().clone())
     }
 
     fn strategy_for(extra: &[&str]) -> PeerIdentityProvenance {
@@ -859,35 +811,6 @@ mod tests {
 
     // ---- the signing plan ----------------------------------------------------------
 
-    /// The issuer kid has ONE derivation, and the plan carries whatever it is handed.
-    ///
-    /// The defect this closes: the kid was derived twice — by the planner, whose
-    /// value the startup transcript prints and which trust excludes from the request-signer
-    /// set, and again inside the delegated wiring, which is the one that reached the
-    /// credential. Both spelled the same fallback, so they agreed. A deployment could
-    /// otherwise have been told it was chaining to one issuer while minting under another.
-    ///
-    /// Asserted with a kid the configuration does not name, which is only possible because
-    /// nothing inside re-derives it.
-    #[test]
-    fn the_issuer_kid_in_the_credential_is_the_one_that_was_planned() {
-        let config = validated(&[]);
-        assert_ne!(
-            response_authority_plans(&config).0.response_kid(),
-            "decided-above"
-        );
-        let plan = SigningPlan::from_validated(
-            &config,
-            "decided-above".to_string(),
-            TrustEpochPlan::NoNetworkChannel,
-        );
-        assert_eq!(
-            plan.custody().issuer_kid,
-            "decided-above",
-            "the credential must be minted under the planned issuer, not a re-derived one"
-        );
-    }
-
     /// The audience-scope hash defaults to the response audience, once.
     #[test]
     fn the_audience_scope_defaults_to_the_response_audience_and_is_overridable() {
@@ -906,9 +829,9 @@ mod tests {
     /// Signing is the plane that landed last, which is exactly when the shortcut is
     /// tempting: take the epoch from the sibling that already has one, or from
     /// configuration through a second reading. Its constructor is private to this module and
-    /// its fields are private, so the one producer is the only way to obtain a plan — and
-    /// the plan it returns carries the epoch decision the trust plan carries, read once from
-    /// the classified state, for a networked source and for none.
+    /// takes the response authority, so the one producer is the only way to obtain a plan —
+    /// and the plan it returns carries the epoch decision the trust plan carries, read once
+    /// from the classified state, for a networked source and for none.
     #[test]
     fn the_signing_plan_cannot_be_given_a_different_epoch() {
         for args in [PUSH_NETWORKED, &[] as &[&str]] {
@@ -1011,14 +934,14 @@ mod tests {
         let config = validated(&["--max-client-cert-lifetime", "3600"]);
         let plan = ChannelEstablishmentPlan::from_validated(&config);
         assert_eq!(
-            plan.credential_window.cert_lifetime(),
+            plan.credential_window().cert_lifetime(),
             std::time::Duration::from_secs(3600)
         );
         assert!(
-            plan.credential_window.connection_age() <= plan.credential_window.exposure_window(),
+            plan.credential_window().connection_age() <= plan.credential_window().exposure_window(),
             "the plan cannot hold a connection age that outlives the credential"
         );
-        assert!(!plan.client_revocation.is_enforced());
+        assert!(plan.crl_paths().is_empty());
     }
 
     /// The operator's handshake-signing capacity reaches the plan the TLS plane builds the
@@ -1033,12 +956,12 @@ mod tests {
             "40",
         ]);
         assert_eq!(
-            ChannelEstablishmentPlan::from_validated(&stated).handshake_signing,
+            ChannelEstablishmentPlan::from_validated(&stated).handshake_capacity(),
             HandshakeSignCapacity::new(250, 40).expect("in bounds")
         );
         let unstated = validated(&[]);
         assert_eq!(
-            ChannelEstablishmentPlan::from_validated(&unstated).handshake_signing,
+            ChannelEstablishmentPlan::from_validated(&unstated).handshake_capacity(),
             HandshakeSignCapacity::default()
         );
     }

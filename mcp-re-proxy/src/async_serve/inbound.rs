@@ -89,7 +89,7 @@ pub(super) fn request_view(
     // closed on a mismatch. This does not bind the received line INTO the signature
     // (both ends must still agree on one canonical absolute URI); it refuses to serve
     // where the operator's assertion is provably not a reconstruction of this request.
-    if let Some(mismatch) = target_uri_mismatch(&options.target_uri, req.uri()) {
+    if let Some(mismatch) = target_uri_mismatch(&options.target, req.uri()) {
         let _ = mismatch;
         return Err(Box::new(malformed_header_response()));
     }

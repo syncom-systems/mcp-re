@@ -20,11 +20,17 @@ failure — are in [`docs/dev/version-bump.md`](dev/version-bump.md). Run
       `appVersion` tracks `VERSION` and moves every time.
 - [ ] The SDK versions were **not** bumped in sympathy — they are on an independent
       cadence.
-- [ ] No cloud operation is part of releasing. A release is qualified by verification,
+- [ ] `docs/releases/<tag>-release-assurance.json` is committed to `main` and records `PASS`
+      for the tagged commit **before the release is published**. Publishing the release starts
+      `distribute.yml`, which builds the install artifacts of that tag (binary archives,
+      Homebrew formula, GHCR image), attests them, and verifies the public copies on clean
+      runners ([`docs/installation.md`](installation.md)). It refuses a tag whose record is
+      not on `main`; if the record lands afterwards, dispatch the workflow for the tag.
+- [ ] No cloud-provider operation is part of releasing. A release is qualified by verification,
       assurance closure, release assurance and its provenance record, and is tagged and
-      published on GitHub. Container images in a cloud registry are deployment
-      infrastructure for a separately authorized cloud run; building or pushing them is
-      not a release step, and their absence at the new tag does not hold a release.
+      published on GitHub. GHCR publication is GitHub's own package registry, driven by the
+      workflow token, and is not a cloud-provider account; deployment images in a cloud
+      registry remain separately authorized infrastructure.
 
 ## Run the local gate first
 

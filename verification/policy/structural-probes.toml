@@ -429,11 +429,11 @@ perfectly good value. What would be false is that they describe the same deploym
 literal restores exactly the hand-pairing the signature removes, which is why the probe is a
 literal rather than a bad argument.
 """
-construction = "// ADR-MCPRE-068 structural probe S14. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\n//\n// The hostile act is not an illegal FIELD \u2014 each of these could be a perfectly good value.\n// It is assembling them SEPARATELY, which is exactly what `from_validated` taking one\n// `ValidatedDeployment` prevents and what a struct literal would restore.\nuse crate::trust_plan::TrustPlan;\n\npub fn hostile() -> TrustPlan {\n    TrustPlan {\n        revocation: todo!(), // STRUCTURAL-PROBE-SITE\n        document: todo!(),\n        response_kid: String::new(),\n        epoch: todo!(),\n    }\n}\n"
+construction = "// ADR-MCPRE-068 structural probe S14. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\n//\n// The hostile act is not an illegal FIELD \u2014 each of these could be a perfectly good value.\n// It is assembling them SEPARATELY, which is exactly what `from_validated` taking one\n// `ValidatedDeployment` prevents and what a struct literal would restore.\nuse crate::trust_plan::TrustPlan;\n\npub fn hostile() -> TrustPlan {\n    TrustPlan {\n        revocation: todo!(), // STRUCTURAL-PROBE-SITE\n        document: todo!(),\n        authority: todo!(),\n    }\n}\n"
 
 [probe.producer_paths]
-module-tree-visibility = "all four fields are bare-private to `trust_plan`, which is a crate-root module. The probe is injected at the crate root, a sibling, so it is outside the defining module and every descendant of it"
-alternate-constructors = "`from_validated` is the only associated function returning Self. It is TOTAL \u2014 there is nothing to refuse, because the legality of each part is its own owner's \u2014 and its single `&ValidatedDeployment` parameter is the entire mechanism: it is what makes the two owned facts co-provenant. `response_kid` and `epoch` are passed in deliberately, being shared with the signing plane, and the five projections return borrows or a computed `TrustReloadPlan`, never the representation"
+module-tree-visibility = "all three fields are bare-private to `trust_plan`, which is a crate-root module. The probe is injected at the crate root, a sibling, so it is outside the defining module and every descendant of it"
+alternate-constructors = "`from_validated` is the only associated function returning Self. It is TOTAL \u2014 there is nothing to refuse, because the legality of each part is its own owner's \u2014 and its single `&ValidatedDeployment` parameter is the entire mechanism: it is what makes the two owned facts co-provenant. the `ResponseAuthority` is passed in deliberately, being shared with the signing plane, and only `startup_plan::response_authority` can produce one (S84); the five projections return borrows or a computed `TrustReloadPlan`, never the representation"
 generated-or-deserialization = "no derives that construct: no Serialize, no Deserialize, no Default. Nothing decodes a TrustPlan \u2014 it is projected from validated configuration, never parsed"
 test-only-construction = "the crate's tests build plans through `from_validated` against a `ValidatedDeployment`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
 
@@ -605,17 +605,18 @@ id = "S21"
 unit = "proxy.admission_configuration_state_sole_producer"
 kind = "in-crate-source-injection"
 crate = "//mcp-re-proxy:mcp_re_proxy"
-invariant = "no code outside `config_state::admission` can assemble an EnforcedAdmission, so the six facts a consumer reads about an enforcing deployment were projected together from ONE classified state rather than paired by the reader"
+invariant = "no code outside `config_state::admission` can assemble an EnforcedAdmission, so the facts a consumer reads about an enforcing deployment were projected together from ONE classified state rather than paired by the reader"
 insertion_parent = "mcp-re-proxy/src/config_state/mod.rs"
 marker = "STRUCTURAL-PROBE-SITE"
 error_code = "E0451"
 note = """
 THE PROJECTION, AND IT IS THE SHARPER HALF — the same lesson S19 taught one owner earlier,
-with more at stake because there are six fields rather than one.
+with more at stake because the view carries six facts rather than one.
 
 `EnforcedAdmission` is the borrow view consumers read when admission is enforced: the
-posture, the authority kid, the authority key itself, the record store, the availability
-rule and the currentness rule. Each could individually be a legal value. What makes them
+posture, and a borrow of the validated gate holding the authority kid, the authority key
+itself, the record store, the availability rule and the currentness rule. Each could
+individually be a legal value. What makes them
 mean anything is that they were projected TOGETHER from one classified state — so a caller
 able to write the struct could hand a consumer an authority key from one deployment beside a
 posture from another, with the state they supposedly project untouched.
@@ -623,13 +624,75 @@ posture from another, with the state they supposedly project untouched.
 Sealing the state (S20) does not seal this: the view is a value in its own right, and a
 probe against the state alone would leave the route unwitnessed.
 """
-construction = "// ADR-MCPRE-068 structural probe S21. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\nuse crate::config_state::EnforcedAdmission;\n\npub fn hostile() -> EnforcedAdmission<'static> {\n    EnforcedAdmission {\n        posture: todo!(), // STRUCTURAL-PROBE-SITE\n        authority_kid: todo!(),\n        authority: todo!(),\n        record_store: todo!(),\n        availability: todo!(),\n        currentness: todo!(),\n    }\n}\n"
+construction = "// ADR-MCPRE-068 structural probe S21. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\nuse crate::config_state::EnforcedAdmission;\n\npub fn hostile() -> EnforcedAdmission<'static> {\n    EnforcedAdmission {\n        posture: todo!(), // STRUCTURAL-PROBE-SITE\n        gate: todo!(),\n    }\n}\n"
 
 [probe.producer_paths]
-module-tree-visibility = "all six fields are bare-private to `config_state::admission`. The parent re-exports the type so consumers can name the view, never its representation"
-alternate-constructors = "the view is produced only by `AdmissionState::enforced()`, which reads the classified kind and returns `Option<EnforcedAdmission<'_>>` \u2014 `None` where admission is not enforced, so the view's very existence is the enforcement fact. There is no `new`, `From`, `Default` or builder"
+module-tree-visibility = "both fields are bare-private to `config_state::admission::enforced_admission`, and the gate's type is private to `config_state::admission`. The parent re-exports the type so consumers can name the view, never its representation"
+alternate-constructors = "the view's one constructor, `of`, is `pub(super)`, so only `config_state::admission` can call it (S85), and its one caller there is `AdmissionState::enforced()`, which reads the classified kind and returns `Option<EnforcedAdmission<'_>>` \u2014 `None` where admission is not enforced, so the view's very existence is the enforcement fact. There is no `From`, `Default` or builder"
 generated-or-deserialization = "no derives that construct, and nothing decodes the view \u2014 it borrows out of a classified state, so it cannot outlive the state it projects, and no decoder could produce one that does"
 test-only-construction = "the owner's `#[cfg(test)] mod tests` obtains views through `enforced()`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+[[probe]]
+id = "S85"
+unit = "proxy.admission_configuration_state_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside `config_state::admission` can call the EnforcedAdmission constructor, so a view is never built around a posture and a gate a reader paired"
+insertion_parent = "mcp-re-proxy/src/config_state/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+note = """
+THE CONSTRUCTOR ROUTE, the one S21's literal does not reach. The view lives in its own
+module, so the admission machine builds it through `of`, which is `pub(super)`: callable from
+`config_state::admission` and nowhere else. Injected into `config_state`, the parent of the
+admission machine, where the view is re-exported.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S85. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::config_state::{AdmissionPosture, EnforcedAdmission};
+
+pub fn hostile() -> EnforcedAdmission<'static> {
+    EnforcedAdmission::of(AdmissionPosture::Required, todo!()) // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`of` is `pub(super)` in `config_state::admission::enforced_admission`, so it is visible to `config_state::admission` and its descendants only; the probe calls it from `config_state`"
+alternate-constructors = "`of` is the view's only constructor and the fields are private (S21); its one caller is `AdmissionState::enforced()`"
+generated-or-deserialization = "no derive constructs a view; Clone and Copy copy one that `enforced()` produced"
+test-only-construction = "the view's tests obtain it through `enforced()` on a classified state; no test-gated constructor exists"
+
+[[probe]]
+id = "S86"
+unit = "proxy.admission_configuration_state_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside the view's module can assemble AdmissionBudgets, so the enforcer and the record verifier are never handed budgets taken under different skews"
+insertion_parent = "mcp-re-proxy/src/config_state/admission/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE PAIR OF BUDGETS. `budgets(skew)` derives the PEP's budget and the record verifier's from
+one skew; a literal could pair two budgets taken under different ones. Injected into
+`config_state::admission`, the view's parent and the module that builds the view, which can
+name the type and is refused the literal.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S86. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use super::enforced_admission::AdmissionBudgets;
+
+pub fn hostile() -> AdmissionBudgets {
+    AdmissionBudgets { enforcer: todo!(), record_verifier: todo!() } // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "both fields are bare-private to `config_state::admission::enforced_admission`; the probe sits in `config_state::admission`, which names the type and is refused the literal"
+alternate-constructors = "`EnforcedAdmission::budgets` is the only function returning the type. There is no `From`, `Default` or builder, and the projections return the two budgets by value, never `&mut`"
+generated-or-deserialization = "the derives are Debug/Clone/Copy; Clone and Copy copy a value `budgets` produced, and nothing decodes one"
+test-only-construction = "the view's tests obtain budgets through `budgets` on a classified state; no test-gated constructor exists"
 
 # --- ADR-MCPRE-068 Phase 1 — THM-0091's two seals ---------------------------------------
 #
@@ -1773,7 +1836,7 @@ pub struct ServerIdentityFacts {
 
 [[probe]]
 id = "S50"
-unit = "core.max_clock_skew_bound"
+unit = "core.max_clock_skew_sole_producer"
 kind = "in-crate-source-injection"
 crate = "//mcp-re-core:mcp_re_core"
 invariant = "no code outside `MaxClockSkew`'s own module can build one around an unchecked tolerance"
@@ -2479,7 +2542,7 @@ fn hostile<'a>(
 """
 [probe.producer_paths]
 module-tree-visibility = "`NoCommitmentRequired`'s one field is bare-private to `audit_commitment::not_required` and its constructor is `pub(in crate::audit_commitment)`; `Redeemed`'s fields are bare-private to `audit_commitment::established::witness`; `ReadyForDispatch` has one constructor, whose parameter list includes the intent disposition. The probes sit in the serving path's or the observer's modules, which can name the types and are refused everything else"
-alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes a `Redeemed<Intent>` by type; there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
+alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes an `OwedOutcome` by type, and the only `OwedOutcome` is G1's (`IntentCommitment::commit`, from the `Redeemed<Intent>` it has just redeemed, through the `pub(super)` `OwedOutcome::new`); there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
 generated-or-deserialization = "`NoCommitmentRequired`, `IntentDisposition` and `Redeemed` derive Debug only: no Clone, Copy, Default, Serialize or Deserialize"
 test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`; the required posture's constructor `AuditPosture::required` takes an `EstablishedProvider`, whose only production constructor is the fallible `establish`, and the reference authority's registration `AuditProviders::with_reference_for_test` is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
 
@@ -2504,7 +2567,7 @@ fn hostile() -> NoCommitmentRequired {
 """
 [probe.producer_paths]
 module-tree-visibility = "`NoCommitmentRequired`'s one field is bare-private to `audit_commitment::not_required` and its constructor is `pub(in crate::audit_commitment)`; `Redeemed`'s fields are bare-private to `audit_commitment::established::witness`; `ReadyForDispatch` has one constructor, whose parameter list includes the intent disposition. The probes sit in the serving path's or the observer's modules, which can name the types and are refused everything else"
-alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes a `Redeemed<Intent>` by type; there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
+alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes an `OwedOutcome` by type, and the only `OwedOutcome` is G1's (`IntentCommitment::commit`, from the `Redeemed<Intent>` it has just redeemed, through the `pub(super)` `OwedOutcome::new`); there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
 generated-or-deserialization = "`NoCommitmentRequired`, `IntentDisposition` and `Redeemed` derive Debug only: no Clone, Copy, Default, Serialize or Deserialize"
 test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`; the required posture's constructor `AuditPosture::required` takes an `EstablishedProvider`, whose only production constructor is the fallible `establish`, and the reference authority's registration `AuditProviders::with_reference_for_test` is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
 
@@ -2530,7 +2593,7 @@ fn hostile(witness: CommitmentWitness<Intent>) -> IntentDisposition {
 """
 [probe.producer_paths]
 module-tree-visibility = "`NoCommitmentRequired`'s one field is bare-private to `audit_commitment::not_required` and its constructor is `pub(in crate::audit_commitment)`; `Redeemed`'s fields are bare-private to `audit_commitment::established::witness`; `ReadyForDispatch` has one constructor, whose parameter list includes the intent disposition. The probes sit in the serving path's or the observer's modules, which can name the types and are refused everything else"
-alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes a `Redeemed<Intent>` by type; there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
+alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes an `OwedOutcome` by type, and the only `OwedOutcome` is G1's (`IntentCommitment::commit`, from the `Redeemed<Intent>` it has just redeemed, through the `pub(super)` `OwedOutcome::new`); there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
 generated-or-deserialization = "`NoCommitmentRequired`, `IntentDisposition` and `Redeemed` derive Debug only: no Clone, Copy, Default, Serialize or Deserialize"
 test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`; the required posture's constructor `AuditPosture::required` takes an `EstablishedProvider`, whose only production constructor is the fallible `establish`, and the reference authority's registration `AuditProviders::with_reference_for_test` is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
 
@@ -2556,7 +2619,7 @@ fn hostile(outcome: Redeemed<Outcome>) -> IntentDisposition {
 """
 [probe.producer_paths]
 module-tree-visibility = "`NoCommitmentRequired`'s one field is bare-private to `audit_commitment::not_required` and its constructor is `pub(in crate::audit_commitment)`; `Redeemed`'s fields are bare-private to `audit_commitment::established::witness`; `ReadyForDispatch` has one constructor, whose parameter list includes the intent disposition. The probes sit in the serving path's or the observer's modules, which can name the types and are refused everything else"
-alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes a `Redeemed<Intent>` by type; there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
+alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes an `OwedOutcome` by type, and the only `OwedOutcome` is G1's (`IntentCommitment::commit`, from the `Redeemed<Intent>` it has just redeemed, through the `pub(super)` `OwedOutcome::new`); there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
 generated-or-deserialization = "`NoCommitmentRequired`, `IntentDisposition` and `Redeemed` derive Debug only: no Clone, Copy, Default, Serialize or Deserialize"
 test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`; the required posture's constructor `AuditPosture::required` takes an `EstablishedProvider`, whose only production constructor is the fallible `establish`, and the reference authority's registration `AuditProviders::with_reference_for_test` is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
 
@@ -2581,7 +2644,7 @@ fn hostile(sink: &dyn crate::audit_sink::AuditSink, intent: &CanonicalEvent) {
 """
 [probe.producer_paths]
 module-tree-visibility = "`NoCommitmentRequired`'s one field is bare-private to `audit_commitment::not_required` and its constructor is `pub(in crate::audit_commitment)`; `Redeemed`'s fields are bare-private to `audit_commitment::established::witness`; `ReadyForDispatch` has one constructor, whose parameter list includes the intent disposition. The probes sit in the serving path's or the observer's modules, which can name the types and are refused everything else"
-alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes a `Redeemed<Intent>` by type; there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
+alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes an `OwedOutcome` by type, and the only `OwedOutcome` is G1's (`IntentCommitment::commit`, from the `Redeemed<Intent>` it has just redeemed, through the `pub(super)` `OwedOutcome::new`); there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
 generated-or-deserialization = "`NoCommitmentRequired`, `IntentDisposition` and `Redeemed` derive Debug only: no Clone, Copy, Default, Serialize or Deserialize"
 test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`; the required posture's constructor `AuditPosture::required` takes an `EstablishedProvider`, whose only production constructor is the fallible `establish`, and the reference authority's registration `AuditProviders::with_reference_for_test` is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
 
@@ -2606,6 +2669,315 @@ fn hostile() {
 """
 [probe.producer_paths]
 module-tree-visibility = "`NoCommitmentRequired`'s one field is bare-private to `audit_commitment::not_required` and its constructor is `pub(in crate::audit_commitment)`; `Redeemed`'s fields are bare-private to `audit_commitment::established::witness`; `ReadyForDispatch` has one constructor, whose parameter list includes the intent disposition. The probes sit in the serving path's or the observer's modules, which can name the types and are refused everything else"
-alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes a `Redeemed<Intent>` by type; there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
+alternate-constructors = "the only construction of `NoCommitmentRequired` outside tests is `AuditPosture::intent`'s best-effort arm; the only `Redeemed` is `CommitmentWitness::redeem`'s; `IntentDisposition::Committed` takes an `OwedOutcome` by type, and the only `OwedOutcome` is G1's (`IntentCommitment::commit`, from the `Redeemed<Intent>` it has just redeemed, through the `pub(super)` `OwedOutcome::new`); there is no `From`, `Into`, `Default` or builder for any of them, and an `ExecutionIntent` produces a `CanonicalEvent`, never an `AuditEnvelope`"
 generated-or-deserialization = "`NoCommitmentRequired`, `IntentDisposition` and `Redeemed` derive Debug only: no Clone, Copy, Default, Serialize or Deserialize"
 test-only-construction = "`NoCommitmentRequired::for_a_test` is `#[cfg(test)]`; the required posture's constructor `AuditPosture::required` takes an `EstablishedProvider`, whose only production constructor is the fallible `establish`, and the reference authority's registration `AuditProviders::with_reference_for_test` is `#[cfg(any(test, feature = \"audit_commitment_reference\"))]`; the probes target `:mcp_re_proxy`, which compiles neither"
+
+# --- proxy.publish_permit_sole_producer: a success is published only with the permit its decision minted
+#
+# The serving path used to hold "decide, then publish" by statement order, measured by
+# source-text probes and by mutation probes that discarded `may_publish`'s answer. The permit
+# makes the discarded answer unrepresentable: only the permit `may_publish` returned can
+# publish, and nothing outside `exchange_state` can construct one.
+[[probe]]
+id = "S76"
+unit = "proxy.publish_permit_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "a success cannot be published without the permit its publication decision returned"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0599"
+construction = """
+// ADR-MCPRE-068 structural probe S76. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::exchange_state::{ExchangeProgress, ServedSuccess};
+use crate::http_profile_serve::inner_plane::NotificationDelivered;
+
+fn hostile(progress: &mut ExchangeProgress) {
+    progress.publish(ServedSuccess::<NotificationDelivered>::Terminal); // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`PublishPermit`'s fields are private to `exchange_state::publication` and its constructor `issue` is `pub(super)`, so only `exchange_state` can construct or open one; the probe sits in the serving path, which can name `ExchangeProgress` and `ServedSuccess`, and finds no operation on the exchange that publishes"
+alternate-constructors = "the only construction of `PublishPermit` is `ExchangeProgress::may_publish`'s `Ok` arm; the only publication is `PublishPermit::publish`, which consumes the permit; there is no `From`, `Into`, `Default` or builder"
+generated-or-deserialization = "`PublishPermit` derives nothing: no Clone, Copy, Default, Serialize or Deserialize, so a permit cannot be duplicated to publish twice"
+test-only-construction = "none: the permit has no test constructor, and the publication tests obtain one from `may_publish` like the serving path"
+
+[[probe]]
+id = "S77"
+unit = "proxy.publish_permit_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "the serving path cannot mint a publish permit; only the publication decision does"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S77. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::exchange_state::publication::PublishPermit;
+use crate::exchange_state::{ExchangeProgress, ServedSuccess};
+use crate::http_profile_serve::inner_plane::NotificationDelivered;
+
+fn hostile(progress: &mut ExchangeProgress) -> PublishPermit<'_, NotificationDelivered> {
+    PublishPermit { exchange: progress, served: ServedSuccess::Terminal } // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`PublishPermit`'s fields are private to `exchange_state::publication`, so its struct literal is refused everywhere else; the probe sits in the serving path, which can name the type and is refused its fields"
+alternate-constructors = "the only construction of `PublishPermit` is `ExchangeProgress::may_publish`'s `Ok` arm, through the `pub(super)` `issue`; there is no `From`, `Into`, `Default` or builder"
+generated-or-deserialization = "`PublishPermit` derives nothing: no Clone, Copy, Default, Serialize or Deserialize"
+test-only-construction = "none: the permit has no test constructor"
+
+# --- proxy.publish_permit_sole_producer: a permit publishes to the exchange that cleared it, and no other
+#
+# A permit holds the exclusive borrow of the exchange `may_publish` judged. S78 tries to point
+# a cleared permit at another exchange; S79 tries to change the cleared exchange between the
+# decision and the terminal. Either would publish a state no decision was taken on.
+[[probe]]
+id = "S78"
+unit = "proxy.publish_permit_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "a permit cleared on one exchange cannot be pointed at another"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0616"
+construction = """
+// ADR-MCPRE-068 structural probe S78. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::exchange_state::{ExchangeProgress, ServedSuccess};
+use crate::http_profile_serve::inner_plane::NotificationDelivered;
+
+fn hostile(cleared: &mut ExchangeProgress, other: &mut ExchangeProgress) {
+    if let Ok(permit) = cleared.may_publish(ServedSuccess::<NotificationDelivered>::Terminal) {
+        std::mem::swap(permit.exchange, other); // STRUCTURAL-PROBE-SITE
+        permit.publish();
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the permit's `exchange` field is private to `exchange_state::publication`; outside it the permit offers `withdraw(self) -> &mut ExchangeProgress`, which consumes the permit so nothing swapped through the borrow can then be published, and in tests `exchange(&self)`, a shared borrow"
+alternate-constructors = "`ExchangeProgress::may_publish` is the only producer and binds the permit to `self`; `publish(self)` takes no exchange argument, so there is no call that names a second exchange"
+generated-or-deserialization = "`PublishPermit` derives nothing: no Clone, Copy, Default, Serialize or Deserialize"
+test-only-construction = "none: the permit has no test constructor"
+
+[[probe]]
+id = "S79"
+unit = "proxy.publish_permit_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "the cleared exchange cannot change between the publication decision and the terminal"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0499"
+construction = """
+// ADR-MCPRE-068 structural probe S79. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::exchange_state::{ExchangeEvent, ExchangeProgress, ServedSuccess};
+use crate::http_profile_serve::inner_plane::NotificationDelivered;
+
+fn hostile(cleared: &mut ExchangeProgress) {
+    if let Ok(permit) = cleared.may_publish(ServedSuccess::<NotificationDelivered>::Terminal) {
+        cleared.advance(ExchangeEvent::BackendDispatched); // STRUCTURAL-PROBE-SITE
+        permit.publish();
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the permit holds `&'x mut ExchangeProgress` for its whole life, so the borrow checker refuses every other access to the cleared exchange until `publish` consumes the permit or the permit is dropped"
+alternate-constructors = "`may_publish` takes `&mut self` and returns a permit carrying that borrow; there is no producer that clears a success without borrowing the exchange it judged"
+generated-or-deserialization = "`PublishPermit` derives nothing: no Clone, Copy, Default, Serialize or Deserialize"
+test-only-construction = "none: the permit has no test constructor"
+
+# --- proxy.dispatched_exit_split: a dispatched notification has no reply to assemble
+#
+# Which exit a dispatched exchange takes is decided once, from the request: a one-way message
+# becomes a `DispatchedNotification` and a call a `DispatchedCall`. The reply assembler takes
+# only the second, so the notification arm answering first is the absence of a value to pass,
+# not the order of two statements.
+[[probe]]
+id = "S80"
+unit = "proxy.dispatched_exit_split"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "a dispatched notification cannot be handed to the reply assembler"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/reply_assembly/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0308"
+construction = """
+// ADR-MCPRE-068 structural probe S80. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::exchange_state::ExchangeProgress;
+
+use super::super::receipt::Accepted;
+use super::super::HttpProfileProxy;
+use super::dispatched::DispatchedNotification;
+
+async fn hostile(
+    proxy: &HttpProfileProxy,
+    acc: &Accepted<'_>,
+    progress: &mut ExchangeProgress,
+    message: DispatchedNotification,
+) {
+    let _ = proxy.assemble_reply(acc, progress, message).await; // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`DispatchedNotification` and `DispatchedCall` have private fields in `reply_assembly::dispatched`, so no other module builds either by struct literal; the probe sits in `reply_assembly`, which can name both types and call the assembler, and finds the assembler typed to take a call alone"
+alternate-constructors = "the only construction of either value is `Answering::of`, private to `reply_assembly::dispatched`, which reads `OutstandingId::is_notification` once and yields a `DispatchedCall` only for a request with an id; neither type has a `From`, `Into`, `Default` or builder, and their `into_parts` projections consume them"
+generated-or-deserialization = "neither type derives anything: no Clone, Copy, Default, Serialize or Deserialize"
+test-only-construction = "none: the dispatched module's tests obtain both through `Answering::of`, from an exchange crossed by `ReadyForDispatch::dispatch`"
+
+# --- proxy.success_exit_order: a cleared success is served only by the success exit's last step
+#
+# The success exit's steps each take the previous step's product, and the products and steps are
+# private to `reply_assembly::success_exit`. S81 tries to serve a cleared success from outside
+# it, skipping the outcome commitment and retention.
+[[probe]]
+id = "S81"
+unit = "proxy.success_exit_order"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "outside the success exit a cleared success cannot be served without its outcome committed and its retention completed"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/reply_assembly/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+construction = """
+// ADR-MCPRE-068 structural probe S81. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use mcp_re_http_profile::HttpResponse;
+
+use crate::async_serve::ServedHttpResponse;
+use crate::exchange_state::publication::PublishPermit;
+
+use super::super::inner_plane::NotificationDelivered;
+use super::super::receipt::Accepted;
+use super::super::HttpProfileProxy;
+
+fn hostile(
+    proxy: &HttpProfileProxy,
+    acc: &Accepted<'_>,
+    permit: PublishPermit<'_, NotificationDelivered>,
+    response: HttpResponse,
+) -> ServedHttpResponse {
+    proxy.serve_published(acc, permit, response) // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the serving step `serve_published` and the stage products `Committed` and `Retained` are private to `reply_assembly::success_exit`; the probe sits in `reply_assembly`, beside the success exit, and is refused the step; the exit's only visible entry is `publish_success`, which runs every step"
+alternate-constructors = "`Committed` is built only on the `Ok` arm of `commit_outcome` (G2) and `Retained` only on the accounted-for arm of `complete_retention`; neither has a `From`, `Into`, `Default` or builder"
+generated-or-deserialization = "neither stage product derives anything: no Clone, Copy, Default, Serialize or Deserialize"
+test-only-construction = "none: the stage products have no test constructor"
+
+# --- proxy.channel_establishment_plan_sole_producer: a channel plan is one deployment's
+#
+# The plan's three facts — the revocation posture, the credential window and the handshake
+# capacity — are private to `startup_plan::channel_establishment_plan`, and `from_validated` is the only producer. S82 tries
+# to assemble a plan from terms a caller holds; S83 tries to replace one term of a plan
+# `from_validated` produced. Either would hold facts no one deployment was validated with.
+[[probe]]
+id = "S82"
+unit = "proxy.channel_establishment_plan_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside `startup_plan::channel_establishment_plan` can assemble a ChannelEstablishmentPlan, so possession means `from_validated` projected it from one validated deployment"
+insertion_parent = "mcp-re-proxy/src/tls_plane/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S82. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::config_state::ClientCredentialWindow;
+use crate::delegated_tls::HandshakeSignCapacity;
+use crate::startup_plan::{ChannelEstablishmentPlan, ClientRevocationPlan};
+
+pub fn hostile(
+    client_revocation: ClientRevocationPlan,
+    credential_window: ClientCredentialWindow,
+    handshake_signing: HandshakeSignCapacity,
+) -> ChannelEstablishmentPlan {
+    ChannelEstablishmentPlan {
+        client_revocation, // STRUCTURAL-PROBE-SITE
+        credential_window,
+        handshake_signing,
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "all three fields are bare-private to `startup_plan::channel_establishment_plan`: no `pub(crate)`, no `pub(super)`. The probe sits in `tls_plane`, the plan's consumer, which can name the type and every term's type and is refused the literal"
+alternate-constructors = "`from_validated` is the only associated function returning Self. There is no `From`, `Default` or builder, and the projections return a bound, a window, a capacity, the CRL paths and the cadence, never `&mut` or the representation"
+generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. Clone copies a plan `from_validated` produced and assembles nothing new; there is no Serialize, Deserialize or Default"
+test-only-construction = "none: every fixture goes through `startup_plan::channel_plan`, which validates a deployment and calls `from_validated`; no test-gated constructor or field visibility exists"
+
+[[probe]]
+id = "S83"
+unit = "proxy.channel_establishment_plan_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside `startup_plan::channel_establishment_plan` can replace one fact of a ChannelEstablishmentPlan, so a plan never pairs terms from two deployments"
+insertion_parent = "mcp-re-proxy/src/tls_plane/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0616"
+construction = """
+// ADR-MCPRE-068 structural probe S83. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::delegated_tls::HandshakeSignCapacity;
+use crate::startup_plan::ChannelEstablishmentPlan;
+
+pub fn hostile(plan: &mut ChannelEstablishmentPlan) {
+    plan.handshake_signing = HandshakeSignCapacity::default(); // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the fields are bare-private to `startup_plan::channel_establishment_plan`, so a consumer holding `&mut ChannelEstablishmentPlan` can neither read nor assign one; the probe assigns from `tls_plane`, where the listener's capacity is read"
+alternate-constructors = "no method takes `&mut self`: the plan is immutable once `from_validated` returns it"
+generated-or-deserialization = "no derive yields a mutable view of a field; Clone copies the whole plan"
+test-only-construction = "none: a test that needs another capacity validates a deployment stating it (`startup_plan::channel_plan`)"
+
+
+# --- proxy.response_authority_sole_producer: one kid and one epoch for both planes
+#
+# The trust plan and the signing plan each take a `ResponseAuthority` whole. S84 builds one
+# from outside its module, around a kid and an epoch a caller chose — the hand-pairing that
+# `response_authority_plans` exists to remove.
+[[probe]]
+id = "S84"
+unit = "proxy.response_authority_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside `startup_plan::response_authority` can build a ResponseAuthority, so the trust plan and the signing plan are built around a kid and an epoch read once from one validated deployment"
+insertion_parent = "mcp-re-proxy/src/startup_plan/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S84. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::startup_plan::{ResponseAuthority, TrustEpochPlan};
+
+pub fn hostile() -> ResponseAuthority {
+    ResponseAuthority {
+        kid: "chosen-by-a-caller".to_string(), // STRUCTURAL-PROBE-SITE
+        epoch: TrustEpochPlan::NoNetworkChannel,
+    }
+}
+"""
+note = """
+Injected into `startup_plan`, the module that declares `response_authority` and holds the
+signing plan's private constructor: the nearest neighbour, and still refused.
+"""
+[probe.producer_paths]
+module-tree-visibility = "both fields are bare-private to `startup_plan::response_authority`, and `startup_plan` re-exports the type without them; the probe is injected into `startup_plan` itself, the parent, which is outside the defining module"
+alternate-constructors = "`from_validated` is the only associated function returning Self, and it is private to `startup_plan::response_authority`; its one caller is `response_authority_plans`. `kid()` and `epoch()` return borrows, and neither plan projects the authority whole, so no consumer can obtain one to clone"
+generated-or-deserialization = "derives Debug, Clone, PartialEq and Eq only; no Default, From or Deserialize exists"
+test-only-construction = "the one test-only construction is inside `startup_plan::response_authority`'s own tests, which build an authority naming a kid and an epoch no deployment names to show that both plans carry what they are handed; no test-gated constructor or field visibility exists outside that module"

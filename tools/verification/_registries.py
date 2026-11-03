@@ -17,6 +17,7 @@ So reading is owned once. `parse`, `read`, `document`, `rows`, `text`, `text_at`
 loaders (`_manifest.load_verification`, `_theorems.load_theorems`, `_mutation.load_probes`,
 `_structural.load_probes`, `_measured.load_measurements`, `_toolchains.load`) read through
 them and add their own schema, and `reader_problems` refuses a reader around this module.
+The same rule holds each generated table in `GENERATED_OWNERS` to the module that reads it.
 The references between registries are checked by `_registry_refs`, which sits above the
 typed loaders; `check-registries` runs both on the merge path.
 
@@ -26,6 +27,8 @@ Stdlib only, and it imports nothing from this package: every typed loader import
 from __future__ import annotations
 
 import ast
+import copy
+import functools
 import re
 import subprocess
 import tomllib
@@ -74,10 +77,21 @@ def policy_files(root: Path = REPO_ROOT) -> list[Path]:
 
 
 def parse(text: str, where: str) -> dict:
+    """`text` parsed, as a document the caller owns.
+
+    Parsed once per distinct text and copied per call. A fingerprint reads the same
+    registries once per unit, and parsing them again each time was most of what measuring
+    cost; the copy keeps every caller's document its own, as a fresh parse would.
+    """
     try:
-        return tomllib.loads(text)
+        return copy.deepcopy(_parsed(text))
     except tomllib.TOMLDecodeError as exc:
         raise ManifestError(f"{where}: unparsable: {exc}") from exc
+
+
+@functools.lru_cache(maxsize=32)
+def _parsed(text: str) -> dict:
+    return tomllib.loads(text)
 
 
 def read(file: Path, where: str | None = None) -> dict:
@@ -89,7 +103,21 @@ def read(file: Path, where: str | None = None) -> dict:
 
 
 def document(name: str, root: Path = REPO_ROOT, *, required: bool = False) -> dict:
-    """Registry `name` parsed. An absent registry is empty unless `required`."""
+    """Registry `name` parsed. An absent registry is empty unless `required`.
+
+    Under the repository root it is read from the current source tree (`_tree.current()`),
+    so a measurement of another commit reads that commit's registry; any other root is a
+    scratch tree a selftest built, read from the filesystem.
+    """
+    if root == REPO_ROOT:
+        import _tree
+
+        tree = _tree.current()
+        if not tree.is_file(relative(name)):
+            if required:
+                raise ManifestError(f"{relative(name)}: missing")
+            return {}
+        return parse(tree.read(relative(name)).decode("utf-8"), relative(name))
     file = path(name, root)
     if not file.is_file() and not required:
         return {}
@@ -103,6 +131,10 @@ def rows(name: str, table: str, root: Path = REPO_ROOT) -> list[dict]:
 
 def text(name: str, root: Path = REPO_ROOT) -> str:
     """Registry `name` as committed text, for a reader that digests or quotes entries."""
+    if root == REPO_ROOT:
+        import _tree
+
+        return _tree.text(relative(name))
     return path(name, root).read_text(encoding="utf-8")
 
 
@@ -160,6 +192,17 @@ def duplicate_ids(ids: list[str], label: str) -> list[str]:
 _READER_ROOTS = ("scripts", "tools/verification")
 _GUARDED_FILES = tuple(REGISTRIES[name] for name in sorted(GUARDED))
 _POLICY_TAIL = re.compile(r"(?:^|/)verification/policy/?$")
+
+#: Generated tables held to one reader the same way, each by the module that is its reader.
+#: The owner may spell the path; every other production source asks the owner.
+GENERATED_OWNERS = {"verification/generated/rust-targets.json": "_rust_targets.py"}
+
+
+def _names_generated(value: str, exempt: frozenset[str]) -> bool:
+    """A path-shaped string ending in a guarded generated table the source does not own."""
+    if any(ch.isspace() for ch in value):
+        return False
+    return any(value.endswith(rel) for rel in GENERATED_OWNERS if rel not in exempt)
 
 
 def _production_sources(root: Path) -> list[Path]:
@@ -226,25 +269,31 @@ def source_problems(source: str, label: str) -> list[str]:
         for node in ast.walk(tree)
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)
     }
+    exempt = frozenset(rel for rel, owner in GENERATED_OWNERS.items() if Path(label).name == owner)
     out: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div) and id(node) not in inner:
             parts = _div_chain(node)
             joined = "/".join(part.strip("/") for part in parts)
-            if parts and (_POLICY_TAIL.search(joined) or ("verification/policy/" in joined and joined.endswith(_GUARDED_FILES))):
+            if parts and (
+                _POLICY_TAIL.search(joined)
+                or ("verification/policy/" in joined and joined.endswith(_GUARDED_FILES))
+                or _names_generated(joined, exempt)
+            ):
                 out.append(f"{label}:{node.lineno}: builds the path {joined!r}")
         elif isinstance(node, ast.Call) and getattr(node.func, "id", None) == "Path" and node.args:
             parts = _div_chain(node.args[0])
-            if len(parts) == 1 and _POLICY_TAIL.search(parts[0]):
+            if len(parts) == 1 and (_POLICY_TAIL.search(parts[0]) or _names_generated(parts[0], exempt)):
                 out.append(f"{label}:{node.lineno}: builds the path {parts[0]!r}")
         elif isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip:
-            if _names_registry(node.value):
+            if _names_registry(node.value) or _names_generated(node.value, exempt):
                 out.append(f"{label}:{node.lineno}: names the path {node.value!r}")
     return sorted(set(out))
 
 
 def reader_problems(root: Path = REPO_ROOT) -> list[str]:
-    """Every production reader that reaches a guarded registry around this module."""
+    """Every production reader that reaches a guarded registry around this module, or a
+    guarded generated table around its owner."""
     out: list[str] = []
     for file in _production_sources(root):
         label = file.relative_to(root).as_posix()

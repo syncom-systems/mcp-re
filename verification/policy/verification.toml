@@ -1197,7 +1197,8 @@ paths = [
   "mcp-re-proxy/src/delegated_tls.rs",
   "mcp-re-proxy/src/tls_listener_state/mod.rs",
   "mcp-re-proxy/src/tls_plane/mod.rs",
-  "mcp-re-proxy/src/startup_plan.rs",
+  "mcp-re-proxy/src/startup_plan/mod.rs",
+  "mcp-re-proxy/src/startup_plan/channel_establishment_plan.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -3368,7 +3369,7 @@ evidence = [
 id = "proxy.trust_plan"
 class = "V0"
 description = "WHAT THE PLAN PROJECTS AND WHAT IT REFUSES TO RE-DERIVE: the classified revocation posture, the document locator, the excluded response issuer, and the shared epoch mechanism it is HANDED rather than computes; its reload cadence is derived from the posture rather than stored, so no second reload value exists to disagree with the first. That the posture and the locator necessarily describe ONE deployment — because the sole constructor takes one `ValidatedDeployment` and no caller can pair them itself — is a compile-time fact and belongs to `proxy.trust_plan_co_provenance`."
-paths = ["mcp-re-proxy/src/trust_plan.rs"]
+paths = ["mcp-re-proxy/src/trust_plan.rs", "mcp-re-proxy/src/startup_plan/response_authority.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
@@ -3377,13 +3378,14 @@ evidence = [
   "mutation://proxy/trust/reload_is_a_projection",
 ]
 # The reload rule in both directions, plus the CF-09 property that the shared values are
-# INPUTS: a plan built with a value the configuration does not name carries that value,
-# which is only possible because nothing inside re-derives it.
+# INPUTS: a plan built around an authority the configuration does not name carries it, which
+# is only possible because nothing inside re-derives it. That control lives with
+# `ResponseAuthority`, the only module that can build such an authority.
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#trust_plan::tests::a_reload_bearing_state_cannot_be_projected_to_read_once",
   "//mcp-re-proxy:proxy_unit_test#trust_plan::tests::bounded_cache_keeps_both_refresh_postures",
   "//mcp-re-proxy:proxy_unit_test#trust_plan::tests::the_trust_plan_carries_the_retained_classification",
-  "//mcp-re-proxy:proxy_unit_test#trust_plan::tests::the_shared_values_are_inputs_the_trust_plan_cannot_re_derive",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::response_authority::tests::the_trust_plan_carries_the_authority_it_is_handed",
 ]
 
 # ---------------------------------------------------------------------------
@@ -3403,7 +3405,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.trust_plan_co_provenance"
 class = "V0"
-description = "A TrustPlan's revocation posture and document locator necessarily describe ONE deployment: all four fields are bare-private to `trust_plan`, `from_validated` is the only associated function returning Self and reads both from a single `&ValidatedDeployment`, nothing decodes a plan, and no test-gated construction route exists — so no caller can pair a posture from one validated deployment with a locator from another. Not a claim that any field is legal, which is each field owner's, and not a claim about what the plan projects, which is `proxy.trust_plan`'s."
+description = "A TrustPlan's revocation posture and document locator necessarily describe ONE deployment: all three fields are bare-private to `trust_plan`, `from_validated` is the only associated function returning Self and reads both from a single `&ValidatedDeployment`, nothing decodes a plan, and no test-gated construction route exists — so no caller can pair a posture from one validated deployment with a locator from another. Not a claim that any field is legal, which is each field owner's, and not a claim about what the plan projects, which is `proxy.trust_plan`'s."
 paths = [
   "mcp-re-proxy/src/trust_plan.rs",
 ]
@@ -4166,6 +4168,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::the_open_leg_path_is_legal_end_to_end_and_ends_somewhere_else",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::every_state_event_pair_has_a_decided_outcome",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::a_terminal_state_admits_nothing_at_all",
+  "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::advance_refused_enters_the_terminal_the_relation_picks",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::the_execution_threshold_partitions_the_pipeline_into_two_non_empty_halves",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::a_refusal_at_or_after_the_dispatch_can_only_reach_the_post_dispatch_terminal",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::the_notification_terminal_is_reachable_only_from_the_dispatch_and_reads_as_executed",
@@ -4227,9 +4230,10 @@ tested_symbols = [
 [[unit]]
 id = "proxy.exchange_publication"
 class = "V0"
-description = "What the machine will let the assembly publish: a success it cannot vouch for is refused rather than emitted — an open leg with no durable record, a reply that opens a leg presented as a completed exchange, synthesized transport-failure bytes, an exchange already carrying an anomaly — a refused publication leaves the exchange where it legally was and is REMEMBERED rather than re-derived, and the notification terminal is decided before its 202 is minted."
+description = "What the machine will let the assembly publish: a success it cannot vouch for is refused rather than emitted — an open leg with no durable record, a reply that opens a leg presented as a completed exchange, synthesized transport-failure bytes, an exchange already carrying an anomaly — a refused publication leaves the exchange where it legally was and is REMEMBERED rather than re-derived, and the notification terminal is decided before its 202 is minted. A permit publishes only to the exchange that cleared it, which cannot change while the permit lives."
 paths = [
   "mcp-re-proxy/src/exchange_state.rs",
+  "mcp-re-proxy/src/exchange_state/publication.rs",
   "mcp-re-proxy/src/http_profile_serve/reply_assembly/accepted.rs",
   "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs",
   # Where the decided success is published: every success exit reaches its terminal here.
@@ -4256,9 +4260,42 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::the_notification_terminal_is_refused_on_the_same_terms",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::a_tail_that_reaches_no_success_terminal_is_refused_rather_than_passed",
   "//mcp-re-proxy:proxy_unit_test#exchange_state::tests::a_refused_202_is_served_from_a_non_terminal_state",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::accepted::tests::the_publication_decision_precedes_retention_and_the_response_signed_record",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::notification::tests::the_terminal_is_decided_before_the_202_is_minted",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::dispatched::tests::a_notification_is_answered_before_any_reply_is_assembled",
+  "//mcp-re-proxy:proxy_unit_test#exchange_state::publication::tests::a_permit_from_may_publish_publishes_to_the_terminal",
+  "//mcp-re-proxy:proxy_unit_test#exchange_state::publication::tests::a_refused_publication_yields_no_permit",
+  "//mcp-re-proxy:proxy_unit_test#exchange_state::publication::tests::a_withdrawn_permit_leaves_its_exchange_to_the_refusal",
+  "//mcp-re-proxy:proxy_unit_test#exchange_state::publication::tests::a_permit_publishes_only_to_the_exchange_that_cleared_it",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::dispatched::tests::a_notification_yields_nothing_the_reply_assembler_takes",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::dispatched::tests::a_call_yields_the_call_with_the_id_it_answers",
+]
+
+# What the publication decision vouches for is `proxy.exchange_publication`'s, tested; that only
+# the decision mints a permit, that publishing needs one, and that a permit stays bound to the
+# exchange it cleared are compile-time facts about the module boundary, witnessed by S76-S79.
+[[unit]]
+id = "proxy.publish_permit_sole_producer"
+class = "V0"
+description = "`ExchangeProgress::may_publish` is the ONLY producer of a `PublishPermit` and `PublishPermit::publish` the only publication: the permit's fields are private to `exchange_state::publication`, it derives nothing and has no test constructor, so the serving path can neither publish a success without the permit its decision returned nor mint one; the permit holds the cleared exchange by `&mut` borrow and exposes it only by shared reference, so it cannot be pointed at another exchange, and the cleared exchange cannot change before `publish` consumes it. States nothing about WHICH successes `may_publish` clears, which is `proxy.exchange_publication`'s."
+paths = ["mcp-re-proxy/src/exchange_state/publication.rs"]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "high"
+evidence = [
+  "structural://proxy/exchange_publication/publish_permit_sole_producer",
+]
+
+# How `Answering::of` routes a dispatched exchange is tested under `proxy.exchange_publication`;
+# that the reply assembler cannot be handed a notification is a compile-time fact about the
+# types it yields, witnessed by S80.
+[[unit]]
+id = "proxy.dispatched_exit_split"
+class = "V0"
+description = "A dispatched notification cannot reach the reply assembler: `Answering::of` is the only producer of `DispatchedNotification` and `DispatchedCall`, both have fields private to `reply_assembly::dispatched` and derive nothing, and `assemble_reply` takes a `DispatchedCall` alone, so a notification has no value the assembler accepts. States nothing about how `Answering::of` classifies a request, which is tested under `proxy.exchange_publication`."
+paths = ["mcp-re-proxy/src/http_profile_serve/reply_assembly/dispatched.rs"]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "high"
+evidence = [
+  "structural://proxy/reply_assembly/dispatched_exit_split",
 ]
 
 [[unit]]
@@ -4268,6 +4305,7 @@ description = "How an exchange event reaches the machine: a stage-owned event tr
 paths = [
   "mcp-re-proxy/src/http_profile_serve/**/*.rs",
   "mcp-re-proxy/src/exchange_state.rs",
+  "mcp-re-proxy/src/exchange_state/publication.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -4328,6 +4366,8 @@ paths = [
   "mcp-re-proxy/src/async_inner/in_process.rs",
   "mcp-re-proxy/src/authorization/dispatch.rs",
   "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs",
+  # The obligations the crossing carries, taken in D7's order.
+  "mcp-re-proxy/src/http_profile_serve/dispatch_obligations.rs",
   # R11-481. The boundary now asks one more question, and this file is where the answer
   # lives: `SigningWindow::covers` is the projection the crossing consults. It is also in
   # `proxy.response_signing`, which is correct — that unit claims what a window ADVERTISES,
@@ -4504,6 +4544,7 @@ tested_symbols = [
   "//mcp-re-proxy:integration_test#refusal_site_totality_test::the_retry_contract_is_derived_from_the_exchange_machine",
   # Each retry verdict the exchange machine can reach maps to exactly one wire disposition.
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::tests::every_retry_verdict_maps_to_its_one_wire_disposition",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::tests::a_refusal_disposition_enters_the_exchange_terminal",
   "//mcp-re-proxy:integration_test#refusal_site_totality_test::the_rules_would_catch_each_regression",
   # R11-461. A completion that did NOT land is its own answer: `NotConfigured` and
   # `Retained` both mean the store owes nothing further, `Failed` is neither, and the success
@@ -8016,6 +8057,11 @@ paths = [
   "mcp-re-proxy/src/transparency/durability.rs",
   "mcp-re-proxy/src/transparency/durable_job.rs",
   "mcp-re-proxy/src/transparency/durable_writer.rs",
+  # The queue in front of the writer, and the thread itself.
+  "mcp-re-proxy/src/transparency/retention_queue.rs",
+  "mcp-re-proxy/src/transparency/writer_thread.rs",
+  # The name each stage's marker carries.
+  "mcp-re-proxy/src/transparency/marker_stage.rs",
   "mcp-re-proxy/src/transparency/reserved_before_dispatch.rs",
   "mcp-re-proxy/src/transparency/dispatch_committed.rs",
   "mcp-re-proxy/src/transparency/reservation_marker.rs",
@@ -8111,6 +8157,13 @@ tested_symbols = [
   # channel does not close when this authority closes its own. Without a budget the drop
   # waits for a writer that is waiting for a sender a parked reservation still holds.
   "//mcp-re-proxy:proxy_unit_test#transparency::durability::tests::dropping_the_store_under_a_live_reservation_still_terminates",
+  "//mcp-re-proxy:proxy_unit_test#transparency::retention_queue::tests::admission_stops_at_the_ceiling_and_a_returned_slot_admits_again",
+  "//mcp-re-proxy:proxy_unit_test#transparency::retention_queue::tests::a_retired_writer_is_a_retired_store_and_not_backpressure",
+  "//mcp-re-proxy:proxy_unit_test#transparency::writer_thread::tests::a_writer_with_no_other_sender_is_reclaimed_inside_the_budget",
+  "//mcp-re-proxy:proxy_unit_test#transparency::writer_thread::tests::a_retired_writer_refuses_as_disconnected",
+  "//mcp-re-proxy:proxy_unit_test#transparency::marker_stage::tests::each_stage_reads_back_the_digest_it_names",
+  "//mcp-re-proxy:proxy_unit_test#transparency::marker_stage::tests::the_two_stages_never_read_each_others_markers",
+  "//mcp-re-proxy:proxy_unit_test#transparency::marker_stage::tests::a_name_that_is_not_a_digest_token_reads_back_nothing",
   # R11-461. The crossing is discharged by the terminal the exchange SERVED, and a caller
   # who can produce a post-dispatch refusal on demand must not accumulate dangling ones. The
   # mirror is not optional: the first control alone passes against a proxy that refuses to
@@ -8130,7 +8183,6 @@ tested_symbols = [
   # record for a success it then refused — the contradiction, arriving through the control
   # meant to prevent one. Asserted over the source because the incoherent tuple is
   # unconstructible through the serving path, which is why the enforcement exists at all.
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::accepted::tests::the_publication_decision_precedes_retention_and_the_response_signed_record",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::accepted::tests::the_publication_refusal_says_the_proxy_disagreed_with_itself_and_nothing_about_the_backend",
   # ADR-MCPRE-069 batch 9. Eight more controls in this unit's OWN files, each answering a
   # clause the statement already makes, and none of them previously any unit's evidence.
@@ -8577,8 +8629,8 @@ tested_symbols = [
 [[unit]]
 id = "proxy.admission_configuration_state"
 class = "V0"
-description = "WHAT ADMISSION CONFIGURATION THIS DEPLOYMENT RECOGNISES: every legal form is classified and accepted, an enforcing state carries every value it cannot verify without, and a configuration that names no authority is refused rather than served as OFF. The enforcing view projects the PEP's §5.2 budget from the classified availability, so the degraded opt-in and P arrive as one cell. That the enforcing view a consumer reads was projected from one classified state, rather than assembled by the reader, is a compile-time fact and belongs to `proxy.admission_configuration_state_sole_producer`."
-paths = ["mcp-re-proxy/src/config_state/admission.rs"]
+description = "WHAT ADMISSION CONFIGURATION THIS DEPLOYMENT RECOGNISES: every legal form is classified and accepted, an enforcing state carries every value it cannot verify without, and a configuration that names no authority is refused rather than served as OFF. The enforcing view projects the PEP's §5.2 budget from the classified availability, so the degraded opt-in and P arrive as one cell, and the record verifier's currentness budget from the gate's record age and the same skew. That the enforcing view a consumer reads was projected from one classified state, rather than assembled by the reader, is a compile-time fact and belongs to `proxy.admission_configuration_state_sole_producer`."
+paths = ["mcp-re-proxy/src/config_state/admission/mod.rs", "mcp-re-proxy/src/config_state/admission/enforced_admission.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
@@ -8600,8 +8652,9 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::a_degraded_window_past_the_ceiling_names_no_state_and_the_ceiling_does",
   "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::an_enforcing_state_names_every_value_it_cannot_verify_without",
   "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::an_authority_key_that_cannot_verify_anything_is_refused",
-  "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::a_fail_closed_gate_projects_no_degraded_window",
-  "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::a_bounded_degraded_gate_projects_its_window_and_the_opt_in",
+  "//mcp-re-proxy:proxy_unit_test#config_state::admission::enforced_admission::tests::a_fail_closed_gate_projects_no_degraded_window",
+  "//mcp-re-proxy:proxy_unit_test#config_state::admission::enforced_admission::tests::a_bounded_degraded_gate_projects_its_window_and_the_opt_in",
+  "//mcp-re-proxy:proxy_unit_test#config_state::admission::enforced_admission::tests::both_budgets_carry_the_one_skew_they_were_taken_under",
 ]
 
 
@@ -8626,9 +8679,10 @@ tested_symbols = [
 [[unit]]
 id = "proxy.admission_configuration_state_sole_producer"
 class = "V0"
-description = "Both values on the admission path are the classifier's: `AdmissionState`'s `kind` is bare-private with a private enum type, and all six fields of `EnforcedAdmission` are bare-private and written only by `AdmissionState::enforced()`. So the six facts a consumer reads about an enforcing deployment were projected together from ONE classified state rather than paired by the reader, and the view's existence is itself the enforcement fact. States nothing about which forms are RECOGNISED, which is `proxy.admission_configuration_state`'s."
+description = "Both values on the admission path are the classifier's: `AdmissionState`'s `kind` is bare-private with a private enum type, and `EnforcedAdmission`'s posture and gate borrow are bare-private to its module, whose one constructor is `pub(super)` and called only by `AdmissionState::enforced()`. So the six facts a consumer reads about an enforcing deployment were projected together from ONE classified state rather than paired by the reader, and the view's existence is itself the enforcement fact. The enforcer's and the record verifier's budgets are one `AdmissionBudgets`, private to the view's module and made only by `budgets` under one skew. States nothing about which forms are RECOGNISED, which is `proxy.admission_configuration_state`'s."
 paths = [
-  "mcp-re-proxy/src/config_state/admission.rs",
+  "mcp-re-proxy/src/config_state/admission/mod.rs",
+  "mcp-re-proxy/src/config_state/admission/enforced_admission.rs",
 ]
 exported_contracts = []
 evidence_class = "structural"
@@ -9635,6 +9689,8 @@ paths = [
   "mcp-re-proxy/src/audit_record/intent.rs",
   # Shared with `proxy.dispatch_commitment`: G1 is placed, and the window extended, there.
   "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs",
+  # Shared with `proxy.dispatch_commitment`: D7's order, reserve -> intent -> crossing.
+  "mcp-re-proxy/src/http_profile_serve/dispatch_obligations.rs",
   "mcp-re-proxy/src/async_inner/completion_bound.rs",
 ]
 exported_contracts = []
@@ -9657,6 +9713,10 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_coordinate_from_another_run_is_500_and_asks_nothing",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::each_failure_class_earns_its_own_status",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::intent::tests::a_spent_budget_refuses_before_dispatch_and_asks_nobody",
+  # D7's order, at unit level over a real store and a scripted authority.
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::dispatch_obligations::tests::a_refused_reservation_commits_no_intent",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::dispatch_obligations::tests::a_refused_intent_records_no_crossing",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::dispatch_obligations::tests::the_crossing_is_recorded_once_the_intent_is_committed",
   # The posture: best-effort mints the owner's statement and asks nothing; required never does.
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::only_best_effort_mints_not_required",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_required_posture_never_yields_not_required",
@@ -9727,6 +9787,8 @@ description = "Under the required audit posture no completed success — bodied 
 paths = [
   "mcp-re-proxy/src/audit_commitment/outcome.rs",
   "mcp-re-proxy/src/request_stages/outcome_disposition.rs",
+  # The carrier G2 spends: a committed intent holds the outcome it owes.
+  "mcp-re-proxy/src/request_stages/intent_disposition.rs",
   "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs",
   # Shared: the A-state reading lives in the posture, the provider in the intent crossing.
   "mcp-re-proxy/src/audit_commitment/posture.rs",
@@ -9750,15 +9812,17 @@ tested_symbols = [
   # The procedure: one bounded attempt, the actual status, always 500.
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::outcome::tests::outcome_commit_gives_committed_with_the_actual_status",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::outcome::tests::every_outcome_failure_is_500",
-  "//mcp-re-proxy:proxy_unit_test#audit_commitment::outcome::tests::an_absent_coordinate_is_500_and_asks_nothing",
+  # G2 is handed no coordinate: the intent G1 committed carries the one it named (D9).
+  "//mcp-re-proxy:proxy_unit_test#audit_commitment::outcome::tests::the_owed_outcome_is_committed_for_the_exchange_its_intent_named",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::outcome::tests::an_intent_receipt_does_not_commit_an_outcome",
   # Requiredness from the carried A state; one token, two status tables (D12).
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::not_required_passes_through_and_asks_nothing",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::posture::tests::the_g1_and_g2_status_tables_differ_only_in_the_retry_safe_rows",
   "//mcp-re-proxy:proxy_unit_test#request_stages::outcome_disposition::tests::the_outcome_obligation_has_exactly_two_cases",
   "//mcp-re-proxy:proxy_unit_test#audit_commitment::machine::tests::machine_a_admits_success_only_from_outcome_committed_or_not_required",
-  # The exit's order (Q2), and that it is the only success exit.
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::success_exit::tests::the_outcome_is_committed_before_retention_and_both_before_success_is_served",
+  # That it is the only success exit. Its order (Q2) is the types': each step takes the
+  # previous step's product, so the order has no test and the falsifiers below attack what
+  # each step does with its refusal.
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::success_exit::tests::success_exit_is_the_only_success_served_call",
   # Through the production HttpProfileProxy, each window of §6 forced.
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::best_effort_success_and_notification_are_unchanged",
@@ -9771,6 +9835,23 @@ tested_symbols = [
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::w4_cancel_after_dispatch_never_claims_nothing_executed",
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::w6_outcome_committed_then_lost_before_the_write",
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::a_full_observer_queue_changes_neither_dispatch_nor_success",
+]
+
+# The success exit's order is held by types from outside the exit: its steps and their products
+# are private to `reply_assembly::success_exit`, so the reply region reaches the exit only through
+# `publish_success`, which runs every step. That is a compile-time fact about the module boundary,
+# witnessed here by S81; the order inside the exit is `proxy.audit_outcome_gate`'s, tested and
+# mutation-probed.
+[[unit]]
+id = "proxy.success_exit_order"
+class = "V0"
+description = "Outside `reply_assembly::success_exit` a cleared success cannot be served without its outcome committed and its retention completed: the serving step `serve_published` and the stage products `Committed` and `Retained` are private to the exit, `Committed` is made only by the outcome commitment and `Retained` only by completed retention, and the exit's only entry the reply region can call is `publish_success`, which runs every step. States nothing about the order inside the exit, or about whether a second success could be served by some other route, which are `proxy.audit_outcome_gate`'s."
+paths = ["mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs"]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://proxy/audit/success_exit_order",
 ]
 
 
@@ -10233,7 +10314,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.trust_epoch_source"
 class = "V0"
-description = "How ONE replica turns reads of the shared trust-epoch counter into invalidation events: the first successful read is a baseline and emits nothing; any later read whose counter or advance generation differs — a regression included — queues one coarse flush and moves the baseline; a failed read emits nothing, marks the source unhealthy and holds the baseline, so an advance missed during an outage is caught on recovery; the poller reads at once and then on its cadence, a dead poller reports unhealthy, and the request path drains the queue without waiting on any read. An ABSENT key is a read failure, never epoch 0."
+description = "How ONE replica turns reads of the shared trust-epoch counter into invalidation events: the first successful read is a baseline and emits nothing; any later read whose counter or advance generation differs — a regression included — queues one coarse flush and moves the baseline; a failed read emits nothing, marks the source unhealthy and holds the baseline, so an advance missed during an outage is caught on recovery; the poller reads at once and then on its cadence, a dead poller reports unhealthy, and the request path drains the queue without waiting on any read. An ABSENT key is a read failure, never epoch 0. No source is built over a store that does not answer: the first read precedes the source, so a push tier configured against an unreachable store refuses at startup and no poller runs over it."
 paths = [
   # The source, the poller body and its supervision, the channel adapter, and the Redis
   # reader's absent-key rule, which is the one place a foreign read's MEANING is decided
@@ -10299,6 +10380,11 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::one_epoch_read_cannot_consume_the_rotation_overlap",
   "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_advance_onto_an_already_seen_counter_still_flushes",
   "//mcp-re-proxy:proxy_unit_test#trust_epoch::state::tests::equal_counters_under_different_generations_are_different_states",
+  # The startup half of fail-closed: the eager first read is what refuses an unreachable
+  # store, and the trust plane spawns its poller only over a source this returned. The
+  # signing plane holds its own reader of the same store and its own refusal, in
+  # `proxy.signing_plane_epoch_read_refusal`.
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_unreachable_epoch_store_builds_no_source",
 ]
 # The Redis reader and its two controls exist only under `redis_replay`. The selectors name
 # `proxy_ext_unit_test` so the fingerprint says the battery measured the crate that carries
@@ -11270,6 +11356,7 @@ description = "Every remote-signer exchange is bounded by ONE shared deadline: i
 paths = [
   "mcp-re-proxy/src/remote_signer_call/wire_limits.rs",
   "mcp-re-proxy/src/aws_sts.rs",
+  "mcp-re-proxy/src/aws_sts/sts_protocol.rs",
   "mcp-re-proxy/src/aws_kms_keysource.rs",
   "mcp-re-proxy/src/gcp_kms_keysource.rs",
 ]
@@ -11491,7 +11578,7 @@ tested_symbols = [
 id = "proxy.aws_sts_credentials"
 class = "V0"
 description = "Acquiring AWS credentials by web-identity AssumeRole: an expiry that cannot be read is already-expired rather than unlimited, a stated expiry is never extended, a far-future one is truncated to the real session ceiling, concurrent callers perform one exchange between them, and a failed exchange is not repeated by every waiter, and a credential response past its read cap is refused rather than truncated."
-paths = ["mcp-re-proxy/src/aws_sts.rs"]
+paths = ["mcp-re-proxy/src/aws_sts.rs", "mcp-re-proxy/src/aws_sts/sts_protocol.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
@@ -11500,26 +11587,26 @@ evidence = [
   "mutation://proxy/aws_sts/credential_lifetime",
 ]
 tested_symbols = [
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_well_formed_response_yields_the_credentials_and_its_expiry",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_session_token_is_always_set_so_sigv4_sends_x_amz_security_token",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_well_formed_response_yields_the_credentials_and_its_expiry",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_session_token_is_always_set_so_sigv4_sends_x_amz_security_token",
   # The direction that matters. An unreadable expiry read as UNLIMITED is a credential used
   # forever; read as already-expired it costs an exchange.
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::an_unparseable_expiration_reads_as_already_expired_not_as_unlimited",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_missing_expiration_element_reads_as_already_expired",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_far_future_expiration_is_truncated_to_the_real_session_ceiling",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::an_unparseable_expiration_reads_as_already_expired_not_as_unlimited",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_missing_expiration_element_reads_as_already_expired",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_far_future_expiration_is_truncated_to_the_real_session_ceiling",
   "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_stated_expiry_is_never_extended_by_the_reuse_floor",
   "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_stated_expiry_already_past_is_not_extended_by_the_reuse_floor",
   # A credential response over its read cap is refused whole, never truncated into a
   # parseable prefix.
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_credential_read_past_its_cap_is_refused_not_truncated",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_credential_read_past_its_cap_is_refused_not_truncated",
   "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::an_unreadable_expiration_is_reused_briefly_rather_than_re_exchanged_every_call",
   # A field that is absent, empty, or echoed outside `Credentials` is not a credential.
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_response_without_credentials_is_refused",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::each_missing_credential_field_is_named",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::an_empty_credential_field_is_refused_rather_than_signed_with",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_value_echoed_outside_credentials_is_not_mistaken_for_one",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::xml_entities_decode_and_amp_is_decoded_last",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::form_encoding_escapes_what_a_jwt_and_an_arn_contain",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_response_without_credentials_is_refused",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::each_missing_credential_field_is_named",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::an_empty_credential_field_is_refused_rather_than_signed_with",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_value_echoed_outside_credentials_is_not_mistaken_for_one",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::xml_entities_decode_and_amp_is_decoded_last",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::form_encoding_escapes_what_a_jwt_and_an_arn_contain",
   "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::session_names_are_validated_against_the_sts_grammar",
   # Where the token is sent. A projected web-identity token handed to a re-pointed endpoint
   # is a credential leak, and it is refused at construction rather than at use.
@@ -11598,6 +11685,21 @@ tested_symbols = [
   "//mcp-re-core:mcp_re_core_test#time::clock_skew::tests::every_tolerance_inside_the_bound_is_held_exactly",
   "//mcp-re-core:mcp_re_core_test#time::clock_skew::tests::a_negative_or_unbounded_tolerance_is_not_constructible",
   "//mcp-re-core:mcp_re_core_test#time::clock_skew::tests::zero_is_the_tolerance_new_builds_from_zero",
+]
+
+# That `new` refuses an out-of-bound tolerance is `core.max_clock_skew_bound`'s, tested; that
+# nothing else can build a `MaxClockSkew` is a compile-time fact about the module boundary,
+# witnessed here by S50.
+[[unit]]
+id = "core.max_clock_skew_sole_producer"
+class = "V0"
+description = "`MaxClockSkew::new` is the ONLY producer of a `MaxClockSkew`: its tuple field is private to `time::clock_skew`, there is no `Default`, `From` or `Deserialize`, and tests build one through `new`, so no code outside the module can wrap an unchecked tolerance. States nothing about which tolerances `new` admits, which is `core.max_clock_skew_bound`'s."
+paths = ["mcp-re-core/src/time/clock_skew.rs"]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "high"
+evidence = [
+  "structural://core/max_clock_skew/sole_producer",
 ]
 
 [[unit]]
@@ -12253,6 +12355,7 @@ paths = [
   "mcp-re-proxy/src/config_state/validation/machine_violations.rs",
   "mcp-re-proxy/src/config_state/validation/recognition.rs",
   "mcp-re-proxy/src/config_state/validation/residue.rs",
+  "mcp-re-proxy/src/config_state/request_target.rs",
   "mcp-re-proxy/src/config_state/trust_document.rs",
 ]
 exported_contracts = []
@@ -12269,14 +12372,16 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::validation::required_coordinate_tests::a_whitespace_coordinate_is_refused_like_an_empty_one",
   "//mcp-re-proxy:proxy_unit_test#config_state::validation::required_coordinate_tests::every_required_coordinate_is_refused_when_empty_however_the_request_was_built",
   "//mcp-re-proxy:proxy_unit_test#config_state::validation::required_coordinate_tests::the_fixture_these_controls_mutate_is_otherwise_legal",
-  "//mcp-re-proxy:proxy_unit_test#config_state::validation::residue::tests::a_target_uri_that_would_disable_the_reconstruction_check_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::request_target::tests::a_target_the_reconstruction_check_cannot_answer_is_unconstructible",
+  "//mcp-re-proxy:proxy_unit_test#config_state::request_target::tests::a_target_that_is_not_an_http_request_target_is_unconstructible",
+  "//mcp-re-proxy:proxy_unit_test#config_state::request_target::tests::a_target_carrying_userinfo_is_refused_without_echoing_it",
   "//mcp-re-proxy:proxy_unit_test#config_state::validation::residue::tests::the_inventory_is_the_file",
   # ADR-MCPRE-069 CO-S3-6 (NP-153). Four members, all deciding in `validation/`, all over a
   # request built in code.
   #
   # The description's own clause, at integration width and over all three illegal shapes
   # (scheme-less, path-only, empty), with the negative control that an absolute target is
-  # NOT refused. `residue.rs` is the deciding file and is in this closure.
+  # NOT refused. `request_target.rs` is the deciding file and is in this closure.
   "//mcp-re-proxy:integration_test#app_startup_characterization_test::a_programmatic_config_cannot_disable_the_request_target_reconstruction_check",
   # The residue inventory exercised on one of its entries: `--authz reference` is an
   # unaccepted profile, refused by `residue.rs` and by nothing downstream since the
@@ -12560,7 +12665,7 @@ tested_symbols = [
 id = "proxy.startup_plan_provenance"
 class = "V0"
 description = "A STARTUP PLAN CARRIES THE DECISION IT WAS HANDED, NOT ONE IT RE-DERIVED: the trust plan and the signing plan come from ONE producer that reads the issuer kid and the trust epoch once, and the signing plan cannot be given an epoch the trust plan does not hold, the continuation plan carries its own endpoint verbatim, the replay plan carries the declared Redis pool size, the channel plan carries the classified custody and the credential window, the epoch plan normalises the key ONCE, the issuer kid in the minted credential is the one that was planned — falling back to the server key id only where the resolution reads it — the audience scope defaults to the response audience and is overridable, both consumers of the epoch hold ONE decision, each CRL posture is projected as its own variant, and the paths accessor answers which FILES rather than which posture. Says nothing about what planning REFUSES, which is `proxy.startup_plan_legality`'s, and nothing about whether any named endpoint can be reached, which is materialization's."
-paths = ["mcp-re-proxy/src/startup_plan.rs"]
+paths = ["mcp-re-proxy/src/startup_plan/mod.rs", "mcp-re-proxy/src/startup_plan/channel_establishment_plan.rs", "mcp-re-proxy/src/startup_plan/response_authority.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -12569,6 +12674,8 @@ evidence = [
   "mutation://proxy/startup_plan_provenance/issuer_kid_is_the_planned_one",
 ]
 tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::channel_establishment_plan::tests::each_projection_answers_with_what_the_deployment_stated",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::channel_establishment_plan::tests::the_currency_bound_relates_the_plans_own_posture_and_window",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::a_declared_replay_pool_size_reaches_the_plan",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::both_consumers_of_the_epoch_hold_one_decision",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::each_crl_posture_is_projected_as_its_own_variant",
@@ -12577,16 +12684,54 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_continuation_plan_carries_its_own_endpoint_verbatim",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_epoch_plan_normalizes_the_key_once",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_issuer_kid_falls_back_to_the_server_key_id",
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_issuer_kid_in_the_credential_is_the_one_that_was_planned",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::response_authority::tests::the_authority_reads_what_layer_a_decided",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::response_authority::tests::the_issuer_kid_in_the_credential_is_the_one_that_was_planned",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_paths_accessor_answers_which_files_not_which_posture",
   "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_signing_plan_cannot_be_given_a_different_epoch",
+]
+
+# `ChannelEstablishmentPlan` is sealed (#1249): its three facts are private to
+# `startup_plan::channel_establishment_plan` and `from_validated` is the only producer. That
+# `from_validated` projects the right facts is `proxy.startup_plan_provenance`'s claim, tested;
+# that nothing else can assemble or alter a plan is a compile-time fact about the module
+# boundary, witnessed here by S82 and S83.
+[[unit]]
+id = "proxy.channel_establishment_plan_sole_producer"
+class = "V0"
+description = "`ChannelEstablishmentPlan::from_validated` is the ONLY producer of a channel plan, and no consumer can replace one of its facts: the revocation posture, the credential window and the handshake-signing capacity are bare-private to `startup_plan::channel_establishment_plan`, there is no second constructor, no derive fills or exposes the fields, and every test fixture goes through a validated deployment — so holding a plan means its three facts came from ONE validated deployment, and the posture and window that bound peer currency together are related by the plan's `currency_bound` rather than re-paired by a caller. States nothing about WHICH facts `from_validated` projects, which is `proxy.startup_plan_provenance`'s."
+paths = ["mcp-re-proxy/src/startup_plan/channel_establishment_plan.rs"]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "high"
+evidence = [
+  "structural://proxy/startup_plan/channel_establishment_plan_sole_producer",
+]
+
+# `ResponseAuthority` is sealed (#1251): the root issuer kid and the shared trust epoch are
+# private to `startup_plan::response_authority`, whose private `from_validated` is called only
+# by `response_authority_plans`, and both plan constructors take the authority whole. That the
+# authority reads the right facts is `proxy.startup_plan_provenance`'s claim, tested; that
+# nothing else can assemble one is a compile-time fact about the module boundary, witnessed
+# here by S84.
+[[unit]]
+id = "proxy.response_authority_sole_producer"
+class = "V0"
+description = "`response_authority_plans` is the ONLY producer of a `ResponseAuthority`, and so of the trust plan and the signing plan in production: the issuer kid and the epoch plan are bare-private to `startup_plan::response_authority`, `from_validated` is private to it, no derive fills the fields, and no test-gated constructor exists outside that module — so a trust plan and a signing plan built from one authority hold one kid and one epoch, read once from one validated deployment, and neither plan can be built around a kid or an epoch a caller chose. States nothing about WHICH facts the authority reads, which is `proxy.startup_plan_provenance`'s."
+paths = ["mcp-re-proxy/src/startup_plan/response_authority.rs"]
+exported_contracts = []
+evidence_class = "structural"
+# A trust plan and a signing plan holding different kids is a deployment that excludes one
+# issuer from the request-signer set while minting under another.
+direct_consequence_severity = "high"
+evidence = [
+  "structural://proxy/startup_plan/response_authority_sole_producer",
 ]
 
 [[unit]]
 id = "proxy.startup_plan_legality"
 class = "V0"
 description = "PLANNING REFUSES A STATE THAT SKIPPED THE PARSER, AND CONTACTS NOTHING: a linearizable tier without an endpoint, a shared Redis tier without a URL and a shared tier without a durability tier are each refused for what they are missing, a request with no durable replay configuration fails closed, the withdrawn alias is refused rather than reinterpreted, each selection is made by its own owner — continuation on its own locator and not the replay tier, admission independently of replay, only the Redis tier selecting a networked store, only the networked push state planning an epoch source — the build refusal is stated ONCE and names both consequences, the assertion arm is refused at the boundary and the both-set arm agrees with the gate on an unreachable input, a deployable configuration reads the verified peer certificate, and PLANNING A NETWORKED TIER OPENS NO SOCKET. Says nothing about what a plan that survives CARRIES, which is `proxy.startup_plan_provenance`'s."
-paths = ["mcp-re-proxy/src/startup_plan.rs"]
+paths = ["mcp-re-proxy/src/startup_plan/mod.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -12616,10 +12761,11 @@ tested_symbols = [
 [[unit]]
 id = "proxy.startup_plan_pool_ceiling"
 class = "V0"
-description = "THE FLEET'S ADMISSION AGGREGATE SATURATES, AND THE INNER POOL IS RAISED ONLY WHEN IT MUST BE: `InFlightLimitBasis::fleet_ceiling` SATURATES rather than wrapping, both bases reach the fleet through the per-core ceiling every core enforces rather than through a second reading of the flags, a fleet total that does not divide evenly rounds each share UP and yields the aggregate the gate actually admits, and the inner pool is raised only where that aggregate exceeds its default and is never lowered. Says nothing about which basis the operator stated, which `proxy.in_flight_limit_basis` classifies."
+description = "THE FLEET'S ADMISSION AGGREGATE SATURATES, AND THE INNER POOL IS RAISED ONLY WHEN IT MUST BE: `InFlightLimitBasis::fleet_ceiling` SATURATES rather than wrapping, both bases reach the fleet — and the serving limits the composition root builds — through the per-core ceiling every core enforces rather than through a second reading of the flags, a fleet total that does not divide evenly rounds each share UP and yields the aggregate the gate actually admits, and the inner pool is raised only where that aggregate exceeds its default and is never lowered. Says nothing about which basis the operator stated, which `proxy.in_flight_limit_basis` classifies."
 paths = [
   "mcp-re-proxy/src/config_state/in_flight_limit.rs",
   "mcp-re-proxy/src/inner_plane_bound.rs",
+  "mcp-re-proxy/src/deployment_request/server_limits.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -12633,6 +12779,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::a_total_that_does_not_divide_evenly_rounds_each_share_up",
   "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::both_bases_reach_the_fleet_through_the_per_core_ceiling",
   "//mcp-re-proxy:proxy_unit_test#inner_plane_bound::tests::a_fleet_ceiling_equal_to_the_default_keeps_the_pool",
+  "//mcp-re-proxy:proxy_unit_test#deployment_request::server_limits::tests::the_served_limits_carry_the_sizes_and_each_cores_share",
+  "//mcp-re-proxy:proxy_unit_test#deployment_request::server_limits::tests::the_default_served_limits_are_the_unstated_requests",
 ]
 
 [[unit]]
@@ -13868,7 +14016,7 @@ tested_symbols = [
 id = "proxy.aws_web_identity_credential_exchange"
 class = "V0"
 description = "THE WEB-IDENTITY EXCHANGE AS A RUNNING EXCHANGE, MEASURED AGAINST A REAL STS PROTOCOL SPEAKER: the projected token is posted as an `AssumeRoleWithWebIdentity` form whose role ARN is percent-encoded and whose answer always carries a session token, the credential it returns is cached rather than re-exchanged per call, a credential inside the refresh margin is re-exchanged rather than served from cache, an answer that is not the document the protocol defines fails closed rather than yielding a partial credential, and the two request fields an operator can make un-sendable — the session name's STS grammar and the regional endpoint the token is posted to — are settled at construction rather than per call. It is the composition twin of `proxy.aws_sts_credentials`, which states the same lifetime algebra over the parser and the cache directly; what is added here is that the wiring in force performs it. It states nothing about where the projected token came from, nor about what the assumed role may do."
-paths = ["mcp-re-proxy/src/aws_sts.rs"]
+paths = ["mcp-re-proxy/src/aws_sts.rs", "mcp-re-proxy/src/aws_sts/sts_protocol.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"

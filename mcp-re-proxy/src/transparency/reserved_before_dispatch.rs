@@ -13,15 +13,6 @@ use super::durable_job::JobKind;
 use super::durable_job::WriteJob;
 use super::retained_record::RetainedRequest;
 
-/// The extension a marker carries while its exchange has not committed to dispatching.
-///
-/// A separate NAME from [`super::PENDING_EXTENSION`] is the whole repair. One artefact was
-/// asked to mean two contradictory things — *responsibility is accepted, nothing has run*
-/// at `reserve`, and *this call crossed the execution threshold and its outcome was never
-/// retained* at reconciliation — so no byte on disk distinguished a refused call from one
-/// whose backend may have acted. Two names, and the commitment is the rename between them.
-pub(super) const RESERVED_EXTENSION: &str = "reserved";
-
 /// Durable acceptance of responsibility for one exchange, taken BEFORE the backend runs.
 ///
 /// **It is not evidence that anything ran, and its durable form says so.** Holding one

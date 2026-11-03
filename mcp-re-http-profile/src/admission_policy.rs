@@ -32,7 +32,7 @@ use vstd::prelude::*;
 /// The legality is owned one layer up and by a type that CAN hold it:
 /// `config_state::AdmissionAvailability` is a tagged value whose degraded arm carries a
 /// `NonZeroU64`, so the illegal cells are unconstructible there, and the proxy's
-/// `EnforcedAdmission::enforcer_policy` PROJECTS this budget from it. Possessing an
+/// `EnforcedAdmission::budgets` PROJECTS this budget from it. Possessing an
 /// `AdmissionPolicy` therefore establishes nothing; what establishes the cell is where it
 /// came from.
 #[derive(Debug, Clone, Copy)]

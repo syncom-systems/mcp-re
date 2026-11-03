@@ -4,7 +4,7 @@
 //!
 //! The success exit cannot serve without one of these, so under the required posture no
 //! success is visible without the exchange's outcome committed and redeemed. It is obtained
-//! only from `AuditPosture::outcome`, which reads requiredness from the
+//! only from `IntentDisposition::outcome`, so requiredness is the
 //! [`IntentDisposition`](super::IntentDisposition) G1 carried across the dispatch.
 
 use crate::audit_commitment::{CommittedOutcome, NoCommitmentRequired};

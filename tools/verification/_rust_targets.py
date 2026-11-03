@@ -45,12 +45,14 @@ generation error, not a guess.
 from __future__ import annotations
 
 import json
-from functools import lru_cache
 from pathlib import Path
 import subprocess
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TABLE = REPO_ROOT / "verification" / "generated" / "rust-targets.json"
+#: Where the committed table lives. This module is its one reader: `_registries`
+#: refuses a production source that spells this path instead of asking here.
+TABLE_RELATIVE = "verification/generated/rust-targets.json"
+TABLE = REPO_ROOT / TABLE_RELATIVE
 SCHEMA = 1
 
 #: The rule classes rustc compiles a crate for, each taking a `lint_config`.
@@ -184,19 +186,52 @@ def render(table: dict) -> str:
     return json.dumps(table, indent=1, sort_keys=True) + "\n"
 
 
-@lru_cache(maxsize=1)
-def table() -> dict[str, dict]:
-    """The committed table's rows, by label."""
+def rows_at(root: Path) -> dict[str, dict]:
+    """The rows, by label, of the table committed under `root`."""
     try:
-        data = json.loads(TABLE.read_text())
-    except (OSError, json.JSONDecodeError) as err:
+        return _rows_of((root / TABLE_RELATIVE).read_text(encoding="utf-8"))
+    except OSError as err:
         raise TargetTableError(
-            f"{TABLE.relative_to(REPO_ROOT)} is unreadable ({err}); regenerate it with "
+            f"{TABLE_RELATIVE} is unreadable ({err}); regenerate it with "
+            f"`tools/verification/rust-targets --write`"
+        ) from err
+
+
+def _rows_of(text: str) -> dict[str, dict]:
+    """The rows, by label, of one rendering of the table."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as err:
+        raise TargetTableError(
+            f"{TABLE_RELATIVE} is unreadable ({err}); regenerate it with "
             f"`tools/verification/rust-targets --write`"
         ) from err
     if data.get("schema") != SCHEMA:
-        raise TargetTableError(f"{TABLE.relative_to(REPO_ROOT)} has schema {data.get('schema')}, not {SCHEMA}")
+        raise TargetTableError(f"{TABLE_RELATIVE} has schema {data.get('schema')}, not {SCHEMA}")
     return data["targets"]
+
+
+def fixture(rows: dict[str, dict]) -> str:
+    """A table holding exactly `rows`, as a gate's selftest writes one under a scratch root."""
+    return render({"schema": SCHEMA, "query": QUERY, "targets": rows})
+
+
+def table() -> dict[str, dict]:
+    """The committed table's rows, by label, as the current source tree holds it."""
+    import _tree
+
+    tree = _tree.current()
+
+    def load() -> dict[str, dict]:
+        try:
+            return _rows_of(tree.read(TABLE_RELATIVE).decode("utf-8"))
+        except OSError as err:
+            raise TargetTableError(
+                f"{TABLE_RELATIVE} is unreadable ({err}); regenerate it with "
+                f"`tools/verification/rust-targets --write`"
+            ) from err
+
+    return tree.memo("rust-targets", load)
 
 
 def production_targets(rows: dict[str, dict] | None = None) -> list[str]:

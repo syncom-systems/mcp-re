@@ -40,9 +40,13 @@ permissions:
 jobs:
   supply-chain:
     name: supply chain (sources, licenses, bans, advisories)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+      - name: Set up the pinned Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
 
       - name: Supply-chain gate selftest
         run: python3 scripts/supply_chain_gate.py --selftest

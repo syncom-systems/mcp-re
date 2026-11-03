@@ -102,6 +102,11 @@ LOCAL_DECL = re.compile(
 #: The root segment of any `::`-qualified path.
 PATH_ROOT = re.compile(r"(?<![:\w])(?P<root>\w+)::")
 
+#: An out-of-line child module the file declares (`mod name;`). Its items are inside the
+#: module tree, so a path into it is local; the child's own file is then held to this same
+#: rule by [`main`], so a child cannot import what its parent may not.
+CHILD_MOD = re.compile(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(?P<name>\w+)\s*;")
+
 
 def production_half(text: str) -> list[tuple[int, str]]:
     """Every production line that carries code, 1-indexed, comments and literals blanked.
@@ -113,8 +118,14 @@ def production_half(text: str) -> list[tuple[int, str]]:
     return production_view(text).numbered_code()
 
 
+def child_modules(body: list[tuple[int, str]]) -> list[str]:
+    """The out-of-line child modules the production half declares."""
+    return [match.group("name") for _, code in body if (match := CHILD_MOD.match(code))]
+
+
 def local_names(text: str, body: list[tuple[int, str]]) -> set[str]:
-    """Names that resolve inside this module: declared types, plus self-alias targets.
+    """Names that resolve inside this module: declared types and child modules, plus
+    self-alias targets.
 
     `use RuntimeEvent as E;` makes `E` local, because `RuntimeEvent` is local. An alias of
     something non-local is not: it is an import wearing a short name, which is exactly the
@@ -125,6 +136,7 @@ def local_names(text: str, body: list[tuple[int, str]]) -> set[str]:
         for line in text.splitlines()
         if (match := LOCAL_DECL.match(line))
     }
+    names.update(child_modules(body))
     # Fixed point: an alias chain (A as B, B as C) stays local only if it starts local.
     changed = True
     while changed:
@@ -141,14 +153,16 @@ def local_names(text: str, body: list[tuple[int, str]]) -> set[str]:
     return names
 
 
-def external_dependencies(text: str) -> list[str]:
+def external_dependencies(text: str, child: bool = False) -> list[str]:
     """Every module-external name the production half depends on, as `line: what`.
 
     Empty list means the relation depends on nothing outside itself but the allowed
-    standard-library paths.
+    standard-library paths. For a `child` module, `super` is its parent: inside the tree.
     """
     body = production_half(text)
     local = local_names(text, body)
+    if child:
+        local.add("super")
     found: list[str] = []
 
     for number, code in body:
@@ -271,7 +285,30 @@ def selftest() -> int:
             "an attributed `use ...;` is a one-line region",
         ),
     ]
+    child_cases = [
+        ("use super::ServedSuccess;\npub struct P(pub(super) ServedSuccess);\n", False,
+         "a child reaching its parent through super"),
+        ("use super::S;\nuse tokio::sync::Mutex;\n", True,
+         "a child importing what its parent may not"),
+    ]
+    cases.append((
+        "pub(crate) mod publication;\npub enum S { A }\nfn f(_: publication::P) {}\n",
+        False,
+        "a path into a child module the file declares",
+    ))
+    cases.append((
+        "pub enum S { A }\nfn f(_: publication::P) {}\n",
+        True,
+        "a path into a module the file does NOT declare",
+    ))
     failures = 0
+    for source, should_fail, label in child_cases:
+        got = bool(external_dependencies(source, child=True))
+        if got != should_fail:
+            failures += 1
+            print(f"SELFTEST FAIL: {label} — expected {'rejection' if should_fail else 'acceptance'}")
+        else:
+            print(f"ok   {label}")
     for source, should_fail, label in cases:
         got = bool(external_dependencies(source))
         if got != should_fail:
@@ -303,7 +340,19 @@ def main(argv: list[str]) -> int:
             )
             failed = True
             continue
-        found = external_dependencies(target.read_text(encoding="utf-8"))
+        text = target.read_text(encoding="utf-8")
+        found = external_dependencies(text)
+        for name in child_modules(production_half(text)):
+            child = target.with_suffix("") / f"{name}.rs"
+            if not child.exists():
+                child = target.with_suffix("") / name / "mod.rs"
+            if not child.exists():
+                found.append(f"0: child module `{name}` has no file this gate can check")
+                continue
+            found.extend(
+                f"{child.relative_to(REPO_ROOT)}:{entry}"
+                for entry in external_dependencies(child.read_text(encoding="utf-8"), child=True)
+            )
         if found:
             print(f"FAIL: {rel} has acquired external dependencies:", file=sys.stderr)
             for entry in found:

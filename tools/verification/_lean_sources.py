@@ -53,6 +53,7 @@ from __future__ import annotations
 import re
 
 from _lean_model import LEAN_DIR, lean_libs
+import _tree
 from _manifest import ManifestError, REPO_ROOT
 
 #: The machine-owned source directory. Everything else a `[[lean_lib]]` names is written by
@@ -67,9 +68,8 @@ IMPORT = re.compile(r"^\s*import\s+([A-Za-z_][A-Za-z0-9_.']*)", re.M)
 
 def _module_file(src_dir: str, module: str) -> str | None:
     """The repo-relative path `module` resolves to inside `src_dir`, or None."""
-    rel = f"{src_dir}/{module.replace('.', '/')}.lean"
-    path = LEAN_DIR / rel
-    if not path.is_file():
+    path = LEAN_DIR / f"{src_dir}/{module.replace('.', '/')}.lean"
+    if not _tree.path_is_file(path):
         return None
     return path.relative_to(REPO_ROOT).as_posix()
 
@@ -124,8 +124,7 @@ def lean_closure() -> dict[str, str]:
         if path in seen:
             continue
         seen[path] = src_dir
-        text = (REPO_ROOT / path).read_text(encoding="utf-8")
-        pending += IMPORT.findall(text)
+        pending += IMPORT.findall(_tree.read_path(REPO_ROOT / path).decode("utf-8"))
     return dict(sorted(seen.items()))
 
 

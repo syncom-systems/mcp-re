@@ -5,7 +5,7 @@
 //! [`HandshakeSignCapacity`](crate::delegated_tls::HandshakeSignCapacity), and the type checks
 //! the term it receives. The bounds are the type's; this module owns only the spelling.
 
-use crate::tls::ServerLimits;
+use crate::deployment_request::ServerLimits;
 
 /// Whether this flag is one of the budget's two terms.
 pub(super) fn owns(flag: &str) -> bool {
@@ -34,7 +34,7 @@ pub(super) fn take(limits: &mut ServerLimits, flag: &str, value: &str) -> Result
 mod tests {
     use super::{owns, take};
     use crate::delegated_tls::HandshakeSignCapacity;
-    use crate::tls::ServerLimits;
+    use crate::deployment_request::ServerLimits;
 
     #[test]
     fn each_flag_replaces_its_own_term_and_leaves_the_other() {

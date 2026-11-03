@@ -90,6 +90,7 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-063 Slice 1: the compatibility surface of the certificate identity
     # migration — the historical identity vocabulary, delegating to the authority.
     "src/aws_sts.rs",
+    "src/aws_sts/sts_protocol.rs",
     # ADR-MCPRE-063 Slice 1: the communication-assurance authority — certificate-chain
     # evidence to peer-identity evidence, and the generic identity-value invariant every
     # provenance shares. The X.509 parser reaches only the adapter.
@@ -149,7 +150,8 @@ _PROXY_LIB_SRCS = [
     "src/config_snapshot.rs",
     # The classified legal deployment state — layer A.
     # One classifier/validator per configuration machine, and the value they produce.
-    "src/config_state/admission.rs",
+    "src/config_state/admission/enforced_admission.rs",
+    "src/config_state/admission/mod.rs",
     "src/config_state/authorization.rs",
     "src/config_state/client_credential_window.rs",
     "src/config_state/connection_bounds/mod.rs",
@@ -169,6 +171,7 @@ _PROXY_LIB_SRCS = [
     "src/config_state/mcp_transport_contract.rs",
     "src/config_state/replay.rs",
     "src/config_state/replica_clock.rs",
+    "src/config_state/request_target.rs",
     # Who this deployment IS, derived once: the server ActorIdentity two consumers used to
     # assemble independently from the same primitives.
     "src/config_state/server_identity.rs",
@@ -197,6 +200,7 @@ _PROXY_LIB_SRCS = [
     "src/deployment_request/kinds.rs",
     "src/deployment_request/mod.rs",
     "src/deployment_request/secret_string.rs",
+    "src/deployment_request/server_limits.rs",
     "src/deployment_request/signing_source/aws_kms_source.rs",
     "src/deployment_request/signing_source/channel_role.rs",
     "src/deployment_request/signing_source/file_source.rs",
@@ -311,6 +315,9 @@ _PROXY_LIB_SRCS = [
     "src/transparency/durability.rs",
     "src/transparency/durable_job.rs",
     "src/transparency/durable_writer.rs",
+    "src/transparency/retention_queue.rs",
+    "src/transparency/writer_thread.rs",
+    "src/transparency/marker_stage.rs",
     "src/transparency/reserved_before_dispatch.rs",
     "src/transparency/dispatch_committed.rs",
     "src/transparency/reservation_marker.rs",
@@ -505,6 +512,7 @@ _PROXY_LIB_SRCS = [
     "src/http_profile_serve/pre_admission/action.rs",
     "src/http_profile_serve/answering_commitment.rs",
     "src/http_profile_serve/dispatch_commitment.rs",
+    "src/http_profile_serve/dispatch_obligations.rs",
     "src/http_profile_serve/reply_assembly/mod.rs",
     "src/http_profile_serve/reply_assembly/notification.rs",
     "src/http_profile_serve/reply_assembly/success_exit.rs",
@@ -530,6 +538,7 @@ _PROXY_LIB_SRCS = [
     # and backend machines it interacts with held as a tuple and the cross-machine
     # invariants stated over projections of it. Crate-internal.
     "src/exchange_state.rs",
+    "src/exchange_state/publication.rs",
     # ADR-MCPRE-057 §7 / ADR-MCPRE-058 §9: the request lifecycle around its one
     # irreversible effect — the typed pre-dispatch boundary and the retention
     # obligation carried across it. Crate-internal.
@@ -547,7 +556,9 @@ _PROXY_LIB_SRCS = [
     "src/serving_capabilities/continuation.rs",
     # ADR-MCPRE-056 §5.2: what startup INTENDS to build, decided from validated
     # configuration alone — no I/O, no environment, no clock. Crate-internal.
-    "src/startup_plan.rs",
+    "src/startup_plan/channel_establishment_plan.rs",
+    "src/startup_plan/mod.rs",
+    "src/startup_plan/response_authority.rs",
     # ADR-MCPRE-056 §5.4: the optional-capability posture vocabulary — every seam
     # states ON or OFF, and an undeclared seam fails the debug build. Crate-internal.
     "src/startup_posture.rs",

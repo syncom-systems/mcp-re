@@ -18,10 +18,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::audit_record::{AuditRecord, ExchangeCoordinate, ExecutionIntent};
+use crate::audit_record::{ExchangeCoordinate, ExecutionIntent};
 use crate::audit_sink::MaybeAuditSink;
 use crate::refusal::Refusal;
-use crate::request_stages::{IntentDisposition, OutcomeDisposition};
+use crate::request_stages::IntentDisposition;
 
 use super::intent::IntentCommitment;
 use super::{CommitmentBound, EstablishedProvider, NoCommitmentRequired};
@@ -115,32 +115,6 @@ impl AuditPosture {
                 .map(IntentDisposition::Committed),
         }
     }
-
-    /// G2: what this exchange's success may be published with (§4, D4, Q2).
-    ///
-    /// Requiredness is the state G1 carried across the dispatch, never the posture read
-    /// again. An exchange dispatched with nothing owed owes nothing now: its statement is
-    /// passed through, and nothing is produced, committed or numbered. An exchange whose
-    /// intent was committed owes its outcome, and gets it committed or a refusal.
-    pub(crate) async fn outcome(
-        &self,
-        intent: IntentDisposition,
-        coordinate: Option<ExchangeCoordinate>,
-        observed: AuditRecord,
-    ) -> Result<OutcomeDisposition, Refusal> {
-        match (intent, &self.commitment) {
-            (IntentDisposition::NotRequired(none), _) => Ok(OutcomeDisposition::NotRequired(none)),
-            (IntentDisposition::Committed(_), Commitment::Required(crossing)) => crossing
-                .outcome(coordinate, observed)
-                .await
-                .map(|committed| OutcomeDisposition::Committed(Box::new(committed))),
-            // Unreachable: a committed intent comes only from the required posture, which a
-            // proxy never leaves. Refused rather than published if that stops holding.
-            (IntentDisposition::Committed(_), Commitment::BestEffort) => {
-                Err(super::outcome::cannot_commit())
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -148,6 +122,8 @@ mod tests {
     use super::*;
     use crate::audit_commitment::reference::{Forgery, ReferenceAuthority, Step};
     use crate::audit_commitment::{DurabilityTier, RejectReason};
+    use crate::audit_record::AuditRecord;
+    use crate::request_stages::OutcomeDisposition;
     use mcp_re_core::McpReError;
 
     fn eligible(steps: impl IntoIterator<Item = Step>) -> Arc<ReferenceAuthority> {
@@ -251,16 +227,13 @@ mod tests {
 
     /// G2's requiredness is the state G1 carried, not the posture read again: an exchange
     /// dispatched with nothing owed passes through, and the authority is asked nothing even
-    /// where the posture is now required.
+    /// where the posture is now required. G2 takes no posture to read.
     #[tokio::test]
     async fn not_required_passes_through_and_asks_nothing() {
         let authority = eligible([]);
-        let posture = required(&authority, Duration::from_millis(200));
+        let _posture = required(&authority, Duration::from_millis(200));
         let carried = IntentDisposition::NotRequired(NoCommitmentRequired::for_a_test());
-        let outcome = posture
-            .outcome(carried, accepted(), observed())
-            .await
-            .expect("nothing was owed");
+        let outcome = carried.outcome(observed()).await.expect("nothing was owed");
         assert!(matches!(outcome, OutcomeDisposition::NotRequired(_)));
         assert_eq!(authority.requests(), 0);
     }
@@ -287,10 +260,7 @@ mod tests {
                 .intent(coordinate, ExecutionIntent::new("actor-a", 1))
                 .await
                 .expect("the intent commits");
-            let outcome = then_outcome
-                .outcome(committed, coordinate, observed())
-                .await
-                .map(|_| ());
+            let outcome = committed.outcome(observed()).await.map(|_| ());
             let token = McpReError::AuditCommitmentUnavailable;
             assert_eq!(refused, Err(Refusal::new(token.clone(), g1)));
             assert_eq!(outcome, Err(Refusal::new(token, 500)));

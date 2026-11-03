@@ -147,7 +147,11 @@ mod tests {
         // Depth 2 under delegated TLS is the case a constant gets wrong: two workers may
         // admit ONE blocking signature, never two, or the core has nothing left to poll
         // its accept loop, its established connections and its in-flight requests.
-        let options = ServerOptions::new(window());
+        let options = ServerOptions::new(
+            window(),
+            crate::config_state::RequestTarget::new("https://localhost/")
+                .expect("an absolute target"),
+        );
         let pool = crate::async_fleet::CorePool::for_core(
             std::num::NonZeroUsize::MIN.saturating_add(1),
             crate::config_state::PrivateKeyExposure::NonExporting,

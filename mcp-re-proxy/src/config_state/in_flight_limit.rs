@@ -107,7 +107,7 @@ impl InFlightLimitBasis {
 
 /// The fail-safe per-core ceiling for a deployment that names no admission limit.
 ///
-/// One constant, two readers: this and [`crate::tls::ServerLimits::default`], which must
+/// One constant, two readers: this and [`crate::deployment_request::ServerLimits::default`], which must
 /// agree because a `ServerLimits` built directly — by a test, by an embedder driving
 /// `async_serve` without a `DeploymentRequest` — gets the same bound the validated path resolves to.
 pub const DEFAULT_PER_CORE_IN_FLIGHT: usize = 256;

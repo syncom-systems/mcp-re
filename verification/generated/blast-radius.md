@@ -61,6 +61,7 @@ attestations this view cannot see.
 | unit://core.content_address | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://core.ed25519_primitive | source, contracts or evidence | THM-0014 | _no consumer_ |
 | unit://core.max_clock_skew_bound | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://core.max_clock_skew_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://core.replay_seam | source, contracts or evidence | THM-0118 | _no consumer_ |
 | unit://core.time_civil_from_days | source, contracts or evidence | THM-0128 | _no consumer_ |
 | unit://core.time_rfc3339 | source, contracts or evidence | THM-0002 | _no consumer_ |
@@ -166,6 +167,7 @@ attestations this view cannot see.
 | unit://proxy.channel_associated_identity | source, contracts or evidence | THM-0029 | proxy.authenticated_relationship_peer (COMPILE_DEPENDENCY) |
 | unit://proxy.channel_associated_identity_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.channel_credential_custody_state | source, contracts or evidence | THM-0077 | _no consumer_ |
+| unit://proxy.channel_establishment_plan_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.channel_peer_resolution | source, contracts or evidence | THM-0031 | _no consumer_ |
 | unit://proxy.client_certificate_posture | source, contracts or evidence | THM-0054 | proxy.credential_currency (COMPILE_DEPENDENCY) |
 | unit://proxy.client_credential_window | source, contracts or evidence | THM-0102 | _no consumer_ |
@@ -208,6 +210,7 @@ attestations this view cannot see.
 | unit://proxy.delegated_tls_key_custody | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.deployment_topology_state | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.dispatch_commitment | source, contracts or evidence | THM-0045, THM-0051, THM-0052, THM-0074 | _no consumer_ |
+| unit://proxy.dispatched_exit_split | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.ed25519_public_key | source, contracts or evidence | THM-0025 | proxy.credential_key_correspondence (COMPILE_DEPENDENCY) |
 | unit://proxy.ed25519_public_key_sole_producer | source, contracts or evidence | THM-0025 | _no consumer_ |
 | unit://proxy.epoch_bound_session_store | source, contracts or evidence | THM-0103 | _no consumer_ |
@@ -248,6 +251,7 @@ attestations this view cannot see.
 | unit://proxy.pkcs11_adapter | source, contracts or evidence | THM-0116 | _no consumer_ |
 | unit://proxy.pre_dispatch_refusal_precedence | source, contracts or evidence | THM-0078 | _no consumer_ |
 | unit://proxy.process_group_set | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://proxy.publish_permit_sole_producer | source, contracts or evidence | THM-0101 | _no consumer_ |
 | unit://proxy.redis_replay_adapter | source, contracts or evidence | THM-0106 | _no consumer_ |
 | unit://proxy.redis_replay_establishment | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.refusal_audit_emission | source, contracts or evidence | THM-0085 | _no consumer_ |
@@ -266,6 +270,7 @@ attestations this view cannot see.
 | unit://proxy.replay_tier_production_minimum | source, contracts or evidence | THM-0092 | _no consumer_ |
 | unit://proxy.request_header_block_boundary | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.request_peer_binding | source, contracts or evidence | THM-0034 | _no consumer_ |
+| unit://proxy.response_authority_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.response_signing | source, contracts or evidence | THM-0063, THM-0075 | _no consumer_ |
 | unit://proxy.retained_record_at_the_store | source, contracts or evidence | THM-0112 | _no consumer_ |
 | unit://proxy.retained_record_content | source, contracts or evidence | THM-0112 | _no consumer_ |
@@ -287,6 +292,7 @@ attestations this view cannot see.
 | unit://proxy.startup_plan_legality | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.startup_plan_pool_ceiling | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.startup_plan_provenance | source, contracts or evidence | THM-0077 | _no consumer_ |
+| unit://proxy.success_exit_order | source, contracts or evidence | THM-0136 | _no consumer_ |
 | unit://proxy.sync_replay_retention_window | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.transport_binding_and_crl_state | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.transport_binding_application | source, contracts or evidence | THM-0034 | _no consumer_ |

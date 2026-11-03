@@ -44,8 +44,7 @@ use crate::deployment_request::{
     AdmissionAvailabilityRequest, AdmissionRequest, DeploymentRequest, RedactedLocator,
     SharedStoreRequest,
 };
-use mcp_re_core::{MaxClockSkew, VerificationKey};
-use mcp_re_http_profile::AdmissionPolicy;
+use mcp_re_core::VerificationKey;
 use std::num::NonZeroU64;
 
 /// What an enforcing deployment does when the admission authority is unreachable.
@@ -175,72 +174,10 @@ pub enum AdmissionPosture {
     Required,
 }
 
-/// An enforcing deployment's gate inputs, as one indivisible value.
-///
-/// Borrowed from the state, so it is a way to READ an admission posture and not a way to
-/// assemble one. The posture and the authority it applies are handed over together because
-/// they were validated together; nothing holding this can re-pair them.
-#[derive(Debug, Clone, Copy)]
-pub struct EnforcedAdmission<'a> {
-    posture: AdmissionPosture,
-    authority_kid: &'a str,
-    authority: &'a VerificationKey,
-    record_store: &'a SharedStoreRequest,
-    availability: AdmissionAvailability,
-    currentness: AdmissionRecordCurrentness,
-}
+/// The borrowed view consumers read an enforcing state through, and the budgets it projects.
+mod enforced_admission;
 
-impl<'a> EnforcedAdmission<'a> {
-    /// How strictly the gate is applied.
-    pub fn posture(&self) -> AdmissionPosture {
-        self.posture
-    }
-
-    /// The key id an assertion must present for its issuer to be recognised.
-    pub fn authority_kid(&self) -> &'a str {
-        self.authority_kid
-    }
-
-    /// The decoded key that verifies it.
-    pub fn authority(&self) -> &'a VerificationKey {
-        self.authority
-    }
-
-    /// The shared authoritative record currency is compared against.
-    pub fn record_store(&self) -> &'a str {
-        self.record_store.locator()
-    }
-
-    /// What this deployment does when that record cannot be reached.
-    pub fn availability(&self) -> AdmissionAvailability {
-        self.availability
-    }
-
-    /// How current a record read from that store must be to be acted on.
-    pub fn record_currentness(&self) -> AdmissionRecordCurrentness {
-        self.currentness
-    }
-
-    /// The PEP's §5.2 budget under this gate, with `max_clock_skew` the freshness owner's.
-    ///
-    /// The two degraded fields are one projection of [`AdmissionAvailability`], never two
-    /// settings to combine. N is the profile's budget, [`AdmissionPolicy::default`]'s, which
-    /// no deployment states. The saturation cannot fire: P was narrowed from a positive `i64`.
-    pub fn enforcer_policy(&self, max_clock_skew: MaxClockSkew) -> AdmissionPolicy {
-        let (allow_degraded_mode, degraded_propagation_bound) = match self.availability {
-            AdmissionAvailability::FailClosed => (false, 0),
-            AdmissionAvailability::BoundedDegraded { bound_secs } => {
-                (true, i64::try_from(bound_secs.get()).unwrap_or(i64::MAX))
-            }
-        };
-        AdmissionPolicy {
-            max_clock_skew: max_clock_skew.secs(),
-            degraded_propagation_bound,
-            allow_degraded_mode,
-            ..AdmissionPolicy::default()
-        }
-    }
-}
+pub use enforced_admission::EnforcedAdmission;
 
 /// Two admission states are the same state when they name the same issuer.
 ///
@@ -297,14 +234,7 @@ impl AdmissionState {
         let AdmissionKindState::Enforced { posture, gate } = &self.kind else {
             return None;
         };
-        Some(EnforcedAdmission {
-            posture: *posture,
-            authority_kid: &gate.authority_kid,
-            authority: &gate.authority,
-            record_store: &gate.record_store,
-            availability: gate.availability,
-            currentness: gate.currentness,
-        })
+        Some(EnforcedAdmission::of(*posture, gate))
     }
 }
 
@@ -832,43 +762,4 @@ mod tests {
     // The mistakes are still expressible on a flat command line, and the table moved there
     // whole: `cli::admission_flags::tests::the_degraded_truth_table_...` drives the same
     // cells through the adapter and pins the same per-mistake diagnostics.
-
-    /// The projected budget for a gate whose authority, unreachable, fails closed: no
-    /// degraded window, the freshness owner's skew, and the profile's N.
-    #[test]
-    fn a_fail_closed_gate_projects_no_degraded_window() {
-        let (state, _) = run(|c| enforcing(c, true));
-        let state = state.expect("a complete admission configuration names a state");
-        let gate = state.enforced().expect("an enforcing state");
-        let skew = mcp_re_core::MaxClockSkew::new(7).expect("7s is within the ceiling");
-        let policy = gate.enforcer_policy(skew);
-        assert!(!policy.allow_degraded_mode);
-        assert_eq!(policy.degraded_propagation_bound, 0);
-        assert_eq!(policy.max_clock_skew, 7);
-        assert_eq!(
-            policy.max_assertion_age,
-            AdmissionPolicy::default().max_assertion_age
-        );
-    }
-
-    /// A bounded-degraded gate projects its P and the opt-in together, as one cell.
-    #[test]
-    fn a_bounded_degraded_gate_projects_its_window_and_the_opt_in() {
-        let (state, _) = run(|c| {
-            c.admission =
-                AdmissionRequest::Optional(crate::deployment_request::AdmissionGateRequest {
-                    availability: AdmissionAvailabilityRequest::Degraded {
-                        bound_secs: NonZeroU64::new(90).expect("90 is not zero"),
-                    },
-                    ..gate()
-                });
-        });
-        let state = state.expect("a complete admission configuration names a state");
-        let gate = state.enforced().expect("an enforcing state");
-        let skew = mcp_re_core::MaxClockSkew::new(5).expect("5s is within the ceiling");
-        let policy = gate.enforcer_policy(skew);
-        assert!(policy.allow_degraded_mode);
-        assert_eq!(policy.degraded_propagation_bound, 90);
-        assert_eq!(policy.max_clock_skew, 5);
-    }
 }

@@ -14,7 +14,7 @@
 //! over a fact signing also consumes — which is the CF-09 defect this tree already closed.
 
 use crate::config_state::validation::ValidatedDeployment;
-use crate::startup_plan::TrustEpochPlan;
+use crate::startup_plan::{ResponseAuthority, TrustEpochPlan};
 
 /// How the `--trust` file is kept current.
 ///
@@ -67,35 +67,33 @@ pub struct TrustPlan {
     revocation: crate::config_state::TrustRevocationState,
     /// The document the request-signer set is read from.
     document: crate::config_state::TrustDocumentSource,
-    /// The root issuer whose key must never be enrolled as a request signer.
-    response_kid: String,
-    /// The shared epoch mechanism — an INPUT, so this plane cannot become its authority
+    /// The root issuer whose key must never be enrolled as a request signer, and the shared
+    /// epoch mechanism — an INPUT, so this plane cannot become the authority over either
     /// merely by being materialized first (CF-09).
-    epoch: TrustEpochPlan,
+    authority: ResponseAuthority,
 }
 
 impl TrustPlan {
-    /// Project the plan from the retained classification and the validated locator.
+    /// Project the plan from the retained classification, the validated locator and the
+    /// response authority.
     ///
-    /// `response_kid` and `epoch` are passed IN rather than derived here. Both are shared
-    /// with the signing plane, and a value derived inside one consumer is a value the other
-    /// consumer must re-derive.
+    /// The authority is passed IN rather than derived here. It is shared with the signing
+    /// plane, and a value derived inside one consumer is a value the other consumer must
+    /// re-derive. Only `startup_plan::response_authority` can produce one, so in production
+    /// the one caller is `startup_plan::response_authority_plans`, which hands the signing
+    /// plan the same authority.
     ///
     /// It takes a `ValidatedDeployment`, so both owned facts come from one deployment, and
-    /// no caller can supply them separately. `pub(crate)`: in production the one caller is
-    /// `startup_plan::response_authority_plans`, which pairs the kid and the epoch with the
-    /// signing plan's; the in-crate tests of the trust plane and its owners call it to hand
-    /// the plan values no deployment produces.
+    /// no caller can supply them separately. `pub(crate)` because that caller is a sibling
+    /// subtree.
     pub(crate) fn from_validated(
         config: &ValidatedDeployment,
-        response_kid: String,
-        epoch: TrustEpochPlan,
+        authority: ResponseAuthority,
     ) -> TrustPlan {
         TrustPlan {
             revocation: config.state().trust_revocation().clone(),
             document: config.state().trust_document().clone(),
-            response_kid,
-            epoch,
+            authority,
         }
     }
 
@@ -111,7 +109,7 @@ impl TrustPlan {
 
     /// The root issuer whose key is excluded from the request-signer set.
     pub fn response_kid(&self) -> &str {
-        &self.response_kid
+        self.authority.kid()
     }
 
     /// How the document is kept current, derived from the posture that decides it.
@@ -121,7 +119,7 @@ impl TrustPlan {
 
     /// The shared epoch mechanism.
     pub fn epoch(&self) -> &TrustEpochPlan {
-        &self.epoch
+        self.authority.epoch()
     }
 }
 
@@ -247,11 +245,7 @@ mod tests {
     #[test]
     fn the_trust_plan_carries_the_retained_classification() {
         let config = push_networked();
-        let plan = TrustPlan::from_validated(
-            &config,
-            "root-1".to_string(),
-            TrustEpochPlan::from_validated(&config),
-        );
+        let (plan, _) = crate::startup_plan::response_authority_plans(&config);
         assert_eq!(
             *plan.revocation(),
             crate::config_state::test_support::revocation_posture(
@@ -270,47 +264,17 @@ mod tests {
                 secs: crate::config_state::TrustRevocationState::cadence(15)
             }
         );
-        assert_eq!(plan.response_kid(), "root-1");
+        assert_eq!(
+            plan.response_kid(),
+            config.state().delegated_signing().issuer_kid()
+        );
         assert!(matches!(plan.epoch(), TrustEpochPlan::Redis { .. }));
 
-        let default_tier = default_tier();
-        let plan = TrustPlan::from_validated(
-            &default_tier,
-            "root-1".to_string(),
-            TrustEpochPlan::from_validated(&default_tier),
-        );
+        let (plan, _) = crate::startup_plan::response_authority_plans(&default_tier());
         assert_eq!(
             plan.reload(),
             TrustReloadPlan::ReadOnceAtStartup,
             "no cadence is a posture, not a missing value"
-        );
-    }
-
-    /// The issuer kid and the epoch are INPUTS to the trust plan.
-    ///
-    /// This is the structural half of CF-09: with both passed in, the trust plan cannot
-    /// become their authority merely by being the first consumer written. The assertion is
-    /// that a plan built with a value the configuration does not name carries that value —
-    /// which is only possible because nothing inside re-derives it.
-    #[test]
-    fn the_shared_values_are_inputs_the_trust_plan_cannot_re_derive() {
-        let config = push_networked();
-        assert_ne!(
-            crate::startup_plan::response_authority_plans(&config)
-                .0
-                .response_kid(),
-            "decided-above",
-            "the fixture must not coincide with what a re-derivation would produce"
-        );
-        let plan = TrustPlan::from_validated(
-            &config,
-            "decided-above".to_string(),
-            TrustEpochPlan::redis("redis://198.51.100.1:6379", "decided-above"),
-        );
-        assert_eq!(plan.response_kid, "decided-above");
-        assert_eq!(
-            plan.epoch,
-            TrustEpochPlan::redis("redis://198.51.100.1:6379", "decided-above")
         );
     }
 }

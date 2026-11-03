@@ -1,26 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Discharging the durable responsibility taken before the dispatch, and reaching a success
-//! terminal.
+//! The bodied reply's terminal decision, and discharging the durable responsibility taken
+//! before the dispatch when the exchange is refused instead.
 //!
-//! The reservation was taken while refusing was still free; this is where it is completed
-//! with what was actually served. A deployment with retention on asserts it can account for
-//! what it served, and refusing when the evidence cannot be kept is the only thing that keeps
-//! that true — so retention completes BEFORE the response goes out and before its
-//! `response.signed` record, and after its outcome is committed (ADR-MCPRE-070 Q2).
-//!
-//! Both success exits retain through here, the bodied reply and the bodyless 202 alike. It is
-//! one function and not a block copied twice because retention wired onto only one of them is
-//! a client-selectable guarantee, not a weaker one.
-
-use std::sync::Arc;
+//! The reservation was taken while refusing was still free; it is completed with what was
+//! actually served. A success completes it in the success exit, after its outcome is committed
+//! and before it is served (ADR-MCPRE-070 Q2). A post-dispatch refusal completes it here, with
+//! the refusal.
 
 use mcp_re_http_profile::HttpResponse;
 
 use crate::async_serve::ServedHttpResponse;
 use crate::exchange_state::ExchangeProgress;
 use crate::exchange_state::ServedSuccess;
-use crate::request_stages::IntentDisposition;
-use crate::request_stages::RetentionDisposition;
+use crate::request_stages::{PostDispatch, RetentionDisposition};
 
 use super::super::receipt::Accepted;
 use super::super::reply::ReplyClass;
@@ -34,13 +26,12 @@ impl HttpProfileProxy {
     /// time: everything before it can still discard this response. Under the required posture
     /// the committed outcome is a different statement — what the proxy observed and signed,
     /// never that it was served (ADR-MCPRE-070 Q2).
-    pub(in crate::http_profile_serve) async fn serve_retained(
+    pub(super) async fn serve_retained(
         &self,
         acc: &Accepted<'_>,
         progress: &mut ExchangeProgress,
         reply: SignedReply,
-        retention: &RetentionDisposition,
-        intent: IntentDisposition,
+        owed: PostDispatch,
     ) -> ServedHttpResponse {
         // Two terminals, because the exchange makes a different claim in each: one says the
         // call is over, the other says the client may continue — and the second is only
@@ -53,16 +44,16 @@ impl HttpProfileProxy {
         // `response.signed` record are all assertions that this exchange succeeded, so a
         // tuple the machine cannot vouch for has to be caught while a refusal is still
         // reachable — which is why this is not a `debug_assert!` and not a check after the fact.
-        if progress.may_publish(&success).is_err() {
+        let Ok(permit) = progress.may_publish(success) else {
             let refusal = crate::refusal::Refusal::new(
                 mcp_re_core::McpReError::ExchangeInvariantViolation,
                 500,
             );
             return self
-                .refuse_retained(acc, refusal, progress, retention)
+                .refuse_retained(acc, refusal, progress, owed.retention())
                 .await;
-        }
-        self.publish_success(acc, progress, success, reply.response, retention, intent)
+        };
+        self.publish_success(acc, permit, reply.response, owed)
             .await
     }
 
@@ -77,8 +68,8 @@ impl HttpProfileProxy {
     /// yields 502 — accumulate *indeterminate* crossings at will, drowning the signal the
     /// marker exists to carry in the cheapest thing a caller can do.
     ///
-    /// **The ordering inverts here, and it has to.** On a success exit retention runs first
-    /// and a failure REFUSES. A refusal exit cannot refuse: there is no further exit to fall
+    /// **The ordering inverts here, and it has to.** On the success exit retention completes
+    /// before anything is served, and a failure REFUSES. A refusal exit cannot refuse: there is no further exit to fall
     /// through to, and converting one refusal into another loses the cause the client needs.
     /// So the refusal is minted, retention is attempted, and the refusal is served — and a
     /// `Failed` outcome leaves the marker, which under the invariant above is the true
@@ -91,7 +82,7 @@ impl HttpProfileProxy {
         &self,
         acc: &Accepted<'_>,
         refusal: crate::refusal::Refusal,
-        progress: &ExchangeProgress,
+        progress: &mut ExchangeProgress,
         retention_owed: &RetentionDisposition,
     ) -> ServedHttpResponse {
         let rejection = self.refuse_accepted(acc, refusal, progress);
@@ -109,54 +100,6 @@ impl HttpProfileProxy {
             .await
             .is_accounted_for();
         rejection
-    }
-
-    /// Retain one ACCEPTED exchange (ADR-MCPRE-054), or produce the refusal.
-    ///
-    /// `Some(rejection)` means the evidence could not be kept and the exchange must be
-    /// refused; `None` means it is retained, or retention is not configured, and the
-    /// caller may serve.
-    ///
-    /// EVERY SUCCESS exit reaches it through
-    /// [`publish_success`](Self::publish_success), after the outcome is committed and before
-    /// the response goes out or its `response.signed` record is offered: retaining an
-    /// exchange the client never received would put a record in the store that no receipt
-    /// should be issued about. A REFUSAL exit cannot use it — refusing a refusal has no exit
-    /// to fall through to — so those go through [`refuse_retained`](Self::refuse_retained).
-    pub(super) async fn retain_accepted(
-        &self,
-        acc: &Accepted<'_>,
-        response: &HttpResponse,
-        retention_owed: &RetentionDisposition,
-        progress: &ExchangeProgress,
-    ) -> Option<ServedHttpResponse> {
-        if self
-            .retention
-            .complete(retention_owed, response)
-            .await
-            .is_accounted_for()
-        {
-            return None;
-        }
-        // The call executed and the record did not land. INDETERMINATE, and deliberately
-        // not 503: the backend has already run, and 503 is the status clients retry.
-        let refusal = crate::refusal::Refusal::new(
-            mcp_re_core::McpReError::EvidenceRetentionIndeterminate,
-            500,
-        );
-        let ex = acc.exchange();
-        Some(self.responses.response_rejection(
-            self.audit.observer(),
-            acc.exchange_coordinate(),
-            ex.http_req,
-            &refusal.cause,
-            refusal.status,
-            ex.now,
-            Some(ex.verified.evidence()),
-            Some(ex.actor_id.to_owned()),
-            Self::disposition(progress, None),
-            Some(Arc::clone(acc.key())),
-        ))
     }
 }
 
@@ -183,44 +126,5 @@ mod tests {
         );
         assert_eq!(refusal.status, 500);
         assert_eq!(refusal.execution_refinement, None);
-    }
-
-    /// The decision is taken BEFORE anything publishes the success claim.
-    ///
-    /// The outcome commitment, retention and the `response.signed` record are all assertions
-    /// that this exchange succeeded, and all three happen inside the success exit — so
-    /// `may_publish` refusing after the exit was entered would leave a committed outcome, a
-    /// retained hop and an audit record for a success that was then refused. The exit's own
-    /// order is asserted next to it, in `success_exit.rs`.
-    ///
-    /// Asserted over the source because the fact is an ORDER between statements, and no
-    /// value-level test can reach it: the incoherent tuple is unconstructible through the
-    /// public serving path, which is exactly why the enforcement is needed at all.
-    #[test]
-    fn the_publication_decision_precedes_retention_and_the_response_signed_record() {
-        let source = include_str!("accepted.rs");
-        let body = source
-            .split_once("async fn serve_retained(")
-            .expect("serve_retained is in this file")
-            .1;
-        // Branched on, not merely called — see the same assertion in `notification.rs`.
-        let decision = body
-            .find("progress.may_publish(&success).is_err()")
-            .expect("the publication decision is branched on");
-        let exit = body
-            .find("self.publish_success(")
-            .expect("the success leaves through the success exit");
-        assert!(
-            decision < exit,
-            "a success claim must not be published before it is decided: \
-             decision {decision}, exit {exit}"
-        );
-        assert!(
-            body[decision..exit]
-                .split_whitespace()
-                .collect::<String>()
-                .contains("returnself.refuse_retained("),
-            "the refusing arm must exit before the success exit is entered"
-        );
     }
 }

@@ -32,6 +32,15 @@ FROM runtime-base AS proxy
 # already provisioned the KMS key, IAM role and OIDC provider it needs.
 ARG DIST=deploy/docker/dist/amd64
 COPY ${DIST}/mcp-re-proxy /usr/local/bin/mcp-re-proxy
+# Release identity, stated by the release workflow (.github/workflows/distribute.yml): the
+# version and the exact source revision the binary was built from. Empty on a local build.
+ARG VERSION=""
+ARG REVISION=""
+LABEL org.opencontainers.image.title="mcp-re-proxy" \
+      org.opencontainers.image.source="https://github.com/syncom-systems/mcp-re" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}"
 # NON-ROOT, declared by the ARTIFACT. This image mounts the response-signing seed and
 # the TLS private key, so a container escape here is a key-compromise event — it is
 # the last process in the system that should run as uid 0. Stating it in the image

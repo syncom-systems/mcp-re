@@ -2594,65 +2594,6 @@ expect_red = [
 ]
 
 [[probe]]
-id = "M93-the-202-is-not-minted-before-its-terminal-is-authorized"
-unit = "proxy.exchange_publication"
-theorem = "THM-0101"
-conjunct = "the notification terminal is decided before the 202 is signed, and the refusal exits"
-# The notification half of the same proposition M92 covers for the bodied path, and the one
-# the unit could not state until `notification.rs` entered its `paths`.
-#
-# The weakening is deliberately NOT a deletion. It keeps the call, so `may_publish` still
-# runs; it keeps the latch, so the machine still records the disagreement; and it DISCARDS
-# THE ANSWER. That is the pre-enforcement behaviour restored exactly — the 202 is signed,
-# committed, retained and recorded for an exchange the machine has just said it cannot vouch
-# for — and it is the mutation an order-only control reads as clean, which is why the control
-# asserts the refusing form and the exit rather than the order.
-path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs"
-anchor = """
-        if progress.may_publish(&acknowledged).is_err() {
-            let refusal = crate::refusal::Refusal::new(
-                mcp_re_core::McpReError::ExchangeInvariantViolation,
-                500,
-            );
-            return self
-                .refuse_retained(acc, refusal, progress, retention)
-                .await;
-        }
-"""
-weakening = """
-        let _ = progress.may_publish(&acknowledged);
-"""
-expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::notification::tests::the_terminal_is_decided_before_the_202_is_minted",
-]
-
-[[probe]]
-id = "M92-the-publication-decision-is-not-bypassed-in-the-serving-path"
-unit = "proxy.retention_commitment"
-conjunct = "the success terminal is decided before retention discharges and before response.signed"
-# The owner half is M90; this is the half where the serving path could simply stop asking.
-# Deleting the branch leaves a proxy that retains, records `response.signed` and serves every
-# success exactly as before — the pre-enforcement behaviour, restored silently, with the
-# enforcement still present and simply never consulted.
-path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/accepted.rs"
-anchor = """
-        if progress.may_publish(&success).is_err() {
-            let refusal = crate::refusal::Refusal::new(
-                mcp_re_core::McpReError::ExchangeInvariantViolation,
-                500,
-            );
-            return self
-                .refuse_retained(acc, refusal, progress, retention)
-                .await;
-        }
-"""
-weakening = """
-"""
-expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::accepted::tests::the_publication_decision_precedes_retention_and_the_response_signed_record",
-]
-
-[[probe]]
 id = "M82-the-backend-projection-is-derived-not-asserted"
 unit = "proxy.exchange_retry_consequence"
 theorem = "THM-0044"
@@ -3217,6 +3158,28 @@ expect_red = [
   "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::recovery_after_outage_catches_an_epoch_that_advanced_during_it",
   "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
 ]
+
+[[probe]]
+id = "M627-an-unreachable-epoch-store-builds-no-source"
+unit = "proxy.trust_epoch_source"
+conjunct = "no source is built over a store that does not answer"
+path = "mcp-re-proxy/src/trust_epoch.rs"
+anchor = """
+    let reader = RedisEpochReader::connect(url, epoch_key).map_err(|e| e.0)?;
+"""
+weakening = """
+    let reader = RedisEpochReader::connect_lazy(url, epoch_key).map_err(|e| e.0)?;
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_unreachable_epoch_store_builds_no_source",
+]
+note = """
+The lazy reader is a legitimate constructor, and the signing plane uses it: there the first
+epoch read happens in the plane's own startup refusal. Here nothing reads before the poller
+starts, so a lazy reader turns an unreachable store into a running push tier whose first poll
+fails, and the replica starts serving on the bounded-T fallback the operator configured a
+store to avoid. Runs only in the `redis_replay` lane, where the source is compiled.
+"""
 
 [[probe]]
 id = "M97-a-regression-is-a-change"
@@ -3980,7 +3943,7 @@ conjunct = "a capacity refusal is retry-safe, which is only true while it is dis
 # The weakening restores the code as it shipped: every `try_send` failure answered as a full
 # queue. Under it the serving path answers a permanently dead writer with 503 — the status
 # that tells a client to keep trying — forever.
-path = "mcp-re-proxy/src/transparency/durability.rs"
+path = "mcp-re-proxy/src/transparency/retention_queue.rs"
 anchor = """
                 std::sync::mpsc::TrySendError::Disconnected(_) => {
                     RetentionError::StoreRetired(std::io::Error::new(
@@ -3991,6 +3954,7 @@ weakening = """
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#transparency::durability::tests::a_dead_writer_is_a_terminal_fault_and_a_full_queue_is_not",
+  "//mcp-re-proxy:proxy_unit_test#transparency::retention_queue::tests::a_retired_writer_is_a_retired_store_and_not_backpressure",
 ]
 
 [[probe]]
@@ -7451,7 +7415,7 @@ id = "M265-proxy-an-unreadable-sts-expiry-is-already-expired"
 unit = "proxy.aws_sts_credentials"
 theorem = "THM-0117"
 conjunct = "an expiry that cannot be read is already-expired rather than unlimited, and a far-future one is truncated to the real session ceiling"
-path = "mcp-re-proxy/src/aws_sts.rs"
+path = "mcp-re-proxy/src/aws_sts/sts_protocol.rs"
 anchor = """
         .map(|stated| stated.min(now + MAX_SESSION_LIFETIME))
         .unwrap_or(UNIX_EPOCH);
@@ -7460,9 +7424,9 @@ weakening = """
         .unwrap_or(now + MAX_SESSION_LIFETIME);
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::an_unparseable_expiration_reads_as_already_expired_not_as_unlimited",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_missing_expiration_element_reads_as_already_expired",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_far_future_expiration_is_truncated_to_the_real_session_ceiling",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::an_unparseable_expiration_reads_as_already_expired_not_as_unlimited",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_missing_expiration_element_reads_as_already_expired",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::sts_protocol::tests::a_far_future_expiration_is_truncated_to_the_real_session_ceiling",
 ]
 note = """
 THE DEFAULT ON AN UNREADABLE FIELD IS A LIFETIME. `UNIX_EPOCH` means already expired, so the
@@ -7515,7 +7479,7 @@ the operator DID name, and says nothing about one they never gave.
 id = "M267-proxy-a-configuration-that-names-no-authority-is-refused"
 unit = "proxy.admission_configuration_state"
 conjunct = "a configuration that names no admission authority is refused rather than served as OFF"
-path = "mcp-re-proxy/src/config_state/admission.rs"
+path = "mcp-re-proxy/src/config_state/admission/mod.rs"
 anchor = """
         return Err(MISSING_ADMISSION_AUTHORITY.to_string());
 """
@@ -8518,11 +8482,11 @@ id = "M311-proxy-a-scheme-less-target-uri-is-refused"
 unit = "proxy.legality_boundary_totality"
 theorem = "THM-0077"
 conjunct = "a target URI that would disable the request-target reconstruction check is refused at the boundary, however the request was built"
-path = "mcp-re-proxy/src/config_state/validation/residue.rs"
-anchor = "    if !uri.contains(\"://\") {\n"
-weakening = "    if false {\n"
+path = "mcp-re-proxy/src/config_state/request_target.rs"
+anchor = "        let Some((scheme, rest)) = uri.split_once(\"://\") else {\n"
+weakening = "        let Some((scheme, rest)) = uri.split_once(\"://\").or(Some((\"https\", uri))) else {\n"
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#config_state::validation::residue::tests::a_target_uri_that_would_disable_the_reconstruction_check_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::request_target::tests::a_target_the_reconstruction_check_cannot_answer_is_unconstructible",
   # ADR-MCPRE-069 CO-S3-6. The same clause reached through `app::run` over all three illegal
   # shapes. The scheme-less case is the one this anchor decides; the row is red as soon as
   # that case is admitted.
@@ -8942,11 +8906,11 @@ id = "M312-proxy-the-credential-is-minted-under-the-planned-issuer"
 unit = "proxy.startup_plan_provenance"
 theorem = "THM-0077"
 conjunct = "the issuer kid in the minted credential is the one that was PLANNED, not one the signing plan re-derived from configuration"
-path = "mcp-re-proxy/src/startup_plan.rs"
-anchor = "                issuer_kid: response_kid,\n"
-weakening = "                issuer_kid: {\n                    let _ = &response_kid;\n                    config.state().delegated_signing().issuer_kid().to_string()\n                },\n"
+path = "mcp-re-proxy/src/startup_plan/mod.rs"
+anchor = "                issuer_kid: authority.kid().to_string(),\n"
+weakening = "                issuer_kid: {\n                    let _ = &authority;\n                    config.state().delegated_signing().issuer_kid().to_string()\n                },\n"
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_issuer_kid_in_the_credential_is_the_one_that_was_planned",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::response_authority::tests::the_issuer_kid_in_the_credential_is_the_one_that_was_planned",
 ]
 note = """
 THE WEAKENING RESTORES THE DEFECT VERBATIM, which is why it is the falsifier for this unit.
@@ -8967,7 +8931,7 @@ id = "M313-proxy-the-trust-epoch-build-refusal-is-stated-once"
 unit = "proxy.startup_plan_legality"
 theorem = "THM-0077"
 conjunct = "a networked trust-epoch source in a build that cannot carry one REFUSES, once, naming both consequences"
-path = "mcp-re-proxy/src/startup_plan.rs"
+path = "mcp-re-proxy/src/startup_plan/mod.rs"
 anchor = "            TrustEpochPlan::Redis { .. } if cfg!(feature = \"redis_replay\") => None,\n"
 weakening = "            TrustEpochPlan::Redis { .. } if true => None,\n"
 expect_red = [
@@ -12059,7 +12023,7 @@ listener is refused — an outage spelled as a setting, which startup must refus
 id = "M486-proxy-the-channel-plan-carries-the-operators-signing-capacity"
 unit = "proxy.handshake_sign_capacity"
 conjunct = "the channel plan carries the capacity the operator stated, not a default"
-path = "mcp-re-proxy/src/startup_plan.rs"
+path = "mcp-re-proxy/src/startup_plan/channel_establishment_plan.rs"
 anchor = """
             handshake_signing: config.config().limits.tls_handshake_signing,
 """
@@ -12093,7 +12057,7 @@ conjunct = "the TLS plane establishes its listener from the plan's capacity"
 path = "mcp-re-proxy/src/tls_plane/mod.rs"
 anchor = """
             client_ca,
-            plan.handshake_signing,
+            plan.handshake_capacity(),
 """
 weakening = """
             client_ca,
@@ -13013,7 +12977,7 @@ expect_red = [
 id = "M538-proxy-a-degraded-window-past-the-ceiling-names-a-state"
 unit = "proxy.admission_configuration_state"
 conjunct = "a degraded admission window past MAX_DEGRADED_ADMISSION_BOUND_SECS is refused, not clamped"
-path = "mcp-re-proxy/src/config_state/admission.rs"
+path = "mcp-re-proxy/src/config_state/admission/mod.rs"
 anchor = """
             if bound_secs.get() > MAX_DEGRADED_ADMISSION_BOUND_SECS =>
 """
@@ -14005,32 +13969,38 @@ expect_red = [
 id = "M610-proxy-the-intent-is-committed-before-the-crossing-is-recorded"
 unit = "proxy.audit_intent_gate"
 conjunct = "G1 runs before the retention commit, so no .pending marker exists for an exchange whose intent was not committed (D7)"
-path = "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
+# RE-ANCHORED (#1247): D7's three steps are one function, `dispatch_obligations::take`, and the
+# weakening swaps the same two of them there.
+path = "mcp-re-proxy/src/http_profile_serve/dispatch_obligations.rs"
 anchor = """
-        let intent = ExecutionIntent::new(acc.exchange().actor_id, acc.exchange().now);
-        let intent = match self.audit.intent(acc.exchange_coordinate(), intent).await {
-            Ok(intent) => intent,
-            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
-        };
-        let retention = match self.retention.commit(accepted).await {
-            Ok(disposition) => progress.establish(disposition),
-            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
-        };
+    let intent = audit.intent(coordinate, intent).await?;
+    let crossing = retention.commit(accepted).await?;
 """
 weakening = """
-        let retention = match self.retention.commit(accepted).await {
-            Ok(disposition) => progress.establish(disposition),
-            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
-        };
-        let intent = ExecutionIntent::new(acc.exchange().actor_id, acc.exchange().now);
-        let intent = match self.audit.intent(acc.exchange_coordinate(), intent).await {
-            Ok(intent) => intent,
-            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
-        };
+    let crossing = retention.commit(accepted).await?;
+    let intent = audit.intent(coordinate, intent).await?;
 """
 expect_red = [
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::w3_retention_commit_failure_after_intent_leaves_no_pending_and_no_dispatch",
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::an_intent_refusal_leaves_no_pending_marker",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::dispatch_obligations::tests::a_refused_intent_records_no_crossing",
+]
+
+[[probe]]
+id = "M626-proxy-a-refused-reservation-commits-no-intent"
+unit = "proxy.audit_intent_gate"
+conjunct = "G1 runs after the retention reserve, so a refused reservation commits no intent (D7)"
+path = "mcp-re-proxy/src/http_profile_serve/dispatch_obligations.rs"
+anchor = """
+    let accepted = retention.reserve(request).await?;
+    let intent = audit.intent(coordinate, intent).await?;
+"""
+weakening = """
+    let intent = audit.intent(coordinate, intent).await?;
+    let accepted = retention.reserve(request).await?;
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::dispatch_obligations::tests::a_refused_reservation_commits_no_intent",
 ]
 
 [[probe]]
@@ -14111,8 +14081,10 @@ expect_red = [
 id = "M615-proxy-a-failed-outcome-commit-does-not-proceed"
 unit = "proxy.audit_outcome_gate"
 conjunct = "a failed outcome commitment refuses; it never proceeds as though no commitment were owed"
+# RE-ANCHORED (#1247): G2's match moved from `AuditPosture::outcome` to `IntentDisposition::outcome`
+# in `outcome.rs`, beside the crossing it spends. Same line, same weakening.
 # The G2 guard (S2). Pill-evidenced RED in #1205 (PP1).
-path = "mcp-re-proxy/src/audit_commitment/posture.rs"
+path = "mcp-re-proxy/src/audit_commitment/outcome.rs"
 anchor = """
                 .map(|committed| OutcomeDisposition::Committed(Box::new(committed))),
 """
@@ -14120,7 +14092,7 @@ weakening = """
                 .map(|committed| OutcomeDisposition::Committed(Box::new(committed)))
                 .or_else(|_| {
                     Ok(OutcomeDisposition::NotRequired(
-                        NoCommitmentRequired::minted_by_posture(),
+                        super::NoCommitmentRequired::minted_by_posture(),
                     ))
                 }),
 """
@@ -14135,19 +14107,23 @@ id = "M616-proxy-success-needs-completed-retention"
 unit = "proxy.audit_outcome_gate"
 conjunct = "a success is served only after retention has completed, as well as the outcome committed"
 # Q2: committed outcome AND completed retention. Pill-evidenced RED in #1205 (PP2).
+# RE-ADJUDICATED (#1245). The old weakening discarded the retention step's refusal and carried
+# on; that no longer compiles, because the serving step takes the `Retained` only completed
+# retention makes. What stays falsifiable is the step reading a failed completion as accounted
+# for, which this weakening applies.
 path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs"
 anchor = """
-        if let Some(rejection) = self
-            .retain_accepted(acc, &response, retention, progress)
             .await
+            .is_accounted_for()
         {
-            return rejection;
-        }
+            return Ok(Retained {
 """
 weakening = """
-        let _ = self
-            .retain_accepted(acc, &response, retention, progress)
-            .await;
+            .await
+            .is_accounted_for()
+            || true
+        {
+            return Ok(Retained {
 """
 expect_red = [
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::retention_failure_after_outcome_commit_never_serves_success",
@@ -14160,13 +14136,14 @@ conjunct = "a notification 202 is visible only through the success exit, after i
 # D4. Pill-evidenced RED in #1205 (PP4).
 path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs"
 anchor = """
-                self.publish_success(acc, progress, acknowledged, ack, retention, intent)
-                    .await
+            Ok(ack) => self.publish_success(acc, permit, ack, owed).await,
 """
 weakening = """
-                let _ = (retention, intent);
-                progress.publish(acknowledged);
+            Ok(ack) => {
+                let _ = owed;
+                permit.publish();
                 super::super::served(ack)
+            }
 """
 expect_red = [
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_notification_gets_no_202_without_a_committed_outcome",
@@ -14179,54 +14156,21 @@ unit = "proxy.audit_outcome_gate"
 conjunct = "G2 precedes retention completion, so a G2 refusal is what retention holds (Q2, ADR-MCPRE-054)"
 # The placement probe: the ADR-literal order retains success bytes the client never got.
 # Pill-evidenced RED in #1205 (PP6: the store held [200]).
+# RE-ADJUDICATED (#1245). The old weakening swapped the two steps; that no longer compiles,
+# because retention takes the `Committed` only G2 makes. What stays falsifiable is the second
+# half of the conjunct: a G2 refusal served without retention completing over it, which this
+# weakening applies.
 path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/success_exit.rs"
 anchor = """
-        // G2 BEFORE retention completes (Q2): a refusal here is what retention then holds, so
-        // the retained representation stays the one actually served.
-        let outcome = match self
-            .audit
-            .outcome(intent, acc.exchange_coordinate(), observed.clone())
-            .await
-        {
-            Ok(outcome) => outcome,
-            Err(refusal) => {
-                return self
-                    .refuse_retained(acc, refusal, progress, retention)
-                    .await
-            }
-        };
-        if let Some(rejection) = self
-            .retain_accepted(acc, &response, retention, progress)
-            .await
-        {
-            return rejection;
-        }
+            Err(refusal) => Err(self
+                .refuse_retained(acc, refusal, permit.withdraw(), &retention)
+                .await),
 """
 weakening = """
-        if let Some(rejection) = self
-            .retain_accepted(acc, &response, retention, progress)
-            .await
-        {
-            return rejection;
-        }
-        // G2 BEFORE retention completes (Q2): a refusal here is what retention then holds, so
-        // the retained representation stays the one actually served.
-        let outcome = match self
-            .audit
-            .outcome(intent, acc.exchange_coordinate(), observed.clone())
-            .await
-        {
-            Ok(outcome) => outcome,
-            Err(refusal) => {
-                return self
-                    .refuse_retained(acc, refusal, progress, retention)
-                    .await
-            }
-        };
+            Err(refusal) => Err(self.refuse_accepted(acc, refusal, permit.withdraw())),
 """
 expect_red = [
   "//mcp-re-proxy:integration_async_test#outcome_before_success_test::required::required_outcome_failure_discharges_retention_with_the_refusal_served",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::reply_assembly::success_exit::tests::the_outcome_is_committed_before_retention_and_both_before_success_is_served",
 ]
 
 [[probe]]

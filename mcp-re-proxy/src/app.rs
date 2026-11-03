@@ -240,7 +240,7 @@ fn run_validated(
     );
     let expected_audience = AudienceTuple {
         audience_id: values.audience.clone(),
-        target_uri: values.target_uri.clone(),
+        target_uri: config.state().request_target().as_str().to_owned(),
         route: values.route.clone(),
     };
     // ADR-MCPRE-056 §5.4: from here on, every optional capability states its posture in
@@ -362,7 +362,7 @@ fn run_validated(
     let serve_options = ServerOptions {
         identity_policy,
         peer_identity_provenance,
-        limits: values.limits.clone(),
+        limits: values.limits.served(in_flight_limit, topology.shards()),
         // The owner's resolved bounds: serving reads every timeout and limit here, not the request.
         connection_bounds: bounds,
         // The owner's sealed window; serving reads both bounds from it, not from the request.
@@ -370,7 +370,7 @@ fn run_validated(
         client_revocation: client_revocation.clone(),
         #[cfg(feature = "online_ocsp")]
         ocsp_checker,
-        target_uri: values.target_uri.clone(),
+        target: config.state().request_target().clone(),
     };
 
     // ADR-MCPRE-051 §3: the async inner plane — a per-core pooled hyper client to

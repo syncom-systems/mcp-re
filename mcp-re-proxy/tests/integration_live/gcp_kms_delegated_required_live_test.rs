@@ -267,7 +267,8 @@ fn delegated_config() -> mcp_re_proxy::deployment_request::DeploymentRequest {
     .collect();
     mcp_re_proxy::cli::parse_args(&args)
         .expect("parse delegated-required serving config")
-        .into_inner()
+        .config()
+        .clone()
 }
 
 fn base_request() -> HttpRequest {

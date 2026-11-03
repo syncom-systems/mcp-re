@@ -157,7 +157,7 @@ declared evidence and leaves the census by being named in the registry.
 **Covers:** `assurance_obligation_gate.py`, `claim_surface_gate.py`, `clippy_ratchet_gate.py`,
 `control_census_gate.py`, `evidence_class_ratchet.py`, `finding_ledger_gate.py`, `merge_path_gate.py`,
 `module_size_gate.py`, `os_entropy_census_gate.py`, `registry_approval_gate.py`,
-`release_assurance_gate.py`, `rehearsal_claim_gate.py`, `slo_invocation_gate.py`,
+`release_assurance_gate.py`, `distribution_gate.py` (added 2026-10-23: it decides whether a tag may be distributed, from the same committed release-assurance record; it checks no security property of the tree), `pre_merge_budget.py` (added 2026-10-28: it decides whether a required check's shards all passed inside the pre-merge time budget; it checks no security property of the tree), `rehearsal_claim_gate.py`, `slo_invocation_gate.py`,
 `slo_evidence_identity.py`, `unit_closure_gate.py`, `verification_trigger_gate.py`,
 `adr051_slo_gate.py`, `slo_gate.py`.
 **Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 2.
@@ -2011,7 +2011,7 @@ happen* — is the root above it, and this is the half about what the shutdown D
 
 **NP-068, NP-069 AND NP-070 ARE DISCHARGED, 2026-09-19 (ADR-MCPRE-069 §5).** All 31 of the
 startup planner's controls that were theirs are now claimed by three `[[unit]]`s over
-`mcp-re-proxy/src/startup_plan.rs` — `proxy.startup_plan_provenance` (10),
+`mcp-re-proxy/src/startup_plan/mod.rs` — `proxy.startup_plan_provenance` (10),
 `proxy.startup_plan_legality` (17) and `proxy.startup_plan_pool_ceiling` (4) — each attached
 to THM-0077's `supported_by`, with falsifiers M312, M313 and M314 demonstrated red. The file
 was in no unit's `paths` before this; it now is, so a change to the planner moves the
@@ -4363,9 +4363,9 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 
 ## NP-220 — the crossing reconciliation read reports only well-formed exchange digests
 
-**Controls:** `mcp-re-proxy` `lib#transparency::durability::tests::an_enumerated_marker_is_a_well_formed_token`.
-**Carrier:** mcp-re-proxy/src/transparency/durability.rs (markers_at, marker_digest).
-**Statement.** *EvidenceRetention::pending_reservations (and stale_reservations at its own stage) reports a marker only when the file stem at that stage's suffix parses as an EvidenceDigest token. A file named '.pending' or 'not-a-digest.pending' is never reported as a crossing.*
+**Controls:** `mcp-re-proxy` `lib#transparency::retained_archive::tests::an_enumerated_marker_is_a_well_formed_token`.
+**Carrier:** mcp-re-proxy/src/transparency/retained_archive.rs (markers_at) and marker_stage.rs (MarkerStage::digest_in).
+**Statement.** *RetainedArchive::pending_reservations (and stale_reservations at its own stage) reports a marker only when the file stem at that stage's suffix parses as an EvidenceDigest token. A file named '.pending' or 'not-a-digest.pending' is never reported as a crossing.*
 **If false.** An auditor asking which calls crossed the execution threshold without landing a hop is shown entries that name no exchange: phantom indeterminate calls from stray or planted files, reported as answerability debt.
 **Likely owner:** proxy.retention_commitment owns the file, but THM-0088's statement is WHEN responsibility was accepted and crossed, and says nothing about what the enumeration may return. proxy.retained_record_at_the_store (THM-0112) 'claims nothing about how the object is NAMED'.
 **Severity:** `medium`.

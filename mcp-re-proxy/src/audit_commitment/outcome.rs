@@ -3,7 +3,7 @@
 //! §4, D1, D4, D8, Q2).
 //!
 //! ```text
-//! coordinate (the exchange's request.accepted)      ── None ──────────────> 500, nothing produced
+//! OwedOutcome (G1's: provider, bound, coordinate)
 //!   └─ produce response.signed, scope Exchange(c)    ── identity failure ──> 500
 //!        └─ EstablishedProvider::commit::<Outcome>   ── any failure ───────> 500
 //!             └─ CommitmentWitness::redeem           ── refused ───────────> 500
@@ -23,6 +23,11 @@
 //!
 //! One bounded attempt. The envelope is produced once, so a provider's internal retry resends
 //! identical bytes, and an `Uncertain` outcome keeps its identity "possibly committed".
+//!
+//! G2 reads nothing G1 already decided. A committed intent carries its [`OwedOutcome`]: the
+//! provider and bound the intent was committed under, and the coordinate it named (D9). So
+//! the outcome is committed for the same exchange and to the same provider by construction,
+//! and neither the posture nor the coordinate is read again.
 
 use std::sync::Arc;
 
@@ -30,8 +35,71 @@ use mcp_re_core::McpReError;
 
 use crate::audit_record::{AuditEnvelope, AuditRecord, ExchangeCoordinate};
 use crate::refusal::Refusal;
+use crate::request_stages::{IntentDisposition, OutcomeDisposition};
 
-use super::{CommitmentBound, EstablishedProvider, Outcome, Redeemed};
+use super::{CommitmentBound, EstablishedProvider, Intent, Outcome, Redeemed};
+
+/// What a committed intent owes at G2: its outcome, committed to the provider and within the
+/// bound the intent was, for the exchange the intent named. Made only by G1, so holding one is
+/// the proof the outcome is owed; [`commit`](Self::commit) spends it.
+#[derive(Debug)]
+pub(crate) struct OwedOutcome {
+    provider: Arc<EstablishedProvider>,
+    bound: CommitmentBound,
+    coordinate: ExchangeCoordinate,
+    /// Never read: what it proves is that G1 redeemed this exchange's intent.
+    _intent: Redeemed<Intent>,
+}
+
+impl OwedOutcome {
+    /// The outcome G1 leaves owed after redeeming `intent` for `coordinate` on `provider`.
+    pub(super) fn new(
+        provider: Arc<EstablishedProvider>,
+        bound: CommitmentBound,
+        coordinate: ExchangeCoordinate,
+        intent: Redeemed<Intent>,
+    ) -> Self {
+        OwedOutcome {
+            provider,
+            bound,
+            coordinate,
+            _intent: intent,
+        }
+    }
+
+    /// The intent G1 redeemed. Tests read it.
+    #[cfg(test)]
+    pub(super) fn intent(&self) -> &Redeemed<Intent> {
+        &self._intent
+    }
+
+    /// G2 over `observed`: the record of the response this exchange is about to serve, at its
+    /// actual status (200, or 202 for an acknowledgement).
+    pub(crate) async fn commit(self, observed: AuditRecord) -> Result<CommittedOutcome, Refusal> {
+        commit(&self.provider, self.bound, self.coordinate, observed).await
+    }
+}
+
+impl IntentDisposition {
+    /// G2: what this exchange's success may be published with (§4, D4, Q2).
+    ///
+    /// Requiredness is the state G1 carried across the dispatch, never the posture read
+    /// again. An exchange dispatched with nothing owed owes nothing now: its statement is
+    /// passed through, and nothing is produced, committed or numbered. An exchange whose
+    /// intent was committed owes its outcome, and gets it committed or a refusal.
+    pub(crate) async fn outcome(
+        self,
+        observed: AuditRecord,
+    ) -> Result<OutcomeDisposition, Refusal> {
+        match self {
+            IntentDisposition::NotRequired(none) => Ok(OutcomeDisposition::NotRequired(none)),
+            IntentDisposition::Committed(owed) => owed
+                .commit(observed)
+                .await
+                .map(|committed| OutcomeDisposition::Committed(Box::new(committed))),
+        }
+    }
+}
 
 /// An exchange's outcome, committed and redeemed for exactly the event the observer will be
 /// offered. Constructed only by [`commit`]: holding one is the proof.
@@ -49,15 +117,13 @@ impl CommittedOutcome {
     }
 }
 
-/// G2 for the exchange `coordinate` names, over `observed`: the record of the response this
-/// exchange is about to serve, at its actual status (200, or 202 for an acknowledgement).
-pub(super) async fn commit(
+/// G2 for the exchange `coordinate` names, over `observed`.
+async fn commit(
     provider: &Arc<EstablishedProvider>,
     bound: CommitmentBound,
-    coordinate: Option<ExchangeCoordinate>,
+    coordinate: ExchangeCoordinate,
     observed: AuditRecord,
 ) -> Result<CommittedOutcome, Refusal> {
-    let coordinate = coordinate.ok_or_else(cannot_commit)?;
     let envelope =
         crate::audit_record::produce(Some(coordinate), observed).map_err(|_| cannot_commit())?;
     let witness = provider
@@ -74,7 +140,7 @@ pub(super) async fn commit(
 }
 
 /// Every G2 refusal, whatever the provider answered.
-pub(super) fn cannot_commit() -> Refusal {
+fn cannot_commit() -> Refusal {
     Refusal::new(McpReError::AuditCommitmentUnavailable, 500)
 }
 
@@ -131,7 +197,7 @@ mod tests {
         let (_, provider) = provider(steps);
         tokio::time::timeout(
             Duration::from_secs(5),
-            commit(&provider, bound(50), Some(coordinate()), observed(200)),
+            commit(&provider, bound(50), coordinate(), observed(200)),
         )
         .await
         .expect("the commitment bound fires before the outer guard")
@@ -144,7 +210,7 @@ mod tests {
         for status in [200, 202] {
             let (authority, provider) = provider([Step::Commit]);
             let c = coordinate();
-            let committed = commit(&provider, bound(200), Some(c), observed(status))
+            let committed = commit(&provider, bound(200), c, observed(status))
                 .await
                 .expect("committed");
             let envelope = committed.envelope();
@@ -182,13 +248,30 @@ mod tests {
         }
     }
 
-    /// No coordinate: nothing is produced and the authority is asked nothing.
+    /// The outcome G1 leaves owed is committed for the exchange its intent named, to the
+    /// provider the intent was committed to (D9): G2 is handed neither.
     #[tokio::test]
-    async fn an_absent_coordinate_is_500_and_asks_nothing() {
-        let (authority, provider) = provider([Step::Commit]);
-        let refused = commit(&provider, bound(50), None, observed(200)).await;
-        assert_eq!(refused.map(|_| ()), Err(cannot_commit()));
-        assert_eq!(authority.requests(), 0);
+    async fn the_owed_outcome_is_committed_for_the_exchange_its_intent_named() {
+        let (authority, provider) = provider([Step::Commit, Step::Commit]);
+        let c = coordinate();
+        let owed = super::super::intent::IntentCommitment::new(provider, bound(200))
+            .commit(
+                Some(c),
+                crate::audit_record::ExecutionIntent::new("actor-a", 10),
+            )
+            .await
+            .expect("the intent commits");
+        let committed = owed
+            .commit(observed(200))
+            .await
+            .expect("the outcome commits");
+        assert_eq!(committed.envelope().scope(), EventScope::Exchange(c));
+        let journaled = authority.journaled();
+        assert_eq!(journaled.len(), 2);
+        assert!(
+            journaled.iter().all(|(_, named)| *named == Some(c)),
+            "the intent and the outcome name one exchange"
+        );
     }
 
     /// A witness for the intent crossing is not an outcome: the authority's receipt names the

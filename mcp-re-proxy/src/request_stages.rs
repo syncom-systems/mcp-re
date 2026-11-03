@@ -133,9 +133,11 @@ impl<'a> ReadyForDispatch<'a> {
         } = self;
         DispatchedExchange {
             outcome: prepared.dispatch().await,
-            window,
-            retention,
-            intent,
+            owed: PostDispatch {
+                window,
+                retention,
+                intent,
+            },
         }
     }
 }
@@ -147,22 +149,73 @@ impl<'a> ReadyForDispatch<'a> {
 /// of them can claim nothing happened.
 pub(crate) struct DispatchedExchange {
     outcome: DispatchedOutcome,
+    owed: PostDispatch,
+}
+
+impl DispatchedExchange {
+    /// What the inner plane managed to do, taken out with the obligations that outlive it.
+    pub(crate) fn split(self) -> (DispatchedOutcome, PostDispatch) {
+        (self.outcome, self.owed)
+    }
+}
+
+/// What a dispatched exchange still owes once its outcome is taken: the window every
+/// post-dispatch response is signed under, the retention it must complete, and the intent
+/// whose outcome G2 commits. Travels whole to the exit that discharges it.
+pub(crate) struct PostDispatch {
     window: SigningWindow,
     retention: RetentionDisposition,
     intent: IntentDisposition,
 }
 
-impl DispatchedExchange {
-    /// What the inner plane managed to do, taken out with the obligations that outlive it.
-    pub(crate) fn into_parts(
-        self,
-    ) -> (
-        DispatchedOutcome,
-        SigningWindow,
-        RetentionDisposition,
-        IntentDisposition,
-    ) {
-        (self.outcome, self.window, self.retention, self.intent)
+impl PostDispatch {
+    /// The credential window the exchange snapshotted before the backend ran.
+    pub(crate) fn window(&self) -> &SigningWindow {
+        &self.window
+    }
+
+    /// The retention every post-dispatch terminal completes, success or refusal.
+    pub(crate) fn retention(&self) -> &RetentionDisposition {
+        &self.retention
+    }
+
+    /// The two obligations only the success exit discharges, released to it together.
+    pub(crate) fn into_publication(self) -> (RetentionDisposition, IntentDisposition) {
+        (self.retention, self.intent)
+    }
+}
+
+/// A dispatched exchange for the post-dispatch stages' own tests, obtained the one way the
+/// serving path obtains one: a ready state, crossed.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    use std::sync::Arc;
+
+    /// An exchange crossed under no policy, no retention and no audit commitment, whose
+    /// in-process backend replied `reply`.
+    pub(crate) async fn dispatched_exchange(reply: &[u8]) -> DispatchedExchange {
+        let key = Arc::new(crate::delegated_wiring::test_support::issued_expiring_at(
+            1_700_000_000,
+            4,
+        ));
+        let inner = |_: &[u8]| reply.to_vec();
+        let released =
+            crate::authorization::AuthorizationPosture::NoPolicyConfigured.release(b"{}".to_vec());
+        let prepared = crate::async_inner::AsyncInnerServer::prepare(&inner, released.bytes())
+            .expect("an in-process inner always prepares");
+        ReadyForDispatch::new(
+            prepared,
+            SigningWindow::over(key, 1_699_999_000, 60).expect("a live credential opens a window"),
+            RetentionDisposition::NotConfigured(
+                crate::http_profile_serve::retention::NothingRetained::for_a_test(),
+            ),
+            IntentDisposition::NotRequired(
+                crate::audit_commitment::NoCommitmentRequired::for_a_test(),
+            ),
+        )
+        .dispatch()
+        .await
     }
 }
 
@@ -209,15 +262,19 @@ mod tests {
 
         let exchange = ready.dispatch().await;
         // `ready` is gone here — the compiler enforces it, which is the assertion.
-        let (outcome, window, retention, intent) = exchange.into_parts();
+        let (outcome, owed) = exchange.split();
         assert_eq!(
             outcome,
             DispatchedOutcome::Replied(b"{\"result\":{}}".to_vec())
         );
         // The window crosses the boundary intact — the reply is signed under the
         // credential the exchange snapshotted before the backend ran.
-        assert_eq!(window.expires(), 1_699_999_060);
-        assert!(matches!(retention, RetentionDisposition::NotConfigured(_)));
+        assert_eq!(owed.window().expires(), 1_699_999_060);
+        assert!(matches!(
+            owed.retention(),
+            RetentionDisposition::NotConfigured(_)
+        ));
+        let (_, intent) = owed.into_publication();
         // The intent obligation crosses with it, for the outcome crossing to discharge.
         assert!(matches!(intent, IntentDisposition::NotRequired(_)));
     }

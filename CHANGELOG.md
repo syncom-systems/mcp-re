@@ -12,6 +12,45 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Added — installation and distribution
+
+Each release is now installable without cloning the repository, compiling Rust or running
+Bazel: Apple Silicon macOS through a Homebrew tap, Linux x86-64 through a versioned binary
+archive and an OCI image on GHCR. Archives carry `mcp-re-proxy` and `mcp-re-client`, a
+`RELEASE.json` naming the version and exact source revision, and `SHA256SUMS`; archives, the
+formula and the image carry build-provenance attestations. `distribute.yml` builds only a tag
+whose release-assurance record on `main` is `PASS` for that commit, and never overwrites a
+published version. `mcp-re-proxy` and `mcp-re-client` answer `--version`. A Docker Compose
+reference deployment (`deploy/compose`) and the installation and source-build guides are
+new. Linux arm64 is not offered: the hermetic cross linker rejects an option rustc passes for
+that target. See [`docs/installation.md`](docs/installation.md).
+
+### Changed — `--version` is required of a published build
+
+`distribute.yml` no longer skips its `--version` assertions when the flag is absent. A build the
+workflow publishes must report `<name> <version>` equal to the tag, from the freshly built
+archive, the public archive and the image; a verify-only run still accepts a release that
+predates the flag. The documentation no longer instructs a Cargo invocation in the quickstart,
+the one-page overview or the dogfood runbook, and `no_cargo_execution_gate.py` now reads every
+top-level document under `docs/` and every `deploy/**/README.md`; the README names
+`mcp_re_proxy_deploy_bin` as the binary the release carries.
+### Added — a signed call is part of distribution verification
+
+`distribute.yml` now runs `scripts/release_artifact_e2e.py` against the published artifacts: the
+released `mcp-re-client`, the published proxy image under `deploy/compose`, and a Streamable-HTTP
+MCP backend that counts what reaches it (`MCP_RE_INNER_BACKEND_CALL_COUNTER=1` on
+`tools/fastmcp_inner_backend.py`; off by default). A signed call is admitted and reaches the
+backend exactly once; a call modified in flight and a recorded call replayed are refused and
+never reach it, and the replay refusal holds across a proxy restart and a Redis restart.
+
+### Fixed — the Compose reference admitted no signed request
+
+The reference deployment ran one Redis under `--replay-durability-tier redis-wait-quorum:1:1000`,
+a tier that needs a replica to acknowledge. It started, completed mTLS and refused every signed
+request as `mcp-re.replay_cache_unavailable`; `verify.sh` could not tell, since it sends an
+unsigned request. A replica now runs beside the primary, and the proxy container maps
+`host.docker.internal` so the default `MCP_RE_INNER_URL` reaches a backend on a Linux host.
+
 ## [0.19.0] — 2026-10-23
 
 Audit commitment (ADR-MCPRE-070). The default posture is unchanged: `--audit-commitment`

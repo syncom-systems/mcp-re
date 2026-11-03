@@ -107,6 +107,12 @@ mod durability_bounds;
 mod durable_job;
 /// HOW a durable job is executed.
 mod durable_writer;
+/// WHICH name a marker carries at each stage.
+mod marker_stage;
+/// WHETHER a job may enter the writer's queue, and what a failed hand-off was.
+mod retention_queue;
+/// The writer thread, the channel into it, and its bounded reclamation.
+mod writer_thread;
 
 /// The execution threshold CROSSED, and durably recorded.
 mod dispatch_committed;

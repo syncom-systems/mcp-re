@@ -2452,7 +2452,8 @@ async fn an_inner_plane_refusal_leaves_no_durable_retention_marker() {
     let retention = Arc::new(
         mcp_re_proxy::transparency::EvidenceRetention::open(&dir.0).expect("retention opens"),
     );
-    let reader = Arc::clone(&retention);
+    let reader = mcp_re_proxy::transparency::RetainedArchive::open_read_only(&dir.0)
+        .expect("the retention root is readable");
     let proxy = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),

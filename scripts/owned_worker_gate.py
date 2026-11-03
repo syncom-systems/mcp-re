@@ -71,7 +71,8 @@ OWNER_MODULE = "src/managed_worker/mod.rs"
 # An allowance follows its SITE, not the path it was written at. When MCPRE-175 split three
 # of these files into owner subtrees the reviewed spawns moved with their owners — the
 # client's shutdown bridge to `startup.rs`, its per-connection handler to `serve/mod.rs`,
-# the retention writer to `transparency/durability.rs` — and each entry was re-pointed at
+# the retention writer to `transparency/durability.rs`, and later to its own
+# `transparency/writer_thread.rs` (EX-019) — and each entry was re-pointed at
 # the exact new file with its count and reason unchanged. Nothing was widened to a
 # directory: a subtree-granular allowance would let a sibling acquire a detached thread for
 # free, which is the same defect as a file-granular one one level up. The gate reports a
@@ -92,8 +93,8 @@ ALLOWED = {
         "the stderr audit writer drains a `static` OnceLock channel and is scoped to the "
         "PROCESS by construction; there is no runtime whose lifetime it could take"
     )),
-    "mcp-re-proxy/src/transparency/durability.rs": (1, (
-        "the retention writer already satisfies §9 by hand: `EvidenceRetention` owns the "
+    "mcp-re-proxy/src/transparency/writer_thread.rs": (1, (
+        "the retention writer already satisfies §9 by hand: `WriterThread` owns the "
         "handle, closing the job channel is its halt, and `Drop` joins it"
     )),
     "mcp-re-proxy/src/async_fleet/mod.rs": (1, (

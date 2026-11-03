@@ -102,8 +102,11 @@ status = "unreviewed"
 # precondition does not hold and the entry is pinned at what it now measures.
 [[debt]]
 path = "mcp-re-proxy/src/tls.rs"
-baseline_prod_loc = 643
-baseline_sha = "b142a7a"
+# #1250: `ServerLimits`, the request's limits, moves to `deployment_request`, and
+# `ServerOptions` carries the narrower `ServedLimits` instead of the whole request bag:
+# 643 -> 518.
+baseline_prod_loc = 518
+baseline_sha = "8ad919901"
 status = "reviewed-exception"
 review_ref = "EX-004 in docs/architecture/review-dispositions.md"
 
@@ -327,12 +330,16 @@ status = "unreviewed"
 # for retaining it is durably established (`durability.rs`), and the auditor's half
 # (`attestation.rs`). The debt follows the bulk rather than the path: `transparency/mod.rs`
 # is 143 lines and below the threshold, so the registered file is the durability runtime,
-# which inherits 882 registered lines as 498.
+# which inherits 882 registered lines as 498. EX-019 (#1248) then moved the writer thread,
+# queue admission, marker naming and enumeration to their owners; the file holds the stage
+# protocol alone.
+# The owner kept that remainder intact on 2026-10-29: EX-019's §14 record, no growth.
 [[debt]]
 path = "mcp-re-proxy/src/transparency/durability.rs"
-baseline_prod_loc = 498
-baseline_sha = "255465e"
-status = "unreviewed"
+baseline_prod_loc = 264
+baseline_sha = "6c045ef7d"
+status = "reviewed-exception"
+review_ref = "EX-019 in docs/architecture/review-dispositions.md"
 
 # MCPRE-175 re-censused the PKCS#11 provider and found four subordinates inside it: the
 # session vocabulary (`session.rs`), ONE session reused (`amortized_session.rs`), a bounded
@@ -361,9 +368,9 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/exchange_state.rs"
-# #1205: the 202 terminal is published through `may_publish`/`publish` like the bodied
-# terminals, so `establish_terminal` lost its only caller and was deleted: 892 -> 874.
-baseline_prod_loc = 874
+# #1245: publishing moved onto the permit `may_publish` returns, in the child module
+# `exchange_state/publication.rs`, so `ExchangeProgress::publish` was deleted: 874 -> 868.
+baseline_prod_loc = 868
 baseline_sha = "a15fc1e"
 status = "reviewed-exception"
 review_ref = "EX-001 in docs/architecture/review-dispositions.md"
@@ -372,8 +379,10 @@ growth_ref = "EX-001 growth authorization in docs/architecture/review-dispositio
 
 [[debt]]
 path = "mcp-re-proxy/src/aws_sts.rs"
-baseline_prod_loc = 783
-baseline_sha = "d1fc5fa"
+# EX-016's action: the STS wire codec moves to its own child, `aws_sts/sts_protocol.rs`:
+# 783 -> 636.
+baseline_prod_loc = 636
+baseline_sha = "32b75956f"
 status = "reviewed-action-required"
 review_ref = "EX-016 in docs/architecture/review-dispositions.md"
 
@@ -458,8 +467,10 @@ status = "unreviewed"
 path = "mcp-re-proxy/src/tls_plane/mod.rs"
 # MCPRE-185: the requested-versus-established custody check left for the key-source owner,
 # and the plane takes one established credential: 393 -> 372.
-baseline_prod_loc = 372
-baseline_sha = "abd8f49"
+# #1249: the fleet bound reads the channel plan's own `currency_bound`: 372 (measured at
+# 099787cbf) -> 369.
+baseline_prod_loc = 369
+baseline_sha = "099787cbf"
 status = "unreviewed"
 
 [[debt]]
@@ -548,9 +559,11 @@ baseline_sha = "1021196"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/config_state/admission.rs"
-baseline_prod_loc = 509
-baseline_sha = "d1fc5fa"
+path = "mcp-re-proxy/src/config_state/admission/mod.rs"
+# #1250: the enforcing view moves to its own child, `admission/enforced_admission.rs`, with the
+# record verifier's currentness budget it now projects: 509 (as `admission.rs`) -> 433.
+baseline_prod_loc = 433
+baseline_sha = "8ad919901"
 status = "unreviewed"
 
 [[debt]]
@@ -558,9 +571,10 @@ path = "mcp-re-proxy/src/config_state/transport.rs"
 # MCPRE-207: EX-018's named action moves the CRL revocation machine to `crl_revocation.rs`
 # and the client-certificate lifetime ceiling to `client_credential_window.rs`: 419 (measured
 # at c939c2f) -> 263. `baseline_sha` names that parent.
+# The owner kept the binding machine intact on 2026-10-29: EX-018's §14 record, no growth.
 baseline_prod_loc = 263
 baseline_sha = "c939c2f"
-status = "reviewed-action-required"
+status = "reviewed-exception"
 review_ref = "EX-018 in docs/architecture/review-dispositions.md"
 
 [[debt]]
@@ -570,7 +584,7 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/startup_plan.rs"
+path = "mcp-re-proxy/src/startup_plan/mod.rs"
 # MCPRE-197: the inner-plane ceiling and raise left with the `Option` x `Option` interface they
 # projected: 385 (measured at bff0cb9) -> 340.
 # MCPRE-209: the response-authority plans have one producer here and the signing plan's
@@ -578,9 +592,11 @@ path = "mcp-re-proxy/src/startup_plan.rs"
 # MCPRE-208: the peer-identity provenance is part of the channel-binding state's projection,
 # so its second exhaustive match here goes: 338 (measured at 132f448) -> 312.
 # MCPRE-210: the clock-fault rule moves to the clock owner: 312 (measured at a36c92f) -> 292.
+# #1249: the channel-establishment plan is sealed in its own file, and `startup_plan.rs`
+# becomes `startup_plan/mod.rs` to declare it: 292 (measured at 099787cbf) -> 259.
 # `baseline_sha` names that parent.
-baseline_prod_loc = 292
-baseline_sha = "a36c92f"
+baseline_prod_loc = 259
+baseline_sha = "099787cbf"
 status = "unreviewed"
 
 [[debt]]
@@ -589,7 +605,8 @@ path = "mcp-re-proxy/src/config_state/validation/mod.rs"
 # already spliced on main: 374 (measured at 0ba3db2) -> 362. `baseline_sha` names that parent.
 # #1206: the `Audit` machine joins the refusable splice (+5) and a stale doc enumeration of
 # refused postures is replaced by the machines that own them: 362 (measured at ab46131a) -> 357.
-baseline_prod_loc = 357
+# #1252: the test-only `into_inner` is deleted, its callers read `config()`: 357 -> 350.
+baseline_prod_loc = 350
 baseline_sha = "ab46131a"
 status = "unreviewed"
 
@@ -606,8 +623,10 @@ path = "mcp-re-proxy/src/serving_capabilities.rs"
 # -> 377.
 # #1206: the audit seam moves to its own child, `serving_capabilities/audit_posture.rs`, with
 # the required posture: 375 (measured at ab46131a) -> 348.
-baseline_prod_loc = 348
-baseline_sha = "ab46131a"
+# #1250: the enforcer and the record verifier take one `AdmissionBudgets` from the admission
+# view, derived under one skew: 348 -> 340.
+baseline_prod_loc = 340
+baseline_sha = "8ad919901"
 status = "unreviewed"
 
 # MCPRE-211: the two delegated emitters are crate-private and read their signer from one

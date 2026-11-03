@@ -35,6 +35,17 @@ range at build time" is not a property of the file. A stage that does NOT instal
 wheel is not bound by this — `Dockerfile.inner` runs the upstream MCP SDK and nothing of
 ours, and its interpreter is its own business.
 
+THE FIFTH FACT is the interpreter the repository's own tooling runs on. The gates, the
+verification tools and the SDK batteries are Python, and each runs on whatever `python3`
+its environment resolves: a runner's system interpreter, or a developer's newest Homebrew
+one. `.python-version` names it once, for the tools that read a file rather than the lock
+(`actions/setup-python`, uv, pyenv), and three things must agree with it:
+
+  * it is one of the pinned interpreters;
+  * the default rules_python toolchain in `MODULE.bazel`, which runs every Bazel `py_test`;
+  * every workflow job that runs Python sets up that interpreter, from that file, before
+    its first Python step. A job that does not runs the runner image's system Python.
+
 Run: python3 scripts/python_runtime_gate.py
 """
 from __future__ import annotations
@@ -48,6 +59,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "tools" / "verification"))
 
 import _toolchains  # noqa: E402
+from workflow_reader import Job, Step, Workflow, parse, workflows  # noqa: E402
 
 PYPROJECT = REPO_ROOT / "sdk" / "python" / "pyproject.toml"
 ECOSYSTEM = "python"
@@ -258,6 +270,106 @@ def check_wheel_metadata(build_text: str, project: dict) -> str | None:
     return None
 
 
+#: The tooling interpreter, for the tools that read a file rather than the lock.
+TOOLING_PIN = ".python-version"
+MODULE_BAZEL = REPO_ROOT / "MODULE.bazel"
+
+#: The `python.toolchain(...)` call in MODULE.bazel and the version it registers.
+BAZEL_TOOLCHAIN = re.compile(r"^python\.toolchain\((.*?)^\)", re.S | re.M)
+BAZEL_VERSION = re.compile(r'python_version\s*=\s*"([^"]+)"')
+
+SETUP_PYTHON = "actions/setup-python@"
+
+#: `python` or `python3` as a word of its own: not `sdk/python`, not `--python`.
+PYTHON_WORD = re.compile(r"(?<![\w./-])python3?(?![\w.-])")
+
+
+def tool_runs_python(path: str, root: Path) -> bool:
+    """Whether the repository file a command runs is Python, or a shell script that runs it."""
+    target = root / path
+    if path.endswith(".py"):
+        return True
+    if not target.is_file():
+        return False
+    text = target.read_text(encoding="utf-8", errors="replace")
+    first = text.split("\n", 1)[0]
+    if first.startswith("#!"):
+        if "python" in first:
+            return True
+        if not re.search(r"\b(ba|z)?sh\b", first):
+            return False
+    return any(
+        PYTHON_WORD.search(line.split("#", 1)[0]) for line in text.splitlines()[1:]
+    )
+
+
+def step_runs_python(step: Step, root: Path) -> bool:
+    for command in step.commands():
+        if PYTHON_WORD.search(command.executed):
+            return True
+        for invocation in command.invocations():
+            if invocation.program.startswith(("scripts/", "tools/")) and tool_runs_python(
+                invocation.program, root
+            ):
+                return True
+    return False
+
+
+def setup_reads_pin(step: Step) -> bool:
+    """The step reads the pin file, at the root of the repository or of a checkout `path:`."""
+    named = step.with_.get("python-version-file", "")
+    return (named == TOOLING_PIN or named.endswith("/" + TOOLING_PIN)) and "python-version" not in step.with_
+
+
+def check_job(path: str, job: Job, root: Path) -> str | None:
+    """A job that runs Python sets up the pinned interpreter, from the pin file, first."""
+    set_up = False
+    for step in job.steps:
+        if step.uses and step.uses.startswith(SETUP_PYTHON):
+            if not setup_reads_pin(step):
+                return (
+                    f"{path} job {job.key!r} line {step.line}: setup-python names its version "
+                    f"{step.with_!r} instead of reading `python-version-file: {TOOLING_PIN}`, "
+                    f"so a pin bump would leave this job behind"
+                )
+            set_up = True
+        elif not set_up and step_runs_python(step, root):
+            return (
+                f"{path} job {job.key!r} line {step.line} runs Python before any "
+                f"`{SETUP_PYTHON}` step reading {TOOLING_PIN}, so it runs the runner "
+                f"image's system interpreter, not the pinned one"
+            )
+    return None
+
+
+def check_tooling(
+    tooling: str | None, module_text: str, flows: list[Workflow], pinned: dict, root: Path
+) -> str | None:
+    """The fifth fact: the repository's tooling runs one pinned interpreter."""
+    allowed = sorted(pinned.values())
+    if tooling is None:
+        return f"{TOOLING_PIN} is missing, so no tool that reads it runs a pinned interpreter"
+    if tooling not in allowed:
+        return f"{TOOLING_PIN} names {tooling!r}, and [python].interpreters pins {', '.join(allowed)}"
+    block = BAZEL_TOOLCHAIN.search(module_text)
+    bazel = BAZEL_VERSION.search(block.group(1)) if block else None
+    if bazel is None:
+        return "MODULE.bazel registers no python.toolchain version this gate can read"
+    if bazel.group(1) != tooling:
+        return (
+            f"MODULE.bazel registers rules_python {bazel.group(1)!r} and {TOOLING_PIN} names "
+            f"{tooling!r}: every Bazel py_test runs an interpreter the tooling does not"
+        )
+    if not flows:
+        return "no workflow was read — checking nothing is not a pass"
+    for flow in flows:
+        for job in flow.jobs.values():
+            refusal = check_job(flow.path, job, root)
+            if refusal is not None:
+                return refusal
+    return None
+
+
 WHEEL_SELFTEST_PROJECT = {
     "name": "mcp-re-sdk", "version": "0.1.0", "requires-python": ">=3.14.5,<3.15",
     "optional-dependencies": {"mcp": ["mcp>=2.0,<3.0"]},
@@ -357,8 +469,56 @@ IMAGE_SELFTEST_CASES = (
 IMAGE_SELFTEST_PIN = {(3, 14): "3.14.7"}
 
 
+_MODULE_OK = 'python.toolchain(\n    is_default = True,\n    python_version = "3.14.7",\n)\n'
+_CHECKOUT = "      - uses: actions/checkout@v6\n"
+_SETUP = ("      - uses: actions/setup-python@v7\n        with:\n"
+          "          python-version-file: .python-version\n")
+_GATE = "      - run: python3 scripts/x_gate.py\n"
+
+
+def _flow(steps: str) -> list[Workflow]:
+    return [parse("on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n" + steps, "w.yml")]
+
+
+#: The tooling pin against MODULE.bazel and the workflows, each refusal paired with the
+#: acceptance it must not swallow.
+TOOLING_SELFTEST_CASES = (
+    ("every place names the pinned interpreter", "3.14.7", _MODULE_OK,
+     _flow(_CHECKOUT + _SETUP + _GATE), False),
+    ("no tooling pin file", None, _MODULE_OK, _flow(_CHECKOUT + _SETUP + _GATE), True),
+    ("a tooling pin outside the pinned set", "3.14.6", _MODULE_OK.replace("3.14.7", "3.14.6"),
+     _flow(_CHECKOUT + _SETUP + _GATE), True),
+    ("the Bazel toolchain the repository had", "3.14.7", _MODULE_OK.replace("3.14.7", "3.12"),
+     _flow(_CHECKOUT + _SETUP + _GATE), True),
+    ("a job running Python on the runner's interpreter", "3.14.7", _MODULE_OK,
+     _flow(_CHECKOUT + _GATE), True),
+    ("a job setting Python up only after its first Python step", "3.14.7", _MODULE_OK,
+     _flow(_CHECKOUT + _GATE + _SETUP), True),
+    ("a setup step naming a floating minor", "3.14.7", _MODULE_OK,
+     _flow(_CHECKOUT + _SETUP.replace("python-version-file: .python-version",
+                                      'python-version: "3.14"') + _GATE), True),
+    ("the pin file read from a checkout path", "3.14.7", _MODULE_OK,
+     _flow(_CHECKOUT + _SETUP.replace(": .python-version", ": tools/.python-version") + _GATE), False),
+    ("another file read as the pin", "3.14.7", _MODULE_OK,
+     _flow(_CHECKOUT + _SETUP.replace(": .python-version", ": runtime.txt") + _GATE), True),
+    ("Python inside a command substitution", "3.14.7", _MODULE_OK,
+     _flow(_CHECKOUT + "      - run: d=\"$(python3 -c 'print(1)')\"\n"), True),
+    ("a job that runs no Python", "3.14.7", _MODULE_OK,
+     _flow(_CHECKOUT + "      - run: cd sdk/python && ls --python\n"), False),
+    ("no workflow at all", "3.14.7", _MODULE_OK, [], True),
+)
+
+
 def selftest() -> int:
     failures = 0
+    for name, tooling, module_text, flows, must_refuse in TOOLING_SELFTEST_CASES:
+        refused = check_tooling(tooling, module_text, flows, IMAGE_SELFTEST_PIN, REPO_ROOT) is not None
+        if refused != must_refuse:
+            verb = "was accepted" if must_refuse else "was refused"
+            print(f"  SELFTEST FAIL: {name} {verb}", file=sys.stderr)
+            failures += 1
+        else:
+            print(f"  ok   {name}: {'refused' if refused else 'accepted'}")
     for name, files, must_refuse in IMAGE_SELFTEST_CASES:
         refused = check_images(files, IMAGE_SELFTEST_PIN) is not None
         if refused != must_refuse:
@@ -387,7 +547,8 @@ def selftest() -> int:
     if failures:
         print(f"python-runtime gate: SELFTEST FAIL — {failures} case(s)", file=sys.stderr)
         return 1
-    total = len(SELFTEST_CASES) + len(IMAGE_SELFTEST_CASES) + len(WHEEL_SELFTEST_CASES)
+    total = (len(SELFTEST_CASES) + len(IMAGE_SELFTEST_CASES) + len(WHEEL_SELFTEST_CASES)
+             + len(TOOLING_SELFTEST_CASES))
     print(f"python-runtime gate: SELFTEST OK — {total} case(s)")
     return 0
 
@@ -419,11 +580,20 @@ def main(argv: list[str]) -> int:
     wheel_refusal = check_wheel_metadata(WHEEL_BUILD.read_text(encoding="utf-8"), project)
     if wheel_refusal is not None:
         return fail(wheel_refusal)
+    pin_file = REPO_ROOT / TOOLING_PIN
+    tooling = pin_file.read_text(encoding="utf-8").strip() if pin_file.is_file() else None
+    flows = workflows(REPO_ROOT)
+    tooling_refusal = check_tooling(
+        tooling, MODULE_BAZEL.read_text(encoding="utf-8"), flows, pinned, REPO_ROOT
+    )
+    if tooling_refusal is not None:
+        return fail(tooling_refusal)
 
     print(
         f"python-runtime gate: OK — {summary}; {len(dockerfiles)} deploy Dockerfile(s) "
         f"examined, every stage installing the MCP-RE wheel on a pinned interpreter; the "
-        f"Bazel wheel's metadata equals pyproject.toml's"
+        f"Bazel wheel's metadata equals pyproject.toml's; {TOOLING_PIN}, the Bazel toolchain "
+        f"and every Python-running job of {len(flows)} workflow(s) name {tooling}"
     )
     return 0
 
