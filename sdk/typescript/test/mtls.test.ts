@@ -189,11 +189,11 @@ async function withServer(
 describe("the mTLS connect helper", () => {
   /** A case that needs the generated X.509 and a live TLS server. */
   const tls = (name: string, fn: () => Promise<void>) =>
-    it(name, async () => {
+    it(name, async (ctx) => {
       if (!material) {
-        // Reported, not silently passed: a lane where this never ran must say so.
-        console.warn(`skipping "${name}": tools/gen_mtls_test_material.py could not run`);
-        return;
+        // SKIPPED, never passed: a case that did not run reports as skipped, which a lane
+        // claiming it refuses. Returning early would report a pass that measured nothing.
+        ctx.skip("tools/gen_mtls_test_material.py could not run (needs `cryptography`)");
       }
       await fn();
     });
