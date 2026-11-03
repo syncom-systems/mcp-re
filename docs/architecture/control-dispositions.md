@@ -5060,7 +5060,7 @@ this one covers request signers too. No theorem depends on it.
 **Statement.** *Shard `i` is pinned to the `i`-th CPU of the affinity mask the process was started with, wrapping when shards outnumber them; with no known CPU, nothing is pinned.*
 **If false.** Shards are pinned outside an operator's `taskset` mask or cgroup cpuset, onto capacity the operator reserved for co-located work.
 **Likely owner:** none. `proxy.fleet_topology_provenance` holds the carrier as closure, not claim.
-**Severity:** `low`.
+**Severity:** `medium`, the vocabulary's floor; the consequence is tail latency only.
 **Root relationship.** None: pinning is a tail-latency optimization, never a correctness or security property (#1196).
 **Recorded:** 2026-11-03.
 

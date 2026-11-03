@@ -15119,7 +15119,7 @@ id = "NP-292"
 title = "A serving shard is pinned inside the CPUs the process is allowed to run on"
 carrier = "mcp-re-proxy/src/async_fleet/cpu_placement.rs"
 likely_owner = "none. proxy.fleet_topology_provenance holds the carrier in its paths as closure, not claim."
-consequence = "low"
+consequence = "medium"
 root_relationship = "none: pinning is a tail-latency optimization, never a correctness or security property (#1196)"
 record = "docs/architecture/control-dispositions.md#np-292"
 
