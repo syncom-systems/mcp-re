@@ -1,0 +1,26 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_dependencies"
+  ],
+  "corrections": [
+    {
+      "field": "depends_on",
+      "id": "C1",
+      "new": "THM-0070 at sha256:7660e7caa07f925319cdae3ef1843082c1e24923f2a2e41af3a2571902db3e8a",
+      "old": "THM-0070 at sha256:dd38b842fb857af412fae0c08d241373fd6f7dcec05c3ac7802ca72b7e5269e1",
+      "reason": "THM-0070, in this theorem's dependency closure, gained a scope paragraph naming the collector as the owner of its emission-order property (#1211). THM-0071 composes THM-0070 only as 'the stream is honest about what reached it', which is unchanged."
+    }
+  ],
+  "dependency_correction": "No edge added or removed; depends_on is unchanged. The dependency digest moved solely because THM-0070's claim digest moved.",
+  "from_fingerprint": "sha256:2b59216016047aec6425a22e403a59d471645cac4ce4330fa6f1bf99347c7a58",
+  "packet": "verification/reviews/packets/thm-0070-stderr-offer-order-scope-2026-11-03.md",
+  "product_behavior_unchanged": true,
+  "reason": "DEPENDENCY PROPAGATION of the THM-0070 scope precision. THM-0071's own statement, security_consequence, scope, severity, depends_on and review requirement are byte-identical to the reviewed text; its fingerprint moved only through THM-0070's claim digest.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18: a precision correction that leaves the accepted promise intact is not an owner escalation. A correction record is not an approval: it does not make the specification-review axis fresh, and release-mode establishment still asks for the owner.",
+  "severity_after": "medium",
+  "severity_before": "medium",
+  "subject": "THM-0071",
+  "to_fingerprint": "sha256:cc325187ec814c99544b4e91d3ffad159955777281a348c660f73c3b1ac0a59e"
+}
