@@ -3602,6 +3602,12 @@ Delivery integrity, not content (THM-0069) and not durability: the sink is in-pr
 record that was emitted may still be lost with the process. It establishes nothing about
 whether a record SHOULD have been written for a given outcome, which is the totality
 proposition below.
+
+The emission-order property is the collector's. The stderr sink writes lines in the order
+they are offered, and a record's `seq` is allocated when its event is produced, before the
+offer, so lines from concurrent producers can reach the stream out of `seq` order. Position
+is still carried by every line: a consumer orders a run by `seq`, and a gap is a gap whatever
+the arrival order.
 """
 owner = "proxy.audit_delivery"
 review_requirement = "Owner security-specification review"

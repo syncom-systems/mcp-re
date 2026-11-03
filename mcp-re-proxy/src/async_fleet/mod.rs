@@ -62,6 +62,7 @@ use crate::config_state::InFlightLimitBasis;
 use crate::tls::ServerOptions;
 
 mod core_runtime;
+mod cpu_placement;
 mod resolved_topology;
 mod reuseport;
 
@@ -196,6 +197,8 @@ where
         listeners.push(reuseport_listener(bound, cfg.listen_backlog)?);
     }
 
+    // Read once, before any shard exists, so every shard maps onto the same allowed set.
+    let placement = Arc::new(cpu_placement::CpuPlacement::of_this_process());
     let workers = release_when_all_started(listeners, |core_index, listener, parked| {
         // Class R, and settled HERE because this is the thread that can still report a
         // failure. Neither is an invariant of this program — `build` allocates threads and
@@ -207,16 +210,17 @@ where
         let options = Arc::clone(&options);
         let handler = make_handler(core_index);
         let shutdown = Arc::clone(&shutdown);
+        let placement = Arc::clone(&placement);
         let worker = std::thread::Builder::new()
             .name(format!("mcp-re-serve-{core_index}"))
             .spawn(move || {
                 if parked.recv().is_err() {
                     return;
                 }
-                // Best-effort CPU pinning (Linux); a no-op elsewhere. Pinning is a
-                // tail-latency optimization, never a correctness property, so a
-                // failure to pin is ignored (logged nowhere hot).
-                pin_current_thread_to_core(core_index);
+                // Best-effort CPU pinning (Linux) onto the CPUs this process is allowed to
+                // run on; a no-op elsewhere. Pinning is a tail-latency optimization, never a
+                // correctness property, so a failure to pin is ignored.
+                placement.pin_current_thread(core_index);
 
                 // `CorePool` decided which runtime this core got and how much blocking
                 // handshake work it may admit onto it; both are stated there, once.
@@ -323,51 +327,6 @@ fn with_per_core_ceiling(
     let mut opts = (*options).clone();
     opts.limits.max_in_flight_requests = Some(ceiling.get());
     Arc::new(opts)
-}
-
-/// Pin the calling thread to `core_index % online_cpus` (Linux `sched_setaffinity`).
-/// Best-effort: pinning is a tail-latency optimization (keep a worker on one core so
-/// its runtime, sockets, and cache lines stay warm), never a correctness property, so
-/// every failure — an unavailable syscall, a restricted cgroup cpuset — is ignored.
-#[cfg(target_os = "linux")]
-fn pin_current_thread_to_core(core_index: usize) {
-    // `checked_rem`, so the guard and the operation are ONE statement. `online_cpu_count`
-    // returns 0 only if every fallback in it failed, and nothing can be pinned to then.
-    let Some(cpu) = core_index.checked_rem(online_cpu_count()) else {
-        return;
-    };
-    // SAFETY: `cpu_set` is a zeroed, fully-owned `cpu_set_t`; `CPU_SET` sets one valid
-    // bit in it; `sched_setaffinity(0, ...)` applies it to the calling thread and does
-    // not retain the pointer. Return value is ignored (best-effort).
-    unsafe {
-        let mut cpu_set: libc::cpu_set_t = std::mem::zeroed();
-        libc::CPU_SET(cpu, &mut cpu_set);
-        let _ = libc::sched_setaffinity(
-            0,
-            std::mem::size_of::<libc::cpu_set_t>(),
-            &cpu_set as *const libc::cpu_set_t,
-        );
-    }
-}
-
-/// Non-Linux platforms: no portable thread-affinity syscall; pinning is a no-op (the
-/// per-core runtimes + `SO_REUSEPORT` still apply — only the affinity hint is
-/// skipped). Matches the target-gated posture of the Linux sandbox backend.
-#[cfg(not(target_os = "linux"))]
-fn pin_current_thread_to_core(_core_index: usize) {}
-
-/// Number of online CPUs, for the pinning modulo. `sysconf(_SC_NPROCESSORS_ONLN)`;
-/// falls back to `available_parallelism` and finally 1.
-#[cfg(target_os = "linux")]
-fn online_cpu_count() -> usize {
-    // SAFETY: `sysconf` takes an int name and returns a long; no pointers involved.
-    let n = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
-    if n > 0 {
-        return n as usize;
-    }
-    std::thread::available_parallelism()
-        .map(|x| x.get())
-        .unwrap_or(1)
 }
 
 #[cfg(test)]

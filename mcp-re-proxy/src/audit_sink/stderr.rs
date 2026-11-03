@@ -109,14 +109,19 @@ impl StderrAuditSink {
 }
 
 impl AuditSink for StderrAuditSink {
+    /// Offer the envelope's line, in the order `record` is called.
+    ///
+    /// The line's position is the event's `seq`, allocated when the event was produced, and
+    /// the stream's order is the order of these calls. The two need not agree: two cores can
+    /// produce events `n` and `n + 1` and offer them the other way round, and the line for
+    /// `n + 1` then precedes the line for `n`. Nothing here reorders. A consumer orders a run
+    /// by `seq`, and a hole is a hole whatever the arrival order (THM-0070 scope).
     fn record(&self, envelope: &AuditEnvelope) {
-        let line = audit_line(&envelope.id(), envelope.record());
-        let queued = offer(
+        let queued = record_on(
+            envelope,
             stderr_audit_writer(),
             &STDERR_AUDIT_DROPPED,
             &STDERR_AUDIT_QUEUED,
-            line,
-            admission_ceiling(envelope.record()),
         );
         super::observer_accounting::count_offer(envelope.record().actor_id.is_some(), queued);
     }
@@ -130,6 +135,24 @@ impl AuditSink for StderrAuditSink {
             &STDERR_AUDIT_QUEUED,
         );
     }
+}
+
+/// Offer `envelope`'s line to `queue`, under the record's admission ceiling. Whether it was
+/// queued.
+fn record_on(
+    envelope: &AuditEnvelope,
+    queue: &std::sync::mpsc::SyncSender<AuditMessage>,
+    dropped: &std::sync::atomic::AtomicU64,
+    queued: &std::sync::atomic::AtomicUsize,
+) -> bool {
+    let line = audit_line(&envelope.id(), envelope.record());
+    offer(
+        queue,
+        dropped,
+        queued,
+        line,
+        admission_ceiling(envelope.record()),
+    )
 }
 
 /// One record's line, under the identity its event was produced with.
@@ -279,6 +302,44 @@ mod tests {
         assert_eq!(
             offered,
             [format!("mcp-re-proxy: audit stream started run={run}")]
+        );
+    }
+
+    /// The ordering the stderr stream provides is OFFER order, not `seq` order (#1211).
+    ///
+    /// Events are numbered when they are produced and offered afterwards, so two producers
+    /// can offer them the other way round. The sink writes what it is offered, in that order,
+    /// under the identity each event was produced with: the later-numbered line comes first,
+    /// neither is renumbered, and both are on the stream. Ordering a run is the consumer's,
+    /// by `seq`; the collector's emission-order property (THM-0070) is not this sink's.
+    #[test]
+    fn the_stream_is_in_offer_order_and_keeps_each_events_own_seq() {
+        let run = crate::audit_record::open_process_run().expect("the OS CSPRNG yields a run");
+        let allocator = crate::audit_record::EventAllocator::starting_at(run, 0);
+        let first = AuditEnvelope::produce_for_test(&allocator, None, accepted("actor-a"))
+            .expect("produced");
+        let second = AuditEnvelope::produce_for_test(&allocator, None, accepted("actor-b"))
+            .expect("produced");
+        let (queue, lines) = std::sync::mpsc::sync_channel(4);
+        let (dropped, queued) = Default::default();
+        assert!(record_on(&second, &queue, &dropped, &queued));
+        assert!(record_on(&first, &queue, &dropped, &queued));
+        let offered: Vec<String> = lines
+            .try_iter()
+            .map(|message| match message {
+                AuditMessage::Line(line) => line,
+                AuditMessage::Flush(_) => panic!("recording flushes nothing"),
+            })
+            .collect();
+        let seq_of = |line: &String| {
+            line.strip_prefix("mcp-re-proxy: audit seq=")
+                .and_then(|rest| rest.split(' ').next())
+                .map(str::to_owned)
+        };
+        assert_eq!(
+            offered.iter().map(seq_of).collect::<Vec<_>>(),
+            [Some("1".to_owned()), Some("0".to_owned())],
+            "the stream is in offer order, and each line keeps its event's own seq: {offered:?}"
         );
     }
 
