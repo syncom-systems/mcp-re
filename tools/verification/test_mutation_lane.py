@@ -199,6 +199,19 @@ def test_main_reports_absence_as_measurement_failure_and_not_as_success():
     assert "missing, red = adjudicate(probe, results)" in body
 
 
+def test_main_reports_a_skipped_control_as_measurement_failure_not_as_a_finding():
+    """The 2026-11-01 M213 case: the mTLS controls were skipped (no `cryptography` for the
+    material generator), and the lane said the conjunct was NOT load-bearing. A skipped
+    control did not run; the probe still fails, with the measurement named as the cause."""
+    import inspect
+
+    body = inspect.getsource(lane.main)
+    skip_arm = body.index('if not red and skipped:')
+    assert body.index('results.get(n) == "ignored"') < skip_arm
+    assert skip_arm < body.index("is NOT load-bearing")
+    assert "were reported SKIPPED" in body[skip_arm:body.index("is NOT load-bearing")]
+
+
 # --- test identity is TARGET plus symbol ---------------------------------------
 
 
