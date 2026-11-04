@@ -32,10 +32,10 @@ fn collect(dir: &Path, into: &mut Vec<PathBuf>) {
 /// Every `<receiver>.dispatch()` call in `source`'s production half, with its receiver.
 fn dispatch_calls(source: &str) -> Vec<String> {
     let production = mcp_re_test_paths::rust_source::production_half(source);
+    let code = mcp_re_test_paths::rust_source::code_only(&production);
     let mut calls = Vec::new();
-    for line in production.lines() {
-        let code = line.split("//").next().unwrap_or_default();
-        let mut rest = code;
+    for line in code.lines() {
+        let mut rest = line;
         while let Some(at) = rest.find(".dispatch()") {
             let receiver: String = rest[..at]
                 .chars()
@@ -110,4 +110,10 @@ fn the_scanner_sees_a_bypass_and_ignores_comments_and_tests() {
     let bypass = "fn skip(p: P) {\n    let _ = p.dispatch();\n    // ready.dispatch()\n}\n\
                   #[cfg(test)]\nmod tests {\n    fn t() { prepared.dispatch(); }\n}\n";
     assert_eq!(dispatch_calls(bypass), ["p.dispatch()"]);
+    let after_a_url = "fn skip(p: P) {\n    let _ = (\"https://x/\", p.dispatch());\n}\n";
+    assert_eq!(
+        dispatch_calls(after_a_url),
+        ["p.dispatch()"],
+        "a `//` inside a string literal must not hide a call after it"
+    );
 }

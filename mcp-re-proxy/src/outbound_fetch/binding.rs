@@ -307,11 +307,13 @@ mod tests {
     /// The agent's https is the proxy's own connector, end to end through a request.
     ///
     /// `public_roots` proves the connector refuses a private CA when handed a socket. This
-    /// proves the agent `agent` hands out is the thing that routes https through it: the
-    /// refusal arrives as the connector's I/O error carrying rustls's `UnknownIssuer`. Had
-    /// ureq been built with a TLS feature of its own, ureq's TLS would run first, the
-    /// connector would pass the already-TLS transport through, and the refusal would come
-    /// back as ureq's own TLS error variant instead, so this fails.
+    /// proves the agent `agent` hands out refuses one end to end, through a request, as an
+    /// I/O error carrying rustls's `UnknownIssuer`.
+    ///
+    /// It does not tell the proxy's connector from a TLS of ureq's own: ureq's rustls
+    /// connector would run first in the chain and report the same refusal the same way, and
+    /// with ureq built with `rustls` this stays green. That ureq has no TLS of its own, so
+    /// the connector is the only TLS here, is `public_roots::tests::ureq_alone_speaks_no_tls`.
     #[test]
     fn an_agents_https_is_authenticated_by_the_proxys_own_connector() {
         let (_ca, leaf, key) = super::super::public_roots::tests::private_pki();
