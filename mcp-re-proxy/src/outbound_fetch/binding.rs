@@ -316,10 +316,9 @@ mod tests {
     fn an_agents_https_is_authenticated_by_the_proxys_own_connector() {
         let (_ca, leaf, key) = super::super::public_roots::tests::private_pki();
         let port = super::super::public_roots::tests::serve(leaf, key);
-        let destination = VettedDestination::operator_configured(format!(
-            "https://localhost:{port}/"
-        ))
-        .expect("a loopback https destination is one an operator may configure");
+        let destination =
+            VettedDestination::operator_configured(format!("https://localhost:{port}/"))
+                .expect("a loopback https destination is one an operator may configure");
         let refused = destination
             .agent(Duration::from_secs(5))
             .post(destination.url())

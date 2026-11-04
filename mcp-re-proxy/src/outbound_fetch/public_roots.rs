@@ -200,7 +200,10 @@ pub(super) mod tests {
     }
 
     /// A loopback TLS server presenting `leaf`, answering one `ping` with `pong`.
-    pub(in crate::outbound_fetch) fn serve(leaf: CertificateDer<'static>, key: PrivateKeyDer<'static>) -> u16 {
+    pub(in crate::outbound_fetch) fn serve(
+        leaf: CertificateDer<'static>,
+        key: PrivateKeyDer<'static>,
+    ) -> u16 {
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let config = ServerConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()
