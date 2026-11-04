@@ -2226,7 +2226,7 @@ jobs:
             du -sh "$base"/execroot/_main/bazel-out/* 2>/dev/null || true
           done
           du -sh ~/.cache/bazel/_bazel_runner/cache/* ~/.cache/bazel/_bazel_runner/install 2>/dev/null || true
-          du -sh ~/.cache/bazel/_bazel_runner/cache/repos/* 2>/dev/null || true
+          du -sh ~/.cache/bazel/_bazel_runner/cache/repos/* ~/.cache/bazel/_bazel_runner/cache/repos/*/* 2>/dev/null || true
 
       # The repository cache holds two things. `contents/` is what `external/` links into
       # (Bazel 9's repository contents cache), so it is saved. `content_addressable/` is
@@ -2240,8 +2240,11 @@ jobs:
       # without a match.
       - name: Drop downloaded archives from the saved cache
         run: |
-          du -sh ~/.cache/bazel/_bazel_runner/cache/repos/content_addressable 2>/dev/null || true
-          rm -rf ~/.cache/bazel/_bazel_runner/cache/repos/content_addressable
+          # The layout differs by platform: `repos/content_addressable` on macOS, under
+          # `repos/v1/` on the Linux runner. The download cache is found by name, at any depth
+          # that layout uses, and the step states what it removed.
+          find ~/.cache/bazel/_bazel_runner/cache/repos -maxdepth 2 -type d -name content_addressable -print0 \
+            | while IFS= read -r -d '' dir; do du -sh "$dir"; rm -rf "$dir"; done
           du -sh ~/.cache/bazel
 
       # After a green run on main only: what the next PR restores. Saving on success
