@@ -7942,6 +7942,7 @@ tested_symbols = [
   # statement names: a resolver refusal means the listener is never connected to, while the
   # operator-configured agent reaches the same shape of listener.
   "//mcp-re-proxy:proxy_ext_unit_test#outbound_fetch::binding::tests::a_certificate_derived_agent_never_connects_to_an_address_its_resolver_refused",
+  "//mcp-re-proxy:proxy_ext_unit_test#outbound_fetch::binding::tests::an_agents_https_is_authenticated_by_the_proxys_own_connector",
   # NO SECOND WAY TO ADDRESS A REQUEST. The join's property belongs to `url.rs` and is
   # measured there; what this establishes is that the capability still addresses THROUGH
   # it — a type that started formatting its own URL would keep every control above green.
@@ -12357,7 +12358,9 @@ paths = [
   "mcp-re-proxy/src/config_state/validation/mod.rs",
   "mcp-re-proxy/src/config_state/validation/machine_violations.rs",
   "mcp-re-proxy/src/config_state/validation/recognition.rs",
+  "mcp-re-proxy/src/config_state/validation/refusable_machines.rs",
   "mcp-re-proxy/src/config_state/validation/residue.rs",
+  "mcp-re-proxy/src/config_state/validation/total_machines.rs",
   "mcp-re-proxy/src/config_state/request_target.rs",
   "mcp-re-proxy/src/config_state/trust_document.rs",
 ]

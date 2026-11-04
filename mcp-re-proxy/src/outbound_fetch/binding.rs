@@ -304,6 +304,41 @@ mod tests {
         );
     }
 
+    /// The agent's https is the proxy's own connector, end to end through a request.
+    ///
+    /// `public_roots` proves the connector refuses a private CA when handed a socket. This
+    /// proves the agent `agent` hands out is the thing that routes https through it: the
+    /// refusal arrives as the connector's I/O error carrying rustls's `UnknownIssuer`. Had
+    /// ureq been built with a TLS feature of its own, ureq's TLS would run first, the
+    /// connector would pass the already-TLS transport through, and the refusal would come
+    /// back as ureq's own TLS error variant instead, so this fails.
+    #[test]
+    fn an_agents_https_is_authenticated_by_the_proxys_own_connector() {
+        let (_ca, leaf, key) = super::super::public_roots::tests::private_pki();
+        let port = super::super::public_roots::tests::serve(leaf, key);
+        let destination =
+            VettedDestination::operator_configured(format!("https://localhost:{port}/"))
+                .expect("a loopback https destination is one an operator may configure");
+        let refused = destination
+            .agent(Duration::from_secs(5))
+            .post(destination.url())
+            .send("")
+            .expect_err("a server under a private CA must be refused");
+        let ureq::Error::Io(io) = &refused else {
+            panic!("https was not handled by the proxy's connector: {refused:?}");
+        };
+        let cause = io
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<rustls::Error>());
+        assert_eq!(
+            cause,
+            Some(&rustls::Error::InvalidCertificate(
+                rustls::CertificateError::UnknownIssuer
+            )),
+            "refused for the wrong reason: {refused}"
+        );
+    }
+
     /// The bound belongs to the agent: a request that sets no timeout of its own still returns.
     #[test]
     fn an_agent_bounds_a_request_that_sets_no_timeout_of_its_own() {

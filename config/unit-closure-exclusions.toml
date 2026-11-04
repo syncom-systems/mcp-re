@@ -1,5 +1,5 @@
 # Unit-closure exclusions — files the module tree reaches from a measured unit
-# that no unit's `paths` answer for. Emitted at 7e184961: 30 entries; 27 remain.
+# that no unit's `paths` answer for. Emitted at 7e184961: 30 entries; 15 remain.
 #
 # A debt register, not an exception mechanism. It may only shrink; see
 # scripts/unit_closure_gate.py.
@@ -61,18 +61,6 @@ status = "unreviewed"
 [[exclusion]]
 path = "mcp-re-proxy/src/config_state/mod.rs"
 rule = "UC-2"
-baseline_sha = "7e184961"
-status = "unreviewed"
-
-[[exclusion]]
-path = "mcp-re-proxy/src/config_state/validation/refusable_machines.rs"
-rule = "UC-1"
-baseline_sha = "7e184961"
-status = "unreviewed"
-
-[[exclusion]]
-path = "mcp-re-proxy/src/config_state/validation/total_machines.rs"
-rule = "UC-1"
 baseline_sha = "7e184961"
 status = "unreviewed"
 
