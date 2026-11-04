@@ -641,6 +641,7 @@ def report_timings(timings: list[tuple[str, float]], total: float) -> None:
 
 
 VERDICT_LINE = re.compile(r"^VERDICT: (\S+)\s*$", re.MULTILINE)
+UNAVAILABLE_PROBE_LINE = re.compile(r"^  UNAVAILABLE (\S+?):", re.MULTILINE)
 
 
 def compose(directory: Path, shards: int) -> int:
@@ -651,6 +652,10 @@ def compose(directory: Path, shards: int) -> int:
     before writing leaves no file or no verdict line, and either is a shard that measured
     nothing. So the composition is PASS only when every expected shard stated exactly one
     verdict and it was PASS; anything else is FAIL, with each shortfall named.
+
+    A passing shard may still have left probes UNAVAILABLE (`--skip-unprepared`, no SDK
+    matrix). Those are unmeasured, not passed, so the composed verdict line names them
+    and counts them apart from the probes that were measured.
     """
     if shards < 1:
         print("FAIL: --compose needs --shards N with N >= 1; a composition of no shard measured nothing")
@@ -660,6 +665,7 @@ def compose(directory: Path, shards: int) -> int:
     present = {p.name for p in directory.glob("*.log")} if directory.is_dir() else set()
     problems = [f"{name}: missing — the shard stated nothing" for name in sorted(expected - present)]
     problems += [f"{name}: not a shard the scope decided on" for name in sorted(present - expected)]
+    unavailable: list[str] = []
     for index in range(shards):
         path = directory / f"shard-{index}.log"
         if not path.is_file():
@@ -674,13 +680,20 @@ def compose(directory: Path, shards: int) -> int:
             problems.append(f"{path.name}: VERDICT {verdicts[0]}")
         else:
             print(f"  ok   {path.name}: {summary[-1] if summary else 'PASS'}")
+            unavailable += UNAVAILABLE_PROBE_LINE.findall(text)
     if problems:
         for problem in problems:
             print(f"  FAIL {problem}")
         print(f"\nFAIL: {len(problems)} shortfall(s) across {shards} shard(s)")
         print("VERDICT: FAIL")
         return 1
-    print(f"\nverify-mutations: PASS — all {shards} shard(s) stated PASS")
+    if unavailable:
+        print(
+            f"\nverify-mutations: PASS — all {shards} shard(s) stated PASS; "
+            f"{len(unavailable)} probe(s) UNAVAILABLE, not measured ({', '.join(unavailable)})"
+        )
+    else:
+        print(f"\nverify-mutations: PASS — all {shards} shard(s) stated PASS")
     print("VERDICT: PASS")
     return 0
 
@@ -872,6 +885,20 @@ def main() -> int:
                 failures.append(probe["id"])
                 continue
             red = sorted(red)
+            skipped = sorted(n for n in probe["expect_red"] if results.get(n) == "ignored")
+            if not red and skipped:
+                # A SKIPPED CONTROL DID NOT EXECUTE, so "left every control green" would be a
+                # finding about the claim drawn from a test that never ran. Still a FAIL; the
+                # diagnosis points at the environment the control needs, not the conjunct.
+                print(
+                    f"  FAIL {probe['id']}: MEASUREMENT FAILURE — expected control(s) "
+                    f"{skipped} were reported SKIPPED under the weakening: they did not "
+                    f"execute, so the run says nothing about whether the conjunct is "
+                    f"load-bearing. A prerequisite of the control is missing here.",
+                    file=sys.stderr,
+                )
+                failures.append(probe["id"])
+                continue
             if not red:
                 print(
                     f"  FAIL {probe['id']}: {probe.get('theorem', probe['unit'])} claims "
