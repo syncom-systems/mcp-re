@@ -78,15 +78,21 @@ impl HttpProfileProxy {
         ex: &Exchange<'_>,
         peer: Option<&crate::communication_assurance::AuthenticatedChannelPeer>,
     ) -> Result<Established<Option<RequestPeerBindingFacts>>, Refusal> {
-        let checked = ExchangeEvent::TransportBindingChecked;
         let Some(binding) = &self.transport_binding else {
-            return Ok(Established::new(None, checked)); // NOT CLAIMED to be bound
+            // NOT CLAIMED to be bound.
+            return Ok(Established::new(
+                None,
+                ExchangeEvent::TransportBindingChecked,
+            ));
         };
         let subject = verified_request_subject(ex.verified);
         let Ok(bound) = binding.bind(peer, subject) else {
             return Err(Refusal::new(McpReError::TransportBindingFailed, 403));
         };
-        Ok(Established::new(Some(bound), checked))
+        Ok(Established::new(
+            Some(bound),
+            ExchangeEvent::TransportBindingChecked,
+        ))
     }
 
     /// ADMISSION-CHECKED — the §7 currency gate (ADR-MCPRE-053).

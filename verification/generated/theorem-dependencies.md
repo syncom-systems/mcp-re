@@ -111,7 +111,7 @@ graph BT
     THM_0098["THM-0098<br/>A replica's trust snapshot is the slot-wise interpretation of one accepted trust document"]
     THM_0099["THM-0099<br/>The production actor resolver answers its Request-slot selector from the deployment's trust document"]
     THM_0100["THM-0100<br/>A replica's exposure to a key its document no longer enrols is confined to the serving interval it prints"]
-    THM_0101["THM-0101<br/>An emitted exchange transition corresponds to the work that justifies it, except the three the assembly owns and the success tail the publication owns"]
+    THM_0101["THM-0101<br/>An emitted exchange transition corresponds to the work that justifies it, except the three the assembly owns, the success tail the publication owns and the refusal terminal"]
     THM_0102["THM-0102<br/>A validated deployment's connection-age bound never exceeds the credential lifetime it reports as its exposure window"]
     THM_0103["THM-0103<br/>The epoch-bound session store resumes a session under the epoch that tagged it, and under no other"]
     THM_0106["THM-0106<br/>The Redis replay backend refuses a server that may drop a nonce, and turns every non-answer into an outage"]

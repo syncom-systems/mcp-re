@@ -1,0 +1,26 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_dependencies"
+  ],
+  "corrections": [
+    {
+      "field": "depends_on",
+      "id": "C1",
+      "old": "THM-0101 at sha256:f5f6b4e5c9fc4d13556e81e23ed6043f118c241a4ec00c52fce03d4113a9fb26",
+      "new": "THM-0101 at sha256:c33d5ec95df5f93b370dfc8c0e15e9b1b06023a441169c4b0ad86e06e0900c64",
+      "reason": "THM-0101, in this theorem's transitive dependency closure, gained the refusal route (#1277). Its stage-owned, assembly-owned and publication-tail clauses, which are what a composing theorem relies on, are byte-identical."
+    }
+  ],
+  "dependency_correction": "No edge added or removed; depends_on is unchanged. The dependency digest moved solely because THM-0101's claim digest moved.",
+  "from_fingerprint": "sha256:d5f490dbe84378272fb8afa20efcc9aa0f97b2033a94b126e84192de39d81614",
+  "packet": "verification/reviews/packets/thm-0101-refusal-route-2026-11-04.md",
+  "product_behavior_unchanged": true,
+  "reason": "DEPENDENCY PROPAGATION of the THM-0101 refusal-route correction. THM-0074's own statement, security_consequence, scope, severity, depends_on and review requirement are byte-identical to the reviewed text; its fingerprint moved only through THM-0101's claim digest.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18: a correction of a statement that misdescribes what production establishes, leaving the accepted promise intact, is not an owner escalation. Prepared on the owner's direction of 2026-11-04 to correct THM-0101 for the refusal route. A correction record is not an approval: it does not make the specification-review axis fresh, and release-mode establishment still asks for the owner, who decides whether the refusal-entry clause is precision or expansion.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0074",
+  "to_fingerprint": "sha256:4f1576d5881475663a5d80923f1fa94b0133d5797722ded9a44361c76fb4f273"
+}

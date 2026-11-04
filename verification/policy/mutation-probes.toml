@@ -14342,3 +14342,39 @@ weakening = """
 expect_red = [
   "//mcp-re-proxy:integration_async_test#intent_before_dispatch_test::required::an_uncertain_intent_identity_is_never_reused_by_the_next_exchange",
 ]
+
+[[probe]]
+id = "M629-proxy-a-refusal-entered-outside-the-disposition-is-detected"
+unit = "proxy.exchange_transition_ownership"
+theorem = "THM-0101"
+conjunct = "the refusal terminal is entered only by ExchangeProgress::refuse, called from the one function that derives a refusal's wire disposition"
+path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/mod.rs"
+anchor = """
+            progress.advance(ExchangeEvent::ContinuationNotRequired);
+            return Ok(());
+"""
+weakening = """
+            progress.advance(ExchangeEvent::ContinuationNotRequired);
+            progress.refuse();
+            return Ok(());
+"""
+expect_red = [
+  "//mcp-re-proxy:integration_test#exchange_transition_ownership_test::the_refusal_terminal_is_entered_only_by_refuse_from_the_disposition",
+]
+
+[[probe]]
+id = "M630-proxy-a-disposition-that-no-longer-refuses-is-detected"
+unit = "proxy.exchange_transition_ownership"
+theorem = "THM-0101"
+conjunct = "the refusal terminal is entered only by ExchangeProgress::refuse, called from the one function that derives a refusal's wire disposition"
+path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+anchor = """
+        p.refuse();
+        match (p.retry_semantics(), refined) {
+"""
+weakening = """
+        match (p.retry_semantics(), refined) {
+"""
+expect_red = [
+  "//mcp-re-proxy:integration_test#exchange_transition_ownership_test::the_refusal_terminal_is_entered_only_by_refuse_from_the_disposition",
+]

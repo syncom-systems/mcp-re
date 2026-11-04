@@ -5740,12 +5740,12 @@ depends_on = ["THM-0097"]
 
 [[theorem]]
 id = "THM-0101"
-title = "An emitted exchange transition corresponds to the work that justifies it, except the three the assembly owns and the success tail the publication owns"
+title = "An emitted exchange transition corresponds to the work that justifies it, except the three the assembly owns, the success tail the publication owns and the refusal terminal"
 statement = """
 For the serving assembly — `handle` and its region functions — and the exchange machine it
 drives:
 
-Every `ExchangeEvent` the machine learns of reaches it in one of exactly two ways. A
+Every `ExchangeEvent` the machine declares reaches it by exactly one of four routes. A
 STAGE-OWNED event travels inside an `Established<T>`: the carrier is constructed at the site
 the stage's work returned its product, has no public field and no reader other than
 `ExchangeProgress::establish` and, for the notification terminal's carrier,
@@ -5759,18 +5759,25 @@ stated that way is exactly the three inventoried with the reason no stage's succ
 each: `BackendDispatched`, `ContinuationRetired`, `ContinuationNotRequired`. The success tail —
 `EvidenceRetained`, then `TerminalResponseServed` or `OpenLegResponseServed` — is advanced only
 by `PublishPermit::publish`, after `may_publish` has checked the same tail, and the serving
-path advances none of them itself.
+path advances none of them itself. The REFUSAL terminal, `Refused`, is entered only by
+`ExchangeProgress::refuse`, which the crate calls at one site, `disposition`, where a
+refusal's retry contract is read from the machine: it states no stage's work, it is not one of
+the assembly's three, and which terminal it reaches, refused before the dispatch or failed
+after it, is the relation's answer and not the caller's.
 
-The two sets are disjoint: no event a stage establishes is also advanced by the serving path,
-so no stage's fact is stated twice or remembered beside the carrier. The assembly-owned set is
-measured in both directions — an advance naming an event outside the three, and a listed event
-the serving path no longer advances, are each a failing control — so a deleted assembly-owned
-`advance` is detected, not merely forbidden.
+The routes partition the events the machine declares: each event is on exactly one, so no
+stage's fact is stated twice or remembered beside the carrier, and no event reaches the machine
+by a route nothing measures. The assembly-owned set is measured in both directions — an advance
+naming an event outside the three, and a listed event the serving path no longer advances, are
+each a failing control — so a deleted assembly-owned `advance` is detected, not merely
+forbidden. The refusal entry is measured the same way: a refusal entered anywhere else in the
+crate, and a `disposition` that no longer refuses, are each a failing control.
 
-Legality is THM-0043's: every advance, by either route, is checked against the relation in
-every build and latches an anomaly when refused. What this theorem adds is that for the
-stage-owned events the machine's state implies the stage's product was obtained, and for the
-three it names, and only those, the correspondence rests on the assembly's own statement.
+Legality is THM-0043's: every advance, by any route, is checked against the relation in every
+build and latches an anomaly when refused. What this theorem adds is that for the stage-owned
+events the machine's state implies the stage's product was obtained, and for the three it
+names, and only those, the correspondence rests on the assembly's own statement. The refusal
+terminal carries no correspondence claim: what is claimed for it is its single entry.
 """
 security_consequence = """
 The machine's record of which stages ran is not a bookkeeping object procedural code remembers
@@ -5784,19 +5791,23 @@ exactly which three transitions to read by hand.
 direct_consequence_severity = "high"
 scope = """
 The serving assembly under `http_profile_serve/` and the carrier in `exchange_state.rs`,
-production halves only. The three assembly-owned transitions are EXCLUDED from the
+production halves only; the refusal entry is measured over the crate's production source
+outside the machine, because `refuse` is visible crate-wide. The three assembly-owned transitions are EXCLUDED from the
 correspondence claim: that the dispatch and the two continuation facts are stated at the right
 moment is the assembly's own statement, read by hand, and this theorem says only that those
 three are the whole residue and that removing one is detected. The publication tail's
 correspondence is the cross-machine invariant's (`exchange_publication`). Not stated: that a
 stage's work is correct (each stage's own theorem), that the relation is complete (THM-0043),
-or that a refusal carries the right disposition (THM-0081).
+that a refusal carries the right disposition (THM-0081), or that every refusal the serving
+path serves derives its disposition through `disposition` and so enters the terminal
+(refusal-site totality, THM-0081's evidence).
 
 `Established` is constructible anywhere in the crate; the claim is not that a wrong carrier is
 unconstructible but that every carrier in the serving path is built at its stage's success site
 (source-measured, listed in the packet) and that nothing but `establish` can open one, and
 nothing but `establish` and `ServedSuccess::tail` reads one (structural). Source-text evidence,
-recorded as evidence: deleting the battery leaves a reintroduced `advance` compiling. Class V0.
+recorded as evidence: deleting the battery leaves a reintroduced `advance` compiling, and a
+refusal entered through an alias or a macro is outside a source scan. Class V0.
 """
 owner = "proxy.exchange_transition_ownership"
 review_requirement = "Owner security-specification review"

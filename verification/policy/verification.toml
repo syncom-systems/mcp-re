@@ -4274,7 +4274,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.publish_permit_sole_producer"
 class = "V0"
-description = "`ExchangeProgress::may_publish` is the ONLY producer of a `PublishPermit` and `PublishPermit::publish` the only publication: the permit's fields are private to `exchange_state::publication`, it derives nothing and has no test constructor, so the serving path can neither publish a success without the permit its decision returned nor mint one; the permit holds the cleared exchange by `&mut` borrow and exposes it only by shared reference, so it cannot be pointed at another exchange, and the cleared exchange cannot change before `publish` consumes it. States nothing about WHICH successes `may_publish` clears, which is `proxy.exchange_publication`'s."
+description = "`ExchangeProgress::may_publish` is the ONLY producer of a `PublishPermit` and `PublishPermit::publish` the only publication: the permit's fields are private to `exchange_state::publication`, it derives nothing and has no test constructor, so the serving path can neither publish a success without the permit its decision returned nor mint one; the permit holds the cleared exchange by `&mut` borrow, so it cannot be pointed at another exchange and the cleared exchange cannot change while it lives; it gives the borrow back only through `withdraw(self)`, which consumes the permit, so nothing done through the returned `&mut` can then be published, and in tests through `exchange(&self)`, a shared borrow. States nothing about WHICH successes `may_publish` clears, which is `proxy.exchange_publication`'s."
 paths = ["mcp-re-proxy/src/exchange_state/publication.rs"]
 exported_contracts = []
 evidence_class = "structural"
@@ -4301,7 +4301,7 @@ evidence = [
 [[unit]]
 id = "proxy.exchange_transition_ownership"
 class = "V0"
-description = "How an exchange event reaches the machine: a stage-owned event travels only inside an Established<T> that nothing but establish() can open and that must be consumed; the assembly states exactly six named events by direct advance, each with its reason; the two sets are disjoint; and the six are measured in both directions, so a reintroduced advance beside a stage and a deleted assembly-owned advance are each a failing control."
+description = "How an exchange event reaches the machine, by exactly one of four routes for every event ExchangeEvent declares: a stage-owned event travels only inside an Established<T> that nothing but establish() can open and that must be consumed; the assembly states exactly three named events by direct advance, each with its reason, measured in both directions, so a reintroduced advance beside a stage and a deleted assembly-owned advance are each a failing control; the success tail is the events ServedSuccess::tail drives through PublishPermit::publish, which the serving path does not advance; and the refusal terminal is entered only by ExchangeProgress::refuse, which the crate calls at one site, the function that derives a refusal's wire disposition, so a refusal entered anywhere else, or that function no longer refusing, is a failing control."
 paths = [
   "mcp-re-proxy/src/http_profile_serve/**/*.rs",
   "mcp-re-proxy/src/exchange_state.rs",
@@ -4342,6 +4342,9 @@ tested_symbols = [
   # registered from NP-151, measure the correspondence it carries: a notification transmitted
   # with no answer earns a 504, never a 202, and one the backend received still earns its 202.
   "//mcp-re-proxy:integration_test#exchange_transition_ownership_test::the_202_terminal_is_entered_through_its_stage_s_carrier",
+  "//mcp-re-proxy:integration_test#exchange_transition_ownership_test::every_exchange_event_reaches_the_machine_by_exactly_one_route",
+  "//mcp-re-proxy:integration_test#exchange_transition_ownership_test::the_refusal_terminal_is_entered_only_by_refuse_from_the_disposition",
+  "//mcp-re-proxy:integration_test#exchange_transition_ownership_test::the_refusal_rule_would_catch_an_unauthorized_entry",
   "//mcp-re-proxy:integration_async_test#mrt_continuation_serving_test::a_notification_the_inner_plane_never_delivered_is_not_acknowledged",
   "//mcp-re-proxy:integration_async_test#mrt_continuation_serving_test::a_delivered_notification_is_still_acknowledged_with_a_202",
 ]
