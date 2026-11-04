@@ -199,6 +199,19 @@ def test_main_reports_absence_as_measurement_failure_and_not_as_success():
     assert "missing, red = adjudicate(probe, results)" in body
 
 
+def test_main_reports_a_skipped_control_as_measurement_failure_not_as_a_finding():
+    """The 2026-11-01 M213 case: the mTLS controls were skipped (no `cryptography` for the
+    material generator), and the lane said the conjunct was NOT load-bearing. A skipped
+    control did not run; the probe still fails, with the measurement named as the cause."""
+    import inspect
+
+    body = inspect.getsource(lane.main)
+    skip_arm = body.index('if not red and skipped:')
+    assert body.index('results.get(n) == "ignored"') < skip_arm
+    assert skip_arm < body.index("is NOT load-bearing")
+    assert "were reported SKIPPED" in body[skip_arm:body.index("is NOT load-bearing")]
+
+
 # --- test identity is TARGET plus symbol ---------------------------------------
 
 
@@ -931,6 +944,38 @@ _SHARD_PASS = "verify-mutations: PASS — 3 probe(s), each turning a declared co
 
 def test_a_composition_of_passing_shards_passes():
     assert _compose({"shard-0.log": _SHARD_PASS, "shard-1.log": _SHARD_PASS}, 2) == 0
+
+
+def test_unavailable_probes_are_named_apart_from_measured_passes():
+    """A shard that skipped SDK probes passes, but the composed verdict line must say which
+    probes were not measured, so the run cannot be read as complete."""
+    import contextlib
+    import io
+
+    shard = (
+        "  UNAVAILABLE M201: sdk_python matrix not built\n"
+        "  UNAVAILABLE M305: sdk_typescript matrix not built\n"
+        "verify-mutations: PASS — 4 probe(s), each turning a declared control red; "
+        "2 UNAVAILABLE in this environment (M201, M305). The umbrella run measures those.\n"
+        "VERDICT: PASS\n"
+    )
+    with tempfile.TemporaryDirectory() as scratch:
+        (Path(scratch) / "shard-0.log").write_text(shard)
+        (Path(scratch) / "shard-1.log").write_text(_SHARD_PASS)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            assert lane.compose(Path(scratch), 2) == 0
+    summary = [line for line in out.getvalue().splitlines() if line.startswith("verify-mutations:")]
+    assert summary == [
+        "verify-mutations: PASS — all 2 shard(s) stated PASS; "
+        "2 probe(s) UNAVAILABLE, not measured (M201, M305)"
+    ]
+
+
+def test_a_shard_that_measured_nothing_still_fails_the_composition():
+    """Every probe in the shard UNAVAILABLE is that shard's VERDICT: UNAVAILABLE."""
+    shard = "  UNAVAILABLE M201: sdk_python matrix not built\nVERDICT: UNAVAILABLE\n"
+    assert _compose({"shard-0.log": shard, "shard-1.log": _SHARD_PASS}, 2) == 1
 
 
 def test_a_shard_that_left_no_output_fails_the_composition():
