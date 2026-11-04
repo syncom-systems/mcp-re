@@ -45,17 +45,11 @@ const RAW_TIMEOUT_CALLS: &[&str] = &[".timeout_global(", ".timeout_per_call(", "
 /// builder in the same file.
 const DISPATCHES: &[&str] = &[".fetch()", ".fetch_with(", ".call()", ".send("];
 
-/// Strip `//` line comments so a doc comment NAMING the bound cannot satisfy a rule about
-/// calling it — the same trap `client_verifier_posture_test` guards against.
+/// The code of `source`, comments and literals blanked, so a doc comment NAMING the bound
+/// cannot satisfy a rule about calling it — the same trap `client_verifier_posture_test`
+/// guards against — and the `//` of a URL literal cannot hide a dispatch after it.
 fn code_only(source: &str) -> String {
-    source
-        .lines()
-        .map(|line| match line.find("//") {
-            Some(at) => &line[..at],
-            None => line,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    mcp_re_test_paths::rust_source::code_only(source)
 }
 
 /// The directory the named transports live in.
@@ -192,6 +186,15 @@ fn the_rules_would_catch_each_regression() {
         ),
         0,
         "a comment naming the call must not read as the call"
+    );
+
+    // A `//` inside a URL literal is the literal's, and must not hide a dispatch after it.
+    assert_eq!(
+        dispatch_count(&code_only(
+            "let r = a.post(\"https://sts.x/\").fetch_with(&b);"
+        )),
+        1,
+        "a dispatch after a URL literal must be seen"
     );
 
     // ureq's own deadline, set directly, is seen as one.

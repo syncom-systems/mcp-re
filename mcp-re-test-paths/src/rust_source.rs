@@ -154,9 +154,51 @@ pub fn production_half(source: &str) -> String {
     out
 }
 
+/// The CODE text of `source`: every string, raw string, character literal and comment
+/// blanked, one output line per input line.
+///
+/// A scan over it reads `//` inside a string literal as part of the literal, not as a
+/// comment, and reads nothing inside a comment or a literal as code. The lexical fact is
+/// [`BraceScan`]'s, the same one the region rule asks, so the two cannot disagree about
+/// what is code.
+#[must_use]
+pub fn code_only(source: &str) -> String {
+    let mut scan = BraceScan::new();
+    let mut out = String::with_capacity(source.len());
+    for line in source.lines() {
+        out.push_str(&scan.feed(line));
+        out.push('\n');
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_line_comment_inside_a_string_is_not_a_comment() {
+        let code = code_only(
+            "let s = \"a //b\"; let r = v.route; // v.audience\nlet t = r#\"x // y\"#; v.bind\n",
+        );
+        assert!(
+            code.contains("v.route"),
+            "the read after the literal was cut: {code}"
+        );
+        assert!(
+            code.contains("v.bind"),
+            "the read after the raw literal was cut: {code}"
+        );
+        assert!(
+            !code.contains("audience"),
+            "a comment survived as code: {code}"
+        );
+        assert!(
+            !code.contains("//"),
+            "a literal's `//` survived as code: {code}"
+        );
+        assert_eq!(code.lines().count(), 2, "the line structure is kept");
+    }
 
     #[test]
     fn a_trailing_test_module_does_not_end_the_scan() {

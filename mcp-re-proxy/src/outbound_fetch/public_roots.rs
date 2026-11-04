@@ -280,6 +280,33 @@ pub(super) mod tests {
         assert!(RootedConnector::public().config.is_some());
     }
 
+    /// ureq on its own speaks no TLS, so this connector is the only TLS an outbound agent has.
+    ///
+    /// An agent over ureq's default connector chain alone refuses an `https` URL as
+    /// `TlsRequired`. `RootedConnector` passes an already-TLS transport through, so were ureq
+    /// ever built with a TLS feature — a dependency enabling one through feature unification —
+    /// ureq's TLS would authenticate the server under its own roots and this connector would
+    /// never run. That agent would then attempt a handshake here and fail some other way.
+    #[test]
+    fn ureq_alone_speaks_no_tls() {
+        use ureq::unversioned::resolver::DefaultResolver;
+        use ureq::unversioned::transport::DefaultConnector;
+
+        let (_ca, leaf, key) = private_pki();
+        let port = serve(leaf, key);
+        let config = ureq::Agent::config_builder().proxy(None).build();
+        let agent =
+            ureq::Agent::with_parts(config, DefaultConnector::new(), DefaultResolver::default());
+        let refused = agent
+            .get(format!("https://localhost:{port}/"))
+            .call()
+            .expect_err("ureq alone has no TLS to speak");
+        assert!(
+            matches!(refused, ureq::Error::TlsRequired),
+            "ureq handled https itself: {refused:?}"
+        );
+    }
+
     /// A name a TLS server cannot carry is refused before the handshake begins.
     #[test]
     fn a_name_that_is_not_a_server_name_is_refused() {

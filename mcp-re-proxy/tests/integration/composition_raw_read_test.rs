@@ -84,25 +84,16 @@ const ORDINARY: &[(&str, &str)] = &[
     ),
 ];
 
-/// The production half of `source`, line comments dropped, with the whitespace around every
-/// `.` removed, so a read rustfmt splits across lines (`values\n    .bind`) reads as one.
+/// The CODE of the production half of `source`, with the whitespace around every `.`
+/// removed, so a read rustfmt splits across lines (`values\n    .bind`) reads as one.
 ///
-/// Comments go first: joining would otherwise read a sentence ending "these two values."
-/// above a `let` as a read of a field named `let`. A `//` starts a comment only at the start
-/// of a line or after whitespace, so the `//` of a URL in a string literal is not one.
+/// Comments and literals go first: joining would otherwise read a sentence ending "these two
+/// values." above a `let` as a read of a field named `let`. Which characters are code is
+/// [`mcp_re_test_paths::rust_source::code_only`]'s lexical answer, so a `//` inside a string
+/// literal is the literal's and does not hide a read after it on the same line.
 fn joined(source: &str) -> String {
     let production = mcp_re_test_paths::rust_source::production_half(source);
-    let code: String = production
-        .lines()
-        .map(|line| {
-            let comment = line
-                .match_indices("//")
-                .map(|(at, _)| at)
-                .find(|&at| at == 0 || line[..at].ends_with(char::is_whitespace));
-            comment.map_or(line, |at| &line[..at])
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let code = mcp_re_test_paths::rust_source::code_only(&production);
     let mut out = String::with_capacity(code.len());
     let mut after_dot = false;
     for c in code.chars() {
@@ -267,6 +258,13 @@ fn the_rule_would_catch_a_new_raw_read() {
              let n = 1; let u = \"https://x/y\"; let _ = values.route; }"
         ) == BTreeSet::from(["route".to_string()]),
         "a comment is not a read, and a URL in a string is not a comment"
+    );
+    assert!(
+        raw_reads(
+            "fn run(c: &V) { let values = c.config(); let s = \"a //b\"; let _ = values.audience; }"
+        )
+        .contains("audience"),
+        "a `//` inside a string literal is the literal's, and must not hide a read after it"
     );
     assert!(
         raw_reads("fn plan(c: &V) -> L { c.config().limits.tls_handshake_signing }")

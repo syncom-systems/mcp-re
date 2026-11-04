@@ -15588,3 +15588,11 @@ control = "src/lib.rs#async_fleet::cpu_placement::tests::a_restricted_mask_keeps
 decision = "new-proposition"
 proposition = "NP-292"
 recorded = "2026-11-03"
+
+[[disposition]]
+id = "CD-20611"
+project = "mcp-re-proxy"
+control = "src/lib.rs#outbound_fetch::public_roots::tests::ureq_alone_speaks_no_tls"
+decision = "new-proposition"
+proposition = "NP-290"
+recorded = "2026-11-05"
