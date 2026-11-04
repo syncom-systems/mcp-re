@@ -12357,7 +12357,9 @@ paths = [
   "mcp-re-proxy/src/config_state/validation/mod.rs",
   "mcp-re-proxy/src/config_state/validation/machine_violations.rs",
   "mcp-re-proxy/src/config_state/validation/recognition.rs",
+  "mcp-re-proxy/src/config_state/validation/refusable_machines.rs",
   "mcp-re-proxy/src/config_state/validation/residue.rs",
+  "mcp-re-proxy/src/config_state/validation/total_machines.rs",
   "mcp-re-proxy/src/config_state/request_target.rs",
   "mcp-re-proxy/src/config_state/trust_document.rs",
 ]

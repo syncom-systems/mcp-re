@@ -157,7 +157,7 @@ impl fmt::Debug for TlsTransport {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::net::{TcpListener, TcpStream};
 
     use rcgen::{
@@ -170,7 +170,7 @@ mod tests {
     use super::*;
 
     /// A CA outside every public root set, and a `localhost` leaf it signed.
-    fn private_pki() -> (
+    pub(in crate::outbound_fetch) fn private_pki() -> (
         CertificateDer<'static>,
         CertificateDer<'static>,
         PrivateKeyDer<'static>,
@@ -200,7 +200,7 @@ mod tests {
     }
 
     /// A loopback TLS server presenting `leaf`, answering one `ping` with `pong`.
-    fn serve(leaf: CertificateDer<'static>, key: PrivateKeyDer<'static>) -> u16 {
+    pub(in crate::outbound_fetch) fn serve(leaf: CertificateDer<'static>, key: PrivateKeyDer<'static>) -> u16 {
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let config = ServerConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()
