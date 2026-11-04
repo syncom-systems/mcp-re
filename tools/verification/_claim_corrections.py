@@ -325,10 +325,25 @@ def chain(
 ) -> tuple[bool, str]:
     """Whether `records` carry `reviewed_fingerprint` all the way to `current_fingerprint`.
 
-    Returns (accepted, reason). The chain must be TOTAL: every record for the subject
-    participates, because a record that names no link in the walk is a dead row, and a dead
-    row hides the next live one — the same rule the module-size and obligation registries
-    follow.
+    Returns (accepted, reason). Authority comes only from the WALK: the records reached by
+    following `from -> to` out of the fingerprint the review covers. A record off the walk
+    authorizes nothing.
+
+    Off the walk, a record is one of two things, and the walk decides which:
+
+        the walk reaches the tree   the record is SUPERSEDED history: a correction the
+                                    owner's later review replaced as the chain's start.
+                                    Deleting it would destroy the audit trail the register
+                                    exists to keep, and it cannot carry the claim anywhere,
+                                    because the claim is already carried. It is accepted
+                                    and counted in the reason.
+        the walk stops short        the record is a DEAD ROW: it may be the next live link
+                                    written against the wrong fingerprint, and it is
+                                    refused with the walk.
+
+    The second case is the one the totality rule exists for, and it is still refused. The
+    first used to be refused too, which made every re-reviewed claim with a correction
+    history fail the moment it moved again, its history unretirable.
     """
     if not records:
         return False, "no correction record"
@@ -354,16 +369,15 @@ def chain(
             f"{current_fingerprint[7:23]}: the claim moved again after the last recorded "
             f"correction"
         )
-    if len(walked) != len(records):
-        dead = sorted(
-            str(r["from_fingerprint"])[7:23] for r in records if r not in walked
-        )
+    if not walked:
         return False, (
-            f"{len(records) - len(walked)} correction record(s) are not on the chain "
-            f"(from {dead}). A record that authorizes no live transition is a dead row."
+            f"no correction record starts at the reviewed fingerprint "
+            f"{reviewed_fingerprint[7:23]}: every record is off the chain"
         )
     ids = [c["id"] for r in walked for c in r["corrections"]]
+    superseded = len(records) - len(walked)
     return True, (
         f"corrected under {walked[-1]['authority']} in {len(walked)} recorded step(s), "
         f"{len(ids)} correction(s): {', '.join(ids)}"
+        + (f"; {superseded} superseded record(s) off the chain" if superseded else "")
     )

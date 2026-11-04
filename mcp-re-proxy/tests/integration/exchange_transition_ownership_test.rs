@@ -83,6 +83,17 @@ const RELOCATED_TO_THE_OWNER: &[&str] = &[
     "OpenLegResponseServed",
 ];
 
+/// The one event that is no stage's, the assembly's or the publication's: the refusal terminal.
+///
+/// `Refused` states no work, so no `Established` carries it and it is not an assembly-owned
+/// advance: it is entered by `ExchangeProgress::refuse`, which the serving path calls in
+/// exactly one function, [`REFUSAL_ENTRY`], the one every refusal's wire disposition is
+/// derived through. Which terminal it reaches is the relation's answer, not the caller's.
+const REFUSAL: &str = "Refused";
+
+/// The one serving-path function that enters the refusal terminal.
+const REFUSAL_ENTRY: &str = "disposition";
+
 /// Every `ExchangeEvent::` variant named inside the balanced argument list of each `call`.
 ///
 /// Paren-matched rather than line-matched: rustfmt splits both forms across lines
@@ -163,6 +174,147 @@ fn serving_source() -> String {
         whole.push('\n');
     }
     whole
+}
+
+/// The crate's `src/` directory, reached from the serving anchor.
+fn crate_src() -> std::path::PathBuf {
+    let anchor = mcp_re_test_paths::resolve_runfile("MCP_RE_HTTP_PROFILE_SERVE_SRC");
+    anchor
+        .parent()
+        .and_then(|serve| serve.parent())
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| panic!("{anchor:?} is not under src/"))
+}
+
+/// The production half of one file under `src/`.
+fn production_of(relative: &str) -> String {
+    let path = crate_src().join(relative);
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+    production_half(&text)
+}
+
+/// Every production line of the crate outside the exchange machine itself.
+///
+/// The refusal route is measured crate-wide, not over the serving directory: `refuse` is
+/// `pub(crate)`, so a refusal entered from outside `http_profile_serve/` would be outside a
+/// directory-scoped scan and report a clean pass.
+fn crate_source_outside_the_machine() -> String {
+    let src = crate_src();
+    let machine = src.join("exchange_state");
+    let mut files = Vec::new();
+    collect_rust_files(&src, &mut files);
+    files.retain(|p| !p.starts_with(&machine) && *p != src.join("exchange_state.rs"));
+    files.sort();
+    assert!(
+        files.len() > 50,
+        "the crate walk found {} files under {src:?}: the runfiles glob no longer carries \
+         src/, and the refusal route would be measured over nothing",
+        files.len()
+    );
+    let mut whole = String::new();
+    for path in files {
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+        whole.push_str(&production_half(&text));
+        whole.push('\n');
+    }
+    whole
+}
+
+/// Every variant `ExchangeEvent` declares, from the production half of `exchange_state.rs`.
+fn declared_events(exchange_state: &str) -> BTreeSet<String> {
+    let start = exchange_state
+        .find("pub(crate) enum ExchangeEvent {")
+        .expect("ExchangeEvent is declared in exchange_state.rs");
+    let body = &exchange_state[start..];
+    let body = &body[body.find('{').map_or(0, |b| b + 1)..body.find("\n}").unwrap_or(body.len())];
+    body.lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with("//") && !l.starts_with('#'))
+        .filter_map(|l| l.strip_suffix(','))
+        .filter(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric()))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The events `ServedSuccess::tail` drives by name: the publication route.
+fn publication_tail(exchange_state: &str) -> BTreeSet<String> {
+    let start = exchange_state
+        .find("fn tail(&self)")
+        .expect("ServedSuccess::tail is declared in exchange_state.rs");
+    let body = &exchange_state[start..];
+    let body = &body[..body.find("\n    }\n").expect("tail closes")];
+    body.match_indices("E::")
+        .map(|(at, _)| {
+            body[at + 3..]
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric())
+                .collect::<String>()
+        })
+        .filter(|v| !v.is_empty())
+        .collect()
+}
+
+/// Each declared event that does not reach the machine by exactly one named route, and each
+/// route naming an event the machine does not declare.
+fn route_defects(declared: &BTreeSet<String>, routes: &[(&str, &BTreeSet<String>)]) -> Vec<String> {
+    let mut defects = Vec::new();
+    for event in declared {
+        let on: Vec<&str> = routes
+            .iter()
+            .filter(|(_, set)| set.contains(event))
+            .map(|(name, _)| *name)
+            .collect();
+        if on.len() != 1 {
+            defects.push(format!("{event} reaches the machine by {on:?}"));
+        }
+    }
+    for (name, set) in routes {
+        for unknown in set.difference(declared) {
+            defects.push(format!(
+                "route {name} names {unknown}, which ExchangeEvent lacks"
+            ));
+        }
+    }
+    defects
+}
+
+/// The function enclosing byte `at` of `source`: the identifier after the nearest `fn `.
+fn enclosing_fn(source: &str, at: usize) -> String {
+    let before = &source[..at];
+    let mut search = before.len();
+    while let Some(fn_at) = before[..search].rfind("fn ") {
+        let word_start = fn_at == 0
+            || !before[..fn_at]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+        if word_start {
+            return before[fn_at + 3..]
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+        }
+        search = fn_at;
+    }
+    String::from("<no function>")
+}
+
+/// The enclosing function of every site in `source` that enters the refusal terminal: a
+/// `.refuse()` call, a path to `ExchangeProgress::refuse`, or any naming of the `Refused`
+/// event, so a direct `advance(ExchangeEvent::Refused)` is an entry too. Sorted, with
+/// repeats, so a second entry in the same function is a second entry.
+fn refusal_entries(source: &str) -> Vec<String> {
+    let mut sites: Vec<String> = [
+        ".refuse()",
+        "ExchangeProgress::refuse",
+        "ExchangeEvent::Refused",
+    ]
+    .iter()
+    .flat_map(|pattern| source.match_indices(pattern).map(|(at, _)| at))
+    .map(|at| enclosing_fn(source, at))
+    .collect();
+    sites.sort();
+    sites
 }
 
 fn collect_rust_files(dir: &std::path::Path, into: &mut Vec<std::path::PathBuf>) {
@@ -257,6 +409,141 @@ fn the_202_terminal_is_entered_through_its_stage_s_carrier() {
         "no stage establishes `NotificationAcknowledged`: the 202 terminal no longer requires \
          the inner plane's observation that the message arrived. Stages establish {by_stages:?}"
     );
+}
+
+/// Every event the machine declares reaches it by exactly one route.
+///
+/// The routes are four: a stage's `Established`, the assembly's own `advance`, the
+/// publication tail `PublishPermit::publish` drives, and the refusal terminal. An event on
+/// none of them is an event no measured route accounts for; an event on two is a fact stated
+/// twice. The publication route is read from `ServedSuccess::tail` itself, so the relocated
+/// list cannot drift from what the permit actually drives.
+#[test]
+fn every_exchange_event_reaches_the_machine_by_exactly_one_route() {
+    let machine = production_of("exchange_state.rs");
+    let declared = declared_events(&machine);
+    assert!(
+        declared.len() > 10 && declared.contains(REFUSAL),
+        "the enum reader has stopped reading ExchangeEvent: {declared:?}"
+    );
+    let stage = events_named_in(&serving_source(), "Established::new(");
+    let assembly: BTreeSet<String> = ASSEMBLY_OWNED.iter().map(|(e, _)| e.to_string()).collect();
+    let tail = publication_tail(&machine);
+    let relocated: BTreeSet<String> = RELOCATED_TO_THE_OWNER
+        .iter()
+        .map(|e| e.to_string())
+        .collect();
+    assert_eq!(
+        tail, relocated,
+        "ServedSuccess::tail drives {tail:?}, and RELOCATED_TO_THE_OWNER names {relocated:?}"
+    );
+    let refusal = BTreeSet::from([REFUSAL.to_owned()]);
+    let defects = route_defects(
+        &declared,
+        &[
+            ("stage", &stage),
+            ("assembly", &assembly),
+            ("publication", &tail),
+            ("refusal", &refusal),
+        ],
+    );
+    assert!(defects.is_empty(), "{defects:#?}");
+}
+
+/// The refusal terminal is entered only by `ExchangeProgress::refuse`, and only from the
+/// function that derives a refusal's wire disposition.
+///
+/// `refuse` is the one production advance of `Refused`; outside the machine the crate
+/// enters it at exactly one site, in [`REFUSAL_ENTRY`]. A second `refuse()` — or an
+/// `advance(ExchangeEvent::Refused)` — anywhere in the crate is a refusal entered without the
+/// disposition the client is told, and fails here.
+#[test]
+fn the_refusal_terminal_is_entered_only_by_refuse_from_the_disposition() {
+    assert_eq!(
+        refusal_entries(&crate_source_outside_the_machine()),
+        vec![REFUSAL_ENTRY.to_owned()],
+        "the crate enters the refusal terminal outside `{REFUSAL_ENTRY}`, or no longer from it"
+    );
+    let publication = production_of("exchange_state/publication.rs");
+    assert_eq!(
+        events_named_in(&publication, ".advance("),
+        BTreeSet::from([REFUSAL.to_owned()]),
+        "publication.rs advances a named event other than the refusal"
+    );
+    assert_eq!(refusal_entries(&publication), vec!["refuse".to_owned()]);
+    assert!(
+        !events_named_in(&production_of("exchange_state.rs"), ".advance(").contains(REFUSAL),
+        "exchange_state.rs advances `Refused` by name beside `refuse`"
+    );
+}
+
+/// The refusal and route rules detect what they claim to.
+#[test]
+fn the_refusal_rule_would_catch_an_unauthorized_entry() {
+    let authorized = "fn disposition(p: &mut ExchangeProgress) {\n    p.refuse();\n}\n\
+                      fn other(&self) { self.responses.refuse(observer, point, refusal, owed); }";
+    assert_eq!(
+        refusal_entries(authorized),
+        vec![REFUSAL_ENTRY.to_owned()],
+        "the authorized entry is seen, and the receipt's `refuse(..)` is not an entry"
+    );
+    for (case, unauthorized) in [
+        (
+            "a second refuse() call",
+            "\nfn region(progress: &mut ExchangeProgress) {\n    progress.refuse();\n}",
+        ),
+        (
+            "a path call",
+            "\nfn region(p: &mut ExchangeProgress) { ExchangeProgress::refuse(p); }",
+        ),
+        (
+            "a direct advance",
+            "\nfn region(p: &mut ExchangeProgress) { p.advance(ExchangeEvent::Refused); }",
+        ),
+        (
+            "a second entry in the disposition",
+            "\nfn disposition(p: &mut ExchangeProgress) { p.refuse(); }",
+        ),
+    ] {
+        let source = format!("{authorized}{unauthorized}");
+        assert_ne!(
+            refusal_entries(&source),
+            vec![REFUSAL_ENTRY.to_owned()],
+            "{case} was not detected"
+        );
+    }
+
+    let set =
+        |events: &[&str]| -> BTreeSet<String> { events.iter().map(|e| e.to_string()).collect() };
+    let declared = set(&["A", "B", "Refused"]);
+    assert!(route_defects(
+        &declared,
+        &[("x", &set(&["A", "B"])), ("refusal", &set(&["Refused"]))]
+    )
+    .is_empty());
+    for (case, routes) in [
+        (
+            "an event on no route",
+            vec![("x", set(&["A"])), ("refusal", set(&["Refused"]))],
+        ),
+        (
+            "an event on two routes",
+            vec![("x", set(&["A", "B"])), ("refusal", set(&["Refused", "B"]))],
+        ),
+        (
+            "a route naming an undeclared event",
+            vec![("x", set(&["A", "B", "C"])), ("refusal", set(&["Refused"]))],
+        ),
+    ] {
+        let routes: Vec<(&str, &BTreeSet<String>)> = routes.iter().map(|(n, s)| (*n, s)).collect();
+        assert!(
+            !route_defects(&declared, &routes).is_empty(),
+            "{case} was not detected"
+        );
+    }
+    let enum_text =
+        "pub(crate) enum ExchangeEvent {\n    /// doc\n    A,\n    #[allow(x)]\n    B,\n}\n";
+    assert_eq!(declared_events(enum_text), set(&["A", "B"]));
 }
 
 /// The rule detects what it claims to.

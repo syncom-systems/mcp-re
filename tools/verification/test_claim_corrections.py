@@ -245,9 +245,19 @@ check(
     "a chain that does not END at the tree is refused",
     not chain([record()], A, C)[0],
 )
+superseded = chain([record(), record(from_fingerprint=C, to_fingerprint=A)], A, B)
 check(
-    "a record off the chain is a DEAD ROW and fails",
-    not chain([record(), record(from_fingerprint=C, to_fingerprint=A)], A, B)[0],
+    "a record off a chain that carries the review to the tree is SUPERSEDED history",
+    superseded[0] and "1 superseded record(s) off the chain" in superseded[1],
+    superseded[1],
+)
+check(
+    "a record off the chain is a DEAD ROW when the walk stops short: it rescues nothing",
+    not chain([record(), record(from_fingerprint=C, to_fingerprint=A)], A, C)[0],
+)
+check(
+    "records that are ALL off the chain carry nothing, even with the tree at the review",
+    not chain([record(from_fingerprint=C, to_fingerprint=B)], A, A)[0],
 )
 check("no record at all is refused", not chain([], A, B)[0])
 check(
