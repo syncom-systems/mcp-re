@@ -32,7 +32,7 @@ budget_report.rs` and `audit_sink/writer.rs` — while this gate was being speci
 target's `srcs`. It fired on the `signing_plane` split and was satisfied the moment the new
 files joined the Bazel list — which says nothing about `verification.toml`.
 
-`tools/verification/_manifest.py` raises when a declared path matches nothing, so a
+`tools/verification/_unit_rules.py` raises when a declared path matches nothing, so a
 DELETED path is caught. That check is one-directional: declared ⇒ exists. A file that
 quietly appears NEXT TO a declared one is invisible, because nothing walks from the file
 system back toward the declarations. This gate is the other direction:

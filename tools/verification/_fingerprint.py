@@ -638,6 +638,9 @@ LEAN_LANE_INPUTS = (
     "tools/verification/_manifest.py",
     # The admission primitives under that loader and under the premise registry's.
     "tools/verification/_record_rules.py",
+    # The V2/V3 class rules `selection(doc)` rests on: which selection keys a class must
+    # declare and that its evidence says so.
+    "tools/verification/_unit_rules.py",
     # Which premises the registry admits: a registered premise is what excuses an axiom, so
     # a loader that admits a malformed one widens what the lane accepts.
     "tools/verification/_assumptions.py",

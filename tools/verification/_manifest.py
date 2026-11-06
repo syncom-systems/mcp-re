@@ -28,13 +28,12 @@ from _ecosystems import unit_ecosystem
 from _ecosystems import unit_projects
 from _evidence_class import MEASUREMENT_KEYS
 from _lanes import claims
-from _evidence_class import class_problems
-from _evidence_class import severity_problem
 import _registries
 import _toolchains
 from _registries import REPO_ROOT
-import _tree
+from _edges import validate_edges
 from _record_rules import reject_unknown, require
+from _unit_rules import validate_proof_selection, validate_unit_identity
 from _registries import ManifestError
 
 VERIFICATION_TOML = _registries.path("verification")
@@ -45,25 +44,6 @@ TOOLCHAINS_LOCK_TOML = _toolchains.path()
 #: refusal below says a schema change alters what a fingerprint MEANS, so every standing
 #: attestation is invalidated by it and must be re-earned against the new fingerprints.
 SCHEMA_VERSION = 2
-
-#: Verification classes, ADR-MCPRE-059 §9.
-CLASSES = {"V0", "V1", "V2", "V3"}
-
-#: The classes as an ordered scale, so "past the class this boundary permits" is a
-#: comparison rather than a reading of the manifest by a human.
-CLASS_ORDER = {"V0": 0, "V1": 1, "V2": 2, "V3": 3}
-
-#: Typed edge kinds, ADR-MCPRE-059 §4. Collapsing these into one "depends on" relation is
-#: forbidden once invalidation is enforced, so the set is closed here.
-EDGE_KINDS = {
-    "COMPILE_DEPENDENCY",
-    "CONTRACT_CONSUMES",
-    "PROOF_DEPENDENCY",
-    "TEST_EVIDENCE",
-    "TRUSTS_ASSUMPTION",
-    "GENERATED_FROM",
-    "REVIEW_CONTEXT",
-}
 
 #: Freshness states, ADR-MCPRE-059 §5.
 STATES = {
@@ -118,7 +98,6 @@ _UNIT_KEYS = {
     "gate_controls",
     *MEASUREMENT_KEYS,
 }
-_EDGE_KEYS = {"kind", "from", "to", "contract", "sealed", "sealed_by", "rationale"}
 
 def _unit_packages(unit: dict) -> list[str]:
     """The projects the unit's declared paths live in, sorted.
@@ -252,82 +231,6 @@ def _validate_rust_test_packages(uwhere: str, unit: dict) -> None:
             )
 
 
-def validate_edges(
-    where: str, edges: list[dict], unit_ids: set[str], exports: dict[str, set[str]]
-) -> None:
-    """The admission rules for typed edges — ADR-MCPRE-059 §4.
-
-    Separate from `load_verification` because the rules below are a proposition about what
-    an edge kind MEANS, and a proposition whose only exercise is that the committed manifest
-    happens to satisfy it has never been shown to refuse anything.
-
-    The contract rule, and why it is stated for every contract edge rather than only for a
-    sealed one: `CONTRACT_CONSUMES` asserts a relation to the producer's PUBLISHED INTERFACE,
-    which is a stronger claim than "this consumer compiles against that producer". Nine edges
-    carried the kind while naming no contract, and none of their producers exported one — so
-    the graph said "contract relation" about nine compile-time dependencies, and
-    `consumed_contracts` had no relation to derive itself from. An edge that cannot name a
-    contract its own producer exports is a `COMPILE_DEPENDENCY`; the fix is never to invent
-    the contract.
-
-    `sealed` is an ADDITIONAL property of an already-valid contract relation — the claim that
-    the contract is the WHOLE of the consumer's reasoning — not what makes the relation a
-    contract relation. So an unsealed contract edge is legitimate, and the contract is
-    required either way.
-    """
-    for index, edge in enumerate(edges):
-        ewhere = f"{where} [[edge]] #{index}"
-        _validate_edge_shape(ewhere, edge, unit_ids)
-        if edge["kind"] == "CONTRACT_CONSUMES":
-            _validate_contract_relation(ewhere, edge, exports)
-        if edge.get("sealed"):
-            _validate_seal(ewhere, edge)
-
-
-def _validate_edge_shape(ewhere: str, edge: dict, unit_ids: set[str]) -> None:
-    """An edge has known keys, a closed kind, and endpoints that are declared units."""
-    reject_unknown(ewhere, edge, _EDGE_KEYS)
-    require(ewhere, edge, {"kind", "from", "to"})
-    if edge["kind"] not in EDGE_KINDS:
-        raise ManifestError(
-            f"{ewhere}: kind {edge['kind']!r} not one of {sorted(EDGE_KINDS)}"
-        )
-    for endpoint in ("from", "to"):
-        if edge[endpoint] not in unit_ids:
-            raise ManifestError(
-                f"{ewhere}: {endpoint} {edge[endpoint]!r} is not a declared unit"
-            )
-
-
-def _validate_contract_relation(
-    ewhere: str, edge: dict, exports: dict[str, set[str]]
-) -> None:
-    """A `CONTRACT_CONSUMES` edge names a contract its own producer exports."""
-    require(ewhere, edge, {"contract"})
-    # Exported by THIS edge's `from`, not by some unit somewhere. The previous check
-    # ran only under `sealed` and compared against the union of every unit's exports,
-    # so a seal could name a contract an unrelated unit published — a relation
-    # between two units justified by a third.
-    if edge["contract"] not in exports.get(edge["from"], set()):
-        raise ManifestError(
-            f"{ewhere}: CONTRACT_CONSUMES names contract {edge['contract']!r}, "
-            f"which {edge['from']!r} does not export. A contract edge is a relation "
-            f"to the PRODUCER's published interface; if this dependency is real but "
-            f"no such contract exists, it is a COMPILE_DEPENDENCY."
-        )
-
-
-def _validate_seal(ewhere: str, edge: dict) -> None:
-    """Only a contract edge may be sealed, and a seal says who sealed it and why."""
-    if edge["kind"] != "CONTRACT_CONSUMES":
-        raise ManifestError(
-            f"{ewhere}: only a CONTRACT_CONSUMES edge may be sealed. Sealing "
-            f"means source-only dirtiness stops at a proved unchanged contract, "
-            f"which is meaningless without a contract."
-        )
-    require(ewhere, edge, {"sealed_by", "rationale"})
-
-
 def _validate_header(where: str, doc: dict) -> None:
     """The document-level refusals: keys, schema version, and the fail-closed policy."""
     reject_unknown(where, doc, _VERIFICATION_TOP)
@@ -348,110 +251,6 @@ def _validate_header(where: str, doc: dict) -> None:
             f"{where}: unknown_is_dirty must be true. Turning it off is a policy change "
             f"that removes the fail-closed property the whole graph rests on; it cannot "
             f"be done by editing this field alone."
-        )
-
-
-def _validate_unit_identity(
-    uwhere: str, unit: dict, seen_ids: set[str], tree_checks: bool
-) -> None:
-    """The record's own identity: declared class, unique id, and paths that resolve.
-
-    Records `unit["id"]` in `seen_ids`, which is how a duplicate is caught across units.
-    """
-    _refuse_unadmitted_class(uwhere, unit)
-    if unit["id"] in seen_ids:
-        raise ManifestError(f"{uwhere}: duplicate unit id {unit['id']!r}")
-    seen_ids.add(unit["id"])
-    if tree_checks:
-        _require_paths_resolve(uwhere, unit)
-
-
-def _refuse_unadmitted_class(uwhere: str, unit: dict) -> None:
-    """The declared class is a known one that the record's own evidence satisfies."""
-    # ADR-MCPRE-068 §9.3, registry adequacy: declaring a class you do not satisfy is a
-    # lie and is fatal here, at load, before anything reads the unit. Every rule
-    # `class_problems` applies is computable from THIS record alone, which is what
-    # keeps it loader-stage; N1's falsifier obligation needs `effective_severity` from
-    # the assurance graph and activates in Phase 0E instead.
-    for problem in class_problems(uwhere, unit):
-        raise ManifestError(problem)
-    problem = severity_problem(uwhere, unit)
-    if problem is not None:
-        raise ManifestError(problem)
-    if unit["class"] not in CLASSES:
-        raise ManifestError(
-            f"{uwhere}: class {unit['class']!r} not one of {sorted(CLASSES)}"
-        )
-
-
-def _require_paths_resolve(uwhere: str, unit: dict) -> None:
-    """Every declared path names at least one file in the current tree."""
-    for declared in unit["paths"]:
-        if not _tree.current().files(declared):
-            raise ManifestError(
-                f"{uwhere}: path {declared!r} matches nothing. A unit whose source "
-                f"cannot be located has unknown provenance, which is dirty, not empty."
-            )
-
-
-def _require_extraction_selection(uwhere: str, unit: dict) -> None:
-    """A V2/V3 unit names what the extracted-model lane measures, and says so in `evidence`.
-
-    The extracted-model lane's two halves of the same argument, and they are separate
-    keys because they name different things in different languages: which RUST items
-    Charon starts from, and which LEAN theorems the prover is asked about. Deriving
-    either from the other would be a guess about a name mangling that Aeneas owns.
-
-    Kept apart from `proved_symbols` deliberately. That key is the Verus lane's, and a
-    V3 unit claims BOTH lanes — one key read by two provers with two naming schemes is
-    a key that means whichever the reader assumed.
-    """
-    for key, what in (
-        ("extracted_symbols", "the Rust items the model is extracted from"),
-        ("lean_theorems", "the Lean theorems the prover is asked about"),
-    ):
-        if not unit.get(key):
-            raise ManifestError(
-                f"{uwhere}: class {unit['class']} requires `{key}` — {what}. A "
-                f"unit claiming extracted-model evidence with an empty selection "
-                f"asks the lane to measure nothing, and nothing measured passes."
-            )
-    # AND IT MUST SAY SO IN ITS EVIDENCE. Two authorities read "what does this unit
-    # require": `_evidence.required_lanes` derives it from the declared URIs, and the
-    # aggregate's requirement set derives it from the class. They agree only while
-    # every V2/V3 unit declares `lean://` — and nothing made it. A unit with the
-    # selection keys above and no `lean://` entry would be ISSUED an attestation on
-    # its test battery alone while claiming extracted-model evidence, because the
-    # issuer would see no lean lane to check.
-    if not claims(unit, "lean"):
-        raise ManifestError(
-            f"{uwhere}: class {unit['class']} declares an extraction selection but "
-            f"no `lean://` evidence entry. The class says the Lean lane must "
-            f"measure this unit and the evidence list is where a unit says which "
-            f"lanes are asked about it, so the two must agree — otherwise the "
-            f"issuer checks a lane the class requires and the manifest never named."
-        )
-
-
-def _validate_proof_selection(uwhere: str, unit: dict) -> None:
-    """What each proof class must name, and that no class names what no lane reads."""
-    # A V1/V3 unit must name the symbols its proof is about. Without that the lane can
-    # only ask "did this crate verify something", and deleting one of two
-    # specifications leaves the other to answer yes — coverage silently halves while
-    # the gate stays green. Naming them turns a deleted theorem into a lane failure.
-    if unit["class"] in {"V1", "V3"} and not unit.get("proved_symbols"):
-        raise ManifestError(
-            f"{uwhere}: class {unit['class']} requires `proved_symbols`. A unit that "
-            f"claims formal evidence must name the symbols proved, or nothing "
-            f"distinguishes a deleted specification from a passing one."
-        )
-    if unit["class"] in {"V2", "V3"}:
-        _require_extraction_selection(uwhere, unit)
-    elif unit.get("extracted_symbols") or unit.get("lean_theorems"):
-        raise ManifestError(
-            f"{uwhere}: declares extraction selection but is class {unit['class']}, so "
-            f"no lane reads it. A selection nothing consumes is a declaration that "
-            f"reads as coverage and measures nothing."
         )
 
 
@@ -512,8 +311,8 @@ def _validate_unit(uwhere: str, unit: dict, seen_ids: set[str], tree_checks: boo
     """Every admission rule one `[[unit]]` record owes, in the order they are checked."""
     reject_unknown(uwhere, unit, _UNIT_KEYS)
     require(uwhere, unit, {"id", "class", "paths"})
-    _validate_unit_identity(uwhere, unit, seen_ids, tree_checks)
-    _validate_proof_selection(uwhere, unit)
+    validate_unit_identity(uwhere, unit, seen_ids, tree_checks)
+    validate_proof_selection(uwhere, unit)
     _validate_test_battery(uwhere, unit)
     if tree_checks:
         _validate_gate_controls(uwhere, unit)

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from _manifest import CLASSES
+from _unit_rules import CLASSES
 from _record_rules import reject_unknown, require
 from _registries import ManifestError
 import _record_rules

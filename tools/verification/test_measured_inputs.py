@@ -333,6 +333,7 @@ def test_the_extraction_lane_instruments_are_part_of_the_evidence_identity():
         "tools/verification/_extraction_identity.py",
         "tools/verification/_manifest.py",
         "tools/verification/_record_rules.py",
+        "tools/verification/_unit_rules.py",
         "tools/verification/_assumptions.py",
         "tools/verification/_toolchain_lock.py",
         # Which tiers the lane covers and which scheme claims it: the lane catalogue.

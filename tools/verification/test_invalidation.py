@@ -31,7 +31,8 @@ from _graph import (  # noqa: E402
     STRUCTURAL_COMPONENT,
     UNRESOLVED_COMPONENT,
 )
-from _manifest import ManifestError, validate_edges  # noqa: E402
+from _manifest import ManifestError  # noqa: E402
+from _edges import validate_edges  # noqa: E402
 
 COMPONENTS = {
     "source_inputs": {"a.rs": "sha256:aaa"},

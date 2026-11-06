@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from _ecosystems import unit_projects
-from _manifest import CLASS_ORDER
+from _unit_rules import CLASS_ORDER
 from _registries import REPO_ROOT
 from _seams import files_with_seams
 import _rust_targets

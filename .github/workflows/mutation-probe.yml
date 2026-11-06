@@ -58,6 +58,8 @@ on:
       - "tools/verification/_boundary_crossings.py"
       - "tools/verification/_toolchain_lock.py"
       - "tools/verification/_verdict.py"
+      - "tools/verification/_unit_rules.py"
+      - "tools/verification/_edges.py"
       - ".github/workflows/mutation-probe.yml"
       - "docs/architecture/components/evidence-verification.md"
       - "mcp-re-http-profile/src/**"
