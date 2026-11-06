@@ -1376,7 +1376,10 @@ nt_rust_test(
 # fail-closed control — an exchange whose evidence cannot be kept is refused.
 nt_rust_test(
     name = "integration_async_test",
-    srcs = glob(["tests/integration_async/*.rs"]) + [
+    srcs = glob([
+        "tests/integration_async/*.rs",
+        "tests/integration_async/*/*.rs",
+    ]) + [
         # `main.rs` reaches the shared helpers via `#[path = "../common/mod.rs"]`.
         "tests/common/mod.rs",
     ],
@@ -1431,7 +1434,10 @@ nt_rust_test(
 # the in-memory lanes run.
 nt_rust_test(
     name = "integration_async_ext_test",
-    srcs = glob(["tests/integration_async/*.rs"]) + [
+    srcs = glob([
+        "tests/integration_async/*.rs",
+        "tests/integration_async/*/*.rs",
+    ]) + [
         # `main.rs` reaches the shared helpers in tests/common/mod.rs.
         "tests/common/mod.rs",
     ],
