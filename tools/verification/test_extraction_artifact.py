@@ -216,18 +216,19 @@ def test_the_loader_refuses_a_lock_that_records_no_preserved_bytes():
     """Every caller of `load_toolchains` inherits the refusal, so no script has to remember
     to ask — the same wiring `identity_problems` has."""
     import _manifest
+    import _toolchain_lock
 
-    original = _manifest.artifact_record_problems
+    original = _toolchain_lock.artifact_record_problems
     try:
-        _manifest.artifact_record_problems = lambda _doc: ["synthetic missing archive"]
+        _toolchain_lock.artifact_record_problems = lambda _doc: ["synthetic missing archive"]
         try:
-            _manifest.load_toolchains()
+            _toolchain_lock.load_toolchains()
         except _manifest.ManifestError as exc:
             assert "synthetic missing archive" in str(exc)
         else:
             raise AssertionError("load_toolchains returned a lock it should have refused")
     finally:
-        _manifest.artifact_record_problems = original
+        _toolchain_lock.artifact_record_problems = original
 
 
 def test_verify_says_nothing_on_stdout():

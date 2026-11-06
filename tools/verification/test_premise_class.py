@@ -33,14 +33,13 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from _manifest import (  # noqa: E402
+from _manifest import ManifestError, load_verification  # noqa: E402
+from _assumptions import (  # noqa: E402
     ASSUMPTIONS_SCHEMA_VERSION,
     ASSUMPTIONS_TOML,
-    ManifestError,
     load_assumptions,
-    load_toolchains,
-    load_verification,
 )
+from _toolchain_lock import load_toolchains  # noqa: E402
 from _premise import (  # noqa: E402
     EVENT_KINDS,
     MODEL_REGISTRATION,

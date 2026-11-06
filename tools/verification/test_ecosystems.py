@@ -40,12 +40,9 @@ from _ecosystems import (  # noqa: E402
     valid_target,
 )
 from _fingerprint import fingerprint_unit  # noqa: E402
-from _manifest import (  # noqa: E402
-    SCHEMA_VERSION,
-    load_assumptions,
-    load_toolchains,
-    load_verification,
-)
+from _manifest import SCHEMA_VERSION, load_verification  # noqa: E402
+from _assumptions import load_assumptions  # noqa: E402
+from _toolchain_lock import load_toolchains  # noqa: E402
 
 DOC = load_verification()
 TOOLCHAINS = load_toolchains()

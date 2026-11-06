@@ -19,7 +19,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _load_tool import load_tool  # noqa: E402
-from _manifest import load_toolchains, load_verification, unpinned_identities  # noqa: E402
+from _manifest import load_verification  # noqa: E402
+from _toolchain_lock import load_toolchains, unpinned_identities  # noqa: E402
 from _verus_results import evaluate_unit, parse_reports  # noqa: E402
 
 LANE = load_tool("verify-verus")

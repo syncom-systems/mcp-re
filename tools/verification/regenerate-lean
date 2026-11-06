@@ -75,13 +75,8 @@ from _lean_model import (  # noqa: E402
     extraction_identity,
     write_stamp,
 )
-from _manifest import (  # noqa: E402
-    REPO_ROOT,
-    ManifestError,
-    load_toolchains,
-    load_verification,
-    unpinned_identities,
-)
+from _manifest import REPO_ROOT, ManifestError, load_verification  # noqa: E402
+from _toolchain_lock import load_toolchains, unpinned_identities  # noqa: E402
 
 REQUIRED = {"charon", "aeneas", "lean", "aeneas_lean_backend", "extraction_container", "bazelisk"}
 

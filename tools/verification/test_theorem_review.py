@@ -39,11 +39,9 @@ from _fingerprint import (  # noqa: E402
     theorem_premises,
     theorem_review_digests,
 )
-from _manifest import (  # noqa: E402
-    load_assumptions,
-    load_toolchains,
-    load_verification,
-)
+from _manifest import load_verification  # noqa: E402
+from _assumptions import load_assumptions  # noqa: E402
+from _toolchain_lock import load_toolchains  # noqa: E402
 from _review import (  # noqa: E402
     CAUSE_PRECEDENCE,
     COMPLETE,

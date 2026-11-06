@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import _lean_model  # noqa: E402
-from _manifest import load_toolchains  # noqa: E402
+from _toolchain_lock import load_toolchains  # noqa: E402
 from _lean_model import (  # noqa: E402
     STAMP_FAIL,
     STAMP_OK,

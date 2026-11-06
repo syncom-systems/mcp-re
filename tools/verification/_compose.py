@@ -56,7 +56,7 @@ from _evidence import EvidenceRecord, load_records
 from _fingerprint import fingerprint_unit
 from _lanes import EXTRACTION_LANES, FORMAL
 from _lanes import required as lane_required
-from _manifest import aggregate_verdict
+from _verdict import aggregate_verdict
 
 #: The lanes that produce per-unit evidence. Which tiers each applies to, which phase runs
 #: it and which URI requires it are the lane catalogue's rows (`_lanes`).

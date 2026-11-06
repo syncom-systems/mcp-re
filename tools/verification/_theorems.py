@@ -39,7 +39,8 @@ from __future__ import annotations
 import re
 
 import _registries
-from _manifest import SCHEMA_VERSION, ManifestError, reject_unknown, require
+from _manifest import SCHEMA_VERSION, ManifestError
+from _record_rules import reject_unknown, require
 from _evidence_class import severity_problem
 
 

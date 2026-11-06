@@ -61,7 +61,8 @@ from _extraction_artifact import (  # noqa: E402
 )
 from _extraction_identity import content_tag  # noqa: E402
 from _extraction_identity import definition_digest  # noqa: E402
-from _manifest import ManifestError, load_toolchains  # noqa: E402
+from _manifest import ManifestError  # noqa: E402
+from _toolchain_lock import load_toolchains  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent.parent
 DOCKERFILE = REPO / "verification" / "extraction" / "Dockerfile"

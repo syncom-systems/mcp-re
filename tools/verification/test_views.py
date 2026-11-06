@@ -31,11 +31,9 @@ sys.path.insert(0, str(HERE))
 
 from _load_tool import load_tool  # noqa: E402
 
-from _manifest import (  # noqa: E402
-    load_assumptions,
-    load_trust_boundaries,
-    load_verification,
-)
+from _manifest import load_verification  # noqa: E402
+from _assumptions import load_assumptions  # noqa: E402
+from _trust_boundaries import load_trust_boundaries  # noqa: E402
 from _theorems import load_theorems  # noqa: E402
 from _views import GENERATED_ROOT, render_all  # noqa: E402
 

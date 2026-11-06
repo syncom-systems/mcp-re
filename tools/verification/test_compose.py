@@ -145,15 +145,16 @@ def _validated(unit: dict):
     document is the repository's own, so the unit is judged in the world it would live in.
     """
     import _manifest
+    import _record_rules
 
     doc = _manifest.load_verification()
     doc = {**doc, "unit": [*doc.get("unit", []), unit]}
-    original = _manifest._load
+    original = _record_rules.load_registry
     try:
-        _manifest._load = lambda _path: doc
+        _record_rules.load_registry = lambda _path: doc
         return _manifest.load_verification()
     finally:
-        _manifest._load = original
+        _record_rules.load_registry = original
 
 
 def _v2_unit(**overrides) -> dict:

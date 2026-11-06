@@ -13,7 +13,7 @@ fingerprint components draw, expressed in the module layout.
 
 from __future__ import annotations
 
-from _manifest import unit_assumptions
+from _assumption_scope import unit_assumptions
 from _view_format import header, one_line, table
 
 
