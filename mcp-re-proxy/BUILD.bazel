@@ -1495,7 +1495,7 @@ nt_rust_test(
 # `redis_replay` build that flavor carries.
 nt_rust_test(
     name = "tls_load_harness_bench",
-    srcs = ["tests/tls_load_harness_bench.rs"],
+    srcs = ["tests/tls_load_harness_bench.rs"] + glob(["tests/tls_load_harness_bench/*.rs"]),
     crate_features = _PROXY_DEPLOY_FEATURES,
     tags = ["manual"],
     data = [

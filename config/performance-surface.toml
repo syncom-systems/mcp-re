@@ -76,6 +76,11 @@ build_configuration = [
 # measured and what counts as passing.
 harness = [
   "mcp-re-proxy/tests/tls_load_harness_bench.rs",
+  "mcp-re-proxy/tests/tls_load_harness_bench/acceptance.rs",
+  "mcp-re-proxy/tests/tls_load_harness_bench/client.rs",
+  "mcp-re-proxy/tests/tls_load_harness_bench/infra.rs",
+  "mcp-re-proxy/tests/tls_load_harness_bench/load.rs",
+  "mcp-re-proxy/tests/tls_load_harness_bench/pki.rs",
   "scripts/local_slo_lane.sh",
   "scripts/adr051_slo_gate.py",
   "scripts/slo_gate.py",

@@ -9921,7 +9921,12 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/tests/tls_load_harness_bench.rs",
    "srcs": [
-    "mcp-re-proxy/tests/tls_load_harness_bench.rs"
+    "mcp-re-proxy/tests/tls_load_harness_bench.rs",
+    "mcp-re-proxy/tests/tls_load_harness_bench/acceptance.rs",
+    "mcp-re-proxy/tests/tls_load_harness_bench/client.rs",
+    "mcp-re-proxy/tests/tls_load_harness_bench/infra.rs",
+    "mcp-re-proxy/tests/tls_load_harness_bench/load.rs",
+    "mcp-re-proxy/tests/tls_load_harness_bench/pki.rs"
    ],
    "testonly": true,
    "verus_deps": []
