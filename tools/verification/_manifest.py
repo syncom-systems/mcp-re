@@ -21,6 +21,7 @@ from _extraction_artifact import record_problems as artifact_record_problems
 from _extraction_identity import identity_problems
 from _seams import files_with_seams
 from _ecosystems import RUST
+from _ecosystems import Ecosystem
 from _ecosystems import test_project_for
 from _ecosystems import valid_target
 import _module_tree
@@ -497,15 +498,8 @@ def validate_edges(
             require(ewhere, edge, {"sealed_by", "rationale"})
 
 
-def load_verification(*, tree_checks: bool = True) -> dict:
-    """Load and validate `verification/policy/verification.toml`.
-
-    `tree_checks=False` validates the DOCUMENT only: what each declared path, gate control
-    and in-crate selector resolves to is a question about a checkout, and a caller measuring
-    a commit it does not check out has no checkout that commit describes.
-    """
-    doc = _load(VERIFICATION_TOML)
-    where = "verification.toml"
+def _validate_header(where: str, doc: dict) -> None:
+    """The document-level refusals: keys, schema version, and the fail-closed policy."""
     reject_unknown(where, doc, _VERIFICATION_TOP)
     require(
         where,
@@ -526,138 +520,186 @@ def load_verification(*, tree_checks: bool = True) -> dict:
             f"be done by editing this field alone."
         )
 
+
+def _validate_unit_identity(
+    uwhere: str, unit: dict, seen_ids: set[str], tree_checks: bool
+) -> None:
+    """The record's own identity: declared class, unique id, and paths that resolve.
+
+    Records `unit["id"]` in `seen_ids`, which is how a duplicate is caught across units.
+    """
+    # ADR-MCPRE-068 §9.3, registry adequacy: declaring a class you do not satisfy is a
+    # lie and is fatal here, at load, before anything reads the unit. Every rule
+    # `class_problems` applies is computable from THIS record alone, which is what
+    # keeps it loader-stage; N1's falsifier obligation needs `effective_severity` from
+    # the assurance graph and activates in Phase 0E instead.
+    for problem in class_problems(uwhere, unit):
+        raise ManifestError(problem)
+    problem = severity_problem(uwhere, unit)
+    if problem is not None:
+        raise ManifestError(problem)
+    if unit["class"] not in CLASSES:
+        raise ManifestError(
+            f"{uwhere}: class {unit['class']!r} not one of {sorted(CLASSES)}"
+        )
+    if unit["id"] in seen_ids:
+        raise ManifestError(f"{uwhere}: duplicate unit id {unit['id']!r}")
+    seen_ids.add(unit["id"])
+    for declared in unit["paths"] if tree_checks else ():
+        if not _tree.current().files(declared):
+            raise ManifestError(
+                f"{uwhere}: path {declared!r} matches nothing. A unit whose source "
+                f"cannot be located has unknown provenance, which is dirty, not empty."
+            )
+
+
+def _require_extraction_selection(uwhere: str, unit: dict) -> None:
+    """A V2/V3 unit names what the extracted-model lane measures, and says so in `evidence`.
+
+    The extracted-model lane's two halves of the same argument, and they are separate
+    keys because they name different things in different languages: which RUST items
+    Charon starts from, and which LEAN theorems the prover is asked about. Deriving
+    either from the other would be a guess about a name mangling that Aeneas owns.
+
+    Kept apart from `proved_symbols` deliberately. That key is the Verus lane's, and a
+    V3 unit claims BOTH lanes — one key read by two provers with two naming schemes is
+    a key that means whichever the reader assumed.
+    """
+    for key, what in (
+        ("extracted_symbols", "the Rust items the model is extracted from"),
+        ("lean_theorems", "the Lean theorems the prover is asked about"),
+    ):
+        if not unit.get(key):
+            raise ManifestError(
+                f"{uwhere}: class {unit['class']} requires `{key}` — {what}. A "
+                f"unit claiming extracted-model evidence with an empty selection "
+                f"asks the lane to measure nothing, and nothing measured passes."
+            )
+    # AND IT MUST SAY SO IN ITS EVIDENCE. Two authorities read "what does this unit
+    # require": `_evidence.required_lanes` derives it from the declared URIs, and the
+    # aggregate's requirement set derives it from the class. They agree only while
+    # every V2/V3 unit declares `lean://` — and nothing made it. A unit with the
+    # selection keys above and no `lean://` entry would be ISSUED an attestation on
+    # its test battery alone while claiming extracted-model evidence, because the
+    # issuer would see no lean lane to check.
+    if not claims(unit, "lean"):
+        raise ManifestError(
+            f"{uwhere}: class {unit['class']} declares an extraction selection but "
+            f"no `lean://` evidence entry. The class says the Lean lane must "
+            f"measure this unit and the evidence list is where a unit says which "
+            f"lanes are asked about it, so the two must agree — otherwise the "
+            f"issuer checks a lane the class requires and the manifest never named."
+        )
+
+
+def _validate_proof_selection(uwhere: str, unit: dict) -> None:
+    """What each proof class must name, and that no class names what no lane reads."""
+    # A V1/V3 unit must name the symbols its proof is about. Without that the lane can
+    # only ask "did this crate verify something", and deleting one of two
+    # specifications leaves the other to answer yes — coverage silently halves while
+    # the gate stays green. Naming them turns a deleted theorem into a lane failure.
+    if unit["class"] in {"V1", "V3"} and not unit.get("proved_symbols"):
+        raise ManifestError(
+            f"{uwhere}: class {unit['class']} requires `proved_symbols`. A unit that "
+            f"claims formal evidence must name the symbols proved, or nothing "
+            f"distinguishes a deleted specification from a passing one."
+        )
+    if unit["class"] in {"V2", "V3"}:
+        _require_extraction_selection(uwhere, unit)
+    elif unit.get("extracted_symbols") or unit.get("lean_theorems"):
+        raise ManifestError(
+            f"{uwhere}: declares extraction selection but is class {unit['class']}, so "
+            f"no lane reads it. A selection nothing consumes is a declaration that "
+            f"reads as coverage and measures nothing."
+        )
+
+
+def _require_runnable_target(uwhere: str, symbol: object, eco: Ecosystem | None) -> None:
+    """A `tested_symbol` names a target its unit's ecosystem can run, and a path inside it."""
+    target, _, path = str(symbol).partition("#")
+    # The target is required, not defaulted: a defaulted target lets a test
+    # that moved between the lib and an integration target keep reporting under
+    # the one it left.
+    # WHICH targets exist is the ecosystem's answer (issue #745): a Rust
+    # selector names a Bazel test target in the build graph, while a pytest or
+    # vitest battery has the one target that says which runner reads the
+    # selector. A unit whose paths name no single ecosystem has no runnable
+    # target at all, which is the same refusal for a different reason.
+    if not path or eco is None or not valid_target(eco, target):
+        raise ManifestError(
+            f"{uwhere}: tested_symbol {symbol!r} names no runnable "
+            f"{eco.name if eco else '<unresolved ecosystem>'} target; "
+            f"rust takes `//pkg:test_target#path::to::test`, a Bazel "
+            f"`rust_test` or `rust_doc_test`; python takes "
+            f"`pytest#tests/file.py::name`; typescript takes "
+            f"`vitest#test/file.test.ts > suite > name`"
+        )
+
+
+def _validate_test_battery(uwhere: str, unit: dict) -> None:
+    """`test://` evidence and `tested_symbols` agree, and every member is runnable."""
+    # The same argument one class down. A `test://` URI names a battery, and a battery
+    # with no declared members is a description: the lane would have nothing to select,
+    # and "the tests passed" would mean "no test was asked for".
+    if claims(unit, "test"):
+        if not unit.get("tested_symbols"):
+            raise ManifestError(
+                f"{uwhere}: declares test:// evidence but no `tested_symbols`. A "
+                f"battery with no named members cannot be run, and an unrunnable "
+                f"claim is not evidence."
+            )
+        eco = unit_ecosystem(unit)
+        for symbol in unit["tested_symbols"]:
+            _require_runnable_target(uwhere, symbol, eco)
+    elif unit.get("tested_symbols"):
+        # Declared members with no `test://` URI claiming them would run a battery
+        # whose result no evidence entry reads — measurement nothing consumes.
+        raise ManifestError(
+            f"{uwhere}: declares `tested_symbols` but no test:// evidence entry "
+            f"claims them, so nothing consumes what the lane would measure."
+        )
+
+
+def _validate_unit(uwhere: str, unit: dict, seen_ids: set[str], tree_checks: bool) -> None:
+    """Every admission rule one `[[unit]]` record owes, in the order they are checked."""
+    reject_unknown(uwhere, unit, _UNIT_KEYS)
+    require(uwhere, unit, {"id", "class", "paths"})
+    _validate_unit_identity(uwhere, unit, seen_ids, tree_checks)
+    _validate_proof_selection(uwhere, unit)
+    _validate_test_battery(uwhere, unit)
+    if tree_checks:
+        _validate_gate_controls(uwhere, unit)
+        _validate_rust_test_packages(uwhere, unit)
+        _validate_in_crate_selectors(uwhere, unit)
+    # `mutation://` is a claim about a NEGATIVE battery, which only exists on top of a
+    # positive one: the probes' `expect_red` names members of `tested_symbols`. A unit
+    # claiming mutation evidence without test evidence would declare controls that are
+    # not evidence for anything.
+    if claims(unit, "mutation") and not claims(unit, "test"):
+        raise ManifestError(
+            f"{uwhere}: declares mutation:// evidence without test:// evidence. A "
+            f"mutation probe asserts that a DECLARED control goes red; with no "
+            f"declared battery there is nothing for it to name."
+        )
+
+
+def load_verification(*, tree_checks: bool = True) -> dict:
+    """Load and validate `verification/policy/verification.toml`.
+
+    `tree_checks=False` validates the DOCUMENT only: what each declared path, gate control
+    and in-crate selector resolves to is a question about a checkout, and a caller measuring
+    a commit it does not check out has no checkout that commit describes.
+    """
+    doc = _load(VERIFICATION_TOML)
+    where = "verification.toml"
+    _validate_header(where, doc)
+
     seen_ids: set[str] = set()
     #: What each unit exports, BY unit id. A flat set would answer "somebody exports this",
     #: and the question a contract edge asks is "does THIS producer export it".
     exports: dict[str, set[str]] = {}
     for index, unit in enumerate(doc.get("unit", [])):
-        uwhere = f"{where} [[unit]] #{index}"
-        reject_unknown(uwhere, unit, _UNIT_KEYS)
-        require(uwhere, unit, {"id", "class", "paths"})
-        # ADR-MCPRE-068 §9.3, registry adequacy: declaring a class you do not satisfy is a
-        # lie and is fatal here, at load, before anything reads the unit. Every rule
-        # `class_problems` applies is computable from THIS record alone, which is what
-        # keeps it loader-stage; N1's falsifier obligation needs `effective_severity` from
-        # the assurance graph and activates in Phase 0E instead.
-        for problem in class_problems(uwhere, unit):
-            raise ManifestError(problem)
-        problem = severity_problem(uwhere, unit)
-        if problem is not None:
-            raise ManifestError(problem)
-        if unit["class"] not in CLASSES:
-            raise ManifestError(
-                f"{uwhere}: class {unit['class']!r} not one of {sorted(CLASSES)}"
-            )
-        if unit["id"] in seen_ids:
-            raise ManifestError(f"{uwhere}: duplicate unit id {unit['id']!r}")
-        seen_ids.add(unit["id"])
-        for declared in unit["paths"] if tree_checks else ():
-            if not _tree.current().files(declared):
-                raise ManifestError(
-                    f"{uwhere}: path {declared!r} matches nothing. A unit whose source "
-                    f"cannot be located has unknown provenance, which is dirty, not empty."
-                )
-        # A V1/V3 unit must name the symbols its proof is about. Without that the lane can
-        # only ask "did this crate verify something", and deleting one of two
-        # specifications leaves the other to answer yes — coverage silently halves while
-        # the gate stays green. Naming them turns a deleted theorem into a lane failure.
-        if unit["class"] in {"V1", "V3"} and not unit.get("proved_symbols"):
-            raise ManifestError(
-                f"{uwhere}: class {unit['class']} requires `proved_symbols`. A unit that "
-                f"claims formal evidence must name the symbols proved, or nothing "
-                f"distinguishes a deleted specification from a passing one."
-            )
-        # The extracted-model lane's two halves of the same argument, and they are separate
-        # keys because they name different things in different languages: which RUST items
-        # Charon starts from, and which LEAN theorems the prover is asked about. Deriving
-        # either from the other would be a guess about a name mangling that Aeneas owns.
-        #
-        # Kept apart from `proved_symbols` deliberately. That key is the Verus lane's, and a
-        # V3 unit claims BOTH lanes — one key read by two provers with two naming schemes is
-        # a key that means whichever the reader assumed.
-        if unit["class"] in {"V2", "V3"}:
-            for key, what in (
-                ("extracted_symbols", "the Rust items the model is extracted from"),
-                ("lean_theorems", "the Lean theorems the prover is asked about"),
-            ):
-                if not unit.get(key):
-                    raise ManifestError(
-                        f"{uwhere}: class {unit['class']} requires `{key}` — {what}. A "
-                        f"unit claiming extracted-model evidence with an empty selection "
-                        f"asks the lane to measure nothing, and nothing measured passes."
-                    )
-            # AND IT MUST SAY SO IN ITS EVIDENCE. Two authorities read "what does this unit
-            # require": `_evidence.required_lanes` derives it from the declared URIs, and the
-            # aggregate's requirement set derives it from the class. They agree only while
-            # every V2/V3 unit declares `lean://` — and nothing made it. A unit with the
-            # selection keys above and no `lean://` entry would be ISSUED an attestation on
-            # its test battery alone while claiming extracted-model evidence, because the
-            # issuer would see no lean lane to check.
-            if not claims(unit, "lean"):
-                raise ManifestError(
-                    f"{uwhere}: class {unit['class']} declares an extraction selection but "
-                    f"no `lean://` evidence entry. The class says the Lean lane must "
-                    f"measure this unit and the evidence list is where a unit says which "
-                    f"lanes are asked about it, so the two must agree — otherwise the "
-                    f"issuer checks a lane the class requires and the manifest never named."
-                )
-        elif unit.get("extracted_symbols") or unit.get("lean_theorems"):
-            raise ManifestError(
-                f"{uwhere}: declares extraction selection but is class {unit['class']}, so "
-                f"no lane reads it. A selection nothing consumes is a declaration that "
-                f"reads as coverage and measures nothing."
-            )
-        # The same argument one class down. A `test://` URI names a battery, and a battery
-        # with no declared members is a description: the lane would have nothing to select,
-        # and "the tests passed" would mean "no test was asked for".
-        if claims(unit, "test"):
-            if not unit.get("tested_symbols"):
-                raise ManifestError(
-                    f"{uwhere}: declares test:// evidence but no `tested_symbols`. A "
-                    f"battery with no named members cannot be run, and an unrunnable "
-                    f"claim is not evidence."
-                )
-            eco = unit_ecosystem(unit)
-            for symbol in unit["tested_symbols"]:
-                target, _, path = str(symbol).partition("#")
-                # The target is required, not defaulted: a defaulted target lets a test
-                # that moved between the lib and an integration target keep reporting under
-                # the one it left.
-                # WHICH targets exist is the ecosystem's answer (issue #745): a Rust
-                # selector names a Bazel test target in the build graph, while a pytest or
-                # vitest battery has the one target that says which runner reads the
-                # selector. A unit whose paths name no single ecosystem has no runnable
-                # target at all, which is the same refusal for a different reason.
-                if not path or eco is None or not valid_target(eco, target):
-                    raise ManifestError(
-                        f"{uwhere}: tested_symbol {symbol!r} names no runnable "
-                        f"{eco.name if eco else '<unresolved ecosystem>'} target; "
-                        f"rust takes `//pkg:test_target#path::to::test`, a Bazel "
-                        f"`rust_test` or `rust_doc_test`; python takes "
-                        f"`pytest#tests/file.py::name`; typescript takes "
-                        f"`vitest#test/file.test.ts > suite > name`"
-                    )
-        elif unit.get("tested_symbols"):
-            # Declared members with no `test://` URI claiming them would run a battery
-            # whose result no evidence entry reads — measurement nothing consumes.
-            raise ManifestError(
-                f"{uwhere}: declares `tested_symbols` but no test:// evidence entry "
-                f"claims them, so nothing consumes what the lane would measure."
-            )
-        if tree_checks:
-            _validate_gate_controls(uwhere, unit)
-            _validate_rust_test_packages(uwhere, unit)
-            _validate_in_crate_selectors(uwhere, unit)
-        # `mutation://` is a claim about a NEGATIVE battery, which only exists on top of a
-        # positive one: the probes' `expect_red` names members of `tested_symbols`. A unit
-        # claiming mutation evidence without test evidence would declare controls that are
-        # not evidence for anything.
-        if claims(unit, "mutation") and not claims(unit, "test"):
-            raise ManifestError(
-                f"{uwhere}: declares mutation:// evidence without test:// evidence. A "
-                f"mutation probe asserts that a DECLARED control goes red; with no "
-                f"declared battery there is nothing for it to name."
-            )
+        _validate_unit(f"{where} [[unit]] #{index}", unit, seen_ids, tree_checks)
         exports[unit["id"]] = set(unit.get("exported_contracts", []))
 
     validate_edges(where, doc.get("edge", []), seen_ids, exports)
