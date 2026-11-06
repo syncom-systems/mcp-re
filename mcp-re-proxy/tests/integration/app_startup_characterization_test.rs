@@ -118,38 +118,56 @@ fn parsed_base(m: &Material) -> DeploymentRequest {
         .clone()
 }
 
-/// What `app::run_request` returns for `config`, which must be an `Err`. `shutdown` is
-/// pre-flipped: a config that unexpectedly reached the serve loop would drain at once, and
-/// the returned `Ok` would still fail the `expect_err`.
-fn run_refusal(config: DeploymentRequest, expectation: &str) -> String {
-    mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true))).expect_err(expectation)
-}
+/// What `app::run_request` returned for a configuration it refused.
+struct Refusal(String);
 
-/// `err` is the validation boundary's own refusal and names every one of `named`.
-///
-/// The boundary's wrapper is asserted rather than the bare refusal: with the guard gone, the
-/// same config would still fail later for an unrelated reason, and a weaker assertion would
-/// report protection that had moved somewhere accidental.
-fn assert_refused_at_boundary(err: &str, named: &[&str]) {
-    assert!(
-        err.contains("refuses unsafe configuration"),
-        "the refusal must come from the validation boundary, got: {err}"
-    );
-    for what in named {
+impl Refusal {
+    fn contains(&self, what: &str) -> bool {
+        self.0.contains(what)
+    }
+
+    /// This is the validation boundary's own refusal and it names every one of `named`.
+    ///
+    /// The boundary's wrapper is asserted rather than the bare refusal: with the guard gone,
+    /// the same config would still fail later for an unrelated reason, and a weaker
+    /// assertion would report protection that had moved somewhere accidental.
+    fn assert_at_boundary(&self, named: &[&str]) {
         assert!(
-            err.contains(what),
-            "the refusal must name {what}, got: {err}"
+            self.contains("refuses unsafe configuration"),
+            "the refusal must come from the validation boundary, got: {self}"
+        );
+        for what in named {
+            assert!(
+                self.contains(what),
+                "the refusal must name {what}, got: {self}"
+            );
+        }
+    }
+
+    /// This is NOT the validation boundary's refusal: the control config stopped somewhere
+    /// environmental, which is what shows the boundary does not refuse everything.
+    fn assert_not_at_boundary(&self, why: &str) {
+        assert!(
+            !self.contains("refuses unsafe configuration"),
+            "{why}, got: {self}"
         );
     }
 }
 
-/// `err` is NOT the validation boundary's refusal: the control config stopped somewhere
-/// environmental, which is what shows the boundary does not refuse everything.
-fn assert_not_refused_at_boundary(err: &str, why: &str) {
-    assert!(
-        !err.contains("refuses unsafe configuration"),
-        "{why}, got: {err}"
-    );
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// The refusal `app::run_request` returns for `config`, which must be an `Err`. `shutdown`
+/// is pre-flipped: a config that unexpectedly reached the serve loop would drain at once,
+/// and the returned `Ok` would still fail the `expect_err`.
+fn run_refusal(config: DeploymentRequest) -> Refusal {
+    Refusal(
+        mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
+            .expect_err("the configuration must be refused before serving"),
+    )
 }
 
 /// The trust plane states its declared revocation tier and its reload posture, in that
@@ -348,12 +366,9 @@ fn a_config_that_skipped_the_parser_still_cannot_bypass_the_safety_guards() {
     // move — it is the only shape an in-code caller has.
     config.max_client_cert_lifetime = None;
 
-    let err = run_refusal(
-        config,
-        "an unsafe configuration must be refused however it was built",
-    );
+    let err = run_refusal(config);
 
-    assert_refused_at_boundary(&err, &["--max-client-cert-lifetime"]);
+    err.assert_at_boundary(&["--max-client-cert-lifetime"]);
 }
 
 /// The same bypass, for the posture that says an online revocation check is running.
@@ -381,12 +396,9 @@ fn a_programmatic_config_cannot_claim_an_ocsp_check_the_serving_path_never_makes
             mcp_re_proxy::deployment_request::OcspResponderRequest::default(),
         );
 
-    let err = run_refusal(
-        config,
-        "a claim the serving path cannot deliver must be refused however it was built",
-    );
+    let err = run_refusal(config);
 
-    assert_refused_at_boundary(&err, &["--client-ocsp require cannot be honored"]);
+    err.assert_at_boundary(&["--client-ocsp require cannot be honored"]);
 }
 
 /// The same bypass again, for a revocation control that nothing enforces.
@@ -409,12 +421,9 @@ fn a_programmatic_config_cannot_carry_a_deny_list_nothing_enforces() {
     // shape the configuration can take.
     config.authorization.revocation_list_paths = vec!["/tmp/deny-list.json".to_string()];
 
-    let err = run_refusal(
-        config,
-        "a revocation control nothing enforces must be refused however it was built",
-    );
+    let err = run_refusal(config);
 
-    assert_refused_at_boundary(&err, &["--revocation-list"]);
+    err.assert_at_boundary(&["--revocation-list"]);
 }
 
 /// An unaccepted authorization profile is refused at the VALIDATION boundary.
@@ -435,12 +444,9 @@ fn a_programmatic_config_cannot_enable_an_unaccepted_authz_profile() {
 
     config.authorization.kind = mcp_re_proxy::deployment_request::AuthzKind::Reference;
 
-    let err = run_refusal(
-        config,
-        "an unaccepted authorization profile must be refused however it was built",
-    );
+    let err = run_refusal(config);
 
-    assert_refused_at_boundary(&err, &["--authz reference"]);
+    err.assert_at_boundary(&["--authz reference"]);
 }
 
 /// `--transport-binding lb-assertion` is refused by the validation boundary alone.
@@ -465,12 +471,9 @@ fn the_boundary_alone_refuses_an_lb_assertion_binding() {
             },
         );
 
-    let err = run_refusal(
-        config,
-        "lb-assertion binding must be refused however it was built",
-    );
+    let err = run_refusal(config);
 
-    assert_refused_at_boundary(&err, &["lb-assertion"]);
+    err.assert_at_boundary(&["lb-assertion"]);
 }
 
 /// Mode-C attested ingress is refused at the configuration boundary, not later.
@@ -505,12 +508,9 @@ fn mode_c_attested_ingress_is_refused_at_the_configuration_boundary() {
             },
         );
 
-    let err = run_refusal(
-        config,
-        "a non-deployable transport-binding mode must be refused",
-    );
+    let err = run_refusal(config);
 
-    assert_refused_at_boundary(&err, &["attested-ingress"]);
+    err.assert_at_boundary(&["attested-ingress"]);
 }
 
 /// `app::run` refuses configs it cannot build BEFORE serving — the key-source and
@@ -718,10 +718,7 @@ fn a_programmatic_config_cannot_disable_the_request_target_reconstruction_check(
         let mut config = parsed.clone();
         config.target_uri = target.to_string();
 
-        let err = run_refusal(
-            config,
-            "a target of this shape must be refused however the config was built",
-        );
+        let err = run_refusal(config);
         assert!(
             err.contains("refuses unsafe configuration"),
             "a {label} target must be refused at the validation boundary, got: {err}"
@@ -735,14 +732,8 @@ fn a_programmatic_config_cannot_disable_the_request_target_reconstruction_check(
     // Negative control: the same fixture with its absolute target must NOT be refused for
     // this reason. Without it, a boundary that refused every config would satisfy the
     // assertions above.
-    let err = run_refusal(
-        parsed,
-        "this fixture stops at an environmental step, not a target-uri one",
-    );
-    assert_not_refused_at_boundary(
-        &err,
-        "an absolute target is the supported shape and must not be refused",
-    );
+    let err = run_refusal(parsed);
+    err.assert_not_at_boundary("an absolute target is the supported shape and must not be refused");
 }
 
 /// Select AWS KMS response signing, with `shape` carrying what the case varies.
@@ -859,8 +850,8 @@ fn refuse_each_hostile_endpoint(parsed: &DeploymentRequest) {
     for (flag, reason, select, endpoint) in cases {
         let mut config = parsed.clone();
         select(&mut config, endpoint.to_string());
-        let err = run_refusal(config, "an unvalidated root-key endpoint must be refused");
-        assert_refused_at_boundary(&err, &[flag, reason]);
+        let err = run_refusal(config);
+        err.assert_at_boundary(&[flag, reason]);
     }
 }
 
@@ -882,7 +873,7 @@ fn admit_each_legitimate_endpoint(parsed: &DeploymentRequest) {
         for select in [aws_endpoint as EndpointSelector, gcp_endpoint, sts_endpoint] {
             let mut config = parsed.clone();
             select(&mut config, allowed.to_string());
-            let err = run_refusal(config, "this fixture stops at an environmental step");
+            let err = run_refusal(config);
             assert!(
                 !err.contains("userinfo") && !err.contains("loopback"),
                 "{allowed} is an admissible endpoint and must not be refused as one, got: {err}"
@@ -979,20 +970,14 @@ fn a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector() {
     for (flag, mutate) in cases {
         let mut config = parsed.clone();
         mutate(&mut config);
-        let err = run_refusal(
-            config,
-            "a dangling custody/ingress selector must be refused",
-        );
-        assert_refused_at_boundary(&err, &[flag]);
+        let err = run_refusal(config);
+        err.assert_at_boundary(&[flag]);
     }
 
     // Negative control: the untouched fixture carries none of these selectors and must
     // not be refused for this reason.
-    let err = run_refusal(parsed, "this fixture stops at an environmental step");
-    assert_not_refused_at_boundary(
-        &err,
-        "a coherent custody/ingress configuration must not be refused",
-    );
+    let err = run_refusal(parsed);
+    err.assert_not_at_boundary("a coherent custody/ingress configuration must not be refused");
 }
 
 /// R8-C052 — a zero CRL reload cadence is a spin, not a disabled reloader.
@@ -1012,8 +997,8 @@ fn a_programmatic_config_cannot_hot_spin_the_crl_reloader() {
 
     let mut config = parsed.clone();
     config.peer_revocation.lists.reload_secs = Some(0);
-    let err = run_refusal(config, "a zero reload cadence must be refused");
-    assert_refused_at_boundary(&err, &["--client-crl-reload-secs"]);
+    let err = run_refusal(config);
+    err.assert_at_boundary(&["--client-crl-reload-secs"]);
 
     // Negative controls: a positive cadence, and no cadence at all (load once), are both
     // supported and must not be refused.
@@ -1026,11 +1011,10 @@ fn a_programmatic_config_cannot_hot_spin_the_crl_reloader() {
         let mut config = parsed.clone();
         config.peer_revocation.lists.paths = vec![m.client_ca_path.to_string_lossy().into_owned()];
         config.peer_revocation.lists.reload_secs = cadence;
-        let err = run_refusal(config, "this fixture stops at an environmental step");
-        assert_not_refused_at_boundary(
-            &err,
-            &format!("cadence {cadence:?} is supported and must not be refused"),
-        );
+        let err = run_refusal(config);
+        err.assert_not_at_boundary(&format!(
+            "cadence {cadence:?} is supported and must not be refused"
+        ));
     }
 }
 
@@ -1053,13 +1037,13 @@ fn a_programmatic_config_cannot_mint_an_unboundedly_long_lived_delegated_credent
     let mut config = parsed.clone();
     config.delegated_signing.ttl_secs = ceiling + 1;
     config.delegated_signing.overlap_secs = 60;
-    let err = run_refusal(config, "a TTL above the ceiling must be refused");
-    assert_refused_at_boundary(&err, &["--delegated-ttl-secs"]);
+    let err = run_refusal(config);
+    err.assert_at_boundary(&["--delegated-ttl-secs"]);
 
     // And the rotor's window rule holds at the boundary as well as in the wiring.
     let mut config = parsed.clone();
     config.delegated_signing.overlap_secs = config.delegated_signing.ttl_secs;
-    let err = run_refusal(config, "an overlap at the TTL must be refused");
+    let err = run_refusal(config);
     assert!(
         err.contains("--delegated-overlap-secs"),
         "the refusal must name the overlap, got: {err}"
@@ -1070,11 +1054,8 @@ fn a_programmatic_config_cannot_mint_an_unboundedly_long_lived_delegated_credent
     let mut config = parsed;
     config.delegated_signing.ttl_secs = ceiling;
     config.delegated_signing.overlap_secs = 60;
-    let err = run_refusal(config, "this fixture stops at an environmental step");
-    assert_not_refused_at_boundary(
-        &err,
-        "a TTL at the ceiling is admissible and must not be refused",
-    );
+    let err = run_refusal(config);
+    err.assert_not_at_boundary("a TTL at the ceiling is admissible and must not be refused");
 }
 
 // --- ADR-MCPRE-065 production wiring: the authority the composition root installs -----
@@ -1208,10 +1189,7 @@ fn a_programmatic_config_cannot_carry_a_decision_scope_that_selects_nothing() {
     config.authorization.decision_scope =
         Some(mcp_re_http_profile::pdp_decision::DecisionScope::Principal);
 
-    let err = run_refusal(
-        config,
-        "a parameter that selects nothing must be refused however it was built",
-    );
+    let err = run_refusal(config);
 
     assert!(
         err.contains("--authz-decision-scope"),
@@ -1280,129 +1258,4 @@ fn a_required_audit_posture_without_an_observer_is_refused_as_configuration() {
 
 /// The commitment-provider seam, driven from OUTSIDE the crate: a provider an embedder
 /// compiled, implementing only the public contract.
-mod injected_provider {
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::Arc;
-
-    use mcp_re_proxy::{
-        AuditProviders, CommitFuture, CommitRequest, CommitmentAuthority, DurabilityTier,
-        EstablishFailure, EstablishFuture, ProviderFailure, ProviderId,
-    };
-
-    use super::*;
-
-    /// A provider that DECLARES the qualifying tier and answers its probe as told. It keeps
-    /// a secret of its own, which must never reach a diagnostic.
-    struct FakeProvider {
-        tier: DurabilityTier,
-        probe: Result<(), EstablishFailure>,
-        secret: &'static str,
-        probes: AtomicUsize,
-        tier_reads: AtomicUsize,
-    }
-
-    impl FakeProvider {
-        fn new(tier: DurabilityTier, probe: Result<(), EstablishFailure>) -> Arc<Self> {
-            Arc::new(FakeProvider {
-                tier,
-                probe,
-                secret: "redis://journal:SECRET-xyz@10.0.0.9:6379",
-                probes: AtomicUsize::new(0),
-                tier_reads: AtomicUsize::new(0),
-            })
-        }
-    }
-
-    impl CommitmentAuthority for FakeProvider {
-        fn provider_id(&self) -> ProviderId {
-            ProviderId::new("fake-journal").expect("a legal name")
-        }
-
-        fn declared_tier(&self) -> DurabilityTier {
-            self.tier_reads.fetch_add(1, Ordering::SeqCst);
-            self.tier
-        }
-
-        fn establish(&self) -> EstablishFuture<'_> {
-            self.probes.fetch_add(1, Ordering::SeqCst);
-            let (answer, _locator) = (self.probe, self.secret);
-            Box::pin(async move { answer })
-        }
-
-        fn commit<'a>(&'a self, _request: CommitRequest<'a>) -> CommitFuture<'a> {
-            Box::pin(async { Err(ProviderFailure::Unavailable) })
-        }
-    }
-
-    fn run_with(extra: &[&str], provider: Arc<FakeProvider>) -> String {
-        let m = serving_fixtures::write_material();
-        let deployment = mcp_re_proxy::cli::parse_args(&with(&m, extra)).expect("parses");
-        let registered: Arc<dyn CommitmentAuthority> = provider;
-        mcp_re_proxy::app::run_with(
-            deployment,
-            AuditProviders::with_commitment(registered),
-            Arc::new(AtomicBool::new(true)),
-        )
-        .expect_err("these fixtures never reach the serve loop")
-    }
-
-    /// The stop every hermetic config here reaches once the audit posture is established.
-    fn replay_refusal() -> &'static str {
-        if cfg!(feature = "redis_replay") {
-            "connect redis"
-        } else {
-            "redis_replay"
-        }
-    }
-
-    /// A fake-qualified provider whose probe fails is refused at startup, naming only the
-    /// provider and the class — and never its own text.
-    #[test]
-    fn a_fake_qualified_provider_that_fails_establishment_is_refused() {
-        let provider = FakeProvider::new(
-            DurabilityTier::SurvivesProxyProcessLoss,
-            Err(EstablishFailure::Unreachable),
-        );
-        let refused = run_with(&["--audit-commitment", "required"], provider.clone());
-        assert!(
-            refused.contains("provider fake-journal could not be established: UNREACHABLE"),
-            "{refused}"
-        );
-        assert!(!refused.contains("SECRET"), "{refused}");
-        assert!(
-            !refused.contains(replay_refusal()),
-            "refused before replay: {refused}"
-        );
-        assert_eq!(provider.probes.load(Ordering::SeqCst), 1);
-    }
-
-    /// A provider declaring a volatile tier is refused before it is asked anything (D3).
-    #[test]
-    fn a_volatile_provider_is_refused_without_being_probed() {
-        let provider = FakeProvider::new(DurabilityTier::ProcessVolatile, Ok(()));
-        let refused = run_with(&["--audit-commitment", "required"], provider.clone());
-        assert!(refused.contains("PROCESS_VOLATILE"), "{refused}");
-        assert_eq!(provider.probes.load(Ordering::SeqCst), 0);
-    }
-
-    /// A qualified provider that answers is established inside the real startup, reading
-    /// its tier once, and startup goes on to its next stop.
-    #[test]
-    fn a_qualified_provider_is_established_inside_the_real_startup() {
-        let provider = FakeProvider::new(DurabilityTier::SurvivesProxyProcessLoss, Ok(()));
-        let refused = run_with(&["--audit-commitment", "required"], provider.clone());
-        assert!(refused.contains(replay_refusal()), "{refused}");
-        assert_eq!(provider.probes.load(Ordering::SeqCst), 1);
-        assert_eq!(provider.tier_reads.load(Ordering::SeqCst), 1);
-    }
-
-    /// Registering a provider selects nothing: under best-effort it is never asked.
-    #[test]
-    fn a_registered_provider_is_not_promoted_under_best_effort() {
-        let provider = FakeProvider::new(DurabilityTier::SurvivesProxyProcessLoss, Ok(()));
-        let refused = run_with(&[], provider.clone());
-        assert!(refused.contains(replay_refusal()), "{refused}");
-        assert_eq!(provider.probes.load(Ordering::SeqCst), 0);
-        assert_eq!(provider.tier_reads.load(Ordering::SeqCst), 0);
-    }
-}
+mod injected_provider;

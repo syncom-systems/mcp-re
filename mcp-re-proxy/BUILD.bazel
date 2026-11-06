@@ -1206,7 +1206,7 @@ nt_rust_test(
 # a full blocking mTLS round-trip (certs minted in-process via rcgen).
 nt_rust_test(
     name = "integration_test",
-    srcs = glob(["tests/integration/*.rs"]) + [
+    srcs = glob(["tests/integration/**/*.rs"]) + [
         # `main.rs` reaches these shared modules via `#[path = "../<dir>/mod.rs"]`.
         "tests/serving_fixtures/mod.rs",
         "tests/startup_transcript/mod.rs",
@@ -1255,7 +1255,7 @@ nt_rust_test(
 # features.
 nt_rust_test(
     name = "integration_kms_test",
-    srcs = glob(["tests/integration/*.rs"]) + [
+    srcs = glob(["tests/integration/**/*.rs"]) + [
         # `main.rs` reaches these shared modules via `#[path = "../<dir>/mod.rs"]`.
         "tests/serving_fixtures/mod.rs",
         "tests/startup_transcript/mod.rs",

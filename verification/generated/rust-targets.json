@@ -2678,6 +2678,7 @@
    "root": "mcp-re-proxy/tests/integration/main.rs",
    "srcs": [
     "mcp-re-proxy/tests/integration/app_startup_characterization_test.rs",
+    "mcp-re-proxy/tests/integration/app_startup_characterization_test/injected_provider.rs",
     "mcp-re-proxy/tests/integration/certificate_identity_no_fallback_test.rs",
     "mcp-re-proxy/tests/integration/client_verifier_posture_test.rs",
     "mcp-re-proxy/tests/integration/composition_raw_read_test.rs",
@@ -2766,6 +2767,7 @@
    "root": "mcp-re-proxy/tests/integration/main.rs",
    "srcs": [
     "mcp-re-proxy/tests/integration/app_startup_characterization_test.rs",
+    "mcp-re-proxy/tests/integration/app_startup_characterization_test/injected_provider.rs",
     "mcp-re-proxy/tests/integration/certificate_identity_no_fallback_test.rs",
     "mcp-re-proxy/tests/integration/client_verifier_posture_test.rs",
     "mcp-re-proxy/tests/integration/composition_raw_read_test.rs",
