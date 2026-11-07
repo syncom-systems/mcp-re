@@ -154,7 +154,7 @@ by-product of this one.
 | Per-request revocation | `tests/integration_async/per_request_revocation_test.rs` | `async_serve` | revoked signer refused |
 | Shared trust epoch over Redis | `tests/integration_ext/redis_trust_epoch_e2e_test.rs` | `_PROXY_EXT_FEATURES`; `//mcp-re-proxy:integration_ext_test` — needs a live Redis | — |
 | Root authority manifest / root-key lifecycle | `tests/integration_async/root_authority_manifest_test.rs`, `root_key_lifecycle_test.rs` | `async_serve` | — |
-| Classifier witnesses | unit tests in `config_state/trust_revocation.rs` | `//mcp-re-proxy:proxy_unit_test` | contradictory witnesses refused |
+| Classifier witnesses | unit tests in `config_state/trust_revocation/mod.rs` | `//mcp-re-proxy:proxy_unit_test` | contradictory witnesses refused |
 | **Reload cadence cannot contradict the revocation tier** | `TrustPlan` has no reload field to set | compile-time | **the check was deleted, and that is the point** (ADR-061 §11 operational test) |
 
 ## 10. Implementation map
@@ -163,7 +163,7 @@ Measured by the ADR-061 §5.1 rule on `main` @ `fede93b` (`scripts/module_size_g
 
 | file | prod | current role | target role |
 |---|---:|---|---|
-| `mcp-re-proxy/src/config_state/trust_revocation.rs` | 429 | `TrustRevocationState`, `EpochSource`, `classify_and_validate` | the revocation fact owner — unchanged, already sealed |
+| `mcp-re-proxy/src/config_state/trust_revocation/` (`mod.rs`, `classify.rs`, `epoch_source.rs`, `validate.rs`) | 4 files | `TrustRevocationState`, `EpochSource`, `classify_and_validate` | the revocation fact owner — representation private to the subtree, already sealed |
 | `mcp-re-proxy/src/config_state/trust_document.rs` | 83 | `TrustDocumentSource` | the locator fact owner — unchanged, already sealed |
 | `mcp-re-proxy/src/startup_plan/mod.rs` (then `startup_plan.rs`) | 476 | hosts `TrustPlan` among other plans | `TrustPlan` moves to live **with its owner**; `startup_plan` re-exports |
 | `mcp-re-proxy/src/trust_plane.rs` | 690 | materialization entry | trust facade |

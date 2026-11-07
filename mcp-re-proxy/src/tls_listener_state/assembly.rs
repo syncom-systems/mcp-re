@@ -2,7 +2,7 @@
 //! Config assembly and resumption binding — PRIVATE to the listener-state subtree.
 //!
 //! The two halves the EX-004 census found could be assembled independently: a verifier over
-//! one anchor set, and a session store over an unrelated epoch. `pub(crate)` in `tls.rs`
+//! one anchor set, and a session store over an unrelated epoch. `pub(crate)` in `tls/`
 //! sealed them against nobody, so they live here, `pub(super)`, reachable only from
 //! [`TlsListenerSecurityState`](super::TlsListenerSecurityState) — the sole construction
 //! authority for the pairing. See that module for the seal's one residual limit.

@@ -46,69 +46,103 @@ pub(super) fn is_token_byte(b: u8) -> bool {
         )
 }
 
+/// The request line, `Host` and body length the transport writes itself. The caller's own
+/// headers travel separately because only those are subject to the transport-owned list.
+pub(super) struct RequestHead<'a> {
+    pub(super) method: &'a str,
+    pub(super) path: &'a str,
+    pub(super) host: &'a str,
+    pub(super) body_len: usize,
+}
+
+fn refuse(reason: String) -> Result<(), TransportError> {
+    Err(TransportError::InvalidRequest(reason))
+}
+
+fn is_visible_ascii(b: u8) -> bool {
+    (0x21..=0x7E).contains(&b)
+}
+
+/// A header value byte that could end the header block or hide a second request.
+fn is_forbidden_value_byte(b: u8) -> bool {
+    (b < 0x20 && b != b'\t') || b == 0x7F
+}
+
+fn check_method(method: &str) -> Result<(), TransportError> {
+    if method.is_empty() || !method.bytes().all(is_token_byte) {
+        return refuse(format!("method is not an RFC 9110 token: {method:?}"));
+    }
+    Ok(())
+}
+
+/// Origin-form request target: visible ASCII, no space (which would end the target and let
+/// the rest be read as the HTTP version), no CR/LF.
+fn check_target(path: &str) -> Result<(), TransportError> {
+    if !path.starts_with('/') || !path.bytes().all(is_visible_ascii) {
+        return refuse(format!(
+            "request target is not origin-form visible ASCII: {path:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// The transport emits Host itself; a CR/LF or control byte here is request splitting and is
+/// refused like any caller-supplied value.
+fn check_host(host: &str) -> Result<(), TransportError> {
+    if host.is_empty() || !host.bytes().all(is_visible_ascii) {
+        return refuse(format!("Host is not non-empty visible ASCII: {host:?}"));
+    }
+    Ok(())
+}
+
+fn check_header(name: &str, value: &str) -> Result<(), TransportError> {
+    if name.is_empty() || !name.bytes().all(is_token_byte) {
+        return refuse(format!("header name is not an RFC 9110 token: {name:?}"));
+    }
+    let lower = name.to_ascii_lowercase();
+    if TRANSPORT_OWNED_HEADERS.contains(&lower.as_str()) {
+        return refuse(format!(
+            "{lower} is set by the transport and must not be supplied by the caller"
+        ));
+    }
+    // A CR or LF here would terminate the header block early and let the rest of the value
+    // be read as a second request (request splitting). Reject the whole exchange; never
+    // sanitise and send.
+    if value.bytes().any(is_forbidden_value_byte) {
+        return refuse(format!(
+            "header {name} carries a control character (request splitting)"
+        ));
+    }
+    Ok(())
+}
+
 /// Serialize the request line + header block, validating every value written
 /// into the head, including the transport-supplied `Host`. `Host`,
 /// `Content-Length` and `Connection` are set here (single request per
 /// connection, matching the proxy's framing).
 pub(super) fn build_request_head(
-    method: &str,
-    path: &str,
-    host: &str,
+    head: &RequestHead<'_>,
     headers: &[(String, String)],
-    body_len: usize,
 ) -> Result<String, TransportError> {
-    if method.is_empty() || !method.bytes().all(is_token_byte) {
-        return Err(TransportError::InvalidRequest(format!(
-            "method is not an RFC 9110 token: {method:?}"
-        )));
-    }
-    // Origin-form request target: visible ASCII, no space (which would end the
-    // target and let the rest be read as the HTTP version), no CR/LF.
-    if !path.starts_with('/') || path.bytes().any(|b| !(0x21..=0x7E).contains(&b)) {
-        return Err(TransportError::InvalidRequest(format!(
-            "request target is not origin-form visible ASCII: {path:?}"
-        )));
-    }
-
-    // The transport emits Host itself; a CR/LF or control byte here is request
-    // splitting and is refused like any caller-supplied value.
-    if host.is_empty() || host.bytes().any(|b| !(0x21..=0x7E).contains(&b)) {
-        return Err(TransportError::InvalidRequest(format!(
-            "Host is not non-empty visible ASCII: {host:?}"
-        )));
-    }
-
-    let mut head = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Length: {body_len}\r\nConnection: close\r\n");
+    check_method(head.method)?;
+    check_target(head.path)?;
+    check_host(head.host)?;
+    let RequestHead {
+        method,
+        path,
+        host,
+        body_len,
+    } = head;
+    let mut out = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Length: {body_len}\r\nConnection: close\r\n");
     for (name, value) in headers {
-        if name.is_empty() || !name.bytes().all(is_token_byte) {
-            return Err(TransportError::InvalidRequest(format!(
-                "header name is not an RFC 9110 token: {name:?}"
-            )));
-        }
-        let lower = name.to_ascii_lowercase();
-        if TRANSPORT_OWNED_HEADERS.contains(&lower.as_str()) {
-            return Err(TransportError::InvalidRequest(format!(
-                "{lower} is set by the transport and must not be supplied by the caller"
-            )));
-        }
-        // A CR or LF here would terminate the header block early and let the rest
-        // of the value be read as a second request (request splitting). Reject the
-        // whole exchange; never sanitise and send.
-        if value
-            .bytes()
-            .any(|b| b == b'\r' || b == b'\n' || b == 0 || (b < 0x20 && b != b'\t') || b == 0x7F)
-        {
-            return Err(TransportError::InvalidRequest(format!(
-                "header {name} carries a control character (request splitting)"
-            )));
-        }
-        head.push_str(name);
-        head.push_str(": ");
-        head.push_str(value);
-        head.push_str("\r\n");
+        check_header(name, value)?;
+        out.push_str(name);
+        out.push_str(": ");
+        out.push_str(value);
+        out.push_str("\r\n");
     }
-    head.push_str("\r\n");
-    Ok(head)
+    out.push_str("\r\n");
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -119,17 +153,36 @@ mod tests {
         (name.to_owned(), value.to_owned())
     }
 
+    /// A head that passes every check; each test overrides the one field it exercises.
+    fn valid() -> RequestHead<'static> {
+        RequestHead {
+            method: "POST",
+            path: "/",
+            host: "proxy.internal",
+            body_len: 0,
+        }
+    }
+
+    fn assert_refused(head: &RequestHead<'_>, headers: &[(String, String)]) {
+        let result = build_request_head(head, headers);
+        assert!(
+            matches!(result, Err(TransportError::InvalidRequest(_))),
+            "must be refused: {result:?}"
+        );
+    }
+
     #[test]
     fn caller_headers_are_emitted_verbatim() {
         let head = build_request_head(
-            "POST",
-            "/mcp?route=a",
-            "proxy.internal",
+            &RequestHead {
+                path: "/mcp?route=a",
+                body_len: 17,
+                ..valid()
+            },
             &[
                 header("signature", "sig1=:AAAA:"),
                 header("content-digest", "sha-256=:BBBB:"),
             ],
-            17,
         )
         .expect("emittable request");
         assert!(head.starts_with("POST /mcp?route=a HTTP/1.1\r\n"));
@@ -142,81 +195,54 @@ mod tests {
 
     #[test]
     fn a_crlf_in_a_header_value_is_rejected_not_sanitised() {
-        let split = build_request_head(
-            "POST",
-            "/",
-            "proxy.internal",
-            &[header("signature", "sig1=:AAAA:\r\nX-Injected: yes")],
-            0,
-        );
-        assert!(matches!(split, Err(TransportError::InvalidRequest(_))));
+        let split = [header("signature", "sig1=:AAAA:\r\nX-Injected: yes")];
+        assert_refused(&valid(), &split);
     }
 
     #[test]
     fn a_bare_lf_in_a_header_value_is_rejected() {
-        let split = build_request_head(
-            "POST",
-            "/",
-            "proxy.internal",
-            &[header("signature", "sig1=:AAAA:\nX-Injected: yes")],
-            0,
-        );
-        assert!(matches!(split, Err(TransportError::InvalidRequest(_))));
+        let split = [header("signature", "sig1=:AAAA:\nX-Injected: yes")];
+        assert_refused(&valid(), &split);
     }
 
     #[test]
     fn a_host_that_is_not_visible_ascii_is_rejected() {
-        for h in [
+        for host in [
             "proxy.internal\r\nX-Injected: yes",
             "proxy.internal\nX",
             "proxy internal",
             "",
         ] {
-            assert!(
-                matches!(
-                    build_request_head("POST", "/", h, &[], 0),
-                    Err(TransportError::InvalidRequest(_))
-                ),
-                "{h:?} must be refused"
-            );
+            assert_refused(&RequestHead { host, ..valid() }, &[]);
         }
-        for h in ["proxy.internal:8443", "::1"] {
-            assert!(build_request_head("POST", "/", h, &[], 0).is_ok());
+        for host in ["proxy.internal:8443", "::1"] {
+            assert!(build_request_head(&RequestHead { host, ..valid() }, &[]).is_ok());
         }
     }
 
     #[test]
     fn transport_owned_headers_are_refused() {
         for name in ["Host", "content-length", "Connection", "Transfer-Encoding"] {
-            let result = build_request_head("POST", "/", "proxy.internal", &[header(name, "x")], 0);
-            assert!(
-                matches!(result, Err(TransportError::InvalidRequest(_))),
-                "{name} must not be caller-settable"
-            );
+            assert_refused(&valid(), &[header(name, "x")]);
         }
     }
 
     #[test]
     fn a_non_token_method_or_header_name_is_rejected() {
-        assert!(matches!(
-            build_request_head("PO ST", "/", "h", &[], 0),
-            Err(TransportError::InvalidRequest(_))
-        ));
-        assert!(matches!(
-            build_request_head("POST", "/", "h", &[header("bad name", "x")], 0),
-            Err(TransportError::InvalidRequest(_))
-        ));
+        assert_refused(
+            &RequestHead {
+                method: "PO ST",
+                ..valid()
+            },
+            &[],
+        );
+        assert_refused(&valid(), &[header("bad name", "x")]);
     }
 
     #[test]
     fn a_request_target_with_a_space_is_rejected() {
-        assert!(matches!(
-            build_request_head("POST", "/mcp HTTP/1.1", "h", &[], 0),
-            Err(TransportError::InvalidRequest(_))
-        ));
-        assert!(matches!(
-            build_request_head("POST", "mcp", "h", &[], 0),
-            Err(TransportError::InvalidRequest(_))
-        ));
+        for path in ["/mcp HTTP/1.1", "mcp"] {
+            assert_refused(&RequestHead { path, ..valid() }, &[]);
+        }
     }
 }

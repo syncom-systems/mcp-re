@@ -10,7 +10,7 @@
 //!
 //! Nothing here names a certificate, a SAN or a handshake. Which field of which credential
 //! carries the identity is the identity policy's question, and extracting it is the
-//! mechanism's; both live below this fact, in `tls.rs` and in
+//! mechanism's; both live below this fact, in `tls/peer.rs` and in
 //! [`crate::communication_assurance::certificate_identity_policy`].
 
 /// Where a served request's verified peer identity comes from.

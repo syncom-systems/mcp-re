@@ -200,9 +200,9 @@ def test_committed_rows_settle_and_reverted_rows_drop() -> None:
         _, rows = size_debt.classify("m", "FAIL\n%s\n" % GREW)
         size_debt.record(td, "x.rs", rows)
         size_debt.record(td, "y.rs", rows)
-        assert size_debt.settle(td, "x.rs", "abc1234", reg, ["f1"]) == 1
+        assert size_debt.settle(td, "x.rs", size_debt.Change("abc1234", ["f1"]), reg) == 1
         size_debt.drop(td, "y.rs")
-        assert size_debt.settle(td, "y.rs", "def5678", reg) == 0
+        assert size_debt.settle(td, "y.rs", size_debt.Change("def5678", []), reg) == 0
         got = [json.loads(l) for l in open(reg)]
         assert len(got) == 1 and got[0]["commits"] == ["abc1234"] and got[0]["findings"] == ["f1"], got
         assert size_debt.register_rows(rows, "batch", reg) == 0, "an already registered growth is not added twice"

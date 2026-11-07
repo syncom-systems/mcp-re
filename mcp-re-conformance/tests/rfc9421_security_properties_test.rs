@@ -20,6 +20,7 @@ use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
@@ -120,10 +121,12 @@ fn signed(nonce: &str, body: &[u8]) -> (HttpRequest, mcp_re_http_profile::Reques
         &mut req,
         &block(),
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        nonce,
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce,
+        },
     )
     .expect("sign");
     (req, ev)
@@ -324,10 +327,12 @@ fn unauthorized_key_id_is_rejected() {
         &mut req,
         &block(),
         &client_key(),
-        "unknown-key-99",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "unknown-key-99",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("sign");
     assert!(

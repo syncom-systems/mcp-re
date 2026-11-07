@@ -14,6 +14,7 @@ use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
@@ -84,10 +85,12 @@ fn signed_request_with(nonce: &str) -> HttpRequest {
     sign_request(
         &mut req,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        nonce,
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce,
+        },
     )
     .expect("signing succeeds");
     req
@@ -132,10 +135,12 @@ fn signer_and_verifier_derive_the_same_evidence_handle() {
     let signer_evidence = sign_request(
         &mut req,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signing succeeds");
     let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -160,10 +165,12 @@ fn authorization_header_is_covered_when_present() {
     sign_request(
         &mut req,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signing succeeds");
     Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -206,10 +213,12 @@ fn response_splice_fails_closed() {
     sign_request(
         &mut req_b,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signing succeeds");
     let mut rsp_b = HttpResponse {
@@ -300,10 +309,12 @@ fn degenerate_window_fails_closed_regardless_of_skew() {
     sign_request(
         &mut req,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        CREATED,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: CREATED,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signing succeeds");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -332,10 +343,12 @@ fn the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not() {
     sign_request(
         &mut req,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        CREATED,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: CREATED,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signs");
     assert_eq!(
@@ -370,10 +383,12 @@ fn the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not() {
     sign_request(
         &mut wide,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        CREATED + max + 1,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: CREATED + max + 1,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signs");
     assert_eq!(
@@ -388,10 +403,12 @@ fn the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not() {
     sign_request(
         &mut at_bound,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        CREATED + max,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: CREATED + max,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signs");
     Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -407,10 +424,12 @@ fn wrong_keyid_fails_closed() {
     sign_request(
         &mut req,
         &client_key(),
-        "rogue-key-9",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "rogue-key-9",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signing succeeds");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -429,10 +448,12 @@ fn keyid_swap_to_another_trusted_key_fails_the_signature() {
     sign_request(
         &mut req,
         &client_key(),
-        "client-key-2",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-2",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signing succeeds");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -487,10 +508,12 @@ fn duplicate_authorization_fails_closed() {
     let err = sign_request(
         &mut req,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .unwrap_err();
     assert_eq!(err, HttpProfileError::DuplicateHeader("authorization"));
@@ -547,10 +570,8 @@ fn request_signed_by_response_only_actor_fails_actor_binding() {
     sign_request(
         &mut req,
         &server_key(),
-        "server-key-1", // only trusted for the Response slot
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature { key_id: "server-key-1", created: // only trusted for the Response slot
+        CREATED, expires: EXPIRES, nonce: &unique_test_nonce() },
     )
     .expect("signing succeeds");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())

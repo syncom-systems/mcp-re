@@ -239,8 +239,8 @@ sdk/typescript/
   Cargo.toml             # napi cdylib -> mcp-re-sdk-core; OWN workspace (separate from root)
   BUILD.bazel            # the addon + its napi type definitions (//sdk/typescript:native)
   package.json           # napi config (binary name, targets), mixed Rust/TS layout
-  scripts/               # build-native.mjs (Bazel build + stage) and write-binding.mjs
-  native/                # generated: binding.js + binding.d.ts + *.node
+  scripts/               # build-native.mjs (Bazel build + stage), write-binding.mjs and render-binding.mjs
+  native/                # generated: binding.js + binding.d.ts + *.node; hand-written: loader/
   src/
     lib.rs               # the napi binding (the exact analog of sdk/python/src/lib.rs)
     index.ts             # public surface (re-exports the native core + the modules)

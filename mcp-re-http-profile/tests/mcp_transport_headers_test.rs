@@ -61,10 +61,12 @@ fn signed(extra: &[(&str, &str)]) -> HttpRequest {
     sign_request(
         &mut r,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signing succeeds");
     r
@@ -130,10 +132,12 @@ fn the_signer_derives_and_covers_the_headers_and_a_request_omitting_them_is_refu
     sign_request_as_given(
         &mut bare,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signs");
     assert_eq!(
@@ -203,10 +207,12 @@ fn header_body_method_divergence_is_rejected() {
     sign_request(
         &mut r,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("the client really does sign the contradiction");
 
@@ -250,10 +256,12 @@ fn an_mcp_method_header_with_no_body_method_is_rejected() {
     sign_request(
         &mut r,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signing succeeds");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -276,10 +284,12 @@ fn a_result_shaped_body_carries_no_method_and_is_refused() {
     sign_request(
         &mut r,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signing succeeds");
     assert_eq!(
@@ -343,6 +353,7 @@ fn the_component_allowlist_is_still_closed() {
 // mcp-name agreement — all enforced AFTER the signature, against protected bytes.
 
 use mcp_re_http_profile::McpTransportPolicy;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::VerifierPolicy;
 
 fn strict_transport() -> VerifierPolicy {
@@ -368,10 +379,12 @@ fn conforming_2026_request_verifies_under_the_transport_contract() {
     sign_request(
         &mut r,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signs");
     Verifier::new(&strict_transport(), &resolver())
@@ -396,10 +409,12 @@ fn a_required_header_absent_is_rejected_through_verify() {
     sign_request_as_given(
         &mut r,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signs");
     let err = Verifier::new(&strict_transport(), &resolver())
@@ -428,10 +443,12 @@ fn an_unsupported_protocol_version_is_rejected_through_verify() {
     sign_request(
         &mut r,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signs");
     let err = Verifier::new(&strict_transport(), &resolver())
@@ -458,10 +475,12 @@ fn protocol_version_header_body_divergence_is_rejected_through_verify() {
     sign_request(
         &mut r,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signs");
     let err = Verifier::new(&strict_transport(), &resolver())
@@ -492,10 +511,12 @@ fn mcp_name_body_divergence_is_rejected_through_verify() {
     sign_request(
         &mut r,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signs");
     let err = Verifier::new(&strict_transport(), &resolver())
@@ -519,10 +540,12 @@ fn absent_headers_verify_when_no_transport_policy_is_attached() {
     sign_request(
         &mut r,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signs");
     Verifier::new(&VerifierPolicy::default(), &resolver())

@@ -31,15 +31,16 @@
 //! implementations agree on a happy path; each negative mutates the third party's own
 //! receipt to show MCP-RE independently enforces the contract rather than trusting it.
 
-use std::path::PathBuf;
+#[path = "scitt_interop_test/corpus.rs"]
+mod corpus;
+#[path = "scitt_interop_test/report.rs"]
+mod report;
 
+use corpus::{
+    another_ed25519_key, artifact, capsule, interop_dir, issuer, operated_capsule, pin,
+    pin_document_with, receipt, retained_chain, statement, verify_corpus, verify_with,
+};
 use mcp_re_core::b64url_decode;
-use mcp_re_core::VerificationKey;
-use mcp_re_http_profile::chain::ChainLabel;
-use mcp_re_http_profile::chain::ChainReconstruction;
-use mcp_re_http_profile::chain::HopEvidence;
-use mcp_re_http_profile::evidence::RequestRoleEvidence;
-use mcp_re_http_profile::evidence::ResponseRoleEvidence;
 use mcp_re_http_profile::scitt::verify_receipt_offline;
 use mcp_re_http_profile::scitt::verify_retained_evidence;
 use mcp_re_http_profile::scitt::EvidenceCommitment;
@@ -47,145 +48,8 @@ use mcp_re_http_profile::scitt::Receipt;
 use mcp_re_http_profile::scitt::ScittServiceTrustPin;
 use mcp_re_http_profile::scitt::SignedStatement;
 use mcp_re_http_profile::HttpProfileError;
+use report::{build_report, corpora, VerificationReport};
 
-fn interop_dir() -> PathBuf {
-    if let Ok(rel) = std::env::var("MCP_RE_SCITT_INTEROP_MANIFEST") {
-        for key in ["TEST_SRCDIR", "RUNFILES_DIR"] {
-            if let Ok(root) = std::env::var(key) {
-                let candidate = std::path::Path::new(&root).join(&rel);
-                if candidate.exists() {
-                    return candidate.parent().expect("manifest parent").to_path_buf();
-                }
-            }
-        }
-        let candidate = PathBuf::from(&rel);
-        if candidate.exists() {
-            return candidate.parent().expect("manifest parent").to_path_buf();
-        }
-        panic!("MCP_RE_SCITT_INTEROP_MANIFEST set but runfile not found (rel={rel})");
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("vectors")
-        .join("scitt")
-        .join("interop")
-}
-
-fn artifact(name: &str) -> Vec<u8> {
-    std::fs::read(interop_dir().join(name)).unwrap_or_else(|e| panic!("{name}: {e}"))
-}
-
-/// Parse `retained-evidence.bin` into the chain reconstruction an auditor would hold.
-///
-/// The artifact records EVERY hop's signature bases, because the statement's
-/// `chain_commitment` covers every hop: a retained set that stopped at hop 0 could not
-/// reproduce it.
-///
-/// It records HANDLES, not the submitted messages, so the submission digest is not
-/// reproducible from it and the record identifies no submission.
-/// [`ChainReconstruction::from_retained_handles`] is how a reconstruction says that, and
-/// it is the only producer that can: the identity field is private, so this corpus cannot
-/// author one it never computed. That limit is what
-/// `a_statement_identifying_no_submission_binds_no_retained_record` records.
-fn retained_chain(bytes: &[u8]) -> ChainReconstruction {
-    let retained: serde_json::Value = serde_json::from_slice(bytes).expect("retained parses");
-    assert_eq!(
-        retained["chain_label"].as_str(),
-        Some("complete"),
-        "the corpus record is a complete chain"
-    );
-    ChainReconstruction::from_retained_handles(
-        ChainLabel::Complete,
-        retained["hops"]
-            .as_array()
-            .expect("hops")
-            .iter()
-            .map(|hop| HopEvidence {
-                request_evidence: RequestRoleEvidence::from_signature_base(
-                    hop["request"].as_str().expect("request base").as_bytes(),
-                ),
-                response_evidence: ResponseRoleEvidence::from_signature_base(
-                    hop["response"].as_str().expect("response base").as_bytes(),
-                ),
-            })
-            .collect(),
-    )
-}
-
-fn pin() -> ScittServiceTrustPin {
-    serde_json::from_slice(&artifact("service-key-pin.json")).expect("pin parses")
-}
-
-/// The corpus pin with one field of its DOCUMENT edited.
-///
-/// The edit is applied to the JSON, not to a parsed pin, because a pin no longer has
-/// editable fields: its `(algorithm, public_key)` pair is checked on the way in, so the
-/// only way to obtain a different one is to present a different document. That is also
-/// the more faithful negative fixture — a pin an operator could ship by mistake, rather
-/// than a value that could only ever have existed in memory.
-fn pin_document_with(
-    bytes: &[u8],
-    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
-) -> ScittServiceTrustPin {
-    let mut document: serde_json::Value = serde_json::from_slice(bytes).expect("pin document");
-    edit(
-        document
-            .as_object_mut()
-            .expect("a pin document is an object"),
-    );
-    serde_json::from_value(document).expect("the edited document is still a legal pin")
-}
-
-/// A real Ed25519 key that is simply not the service's signer.
-fn another_ed25519_key() -> serde_json::Value {
-    mcp_re_core::b64url_encode(
-        &mcp_re_core::SigningKey::from_seed_bytes(&[0xAB; 32])
-            .public_key()
-            .to_bytes(),
-    )
-    .into()
-}
-
-fn statement() -> SignedStatement {
-    SignedStatement::from_cose(&artifact("signed-statement.cbor")).expect("statement parses")
-}
-
-fn receipt() -> Receipt {
-    Receipt::from_cose(&artifact("receipt.cbor")).expect("receipt parses")
-}
-
-/// The statement's issuer key — our own corpus issuer, since MCP-RE issued the statement.
-fn issuer() -> VerificationKey {
-    let s01: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(
-            interop_dir()
-                .parent()
-                .expect("scitt dir")
-                .join("s01_complete_record.json"),
-        )
-        .expect("s01 committed"),
-    )
-    .expect("s01 parses");
-    VerificationKey::from_b64url(s01["issuer_pubkey_b64url"].as_str().expect("issuer key"))
-        .expect("issuer key decodes")
-}
-
-fn verify_with(
-    statement: &SignedStatement,
-    receipt: &Receipt,
-    pin: &ScittServiceTrustPin,
-) -> Result<(), HttpProfileError> {
-    let issuer = issuer();
-    verify_receipt_offline(
-        statement,
-        receipt,
-        |_| Some(issuer.clone().into()),
-        |kid| pin.resolve(kid),
-    )
-}
-
-/// THE decisive test: a third party's receipt verifies offline under MCP-RE, contacting
-/// nothing. Every input is a committed byte string — statement, receipt, pinned key.
 #[test]
 fn a_third_party_receipt_verifies_offline_under_mcp_re() {
     verify_with(&statement(), &receipt(), &pin()).expect("the third party's receipt verifies");
@@ -421,34 +285,11 @@ fn the_corpus_records_the_limits_of_the_exchange() {
 // capsule-anchor — a real SCITT Transparency SERVICE, run locally.
 // ---------------------------------------------------------------------------
 
-/// The corpus from the `capsule-anchor` exchange: it accepted our exact Signed Statement
-/// over HTTP and returned a receipt. Frozen so verification is reproducible with the
-/// service stopped — which is what "offline" has to mean.
-fn capsule_dir() -> PathBuf {
-    interop_dir().join("capsule-anchor")
-}
-
-fn capsule(name: &str) -> Vec<u8> {
-    std::fs::read(capsule_dir().join(name)).unwrap_or_else(|e| panic!("{name}: {e}"))
-}
-
 /// A real service's receipt verifies offline — detached payload, and its own leaf
 /// profile taken from the pin.
 #[test]
 fn a_real_transparency_services_receipt_verifies_offline() {
-    let statement = SignedStatement::from_cose(&capsule("signed-statement.cbor")).expect("parses");
-    let receipt = Receipt::from_cose(&capsule("receipt.cbor")).expect("parses");
-    let pin: ScittServiceTrustPin =
-        serde_json::from_slice(&capsule("service-key-pin.json")).expect("pin parses");
-    let issuer = issuer();
-
-    verify_receipt_offline(
-        &statement,
-        &receipt,
-        |_| Some(issuer.clone().into()),
-        |kid| pin.resolve(kid),
-    )
-    .expect("capsule-anchor's receipt verifies offline");
+    verify_corpus(capsule).expect("capsule-anchor's receipt verifies offline");
 }
 
 /// The qualifier decides, and exactly one value of it can be right. With the default
@@ -531,33 +372,12 @@ fn the_capsule_anchor_corpus_records_the_exchange_and_its_limits() {
 // `SHA256(0x00 ‖ SHA256(Sig_structure))`, which it calls `sig_structure` and which is a
 // third reading of RFC 9162 §2.1's entry.
 
-/// The frozen exchange with the OPERATED instance.
-fn operated_capsule_dir() -> PathBuf {
-    interop_dir().join("capsule-anchor-live")
-}
-
-fn operated_capsule(name: &str) -> Vec<u8> {
-    std::fs::read(operated_capsule_dir().join(name)).unwrap_or_else(|e| panic!("{name}: {e}"))
-}
-
 /// THE external-interoperability property: a Transparency Service somebody else operates
 /// accepted our exact octets, and its receipt verifies here with no network at all.
 #[test]
 fn an_operated_transparency_services_receipt_verifies_offline() {
-    let statement =
-        SignedStatement::from_cose(&operated_capsule("signed-statement.cbor")).expect("parses");
-    let receipt = Receipt::from_cose(&operated_capsule("receipt.cbor")).expect("parses");
-    let pin: ScittServiceTrustPin =
-        serde_json::from_slice(&operated_capsule("service-key-pin.json")).expect("pin parses");
-    let issuer = issuer();
-
-    verify_receipt_offline(
-        &statement,
-        &receipt,
-        |_| Some(issuer.clone().into()),
-        |kid| pin.resolve(kid),
-    )
-    .expect("the operated service's receipt verifies offline against the pinned key");
+    verify_corpus(operated_capsule)
+        .expect("the operated service's receipt verifies offline against the pinned key");
 }
 
 /// The third leaf profile is doing real work: NEITHER of the other two verifies this
@@ -671,204 +491,6 @@ fn the_operated_corpus_records_the_exchange_its_limits_and_what_it_supersedes() 
             "{name} drifted"
         );
     }
-}
-
-// ---------------------------------------------------------------------------
-// verification-report.json — emitted by the verifier, re-checked by a test.
-// ---------------------------------------------------------------------------
-
-/// One corpus's report: what was verified, by what, and the verdict reached.
-///
-/// Written by the verifier itself rather than by hand, because a hand-written report is
-/// a claim about a run and this has to be a record OF one. The check below re-derives
-/// every field, so a report that drifts from what the verifier now does fails.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct VerificationReport {
-    schema: String,
-    peer: String,
-    verifier: String,
-    /// The test that emits and re-checks this file.
-    generated_by: String,
-    /// Artifact name → base64url SHA-256, over the bytes on disk.
-    artifacts: std::collections::BTreeMap<String, String>,
-    /// The verdict on the positive case: `verify_ok`, or the refusing wire code.
-    positive_verdict: String,
-    /// Each mutation and the wire code it was refused with.
-    refusals: std::collections::BTreeMap<String, String>,
-    /// Why a forged inclusion path refuses the way it does for this receipt form.
-    ///
-    /// On an ATTACHED receipt the fold and the signature are separable, so a forged path
-    /// is refused as an inclusion mismatch while the service's signature stays valid —
-    /// which is what shows SCITT receipt verification rather than mere COSE signature
-    /// checking. On a DETACHED receipt they are one check by construction, because the
-    /// fold's output IS the signed payload; the refusal is then a signature failure and
-    /// cannot be exhibited with a valid signature.
-    refusal_note: String,
-}
-
-/// Whether a tagged `COSE_Sign1`'s payload slot is CBOR `null` — the detached form.
-/// Read from the octets rather than from a parsed view, so it reports what is on the wire.
-fn cbor_payload_is_absent(receipt: &[u8]) -> bool {
-    Receipt::from_cose(receipt).expect("receipt parses");
-    // The payload is the third element; `f6` is CBOR null. Scanning for the marker that
-    // precedes the 64-octet signature (`58 40`) keeps this independent of header sizes.
-    receipt.windows(3).any(|w| w == [0xf6, 0x58, 0x40])
-}
-
-fn digest_of(bytes: &[u8]) -> String {
-    use sha2::Digest;
-    mcp_re_core::b64url_encode(&sha2::Sha256::digest(bytes))
-}
-
-/// Every leaf rule this verifier implements, by the token a pin writes.
-///
-/// Enumerated once, here, so a fourth reading of RFC 9162 §2.1's entry cannot be added to
-/// the profile without the reports that exercise the wrong ones noticing.
-const LEAF_PROFILE_TOKENS: &[&str] = &[
-    "statement-bytes",
-    "statement-digest",
-    "sig-structure-digest",
-];
-
-/// The token a pin writes for a leaf profile.
-fn leaf_profile_token(profile: mcp_re_http_profile::scitt::StatementLeafProfile) -> &'static str {
-    use mcp_re_http_profile::scitt::StatementLeafProfile as P;
-    match profile {
-        P::StatementBytes => "statement-bytes",
-        P::StatementDigest => "statement-digest",
-        P::SigStructureDigest => "sig-structure-digest",
-    }
-}
-
-/// Verdict as the report records it: `verify_ok` or the wire code.
-fn verdict_token(outcome: Result<(), HttpProfileError>) -> String {
-    match outcome {
-        Ok(()) => "verify_ok".to_owned(),
-        Err(e) => e.wire_code().to_owned(),
-    }
-}
-
-/// Build the report for one corpus directory by actually running the verification.
-fn build_report(dir: &std::path::Path, peer: &str) -> VerificationReport {
-    let read = |n: &str| std::fs::read(dir.join(n)).unwrap_or_else(|e| panic!("{n}: {e}"));
-    let statement = SignedStatement::from_cose(&read("signed-statement.cbor")).expect("statement");
-    let receipt = Receipt::from_cose(&read("receipt.cbor")).expect("receipt");
-    let pin: ScittServiceTrustPin =
-        serde_json::from_slice(&read("service-key-pin.json")).expect("pin");
-    let issuer = issuer();
-    let verify = |s: &SignedStatement, r: &Receipt, p: &ScittServiceTrustPin| {
-        verify_receipt_offline(s, r, |_| Some(issuer.clone().into()), |kid| p.resolve(kid))
-    };
-
-    let mut artifacts = std::collections::BTreeMap::new();
-    for name in [
-        "signed-statement.cbor",
-        "receipt.cbor",
-        "retained-evidence.bin",
-        "service-key-pin.json",
-        "exchange-metadata.json",
-    ] {
-        artifacts.insert(name.to_owned(), digest_of(&read(name)));
-    }
-
-    // Whether this service emits detached receipts decides how a forged path refuses.
-    let detached = cbor_payload_is_absent(&read("receipt.cbor"));
-
-    let mut refusals = std::collections::BTreeMap::new();
-
-    // A pinned key that is not the signer.
-    let wrong_key = pin_document_with(&read("service-key-pin.json"), |d| {
-        d["public_key"]["x"] = another_ed25519_key();
-    });
-    refusals.insert(
-        "wrong-pinned-service-key".to_owned(),
-        verdict_token(verify(&statement, &receipt, &wrong_key)),
-    );
-
-    // A pin that answers for a different kid.
-    let wrong_kid = pin_document_with(&read("service-key-pin.json"), |d| {
-        d.insert("kid".into(), "not-the-receipts-kid".into());
-    });
-    refusals.insert(
-        "kid-not-covered-by-the-pin".to_owned(),
-        verdict_token(verify(&statement, &receipt, &wrong_kid)),
-    );
-
-    // EVERY leaf profile this verifier implements except the pinned one. Exactly one can
-    // be right, and with three readings of "the entry" in the registry the singular "the
-    // other profile" stopped being a well-formed question: a report that exercised one of
-    // the two wrong ones would leave the other unexercised and look the same.
-    for wrong in LEAF_PROFILE_TOKENS
-        .iter()
-        .filter(|token| **token != leaf_profile_token(pin.leaf_profile()))
-    {
-        let wrong_profile = pin_document_with(&read("service-key-pin.json"), |d| {
-            d.insert("leaf_profile".into(), (*wrong).into());
-        });
-        refusals.insert(
-            format!("wrong-leaf-profile:{wrong}"),
-            verdict_token(verify(&statement, &receipt, &wrong_profile)),
-        );
-    }
-
-    // A sibling hash flipped in the unprotected inclusion path — the service's own
-    // signature stays valid, so only the fold refuses it.
-    let bytes = read("receipt.cbor");
-    let head: [u8; 4] = [0x83, bytes[0], 0x00, 0x00]; // placeholder, replaced below
-    let _ = head;
-    let proof_at = (0..bytes.len().saturating_sub(6)).find(|&i| {
-        bytes[i] == 0x83 && bytes[i + 3] == 0x81 && bytes[i + 4] == 0x58 && bytes[i + 5] == 0x20
-    });
-    if let Some(at) = proof_at {
-        let mut forged = bytes.clone();
-        forged[at + 6 + 31] ^= 0x01;
-        let outcome = Receipt::from_cose(&forged).and_then(|r| verify(&statement, &r, &pin));
-        refusals.insert(
-            "forged-inclusion-path-valid-service-signature".to_owned(),
-            verdict_token(outcome),
-        );
-    }
-
-    VerificationReport {
-        schema: "mcp-re-scitt-verification-report/v1".to_owned(),
-        peer: peer.to_owned(),
-        verifier: "mcp-re-http-profile::scitt::verify_receipt_offline (offline; no service contacted)"
-            .to_owned(),
-        generated_by: "mcp-re-conformance/tests/scitt_interop_test.rs::write_verification_reports"
-            .to_owned(),
-        artifacts,
-        positive_verdict: verdict_token(verify(&statement, &receipt, &pin)),
-        refusals,
-        refusal_note: if detached {
-            "detached payload: the re-derived root IS the signed payload, so a forged              inclusion path is refused as a signature failure — the fold and the              signature are one check and cannot be separated"
-        } else {
-            "attached payload: a forged inclusion path is refused as an inclusion              mismatch while the service's signature remains valid — the fold is doing              the work, not the signature check"
-        }
-        .to_owned(),
-    }
-}
-
-fn corpora() -> Vec<(PathBuf, String)> {
-    let transmute: serde_json::Value =
-        serde_json::from_slice(&artifact("manifest.json")).expect("manifest");
-    let capsule: serde_json::Value =
-        serde_json::from_slice(&capsule("manifest.json")).expect("manifest");
-    let operated: serde_json::Value =
-        serde_json::from_slice(&operated_capsule("manifest.json")).expect("manifest");
-    vec![
-        (
-            interop_dir(),
-            transmute["peer"].as_str().expect("peer").to_owned(),
-        ),
-        (
-            capsule_dir(),
-            capsule["peer"].as_str().expect("peer").to_owned(),
-        ),
-        (
-            operated_capsule_dir(),
-            operated["peer"].as_str().expect("peer").to_owned(),
-        ),
-    ]
 }
 
 #[test]

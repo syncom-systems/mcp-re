@@ -465,6 +465,7 @@ mod tests {
     use crate::delegation::verify_delegation_credential;
     use crate::delegation::DelegationVerifyParams;
     use crate::delegation::VerifiedDelegation;
+    use crate::sign::RequestSignature;
     use mcp_re_core::audit::event_type;
     use mcp_re_core::VerificationKey;
 
@@ -929,10 +930,12 @@ mod tests {
         crate::sign::sign_request(
             &mut request,
             &SigningKey::from_seed_bytes(&[77u8; 32]),
-            "client-key-1",
-            now,
-            now + 60,
-            &mcp_re_test_paths::unique_test_nonce(),
+            &RequestSignature {
+                key_id: "client-key-1",
+                created: now,
+                expires: now + 60,
+                nonce: &mcp_re_test_paths::unique_test_nonce(),
+            },
         )
         .expect("request signs");
 
@@ -990,10 +993,12 @@ mod tests {
         crate::sign::sign_request(
             &mut request,
             &SigningKey::from_seed_bytes(&[77u8; 32]),
-            "client-key-1",
-            now,
-            now + 60,
-            &mcp_re_test_paths::unique_test_nonce(),
+            &RequestSignature {
+                key_id: "client-key-1",
+                created: now,
+                expires: now + 60,
+                nonce: &mcp_re_test_paths::unique_test_nonce(),
+            },
         )
         .expect("request signs");
         let mut response = crate::message::HttpResponse {

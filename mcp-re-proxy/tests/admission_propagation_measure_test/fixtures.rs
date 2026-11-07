@@ -33,6 +33,7 @@ use mcp_re_http_profile::DelegationHeader;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::PROFILE_TAG;
@@ -230,10 +231,12 @@ pub(super) fn signed_call(claims: &AdmissionClaims, nonce: &str) -> HttpRequest 
         &mut req,
         &block,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        nonce,
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce,
+        },
     )
     .expect("signs");
     req

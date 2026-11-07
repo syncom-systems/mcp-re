@@ -10,6 +10,7 @@ use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::RequestRoleEvidence;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
@@ -136,10 +137,12 @@ pub(super) fn signed_request() -> (HttpRequest, RequestRoleEvidence) {
         &mut req,
         &block,
         &client_key(),
-        CLIENT_KID,
-        CREATED,
-        EXPIRES,
-        "nonce-1",
+        &RequestSignature {
+            key_id: CLIENT_KID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: "nonce-1",
+        },
     )
     .expect("sign request");
     (req, ev)

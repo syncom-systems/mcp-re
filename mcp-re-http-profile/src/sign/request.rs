@@ -55,6 +55,29 @@ pub(crate) fn conditional_request_components(
     Ok(components)
 }
 
+/// The RFC 9421 signature parameters one request signature states: who signs, when the
+/// signature was created and stops being valid, and the nonce that makes it single-use.
+#[derive(Debug, Clone, Copy)]
+pub struct RequestSignature<'a> {
+    pub key_id: &'a str,
+    pub created: i64,
+    pub expires: i64,
+    pub nonce: &'a str,
+}
+
+impl RequestSignature<'_> {
+    fn params(&self) -> SignatureParams {
+        SignatureParams {
+            created: Some(self.created),
+            expires: Some(self.expires),
+            nonce: Some(self.nonce.to_owned()),
+            keyid: Some(self.key_id.to_owned()),
+            alg: Some(ALG_ED25519.to_owned()),
+            tag: Some(PROFILE_TAG.to_owned()),
+        }
+    }
+}
+
 /// Sign `request` in place with a local in-process [`SigningKey`]: emit
 /// `Content-Digest`, `Signature-Input`, and `Signature` (label `mcp-re`, tag
 /// `mcp-re-http-v1`). Returns the [`RequestRoleEvidence`] handle derived from the
@@ -63,19 +86,9 @@ pub(crate) fn conditional_request_components(
 pub fn sign_request(
     request: &mut HttpRequest,
     key: &SigningKey,
-    key_id: &str,
-    created: i64,
-    expires: i64,
-    nonce: &str,
+    signature: &RequestSignature<'_>,
 ) -> Result<RequestRoleEvidence, HttpProfileError> {
-    sign_request_with_signer(
-        request,
-        |base| local_sig(key, base),
-        key_id,
-        created,
-        expires,
-        nonce,
-    )
+    sign_request_with_signer(request, |base| local_sig(key, base), signature)
 }
 
 /// Sign `request` in place with an EXTERNAL signer (Cloud KMS / HSM custody).
@@ -88,16 +101,13 @@ pub fn sign_request(
 pub fn sign_request_with_signer(
     request: &mut HttpRequest,
     sign_base: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
-    key_id: &str,
-    created: i64,
-    expires: i64,
-    nonce: &str,
+    signature: &RequestSignature<'_>,
 ) -> Result<RequestRoleEvidence, HttpProfileError> {
     reject_content_encoding(&request.headers)?;
     // The routing headers the contract requires, derived from the body this signature
     // protects, so the signer cannot be the source of a header/body disagreement.
     crate::mcp_transport::add_contract_headers(request)?;
-    sign_headers_as_given(request, sign_base, key_id, created, expires, nonce)
+    sign_headers_as_given(request, sign_base, signature)
 }
 
 /// Sign `request` with a local key over exactly the headers it already carries: no routing
@@ -106,29 +116,16 @@ pub fn sign_request_with_signer(
 pub fn sign_request_as_given(
     request: &mut HttpRequest,
     key: &SigningKey,
-    key_id: &str,
-    created: i64,
-    expires: i64,
-    nonce: &str,
+    signature: &RequestSignature<'_>,
 ) -> Result<RequestRoleEvidence, HttpProfileError> {
     reject_content_encoding(&request.headers)?;
-    sign_headers_as_given(
-        request,
-        |base| local_sig(key, base),
-        key_id,
-        created,
-        expires,
-        nonce,
-    )
+    sign_headers_as_given(request, |base| local_sig(key, base), signature)
 }
 
 fn sign_headers_as_given(
     request: &mut HttpRequest,
     sign_base: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
-    key_id: &str,
-    created: i64,
-    expires: i64,
-    nonce: &str,
+    signature: &RequestSignature<'_>,
 ) -> Result<RequestRoleEvidence, HttpProfileError> {
     // Every request signer ends here, so this is the one place a carried block is checked.
     super::request_block::validate_carried(&request.body)?;
@@ -139,14 +136,7 @@ fn sign_headers_as_given(
     );
 
     let components = request_components(request)?;
-    let params = SignatureParams {
-        created: Some(created),
-        expires: Some(expires),
-        nonce: Some(nonce.to_owned()),
-        keyid: Some(key_id.to_owned()),
-        alg: Some(ALG_ED25519.to_owned()),
-        tag: Some(PROFILE_TAG.to_owned()),
-    };
+    let params = signature.params();
     let base = signature_base(&components, &params, &SourceMessage::Request(request))?;
     emit_signature(
         &mut request.headers,
@@ -159,6 +149,16 @@ fn sign_headers_as_given(
     Ok(RequestRoleEvidence::from_signature_base(&base))
 }
 
+/// Compose the request evidence block (`se.syncom/mcp-re.http.request`) into the JSON-RPC
+/// body `_meta` FIRST, so `content-digest` (a covered component) protects the block.
+fn compose_evidence_block(
+    request: &mut HttpRequest,
+    block: &HttpRequestEvidenceBlock,
+) -> Result<(), HttpProfileError> {
+    request.body = insert_meta_block(&request.body, REQUEST_EVIDENCE_BLOCK_KEY, block)?;
+    Ok(())
+}
+
 /// Full-profile request signing (MCPRE-101): compose the request evidence block
 /// (`se.syncom/mcp-re.http.request`) into the JSON-RPC body `_meta` FIRST, then
 /// sign — so `content-digest` (a covered component) protects the block. Returns
@@ -168,13 +168,10 @@ pub fn sign_request_full(
     request: &mut HttpRequest,
     block: &HttpRequestEvidenceBlock,
     key: &SigningKey,
-    key_id: &str,
-    created: i64,
-    expires: i64,
-    nonce: &str,
+    signature: &RequestSignature<'_>,
 ) -> Result<RequestRoleEvidence, HttpProfileError> {
-    request.body = insert_meta_block(&request.body, REQUEST_EVIDENCE_BLOCK_KEY, block)?;
-    sign_request(request, key, key_id, created, expires, nonce)
+    compose_evidence_block(request, block)?;
+    sign_request(request, key, signature)
 }
 
 /// Full-profile request signing through an EXTERNAL signer (Cloud KMS / HSM
@@ -187,11 +184,8 @@ pub fn sign_request_full_with_signer(
     request: &mut HttpRequest,
     block: &HttpRequestEvidenceBlock,
     sign_base: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
-    key_id: &str,
-    created: i64,
-    expires: i64,
-    nonce: &str,
+    signature: &RequestSignature<'_>,
 ) -> Result<RequestRoleEvidence, HttpProfileError> {
-    request.body = insert_meta_block(&request.body, REQUEST_EVIDENCE_BLOCK_KEY, block)?;
-    sign_request_with_signer(request, sign_base, key_id, created, expires, nonce)
+    compose_evidence_block(request, block)?;
+    sign_request_with_signer(request, sign_base, signature)
 }

@@ -13,144 +13,81 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 
-_TEST_REGION = re.compile(r"^#\[cfg\((?:all\()?test", re.M)
-_LINE_COMMENT = re.compile(r"//[^\n]*")
-_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
-_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
-_USE = re.compile(r"\b(pub(?:\([^)]*\))?\s+)?use\s+([^;]+);")
+from rust_crates import CrateIndex
+from rust_use_tree import USE, expand_use_tree, production_text, reexport_table
+
 _MAX_HOPS = 4
-
-
-def production_text(src: str) -> str:
-    m = _TEST_REGION.search(src)
-    body = src[:m.start()] if m else src
-    return _STRING.sub('""', _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", body)))
-
-
-def expand_use_tree(tree: str) -> list[list[str]]:
-    """`a::{b, c::{d, e}}` -> [[a,b], [a,c,d], [a,c,e]]; `self` and `*` stop a path."""
-    tree = re.sub(r"\s+", "", re.sub(r"\s+as\s+\w+", "", tree))
-    out: list[list[str]] = []
-
-    def split_top(s: str) -> list[str]:
-        parts, depth, cur = [], 0, ""
-        for ch in s:
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-            if ch == "," and depth == 0:
-                parts.append(cur)
-                cur = ""
-            else:
-                cur += ch
-        if cur:
-            parts.append(cur)
-        return parts
-
-    def walk(prefix: list[str], s: str) -> None:
-        brace = s.find("{")
-        if brace == -1:
-            path = prefix + [x for x in s.split("::") if x and x not in ("self", "*")]
-            if path:
-                out.append(path)
-            return
-        head = [x for x in s[:brace].split("::") if x]
-        for part in split_top(s[brace + 1:s.rfind("}")]):
-            walk(prefix + head, part)
-
-    walk([], tree)
-    return out
-
-
-#: One Rust library target's attribute block in a BUILD file.
-_LIBRARY = re.compile(r"^(?:nt_)?rust_library\((.*?)^\)", re.M | re.S)
+_RELATIVE = ("super", "self")
 
 
 class RustResolver:
     def __init__(self, root: str) -> None:
         self.root = root
-        # crate ident -> crate dir (repo-relative), read from the Bazel library targets:
-        # a library's crate is its `crate_name` (or its target name), rooted at its
-        # package's `src/lib.rs`. Every flavor of one library names the same crate.
-        self.crates: dict[str, str] = {}
-        p = subprocess.run(["git", "ls-files", "*BUILD.bazel", "*BUILD"], cwd=root,
-                           capture_output=True, text=True)
-        for build in p.stdout.split():
-            d = os.path.dirname(build)
-            if not os.path.isfile(os.path.join(root, d, "src", "lib.rs")):
-                continue
-            text = open(os.path.join(root, build), encoding="utf-8").read()
-            for block in _LIBRARY.findall(text):
-                m = re.search(r'\bcrate_name\s*=\s*"([^"]+)"', block) or \
-                    re.search(r'\bname\s*=\s*"([^"]+)"', block)
-                if m:
-                    self.crates.setdefault(m.group(1).replace("-", "_"), d)
+        self.index = CrateIndex(root)
+        heads = "|".join(["crate", "super", "self"] + [re.escape(c) for c in self.index.crates])
+        self._path_re = re.compile(r"\b(?:%s)(?:::\w+)+" % heads)
         self._reexports: dict[str, dict[str, list[str]]] = {}
 
     def crate_of(self, path: str) -> str | None:
-        best = None
-        for ident, d in self.crates.items():
-            if path.startswith(d + "/src/") and (best is None or len(d) > len(self.crates[best])):
-                best = ident
-        return best
+        return self.index.crate_of(path)
 
     def module_path(self, path: str) -> list[str]:
-        ident = self.crate_of(path)
-        rel = path[len(self.crates[ident]) + len("/src/"):] if ident else path
-        parts = rel[:-3].split("/")
-        if parts[-1] in ("lib", "main", "mod"):
-            parts = parts[:-1]
-        return parts
-
-    def module_file(self, crate: str, mod: list[str]) -> str | None:
-        base = os.path.join(self.crates[crate], "src", *mod)
-        cands = [os.path.join(self.crates[crate], "src", "lib.rs")] if not mod else \
-            [base + ".rs", os.path.join(base, "mod.rs")]
-        for c in cands:
-            if os.path.isfile(os.path.join(self.root, c)):
-                return c
-        return None
+        return self.index.module_path(path)
 
     def _absolute(self, path: str, segs: list[str]) -> tuple[str, list[str]] | None:
         """(crate, absolute segments) for a path written inside `path`."""
-        own = self.crate_of(path)
         if not segs:
             return None
+        own = self.index.crate_of(path)
         if segs[0] == "crate" and own:
             return own, segs[1:]
-        if segs[0] in ("super", "self") and own:
-            mod = self.module_path(path)
-            i = 0
-            while i < len(segs) and segs[i] in ("super", "self"):
-                if segs[i] == "super":
-                    mod = mod[:-1]
-                i += 1
-            return own, mod + segs[i:]
-        if segs[0] in self.crates:
+        if segs[0] in _RELATIVE and own:
+            return own, self._relative(path, segs)
+        if segs[0] in self.index.crates:
             return segs[0], segs[1:]
-        if own:
-            # A 2018-edition path may start at a child module of the current one.
-            mod = self.module_path(path)
-            if self.module_file(own, mod + [segs[0]]):
-                return own, mod + segs
+        # A 2018-edition path may start at a child module of the current one.
+        return self._child_path(own, path, segs) if own else None
+
+    def _relative(self, path: str, segs: list[str]) -> list[str]:
+        """Walk the leading `super`/`self` segments up from `path`'s own module."""
+        mod = self.index.module_path(path)
+        i = 0
+        while i < len(segs) and segs[i] in _RELATIVE:
+            if segs[i] == "super":
+                mod = mod[:-1]
+            i += 1
+        return mod + segs[i:]
+
+    def _child_path(self, own: str, path: str, segs: list[str]) -> tuple[str, list[str]] | None:
+        mod = self.index.module_path(path)
+        if self.index.module_file(own, mod + [segs[0]]):
+            return own, mod + segs
         return None
 
     def _module_reexports(self, file: str) -> dict[str, list[str]]:
         """item name -> the path its `pub use` points at, for one module file."""
         if file not in self._reexports:
-            table: dict[str, list[str]] = {}
-            src = production_text(open(os.path.join(self.root, file), encoding="utf-8",
-                                       errors="ignore").read())
-            for m in _USE.finditer(src):
-                if not m.group(1):
-                    continue
-                for segs in expand_use_tree(m.group(2)):
-                    table[segs[-1]] = segs
-            self._reexports[file] = table
+            self._reexports[file] = reexport_table(production_text(self._read(file)))
         return self._reexports[file]
+
+    def _read(self, path: str) -> str:
+        with open(os.path.join(self.root, path), encoding="utf-8", errors="ignore") as fh:
+            return fh.read()
+
+    def _longest_module(self, crate: str, rest: list[str]) -> tuple[str, int] | None:
+        """The module file named by the longest prefix of `rest`, and that prefix's length."""
+        for n in range(len(rest), -1, -1):
+            f = self.index.module_file(crate, rest[:n])
+            if f:
+                return f, n
+        return None
+
+    def _reexport_hop(self, file: str, rest: list[str], used: int) -> list[str] | None:
+        """Where `file` re-exports the item that follows the module prefix, if it does."""
+        if used >= len(rest):
+            return None
+        return self._module_reexports(file).get(rest[used])
 
     def resolve(self, path: str, segs: list[str]) -> str | None:
         ab = self._absolute(path, segs)
@@ -159,16 +96,11 @@ class RustResolver:
         crate, rest = ab
         file = None
         for _ in range(_MAX_HOPS):
-            file, used = None, 0
-            for n in range(len(rest), -1, -1):
-                f = self.module_file(crate, rest[:n])
-                if f:
-                    file, used = f, n
-                    break
-            if file is None:
+            found = self._longest_module(crate, rest)
+            if found is None:
                 return None
-            item = rest[used] if used < len(rest) else None
-            hop = self._module_reexports(file).get(item) if item else None
+            file, used = found
+            hop = self._reexport_hop(file, rest, used)
             if not hop:
                 return file
             nxt = self._absolute(file, hop)
@@ -177,21 +109,22 @@ class RustResolver:
             crate, rest = nxt
         return file
 
-    def targets(self, path: str) -> set[str]:
-        if not path.endswith(".rs") or self.crate_of(path) is None \
-                or not os.path.isfile(os.path.join(self.root, path)):
-            return set()
-        src = production_text(open(os.path.join(self.root, path), encoding="utf-8",
-                                   errors="ignore").read())
+    def _scannable(self, path: str) -> bool:
+        if not path.endswith(".rs") or self.index.crate_of(path) is None:
+            return False
+        return os.path.isfile(os.path.join(self.root, path))
+
+    def _named_paths(self, src: str) -> list[list[str]]:
+        """Every path `src` names: through `use` trees, then written out in full."""
         paths: list[list[str]] = []
-        for m in _USE.finditer(src):
+        for m in USE.finditer(src):
             paths += expand_use_tree(m.group(2))
-        heads = "|".join(["crate", "super", "self"] + [re.escape(c) for c in self.crates])
-        for m in re.finditer(r"\b(?:%s)(?:::\w+)+" % heads, _USE.sub("", src)):
-            paths.append(m.group(0).split("::"))
-        out = set()
-        for segs in paths:
-            f = self.resolve(path, segs)
-            if f and f != path:
-                out.add(f)
-        return out
+        paths += [m.group(0).split("::") for m in self._path_re.finditer(USE.sub("", src))]
+        return paths
+
+    def targets(self, path: str) -> set[str]:
+        if not self._scannable(path):
+            return set()
+        resolved = (self.resolve(path, segs) for segs in self._named_paths(
+            production_text(self._read(path))))
+        return {f for f in resolved if f and f != path}

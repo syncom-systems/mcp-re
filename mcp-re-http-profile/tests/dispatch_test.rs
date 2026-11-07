@@ -29,6 +29,7 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::RequestEvidenceDigest;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_http_profile::SignerSlot;
@@ -151,7 +152,18 @@ fn verified_request(
     block: &HttpRequestEvidenceBlock,
 ) -> VerifiedMcpRequest {
     let mut req = base_request();
-    sign_request_full(&mut req, block, key, key_id, CREATED, EXPIRES, nonce).expect("full sign");
+    sign_request_full(
+        &mut req,
+        block,
+        key,
+        &RequestSignature {
+            key_id,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce,
+        },
+    )
+    .expect("full sign");
     Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req, &block.audience, &no_material(), NOW)
         .expect("full verify")

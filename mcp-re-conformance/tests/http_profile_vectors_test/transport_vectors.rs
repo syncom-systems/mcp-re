@@ -2,6 +2,7 @@
 //! MCP transport-header (#415 rev 2 §4.1, MCPRE-425) vectors.
 
 use mcp_re_http_profile::HttpRequest;
+use mcp_re_http_profile::RequestSignature;
 
 use super::material::client_key;
 use super::material::edit_signature_input;
@@ -72,10 +73,12 @@ fn signed_as_given(headers: &[(&str, &str)], body: &[u8], nonce: &str) -> HttpRe
     mcp_re_http_profile::sign::sign_request_as_given(
         &mut request,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        nonce,
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce,
+        },
     )
     .expect("signing succeeds");
     request

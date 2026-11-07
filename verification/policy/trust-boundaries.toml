@@ -42,6 +42,7 @@ kind = "ffi"
 paths = [
   "mcp-re-proxy/src/async_fleet/**/*.rs",
   "mcp-re-proxy/src/app.rs",
+  "mcp-re-proxy/src/app/serving.rs",
   "mcp-re-proxy/src/main.rs",
   "mcp-re-client/src/startup.rs",
 ]
@@ -108,7 +109,7 @@ paths = [
   # module tree. The read side reads no clock at all.
   "mcp-re-proxy/src/retained_evidence/private_file.rs",
   "mcp-re-proxy/src/shared_replay.rs",
-  "mcp-re-proxy/src/tls.rs",
+  "mcp-re-proxy/src/tls/request_guard.rs",
   "mcp-re-proxy/src/trust_plane/trust_cache.rs",
 ]
 beyond = "Whether wall-clock time is within the skew bound of any peer's."

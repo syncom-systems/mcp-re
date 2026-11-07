@@ -418,21 +418,21 @@
     {
       "property": "MRT continuation: a multi-round-trip continuation opened on replica A is honoured on replica B (stateless cross-replica, shared correlation tier)",
       "bazel_target": "//mcp-re-proxy:integration_async_test",
-      "source": "mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test.rs",
+      "source": "mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test/binding_cases.rs",
       "test_fn": "continuation_opened_on_a_is_honoured_on_b",
       "notes": "ADR-MCPS-047. Open leg on A records the retained bases in the shared continuation store; the answer leg on B (different signer + replay tier) recovers them and binds the continuation, then serves a terminal reply. The live analogue is Proof 3 of docs/security/gke-multi-replica-validation.sh."
     },
     {
       "property": "MRT continuation: an answer leg with no shared-store entry fails closed (continuation_binding_failed)",
       "bazel_target": "//mcp-re-proxy:integration_async_test",
-      "source": "mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test.rs",
+      "source": "mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test/binding_cases.rs",
       "test_fn": "answer_without_a_shared_store_entry_fails_closed",
       "notes": "ADR-MCPS-047. No retained bases (never opened / expired / one-shot already consumed) => the pure dispatcher rejects the binding; a replayed or forged continuation never admits."
     },
     {
       "property": "MRT continuation: a tampered requestState breaks the binding (continuation_binding_failed)",
       "bazel_target": "//mcp-re-proxy:integration_async_test",
-      "source": "mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test.rs",
+      "source": "mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test/binding_cases.rs",
       "test_fn": "tampered_request_state_breaks_the_binding",
       "notes": "ADR-MCPS-047. The wire requestState is keyed into the shared store and digest-bound under the client's signature; a mismatch fails closed."
     }

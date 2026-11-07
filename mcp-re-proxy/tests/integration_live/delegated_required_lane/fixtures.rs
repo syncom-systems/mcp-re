@@ -13,6 +13,7 @@ use mcp_re_http_profile::CustodyConfig;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
@@ -183,10 +184,12 @@ pub(super) fn signed_request(nonce: &str, at: i64) -> HttpRequest {
         &mut req,
         &block,
         &client_key(),
-        CLIENT_KEY_ID,
-        at - 100,
-        at + 200,
-        nonce,
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: at - 100,
+            expires: at + 200,
+            nonce,
+        },
     )
     .expect("client signs RFC 9421 request");
     let no_material = |_b: &ArtifactBinding| None;

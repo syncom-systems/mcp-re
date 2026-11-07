@@ -42,11 +42,14 @@ const RELAXATION: &str = "allow_unknown_revocation_status";
 /// The posture the builder must positively state.
 const EXPIRATION: &str = ".enforce_revocation_expiration()";
 
-/// The one other implementation in the crate, and the feature that gates it. It exists to
-/// prove the control is live by breaking it, so it is named here rather than excluded by a
-/// filter that would also hide a real second implementation.
-const FAULT_IMPL_FILE: &str = "tls.rs";
+/// The one other implementation in the crate, the module that declares it, and the feature
+/// that gates it. It exists to prove the control is live by breaking it, so it is named here
+/// rather than excluded by a filter that would also hide a real second implementation. The
+/// file holds only the verifier; the gate is the `mod` declaration that compiles the file.
+const FAULT_IMPL_FILE: &str = "tls/fault_accept_any.rs";
+const FAULT_DECLARING_FILE: &str = "tls/mod.rs";
 const FAULT_FEATURE: &str = r#"#[cfg(feature = "fault_accept_any_client")]"#;
+const FAULT_MODULE_DECLARATION: &str = "pub(crate) mod fault_accept_any;";
 
 /// What an argument that could relax the posture would look like. A verifier builder whose
 /// caller chooses the policy has moved the decision to whoever calls it correctly.
@@ -206,16 +209,24 @@ fn the_only_other_verifier_is_the_declared_fault_injector() {
         .into_iter()
         .filter(|(rel, text)| rel != BUILDER_FILE && text.contains("impl ClientCertVerifier"))
         .collect();
-    for (rel, text) in &others {
+    for (rel, _) in &others {
         assert_eq!(
             rel, FAULT_IMPL_FILE,
             "{rel} implements `ClientCertVerifier`. Only the declared fault injector may, and \
              it may only because its feature is never in a production build."
         );
+    }
+    if !others.is_empty() {
+        let declaring = crate_production()
+            .into_iter()
+            .find(|(rel, _)| rel == FAULT_DECLARING_FILE)
+            .map(|(_, text)| text)
+            .unwrap_or_else(|| panic!("{FAULT_DECLARING_FILE} is not in the crate"));
         assert!(
-            text.contains(FAULT_FEATURE),
-            "{rel} implements `ClientCertVerifier` outside `{FAULT_FEATURE}` — an \
-             implementation a production build would compile."
+            declaring.contains(&format!("{FAULT_FEATURE}\n{FAULT_MODULE_DECLARATION}")),
+            "{FAULT_IMPL_FILE} implements `ClientCertVerifier` but {FAULT_DECLARING_FILE} \
+             compiles it outside `{FAULT_FEATURE}` — an implementation a production build \
+             would compile."
         );
     }
 }

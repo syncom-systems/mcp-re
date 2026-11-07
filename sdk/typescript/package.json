@@ -38,6 +38,7 @@
   "files": [
     "dist",
     "native/binding.js",
+    "native/loader",
     "native/binding.d.ts",
     "native/*.node"
   ],
