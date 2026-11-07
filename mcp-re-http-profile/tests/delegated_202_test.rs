@@ -169,6 +169,54 @@ fn no_revocation() -> impl Fn(&str) -> bool {
     |_| false
 }
 
+/// What a delegated-202 verification runs under: the accepted epochs, which keys are
+/// revoked, and the verifier's clock.
+struct Conditions<'a> {
+    epochs: &'a [&'a str],
+    revoked: &'a dyn Fn(&str) -> bool,
+    now: i64,
+}
+
+fn never_revoked(_: &str) -> bool {
+    false
+}
+
+impl Conditions<'static> {
+    /// The accepted epoch, nothing revoked, at `NOW`.
+    fn standard() -> Self {
+        Self {
+            epochs: &[EPOCH],
+            revoked: &never_revoked,
+            now: NOW,
+        }
+    }
+}
+
+/// The delegated-202 verdict for `ack` against `note` under `conditions`.
+fn verify_with(
+    ack: &mcp_re_http_profile::HttpResponse,
+    note: &HttpRequest,
+    conditions: &Conditions<'_>,
+) -> Result<(), HttpProfileError> {
+    verify_delegated_accepted_202(
+        ack,
+        note,
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
+        &expectations(conditions.epochs),
+        conditions.revoked,
+        conditions.now,
+    )
+    .map(|_| ())
+}
+
+/// The delegated-202 verdict under the standard conditions.
+fn verify_default(
+    ack: &mcp_re_http_profile::HttpResponse,
+    note: &HttpRequest,
+) -> Result<(), HttpProfileError> {
+    verify_with(ack, note, &Conditions::standard())
+}
+
 fn sign_ack(note: &HttpRequest) -> mcp_re_http_profile::HttpResponse {
     sign_ack_with(note, &credential())
 }
@@ -243,15 +291,7 @@ fn a_credential_scoped_to_a_principal_its_root_is_not_is_refused() {
     };
     let ack = sign_ack_with(&note, &credential_for(&other));
     assert_eq!(
-        verify_delegated_accepted_202(
-            &ack,
-            &note,
-            &Verifier::new(&VerifierPolicy::default(), &resolver()),
-            &expectations(&[EPOCH]),
-            &no_revocation(),
-            NOW
-        )
-        .unwrap_err(),
+        verify_default(&ack, &note).unwrap_err(),
         HttpProfileError::DelegationIssuerUntrusted,
     );
 }
@@ -269,15 +309,7 @@ fn a_credential_header_not_covered_is_rejected() {
         }
     }
     assert_eq!(
-        verify_delegated_accepted_202(
-            &ack,
-            &note,
-            &Verifier::new(&VerifierPolicy::default(), &resolver()),
-            &expectations(&[EPOCH]),
-            &no_revocation(),
-            NOW
-        )
-        .unwrap_err(),
+        verify_default(&ack, &note).unwrap_err(),
         HttpProfileError::MissingCoveredComponent(MCP_RE_DELEGATION_HEADER),
     );
 }
@@ -290,15 +322,7 @@ fn a_missing_credential_header_is_rejected() {
     ack.headers
         .retain(|(k, _)| !k.eq_ignore_ascii_case(MCP_RE_DELEGATION_HEADER));
     assert_eq!(
-        verify_delegated_accepted_202(
-            &ack,
-            &note,
-            &Verifier::new(&VerifierPolicy::default(), &resolver()),
-            &expectations(&[EPOCH]),
-            &no_revocation(),
-            NOW
-        )
-        .unwrap_err(),
+        verify_default(&ack, &note).unwrap_err(),
         HttpProfileError::DelegationCredentialMissing,
     );
 }
@@ -318,15 +342,7 @@ fn a_duplicated_credential_header_is_rejected() {
         .clone();
     ack.headers.push((MCP_RE_DELEGATION_HEADER.into(), cred));
     assert_eq!(
-        verify_delegated_accepted_202(
-            &ack,
-            &note,
-            &Verifier::new(&VerifierPolicy::default(), &resolver()),
-            &expectations(&[EPOCH]),
-            &no_revocation(),
-            NOW
-        )
-        .unwrap_err(),
+        verify_default(&ack, &note).unwrap_err(),
         HttpProfileError::DuplicateHeader(MCP_RE_DELEGATION_HEADER),
     );
 }
@@ -343,15 +359,7 @@ fn an_oversized_credential_header_is_rejected() {
         }
     }
     assert_eq!(
-        verify_delegated_accepted_202(
-            &ack,
-            &note,
-            &Verifier::new(&VerifierPolicy::default(), &resolver()),
-            &expectations(&[EPOCH]),
-            &no_revocation(),
-            NOW
-        )
-        .unwrap_err(),
+        verify_default(&ack, &note).unwrap_err(),
         HttpProfileError::MalformedEvidence("delegation header too large"),
     );
 }
@@ -363,13 +371,13 @@ fn a_revoked_delegated_key_is_rejected() {
     let ack = sign_ack(&note);
     let revoked = |id: &str| id == DELEGATED_KID;
     assert_eq!(
-        verify_delegated_accepted_202(
+        verify_with(
             &ack,
             &note,
-            &Verifier::new(&VerifierPolicy::default(), &resolver()),
-            &expectations(&[EPOCH]),
-            &revoked,
-            NOW
+            &Conditions {
+                revoked: &revoked,
+                ..Conditions::standard()
+            },
         )
         .unwrap_err(),
         HttpProfileError::DelegationRevoked,
@@ -389,25 +397,9 @@ fn a_delegated_202_refuses_a_content_distinct_notification() {
     let note_a = notification_method(&unique_test_nonce(), "notifications/initialized");
     let note_b = notification_method(&unique_test_nonce(), "notifications/cancelled");
     let ack_a = sign_ack(&note_a);
-    verify_delegated_accepted_202(
-        &ack_a,
-        &note_a,
-        &Verifier::new(&VerifierPolicy::default(), &resolver()),
-        &expectations(&[EPOCH]),
-        &no_revocation(),
-        NOW,
-    )
-    .expect("binds to A");
+    verify_default(&ack_a, &note_a).expect("binds to A");
     assert!(
-        verify_delegated_accepted_202(
-            &ack_a,
-            &note_b,
-            &Verifier::new(&VerifierPolicy::default(), &resolver()),
-            &expectations(&[EPOCH]),
-            &no_revocation(),
-            NOW
-        )
-        .is_err(),
+        verify_default(&ack_a, &note_b).is_err(),
         "A's acknowledgement must not acknowledge B"
     );
 }
@@ -428,25 +420,9 @@ fn a_delegated_202_refuses_a_retransmission_of_the_same_notification() {
     );
 
     let ack_a = sign_ack(&a);
-    verify_delegated_accepted_202(
-        &ack_a,
-        &a,
-        &Verifier::new(&VerifierPolicy::default(), &resolver()),
-        &expectations(&[EPOCH]),
-        &no_revocation(),
-        NOW,
-    )
-    .expect("binds to the transmission it acknowledges");
+    verify_default(&ack_a, &a).expect("binds to the transmission it acknowledges");
     assert_eq!(
-        verify_delegated_accepted_202(
-            &ack_a,
-            &a_prime,
-            &Verifier::new(&VerifierPolicy::default(), &resolver()),
-            &expectations(&[EPOCH]),
-            &no_revocation(),
-            NOW
-        )
-        .unwrap_err(),
+        verify_default(&ack_a, &a_prime).unwrap_err(),
         HttpProfileError::ResponseBindingMismatch,
         "A's acknowledgement must not acknowledge a distinct transmission A′"
     );
@@ -463,15 +439,8 @@ fn a_delegated_202_refuses_a_forged_request_evidence_header() {
     let a_prime = notification(&unique_test_nonce());
     let ack_a = sign_ack(&a);
     let ack_a_prime = sign_ack(&a_prime);
-    verify_delegated_accepted_202(
-        &ack_a_prime,
-        &a_prime,
-        &Verifier::new(&VerifierPolicy::default(), &resolver()),
-        &expectations(&[EPOCH]),
-        &no_revocation(),
-        NOW,
-    )
-    .expect("positive control: A′'s own acknowledgement binds to A′");
+    verify_default(&ack_a_prime, &a_prime)
+        .expect("positive control: A′'s own acknowledgement binds to A′");
 
     let forged_value = ack_a_prime
         .headers
@@ -487,15 +456,8 @@ fn a_delegated_202_refuses_a_forged_request_evidence_header() {
         .expect("A's acknowledgement carries the request-evidence header");
     slot.1 = forged_value;
 
-    let err = verify_delegated_accepted_202(
-        &forged,
-        &a_prime,
-        &Verifier::new(&VerifierPolicy::default(), &resolver()),
-        &expectations(&[EPOCH]),
-        &no_revocation(),
-        NOW,
-    )
-    .expect_err("a header value derived from A′ must not verify under A's signature");
+    let err = verify_default(&forged, &a_prime)
+        .expect_err("a header value derived from A′ must not verify under A's signature");
     assert_ne!(
         err,
         HttpProfileError::ResponseBindingMismatch,
@@ -509,13 +471,13 @@ fn a_stale_trust_epoch_is_rejected() {
     let note = notification(&unique_test_nonce());
     let ack = sign_ack(&note);
     assert_eq!(
-        verify_delegated_accepted_202(
+        verify_with(
             &ack,
             &note,
-            &Verifier::new(&VerifierPolicy::default(), &resolver()),
-            &expectations(&["epoch-2"]),
-            &no_revocation(),
-            NOW
+            &Conditions {
+                epochs: &["epoch-2"],
+                ..Conditions::standard()
+            },
         )
         .unwrap_err(),
         HttpProfileError::DelegationTrustEpochStale,
@@ -561,13 +523,13 @@ fn a_delegated_202_outside_its_signature_window_is_refused() {
     let ack = sign_ack(&note);
     let stale = EXPIRES + VerifierPolicy::default().max_clock_skew() + 1;
     assert_eq!(
-        verify_delegated_accepted_202(
+        verify_with(
             &ack,
             &note,
-            &Verifier::new(&VerifierPolicy::default(), &resolver()),
-            &expectations(&[EPOCH]),
-            &no_revocation(),
-            stale,
+            &Conditions {
+                now: stale,
+                ..Conditions::standard()
+            },
         )
         .unwrap_err(),
         HttpProfileError::StaleWindow,

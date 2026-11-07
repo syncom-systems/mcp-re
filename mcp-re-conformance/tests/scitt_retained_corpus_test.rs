@@ -390,26 +390,29 @@ fn from_wire_response(w: &WireMessage) -> HttpResponse {
 /// derived from that rather than from `CARGO_MANIFEST_DIR`, which is a source path the
 /// sandbox does not have.
 fn corpus_dir() -> PathBuf {
-    if let Ok(rel) = std::env::var("MCP_RE_SCITT_RETAINED_MANIFEST") {
-        for key in ["TEST_SRCDIR", "RUNFILES_DIR"] {
-            if let Ok(root) = std::env::var(key) {
-                let candidate = std::path::Path::new(&root).join(&rel);
-                if candidate.exists() {
-                    return candidate.parent().expect("manifest parent").to_path_buf();
-                }
-            }
-        }
-        let candidate = PathBuf::from(&rel);
-        if candidate.exists() {
-            return candidate.parent().expect("manifest parent").to_path_buf();
-        }
-        panic!("MCP_RE_SCITT_RETAINED_MANIFEST set but runfile not found (rel={rel})");
+    match std::env::var("MCP_RE_SCITT_RETAINED_MANIFEST") {
+        Ok(rel) => bazel_manifest_dir(&rel),
+        Err(_) => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("vectors")
+            .join("scitt")
+            .join("retained"),
     }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("vectors")
-        .join("scitt")
-        .join("retained")
+}
+
+/// The directory holding the manifest `rel`, found in the runfiles tree or as given.
+fn bazel_manifest_dir(rel: &str) -> PathBuf {
+    let in_runfiles = ["TEST_SRCDIR", "RUNFILES_DIR"]
+        .iter()
+        .filter_map(|key| std::env::var(key).ok())
+        .map(|root| std::path::Path::new(&root).join(rel));
+    let found = in_runfiles
+        .chain(std::iter::once(PathBuf::from(rel)))
+        .find(|candidate| candidate.exists())
+        .unwrap_or_else(|| {
+            panic!("MCP_RE_SCITT_RETAINED_MANIFEST set but runfile not found (rel={rel})")
+        });
+    found.parent().expect("manifest parent").to_path_buf()
 }
 
 fn artifact(name: &str) -> Vec<u8> {

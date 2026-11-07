@@ -250,6 +250,38 @@ fn trusted_server_and_client_round_trip_succeeds() {
 // 2. Untrusted server cert (DIFFERENT CA) → client aborts before sending body.
 // ---------------------------------------------------------------------------
 
+/// A server presenting `presented` to a client that trusts `trusted_server_ca`: the client
+/// aborts the handshake and the server's handler is never reached.
+fn assert_server_cert_is_rejected(
+    presented: (CertificateDer<'static>, PrivateKeyDer<'static>),
+    trusted_server_ca: &Ca,
+    client_ca: &Ca,
+    what: &str,
+) {
+    let (server_cert, server_key) = presented;
+    let config = server_config(vec![server_cert], server_key, client_ca);
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let reached = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let server = spawn_server(listener, config, reached.clone());
+
+    let client_config =
+        client_config_with_server_ca(client_ca, trusted_server_ca.cert.der().clone());
+    let client = MtlsClient::new(client_config, SERVER_NAME).expect("client");
+    let result = client.round_trip(addr, b"{\"jsonrpc\":\"2.0\"}");
+
+    assert!(
+        matches!(result, Err(TransportError::Handshake(_))),
+        "{what} must abort the handshake, got {result:?}"
+    );
+    let _ = server.join();
+    assert!(
+        !reached.load(std::sync::atomic::Ordering::SeqCst),
+        "server handler must NOT be reached when the client rejects {what}"
+    );
+}
+
 #[test]
 fn untrusted_server_cert_is_rejected() {
     // Server presents a cert signed by `rogue_ca`, but the client trusts only
@@ -257,27 +289,11 @@ fn untrusted_server_cert_is_rejected() {
     let server_ca = make_ca();
     let rogue_ca = make_ca();
     let client_ca = make_ca();
-    let (server_cert, server_key) =
-        make_leaf(&rogue_ca, vec![dns(SERVER_NAME)], Some(SERVER_NAME), false);
-    let config = server_config(vec![server_cert], server_key, &client_ca);
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    let reached = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let server = spawn_server(listener, config, reached.clone());
-
-    let client_config = client_config_with_server_ca(&client_ca, server_ca.cert.der().clone());
-    let client = MtlsClient::new(client_config, SERVER_NAME).expect("client");
-    let result = client.round_trip(addr, b"{\"jsonrpc\":\"2.0\"}");
-
-    assert!(
-        matches!(result, Err(TransportError::Handshake(_))),
-        "untrusted server cert must abort the handshake, got {result:?}"
-    );
-    let _ = server.join();
-    assert!(
-        !reached.load(std::sync::atomic::Ordering::SeqCst),
-        "server handler must NOT be reached when the client rejects the server cert"
+    assert_server_cert_is_rejected(
+        make_leaf(&rogue_ca, vec![dns(SERVER_NAME)], Some(SERVER_NAME), false),
+        &server_ca,
+        &client_ca,
+        "an untrusted server cert",
     );
 }
 
@@ -290,31 +306,16 @@ fn wrong_server_identity_is_rejected() {
     let server_ca = make_ca();
     let client_ca = make_ca();
     // Cert is signed by the trusted CA but its SAN/name is NOT `SERVER_NAME`.
-    let (server_cert, server_key) = make_leaf(
+    assert_server_cert_is_rejected(
+        make_leaf(
+            &server_ca,
+            vec![dns("evil.attacker.test")],
+            Some("evil.attacker.test"),
+            false,
+        ),
         &server_ca,
-        vec![dns("evil.attacker.test")],
-        Some("evil.attacker.test"),
-        false,
-    );
-    let config = server_config(vec![server_cert], server_key, &client_ca);
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    let reached = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let server = spawn_server(listener, config, reached.clone());
-
-    let client_config = client_config_with_server_ca(&client_ca, server_ca.cert.der().clone());
-    let client = MtlsClient::new(client_config, SERVER_NAME).expect("client");
-    let result = client.round_trip(addr, b"{\"jsonrpc\":\"2.0\"}");
-
-    assert!(
-        matches!(result, Err(TransportError::Handshake(_))),
-        "wrong-identity server cert must abort the handshake, got {result:?}"
-    );
-    let _ = server.join();
-    assert!(
-        !reached.load(std::sync::atomic::Ordering::SeqCst),
-        "server handler must NOT be reached on identity mismatch"
+        &client_ca,
+        "a wrong-identity server cert",
     );
 }
 
@@ -327,31 +328,16 @@ fn expired_server_cert_is_rejected() {
     let server_ca = make_ca();
     let client_ca = make_ca();
     // Right CA, right name, but the validity window is entirely in the past.
-    let (server_cert, server_key) = make_server_leaf_with_validity(
+    assert_server_cert_is_rejected(
+        make_server_leaf_with_validity(
+            &server_ca,
+            vec![dns(SERVER_NAME)],
+            (2000, 1, 1),
+            (2001, 1, 1),
+        ),
         &server_ca,
-        vec![dns(SERVER_NAME)],
-        (2000, 1, 1),
-        (2001, 1, 1),
-    );
-    let config = server_config(vec![server_cert], server_key, &client_ca);
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    let reached = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let server = spawn_server(listener, config, reached.clone());
-
-    let client_config = client_config_with_server_ca(&client_ca, server_ca.cert.der().clone());
-    let client = MtlsClient::new(client_config, SERVER_NAME).expect("client");
-    let result = client.round_trip(addr, b"{\"jsonrpc\":\"2.0\"}");
-
-    assert!(
-        matches!(result, Err(TransportError::Handshake(_))),
-        "expired server cert must abort the handshake, got {result:?}"
-    );
-    let _ = server.join();
-    assert!(
-        !reached.load(std::sync::atomic::Ordering::SeqCst),
-        "server handler must NOT be reached when the server cert is expired"
+        &client_ca,
+        "an expired server cert",
     );
 }
 
