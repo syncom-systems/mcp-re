@@ -509,7 +509,9 @@ mod tests {
             &header_source("x-rar"),
         );
         assert_eq!(
-            load(&route).routes()[0].resolve_bindings().expect("resolve"),
+            load(&route).routes()[0]
+                .resolve_bindings()
+                .expect("resolve"),
             vec![ArtifactBinding::opaque_digest(
                 ArtifactType::OauthRar,
                 b"details-blob"

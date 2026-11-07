@@ -240,13 +240,9 @@ mod tests {
     #[test]
     fn a_configured_profile_installs_an_evaluator_over_the_enrolled_authorities() {
         let file = TrustFile::holding(&authority_entry(), "on");
-        let (artifact, posture) = evaluator(
-            &state(&pdp_config()),
-            &file.source(),
-            &audience(),
-        )
-        .expect("a complete profile installs")
-        .into_parts();
+        let (artifact, posture) = evaluator(&state(&pdp_config()), &file.source(), &audience())
+            .expect("a complete profile installs")
+            .into_parts();
         assert!(
             artifact.is_some(),
             "a configured profile installs an evaluator"
@@ -272,11 +268,7 @@ mod tests {
     fn a_configured_profile_with_no_enrolled_authority_refuses_startup() {
         // Serving would refuse every call while the transcript announced enforcement.
         let file = TrustFile::holding("[]", "empty");
-        let Err(err) = evaluator(
-            &state(&pdp_config()),
-            &file.source(),
-            &audience(),
-        ) else {
+        let Err(err) = evaluator(&state(&pdp_config()), &file.source(), &audience()) else {
             panic!("an authority-less profile must fail closed at boot")
         };
         assert!(err.contains("authorization-issuer"), "{err}");
@@ -294,12 +286,7 @@ mod tests {
             "signers-only",
         );
         assert!(
-            evaluator(
-                &state(&pdp_config()),
-                &file.source(),
-            &audience(),
-            )
-            .is_err(),
+            evaluator(&state(&pdp_config()), &file.source(), &audience(),).is_err(),
             "a request-slot key must not answer as an authorization authority"
         );
     }
@@ -326,7 +313,14 @@ mod tests {
 
     /// A decision about the harness actor, at the deployment's accepted scope.
     fn decision(outcome: PdpDecisionOutcome, target: &str) -> String {
-        decision_identified(outcome, target, &Provenance { jti: "decision-1".into(), policy_version: "2026-08-01".into() })
+        decision_identified(
+            outcome,
+            target,
+            &Provenance {
+                jti: "decision-1".into(),
+                policy_version: "2026-08-01".into(),
+            },
+        )
     }
 
     /// The authority's own decision id and policy version, the two facts a decision carries
@@ -409,13 +403,9 @@ mod tests {
             ),
             "enforcing",
         );
-        let (artifact, _) = evaluator(
-            &state(&pdp_config()),
-            &file.source(),
-            &audience(),
-        )
-        .expect("a complete profile installs")
-        .into_parts();
+        let (artifact, _) = evaluator(&state(&pdp_config()), &file.source(), &audience())
+            .expect("a complete profile installs")
+            .into_parts();
         artifact.expect("a configured profile installs an evaluator")
     }
 
@@ -461,8 +451,22 @@ mod tests {
     /// would be an illusion.
     #[test]
     fn changing_the_document_changes_the_evidence_identity_even_under_one_decision_id() {
-        let read = decision_identified(PdpDecisionOutcome::Permit, "read", &Provenance { jti: "same-jti".into(), policy_version: "v1".into() });
-        let other = decision_identified(PdpDecisionOutcome::Permit, "read", &Provenance { jti: "same-jti".into(), policy_version: "v2".into() });
+        let read = decision_identified(
+            PdpDecisionOutcome::Permit,
+            "read",
+            &Provenance {
+                jti: "same-jti".into(),
+                policy_version: "v1".into(),
+            },
+        );
+        let other = decision_identified(
+            PdpDecisionOutcome::Permit,
+            "read",
+            &Provenance {
+                jti: "same-jti".into(),
+                policy_version: "v2".into(),
+            },
+        );
         assert_ne!(read, other, "the fixture must produce different bytes");
 
         let evaluator = installed();

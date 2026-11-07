@@ -252,7 +252,11 @@ pub(super) fn serve_one(proxy: &HttpProfileProxy, nonce: &str) -> u16 {
 /// bodyless 202.
 pub(super) fn serve_one_notification(proxy: &HttpProfileProxy, nonce: &str) -> u16 {
     let signed = mcp_re_client_core::build_signed_message(
-        mcp_re_client_core::McpMessage::new(None, "notifications/cancelled", serde_json::Map::new()),
+        mcp_re_client_core::McpMessage::new(
+            None,
+            "notifications/cancelled",
+            serde_json::Map::new(),
+        ),
         TARGET,
         &signing_inputs(nonce),
         &client_key(),

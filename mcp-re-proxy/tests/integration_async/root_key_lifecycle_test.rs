@@ -26,7 +26,6 @@
 //! `mcp-re-proxy/tests/delegated_production_wiring_test.rs::issuance_failure_serves_the_valid_key_then_fails_closed_at_expiry`.)
 
 use mcp_re_client_core::build_signed_message;
-use mcp_re_client_core::McpMessage;
 use mcp_re_client_core::verify_delegated_response;
 use mcp_re_client_core::ActorIdentity;
 use mcp_re_client_core::ArtifactBinding;
@@ -36,6 +35,7 @@ use mcp_re_client_core::CompositeResponseTrust;
 use mcp_re_client_core::DelegatedOutcome;
 use mcp_re_client_core::DelegatedResponseTrust;
 use mcp_re_client_core::DelegationPolicy;
+use mcp_re_client_core::McpMessage;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResolvedActor;
 use mcp_re_client_core::ResponseExpectation;

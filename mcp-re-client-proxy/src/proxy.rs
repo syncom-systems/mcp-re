@@ -15,13 +15,13 @@
 //! (rebuilt on RFC 9421 later); this is the signing/verification adapter core.
 
 use mcp_re_client_core::build_signed_message;
-use mcp_re_client_core::McpMessage;
 use mcp_re_client_core::response::verify_delegated_accepted_202_pinned;
 use mcp_re_client_core::verify_delegated_response;
 use mcp_re_client_core::CompositeResponseTrust;
 use mcp_re_client_core::ExecutionContract;
 use mcp_re_client_core::HttpProfileError;
 use mcp_re_client_core::HttpResponse;
+use mcp_re_client_core::McpMessage;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResponseExpectation;
 use mcp_re_core::SigningKey;

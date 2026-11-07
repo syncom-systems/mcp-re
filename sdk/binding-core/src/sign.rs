@@ -8,8 +8,8 @@
 
 use mcp_re_client_core::build_signed_message;
 use mcp_re_client_core::build_signed_message_with_signer;
-use mcp_re_client_core::McpMessage;
 use mcp_re_client_core::HttpProfileError;
+use mcp_re_client_core::McpMessage;
 use mcp_re_client_core::SignedRequest;
 use mcp_re_core::SigningKey;
 

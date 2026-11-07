@@ -266,7 +266,10 @@ mod tests {
         bad_domain.trust_domain = domain.to_string();
         let mut bad_signer = legal_config();
         bad_signer.server_signer = signer.to_string();
-        for (flag, config) in [("--trust-domain", bad_domain), ("--server-signer", bad_signer)] {
+        for (flag, config) in [
+            ("--trust-domain", bad_domain),
+            ("--server-signer", bad_signer),
+        ] {
             let (identity, violations) = facts(&config);
             assert!(identity.is_none(), "{flag}: an identity was built anyway");
             check(flag, &violations);

@@ -26,8 +26,8 @@ use mcp_re_http_profile::custody::TrustEpoch;
 use mcp_re_http_profile::CustodyError;
 
 use super::epoch_watch::EpochRefusal;
-use super::rotation_jitter;
 use super::rotation::RotationScope;
+use super::rotation_jitter;
 use super::DelegatedEpochWatch;
 
 /// What the shared trust epoch says to do next.

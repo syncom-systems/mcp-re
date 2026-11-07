@@ -357,12 +357,12 @@ pub fn verify_delegated_accepted_202_pinned(
 mod delegated_tests {
     use super::*;
     use crate::build_signed_message;
-    use crate::McpMessage;
     use crate::delegated_trust::RevocationSource;
     use crate::delegated_trust::StaticRevocationList;
     use crate::delegated_trust::TrustedIssuerSet;
     use crate::execution_contract::ExecutionStatus;
     use crate::execution_contract::RetrySafety;
+    use crate::McpMessage;
     use crate::RequestSigningInputs;
     use mcp_re_core::SigningKey;
     use mcp_re_http_profile::build_delegated_rejection;
@@ -521,7 +521,7 @@ mod delegated_tests {
             &inputs,
             &client_key(),
         )
-            .expect("client signs request")
+        .expect("client signs request")
     }
     /// A request whose body differs from [`signed`]'s: what an attacker signs for itself.
     fn other_signed() -> crate::SignedRequest {

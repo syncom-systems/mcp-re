@@ -211,7 +211,10 @@ mod tests {
     fn assert_refused_naming(config: &DeploymentRequest, flag: &str) {
         let (state, violations) = classify_and_validate(config);
         assert!(state.is_none(), "{violations:?}");
-        assert!(violations.iter().any(|v| v.contains(flag)), "{violations:?}");
+        assert!(
+            violations.iter().any(|v| v.contains(flag)),
+            "{violations:?}"
+        );
     }
 
     #[test]

@@ -161,7 +161,8 @@ pub(crate) fn delegated_key(
     if !cnf_is_self_consistent(claims) {
         return Err(HttpProfileError::DelegationCredentialInvalid);
     }
-    VerificationKey::from_b64url(&claims.cnf.jwk.x).map_err(|_| HttpProfileError::DelegationCredentialInvalid)
+    VerificationKey::from_b64url(&claims.cnf.jwk.x)
+        .map_err(|_| HttpProfileError::DelegationCredentialInvalid)
 }
 
 /// Verify a compact JWS delegation credential against the root and the expected scope

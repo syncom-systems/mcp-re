@@ -14,10 +14,10 @@
 //! the HTTP headers, not a JSON-RPC `_meta` block.
 
 use mcp_re_client_core::build_signed_message;
-use mcp_re_client_core::McpMessage;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::AudienceTuple;
 use mcp_re_client_core::HttpProfileError;
+use mcp_re_client_core::McpMessage;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::SignedRequest;
 use mcp_re_core::SigningKey;
