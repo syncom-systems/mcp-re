@@ -9,7 +9,7 @@
     "theorem_id": "THM-0048",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G6.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded. Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written. Read in verification/reviews/packets/epic-1201-assurance-closure-2026-10-21.md: verdict CLEAN, cause dependency change (boundary.tls_mechanism digest).  Evidence class as registered; V0 units are tested and probed, not machine-checked proofs.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read proxy.listener_state_assembly against the commit that last wrote the record. tls_listener_state/ changed only in comments and in the resumption tests' handshake helpers (deliver/settled over rustls Connection, same bytes moved, same handshake_kind read); the epoch, session-store and verifier construction in assembly.rs is textually unchanged. tls.rs became tls/{mod,options,peer,request_guard,delegated,fault_accept_any}.rs; its one-clock change replaced wall_clock_unix with crate::clock::now_unix, which clamps a pre-epoch reading to 0 exactly as before, and the transport-binding refusal was factored into transport_binding_failure with the same error object. The channel plan is now sealed (#1249) and read through accessors. The claim, premises and dependencies are unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor, and every tested symbol the unit names still names a test function.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -22,13 +22,13 @@
         "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "governing_boundaries": "sha256:8e7bc27552edc275e6ef49262aa784bb9356bdeadd9b37dadd71150688bf45dc",
+        "governing_boundaries": "sha256:25849e9dc53bd0203488fa297f2e69ba204272f4e657dfba2409c97fe0b1f6c5",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "mutation_probes": "sha256:f9a578debd9f73cd05fc500a164c90b01a3ca14de3df2b21ee29618f2b3f1112",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:e6a51328a8046db5388b89fe8392e9778db7b20ee8842ada7a5d6590f933c5a6",
+        "source_inputs": "sha256:fd387e7004d0bca38584486141df37c1e2d15549fbfe8a14edefa536998c93af",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:c8f861f72a7cf26cd3d86c8d99447dd99fb96796662b1a60f76dee646ff42e57",
         "test_selection": "sha256:a7dc9356ad6f2b8e697d86c1d7096d591477d485e5612bd89868830490ee90ea",
@@ -43,8 +43,8 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:ed7535fc1c8a5c0c8221e4ccb3fcf1e2e47895fb90ebe2b6d013527a6f245189",
+  "review_digest": "sha256:9e85482010c57b2bf1ba89eef11879b7c82ff1bc0aec3b3b564852bfc0962500",
   "reviewed_fingerprint": "sha256:36d8b72301e9dacf16480f987b6331c2d9a2601fcc78b67e1e0ec0c7fa7383d8",
-  "reviewer": "agent:claude-opus-5-5 (exec #1201; prepared for owner ratification, not an owner signature)",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0048"
 }

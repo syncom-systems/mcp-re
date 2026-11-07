@@ -7,7 +7,7 @@
     "theorem_id": "THM-0049",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G6.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). The claim was corrected under that ruling before this review was recorded; the record names the corrected fingerprint, and the old and new text are in verification/claim-corrections/THM-0049-mcpre-218-assurance-closure-2026-10-14.json.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read proxy.delegated_tls_depth_refusal. Its two source files, config_state/cross_machine/delegated_tls_depth.rs and async_fleet/core_runtime.rs, have no change since the record. Only the governing boundary path lists in trust-boundaries.toml moved (new paths for moved files, one added boundary), which moves the unit's governing_boundaries digest and nothing the refusal depends on. The owner signature at the claim's current text, owner-signature:thm-0049-four-live-relations-2026-10-14, still backs the claim text. The previous record named the owner as reviewer; it is replaced because its fingerprint no longer matched the tree, and the owner's earlier reading stays in git history. The claim, premises and dependencies are unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor, and every tested symbol the unit names still names a test function.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -38,7 +38,7 @@
         "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "governing_boundaries": "sha256:e3e4bf6e6e7d4b3a3ba09249d27191a13e10e0ad858c7b19c53b321cc75a20ae",
+        "governing_boundaries": "sha256:207f9fe6503413ae8a3679141c61c3b1da0df6c6fd612acc58a9fa0923ad25cf",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "mutation_probes": "sha256:52bf90eed0da55e92f53e393fc339c8529549a9ccb752774d129e1d1b50dcf03",
@@ -57,8 +57,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:2f673995317ff948c987ec139e96a87f16327fc7a49b2a487aa84734112cfb33",
+  "review_digest": "sha256:d8f254c0a92a1985e93a27763ba35d818b5f86e3d17c4a1359e7dd036d4e6dce",
   "reviewed_fingerprint": "sha256:7c7494bac47f3375990e9a24aee2216da0e6588c5fd28f6142b16d594ee3f319",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0049"
 }
