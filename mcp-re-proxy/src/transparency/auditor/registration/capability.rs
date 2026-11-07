@@ -16,11 +16,9 @@
 use mcp_re_http_profile::scitt::CoseVerificationKey;
 #[cfg(feature = "scitt_registration")]
 use mcp_re_http_profile::scitt::Receipt;
-#[cfg(feature = "scitt_registration")]
 use mcp_re_http_profile::scitt::ScittServiceTrustPin;
 #[cfg(feature = "scitt_registration")]
 use mcp_re_http_profile::scitt::SignedStatement;
-#[cfg(feature = "scitt_registration")]
 use mcp_re_http_profile::scitt::TransparencyKeyLifecycle;
 
 /// What a mechanism produces: the bytes a service answered with, and nothing about
@@ -159,11 +157,32 @@ impl RegisteredStatement {
     }
 }
 
+/// Everything a receipt is judged against, all of it already loaded.
+///
+/// `issuer_key` is the key this auditor signed with, `pin` the operator's pinned service,
+/// `ts_key` the lifecycle the audit profile states for a service key, and `clock` the
+/// auditor's own time. Nothing here is fetched while a receipt is checked.
+///
+/// Declared in every flavor so [`RegistrationTarget::register`] has one signature; only the
+/// flavor with the transport reads the fields.
+#[cfg_attr(not(feature = "scitt_registration"), allow(dead_code))]
+#[derive(Clone, Copy)]
+pub struct RegistrationTrust<'a> {
+    /// The key the registered statement was signed with.
+    pub issuer_key: &'a mcp_re_core::VerificationKey,
+    /// The operator's pin of the transparency service.
+    pub pin: &'a ScittServiceTrustPin,
+    /// The lifecycle the audit profile states for a service key, by kid.
+    pub ts_key: &'a dyn Fn(&str) -> Option<TransparencyKeyLifecycle>,
+    /// The auditor's current time, read when a receipt is accepted.
+    pub clock: &'a dyn Fn() -> i64,
+}
+
 /// Register `statement` through `mechanism`, and accept the answer only if it verifies.
 ///
 /// The verification is the existing offline one, and it is offline in the strong sense:
-/// `resolve_ts` is the already-loaded pin, `issuer_key` is the key this auditor signed
-/// with, and nothing here fetches or refreshes either. A verifier that reached for a key
+/// the pin and the issuer key are the already-loaded ones in `trust`, and nothing here
+/// fetches or refreshes either. A verifier that reached for a key
 /// while checking a receipt would be verifying against whatever the network offered at
 /// that moment, which is the property the pin exists to remove.
 ///
@@ -176,10 +195,7 @@ impl RegisteredStatement {
 pub fn register_and_verify(
     mechanism: &dyn TransparencyRegistration,
     statement: &SignedStatement,
-    issuer_key: &mcp_re_core::VerificationKey,
-    pin: &ScittServiceTrustPin,
-    ts_key: &dyn Fn(&str) -> Option<TransparencyKeyLifecycle>,
-    clock: &dyn Fn() -> i64,
+    trust: &RegistrationTrust<'_>,
 ) -> Result<RegisteredStatement, RegistrationError> {
     let response = mechanism.register(statement.to_cose())?;
     let receipt = Receipt::from_cose(response.bytes()).map_err(|e| {
@@ -189,24 +205,24 @@ pub fn register_and_verify(
         ))
     })?;
     let ts_kid = receipt.ts_kid();
-    let lifecycle = ts_key(ts_kid).ok_or_else(|| {
+    let lifecycle = (trust.ts_key)(ts_kid).ok_or_else(|| {
         RegistrationError::ReceiptUnverified(format!(
             "the audit profile states no lifecycle for transparency-service key {ts_kid:?}"
         ))
     })?;
-    let now = clock();
+    let now = (trust.clock)();
     lifecycle.admits_at(now).map_err(|refusal| {
         RegistrationError::ReceiptUnverified(format!(
             "transparency-service key {ts_kid:?} is not acceptable at {now}: {refusal}"
         ))
     })?;
     let issuer_kid = statement.issuer_kid().to_owned();
-    let issuer = CoseVerificationKey::Ed25519(issuer_key.clone());
+    let issuer = CoseVerificationKey::Ed25519(trust.issuer_key.clone());
     mcp_re_http_profile::scitt::verify_receipt_offline(
         statement,
         &receipt,
         |kid| (kid == issuer_kid).then(|| issuer.clone()),
-        |kid| pin.resolve(kid),
+        |kid| trust.pin.resolve(kid),
     )
     .map_err(|e| RegistrationError::ReceiptUnverified(e.wire_code().to_owned()))?;
     Ok(RegisteredStatement {
@@ -242,15 +258,8 @@ mod tests {
     fn a_verifying_receipt_produces_a_registered_statement() {
         let statement = a_statement();
         let receipt = receipt_for(&statement);
-        let registered = register_and_verify(
-            &Canned(Ok(receipt.clone())),
-            &statement,
-            &issuer().public_key(),
-            &pin(),
-            &ts_lifecycle,
-            &|| NOW,
-        )
-        .expect("the receipt verifies against the statement and the pin");
+        let registered = register_standard(&Canned(Ok(receipt.clone())), &statement)
+            .expect("the receipt verifies against the statement and the pin");
         assert_eq!(registered.receipt_bytes(), receipt.as_slice());
         assert_eq!(
             registered.protocol(),
@@ -270,15 +279,8 @@ mod tests {
     #[test]
     fn an_attached_receipt_carries_the_protocol_that_established_it() {
         let statement = a_statement();
-        let registered = register_and_verify(
-            &Canned(Ok(receipt_for(&statement))),
-            &statement,
-            &issuer().public_key(),
-            &pin(),
-            &ts_lifecycle,
-            &|| NOW,
-        )
-        .expect("the receipt verifies");
+        let registered = register_standard(&Canned(Ok(receipt_for(&statement))), &statement)
+            .expect("the receipt verifies");
         let artifact = artifact_carrying(&statement)
             .with_verified_receipt(&registered)
             .expect("the artifact carries the registered statement");
@@ -296,15 +298,8 @@ mod tests {
     #[test]
     fn a_receipt_is_refused_by_an_artifact_carrying_another_statement() {
         let statement = a_statement();
-        let registered = register_and_verify(
-            &Canned(Ok(receipt_for(&statement))),
-            &statement,
-            &issuer().public_key(),
-            &pin(),
-            &ts_lifecycle,
-            &|| NOW,
-        )
-        .expect("the receipt verifies");
+        let registered = register_standard(&Canned(Ok(receipt_for(&statement))), &statement)
+            .expect("the receipt verifies");
         artifact_carrying(&another_statement())
             .with_verified_receipt(&registered)
             .expect_err("the receipt is about another statement");
@@ -319,15 +314,8 @@ mod tests {
     fn a_receipt_about_another_statement_is_refused() {
         let statement = a_statement();
         let elsewhere = receipt_for(&another_statement());
-        let refused = register_and_verify(
-            &Canned(Ok(elsewhere)),
-            &statement,
-            &issuer().public_key(),
-            &pin(),
-            &ts_lifecycle,
-            &|| NOW,
-        )
-        .expect_err("a receipt about another statement must not be accepted");
+        let refused = register_standard(&Canned(Ok(elsewhere)), &statement)
+            .expect_err("a receipt about another statement must not be accepted");
         assert!(
             matches!(refused, RegistrationError::ReceiptUnverified(_)),
             "{refused:?}",
@@ -350,15 +338,8 @@ mod tests {
             .to_vec();
         // A lifecycle for every kid, so the refusal is the pin's and not the lifecycle's.
         let any_kid = |_: &str| TransparencyKeyLifecycle::new(1_600_000_000, None, None).ok();
-        let refused = register_and_verify(
-            &Canned(Ok(receipt)),
-            &statement,
-            &issuer().public_key(),
-            &pin(),
-            &any_kid,
-            &|| NOW,
-        )
-        .expect_err("a log the pin does not name is not the pinned service");
+        let refused = register_with(&Canned(Ok(receipt)), &statement, &any_kid, &|| NOW)
+            .expect_err("a log the pin does not name is not the pinned service");
         assert!(
             matches!(&refused, RegistrationError::ReceiptUnverified(d) if !d.contains("lifecycle")),
             "{refused:?}",
@@ -372,11 +353,9 @@ mod tests {
     ) -> Result<RegisteredStatement, RegistrationError> {
         let statement = a_statement();
         let ts_key = move |kid: &str| (kid == TS_KID).then_some(lifecycle).flatten();
-        register_and_verify(
+        register_with(
             &Canned(Ok(receipt_for(&statement))),
             &statement,
-            &issuer().public_key(),
-            &pin(),
             &ts_key,
             &|| NOW,
         )
@@ -482,15 +461,8 @@ mod tests {
             clock,
             to: revoked_at,
         };
-        let refused = register_and_verify(
-            &mechanism,
-            &statement,
-            &issuer().public_key(),
-            &pin(),
-            &ts_key,
-            &read,
-        )
-        .expect_err("the key was revoked by the time the receipt arrived");
+        let refused = register_with(&mechanism, &statement, &ts_key, &read)
+            .expect_err("the key was revoked by the time the receipt arrived");
         assert!(
             matches!(&refused, RegistrationError::ReceiptUnverified(d) if d.contains("revoked")),
             "{refused:?}",
@@ -501,15 +473,8 @@ mod tests {
     #[test]
     fn an_answer_that_is_not_a_receipt_is_refused() {
         let statement = a_statement();
-        let refused = register_and_verify(
-            &Canned(Ok(b"not cbor".to_vec())),
-            &statement,
-            &issuer().public_key(),
-            &pin(),
-            &ts_lifecycle,
-            &|| NOW,
-        )
-        .expect_err("unparseable bytes are not a receipt");
+        let refused = register_standard(&Canned(Ok(b"not cbor".to_vec())), &statement)
+            .expect_err("unparseable bytes are not a receipt");
         assert!(
             matches!(refused, RegistrationError::ReceiptUnverified(_)),
             "{refused:?}",
@@ -521,15 +486,8 @@ mod tests {
     #[test]
     fn a_mechanism_refusal_is_carried_through_with_its_certainty() {
         let statement = a_statement();
-        let refused = register_and_verify(
-            &Canned(Err(())),
-            &statement,
-            &issuer().public_key(),
-            &pin(),
-            &ts_lifecycle,
-            &|| NOW,
-        )
-        .expect_err("the mechanism refused");
+        let refused =
+            register_standard(&Canned(Err(())), &statement).expect_err("the mechanism refused");
         assert!(
             matches!(refused, RegistrationError::Indeterminate(_)),
             "an unknown outcome must not become a definite one: {refused:?}",

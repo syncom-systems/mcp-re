@@ -66,6 +66,26 @@ pub fn foreign_owner(file_uid: u32, process_euid: u32) -> bool {
 pub const FOREIGN_OWNER: &str =
     "owned by a uid that is neither this process's effective uid nor root";
 
+/// What `stat` reported about a file whose posture is judged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileFacts {
+    /// The permission bits (`st_mode`).
+    pub mode: u32,
+    /// The owning uid.
+    pub uid: u32,
+    /// The owning group.
+    pub gid: u32,
+}
+
+/// The process judging a file: its effective uid and its groups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProcessIdentity<'a> {
+    /// The effective uid.
+    pub euid: u32,
+    /// The effective and supplementary groups.
+    pub gids: &'a [u32],
+}
+
 impl KeyFileAccessPolicy {
     /// Why this key file's posture is refused, or `None` when it is acceptable.
     ///
@@ -77,24 +97,17 @@ impl KeyFileAccessPolicy {
     /// The order of the clauses is the order of severity, and each is separate on purpose:
     /// a world bit and a group-write bit are refused under BOTH policies, so relaxing the
     /// posture can never be read as relaxing those.
-    pub fn violation(
-        &self,
-        mode: u32,
-        file_uid: u32,
-        file_gid: u32,
-        process_euid: u32,
-        process_gids: &[u32],
-    ) -> Option<&'static str> {
-        if foreign_owner(file_uid, process_euid) {
+    pub fn violation(&self, file: FileFacts, process: ProcessIdentity<'_>) -> Option<&'static str> {
+        if foreign_owner(file.uid, process.euid) {
             return Some(FOREIGN_OWNER);
         }
-        if mode & 0o007 != 0 {
+        if file.mode & 0o007 != 0 {
             return Some("world-accessible");
         }
-        if mode & 0o020 != 0 {
+        if file.mode & 0o020 != 0 {
             return Some("group-writable");
         }
-        if mode & 0o050 == 0 {
+        if file.mode & 0o050 == 0 {
             return None;
         }
         match self {
@@ -103,11 +116,8 @@ impl KeyFileAccessPolicy {
                  fsGroup-owned mount)",
             ),
             KeyFileAccessPolicy::GroupReadableUnderProcessGroup => {
-                if process_gids.contains(&file_gid) {
-                    None
-                } else {
-                    Some("group-accessible to a group this process is not a member of")
-                }
+                (!process.gids.contains(&file.gid))
+                    .then_some("group-accessible to a group this process is not a member of")
             }
         }
     }
@@ -189,28 +199,39 @@ mod tests {
     const STRICT: KeyFileAccessPolicy = KeyFileAccessPolicy::OwnerOnly;
     const RELAXED: KeyFileAccessPolicy = KeyFileAccessPolicy::GroupReadableUnderProcessGroup;
 
+    /// The process under test: uid 1000, in the given groups.
+    fn violation(
+        policy: KeyFileAccessPolicy,
+        file: FileFacts,
+        gids: &[u32],
+    ) -> Option<&'static str> {
+        policy.violation(file, ProcessIdentity { euid: 1000, gids })
+    }
+
+    /// A file owned by the process user, in `gid`, with permission bits `mode`.
+    fn owned(mode: u32, gid: u32) -> FileFacts {
+        FileFacts {
+            mode,
+            uid: 1000,
+            gid,
+        }
+    }
+
     /// The owner-only posture accepts exactly the two owner-only modes.
     #[test]
     fn owner_only_accepts_0600_and_0400_and_nothing_else() {
-        assert_eq!(STRICT.violation(0o600, 1000, 1000, 1000, &[1000]), None);
-        assert_eq!(STRICT.violation(0o400, 1000, 1000, 1000, &[1000]), None);
-        assert!(STRICT.violation(0o440, 1000, 1000, 1000, &[1000]).is_some());
-        assert!(STRICT.violation(0o604, 1000, 1000, 1000, &[1000]).is_some());
-        assert!(STRICT.violation(0o660, 1000, 1000, 1000, &[1000]).is_some());
-        assert!(STRICT.violation(0o777, 1000, 1000, 1000, &[1000]).is_some());
+        let refused = |mode| violation(STRICT, owned(mode, 1000), &[1000]).is_some();
+        assert_eq!(violation(STRICT, owned(0o600, 1000), &[1000]), None);
+        assert_eq!(violation(STRICT, owned(0o400, 1000), &[1000]), None);
+        assert!([0o440, 0o604, 0o660, 0o777].into_iter().all(refused));
     }
 
     /// The relaxed posture is the fsGroup mount, and only that.
     #[test]
     fn group_read_is_accepted_only_for_a_group_this_process_is_in() {
-        assert_eq!(
-            RELAXED.violation(0o440, 1000, 2000, 1000, &[1000, 2000]),
-            None
-        );
+        assert_eq!(violation(RELAXED, owned(0o440, 2000), &[1000, 2000]), None);
         assert!(
-            RELAXED
-                .violation(0o440, 1000, 9999, 1000, &[1000, 2000])
-                .is_some(),
+            violation(RELAXED, owned(0o440, 9999), &[1000, 2000]).is_some(),
             "a group the process is not in grants a stranger, which is worse than strict"
         );
     }
@@ -222,36 +243,41 @@ mod tests {
     /// accepted a key another process can replace.
     #[test]
     fn no_policy_accepts_world_access_or_group_write() {
-        for mode in [
+        let world = [
             0o004, 0o002, 0o001, 0o441, 0o444, 0o604, 0o642, 0o666, 0o777,
-        ] {
-            assert!(
-                RELAXED.violation(mode, 1000, 2000, 1000, &[2000]).is_some(),
-                "world bit accepted at {mode:o}"
-            );
-            assert!(STRICT.violation(mode, 1000, 2000, 1000, &[2000]).is_some());
-        }
-        for mode in [0o020, 0o060, 0o460, 0o620, 0o660] {
-            assert!(
-                RELAXED.violation(mode, 1000, 2000, 1000, &[2000]).is_some(),
-                "group write accepted at {mode:o}"
-            );
-            assert!(STRICT.violation(mode, 1000, 2000, 1000, &[2000]).is_some());
+        ];
+        let group_write = [0o020, 0o060, 0o460, 0o620, 0o660];
+        for mode in world.into_iter().chain(group_write) {
+            for policy in [RELAXED, STRICT] {
+                assert!(
+                    violation(policy, owned(mode, 2000), &[2000]).is_some(),
+                    "{policy:?} accepted {mode:o}"
+                );
+            }
         }
     }
 
     #[test]
     fn a_key_file_owned_by_another_uid_is_refused_under_both_policies() {
-        assert!(STRICT.violation(0o600, 1001, 1000, 1000, &[1000]).is_some());
-        assert!(RELAXED
-            .violation(0o440, 1001, 2000, 1000, &[1000, 2000])
-            .is_some());
+        let foreign = |mode, gid| FileFacts {
+            uid: 1001,
+            ..owned(mode, gid)
+        };
+        assert!(violation(STRICT, foreign(0o600, 1000), &[1000]).is_some());
+        assert!(violation(RELAXED, foreign(0o440, 2000), &[1000, 2000]).is_some());
     }
 
     #[test]
     fn a_root_owned_fsgroup_secret_is_still_admitted() {
-        assert_eq!(RELAXED.violation(0o440, 0, 2000, 1000, &[1000, 2000]), None);
-        assert_eq!(STRICT.violation(0o400, 0, 0, 1000, &[1000]), None);
+        let root_owned = |mode, gid| FileFacts {
+            uid: 0,
+            ..owned(mode, gid)
+        };
+        assert_eq!(
+            violation(RELAXED, root_owned(0o440, 2000), &[1000, 2000]),
+            None
+        );
+        assert_eq!(violation(STRICT, root_owned(0o400, 0), &[1000]), None);
     }
 
     /// The flag decides the policy, and absence is the strict one.
@@ -362,46 +388,58 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The refusal for a module file created with `file_mode` inside a directory created
+    /// with `dir_mode`, both under a fresh temp directory named by `tag`.
+    #[cfg(unix)]
+    fn refusal_for_module(tag: &str, file_mode: u32, dir_mode: u32) -> Option<String> {
+        use std::os::unix::fs::PermissionsExt;
+        let chmod = |path: &std::path::Path, mode| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+                .expect("chmod fixture");
+        };
+        let dir = std::env::temp_dir().join(format!("mcp-re-mod-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).expect("create dir");
+        let path = dir.join("libmodule.so");
+        std::fs::write(&path, b"not really a library").expect("write module");
+        chmod(&path, file_mode);
+        chmod(&dir, dir_mode);
+        let why = executable_path_violation(path.to_str().expect("utf-8"));
+        chmod(&dir, 0o755);
+        let _ = std::fs::remove_dir_all(&dir);
+        why
+    }
+
+    /// One half of the floor on its own: `file_mode` in a safe directory is refused naming
+    /// the FILE and its mode, and a `0644` file in a directory of `dir_mode` is refused
+    /// naming the DIRECTORY and its mode.
+    #[cfg(unix)]
+    fn assert_only_this_write_bit_is_refused(tag: &str, file_mode: u32, dir_mode: u32) {
+        let why =
+            refusal_for_module(tag, file_mode, 0o755).expect("a writable module file is refused");
+        assert!(
+            why.contains("libmodule.so") && why.contains(&format!("{file_mode:o}")),
+            "the refusal must name the writable FILE and its mode: {why}"
+        );
+        let why = refusal_for_module(tag, 0o644, dir_mode)
+            .expect("a module in a writable directory is refused");
+        assert!(
+            why.contains(&format!("mcp-re-mod-{tag}-")) && why.contains(&format!("{dir_mode:o}")),
+            "the refusal must name the writable DIRECTORY and its mode: {why}"
+        );
+    }
+
     /// The GROUP-write half of the floor, on its own.
     ///
     /// The world-writable cases above are caught by the `0o002` bit alone, so they say
     /// nothing about `0o020`. This is also the posture a build host with `umask 002`
     /// produces — directories `0775`, files `0664` — which is the likeliest way a real
-    /// deployment meets this refusal, and it was the half no test reached.
+    /// deployment meets this refusal, and it was the half no test reached. Neither carries
+    /// a world-write bit, so only the `0o020` half of the mask can refuse either one.
     #[cfg(unix)]
     #[test]
     fn group_write_alone_is_refused_on_the_directory_and_on_the_file() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("mcp-re-mod-g-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir(&dir).expect("create dir");
-        let path = dir.join("libmodule.so");
-        std::fs::write(&path, b"not really a library").expect("write module");
-
-        // umask 002: the file is 0664, the directory 0775. Neither carries a world-write
-        // bit, so only the 0o020 half of the mask can refuse either one.
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o664))
-            .expect("chmod 0664");
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("chmod dir");
-        let why = executable_path_violation(path.to_str().expect("utf-8"))
-            .expect("a group-writable module file is refused");
-        assert!(
-            why.contains("libmodule.so") && why.contains("664"),
-            "the refusal must name the group-writable FILE and its mode: {why}"
-        );
-
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
-            .expect("chmod 0644");
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o775)).expect("chmod dir");
-        let why = executable_path_violation(path.to_str().expect("utf-8"))
-            .expect("a module in a group-writable directory is refused");
-        assert!(
-            why.contains("mcp-re-mod-g-") && why.contains("775"),
-            "the refusal must name the group-writable DIRECTORY and its mode: {why}"
-        );
-
-        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755));
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_only_this_write_bit_is_refused("g", 0o664, 0o775);
     }
 
     /// The WORLD-write half of the floor, on its own.
@@ -413,35 +451,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn world_write_alone_is_refused_on_the_directory_and_on_the_file() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("mcp-re-mod-wonly-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir(&dir).expect("create dir");
-        let path = dir.join("libmodule.so");
-        std::fs::write(&path, b"not really a library").expect("write module");
-
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o606))
-            .expect("chmod 0606");
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("chmod dir");
-        let why = executable_path_violation(path.to_str().expect("utf-8"))
-            .expect("a world-writable module file is refused");
-        assert!(
-            why.contains("libmodule.so") && why.contains("606"),
-            "the refusal must name the world-writable FILE and its mode: {why}"
-        );
-
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
-            .expect("chmod 0644");
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o757)).expect("chmod dir");
-        let why = executable_path_violation(path.to_str().expect("utf-8"))
-            .expect("a module in a world-writable directory is refused");
-        assert!(
-            why.contains("mcp-re-mod-wonly-") && why.contains("757"),
-            "the refusal must name the world-writable DIRECTORY and its mode: {why}"
-        );
-
-        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755));
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_only_this_write_bit_is_refused("wonly", 0o606, 0o757);
     }
 
     /// A path that names nothing is refused rather than passed to `dlopen` to fail there.

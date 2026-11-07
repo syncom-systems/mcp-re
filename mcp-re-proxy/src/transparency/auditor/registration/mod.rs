@@ -103,6 +103,7 @@ mod endpoint;
 // mechanism a selection made here rather than a type the layer above can name.
 pub use capability::RegisteredStatement;
 pub use capability::RegistrationError;
+pub(super) use capability::RegistrationTrust;
 pub(super) use endpoint::RegistrationTarget;
 pub(super) use protocol::RegistrationProtocol;
 
@@ -192,6 +193,36 @@ mod fixtures {
             sign_with(issuer()),
         )
         .expect("a statement")
+    }
+
+    /// Register `statement` through `mechanism`, judging the receipt's service key by
+    /// `ts_key` at the instant `clock` reads, against the fixture issuer and pin.
+    pub(super) fn register_with(
+        mechanism: &dyn super::capability::TransparencyRegistration,
+        statement: &SignedStatement,
+        ts_key: &dyn Fn(&str) -> Option<TransparencyKeyLifecycle>,
+        clock: &dyn Fn() -> i64,
+    ) -> Result<super::RegisteredStatement, super::RegistrationError> {
+        let issuer_key = issuer().public_key();
+        let pin = pin();
+        super::capability::register_and_verify(
+            mechanism,
+            statement,
+            &super::capability::RegistrationTrust {
+                issuer_key: &issuer_key,
+                pin: &pin,
+                ts_key,
+                clock,
+            },
+        )
+    }
+
+    /// [`register_with`] under the fixture lifecycle, read at [`NOW`].
+    pub(super) fn register_standard(
+        mechanism: &dyn super::capability::TransparencyRegistration,
+        statement: &SignedStatement,
+    ) -> Result<super::RegisteredStatement, super::RegistrationError> {
+        register_with(mechanism, statement, &ts_lifecycle, &|| NOW)
     }
 
     /// The statement every lane starts from.
