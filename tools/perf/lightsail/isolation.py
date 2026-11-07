@@ -99,43 +99,71 @@ def pin_process(pid: int, cpus: list[int]) -> list[dict]:
     return done
 
 
+class _Enforcer:
+    """The state of one `enforce` run: what each thread was last seen as, and whether the
+    thread set has settled and been snapshotted."""
+
+    def __init__(self, pid: int, plan_: dict, sink, settle_s: float) -> None:
+        self._pid = pid
+        self._plan = plan_
+        self._sink = sink
+        self._settle_s = settle_s
+        self._seen: dict[int, str] = {}
+        self._stable_since = time.time()
+        self._snapshotted = False
+
+    def run(self) -> None:
+        while os.path.exists(f"/proc/{self._pid}"):
+            try:
+                tids = sorted(int(t) for t in os.listdir(f"/proc/{self._pid}/task"))
+            except OSError:
+                break
+            self._tick(tids)
+            time.sleep(0.2)
+
+    def _write(self, record: dict) -> None:
+        self._sink.write(json.dumps({"t": time.time(), **record}) + "\n")
+        self._sink.flush()
+
+    def _tick(self, tids: list[int]) -> None:
+        changed = any([self._visit(tid) for tid in tids])
+        if changed:
+            self._stable_since, self._snapshotted = time.time(), False
+        elif not self._snapshotted and time.time() - self._stable_since >= self._settle_s:
+            self._snapshot()
+            self._snapshotted = True
+
+    def _visit(self, tid: int) -> bool:
+        """Move one thread onto its target; True when it moved or its name changed."""
+        try:
+            comm, moved = self._align(tid)
+        except OSError:
+            return False
+        remembered = self._seen.get(tid) != comm
+        self._seen[tid] = comm
+        return moved or remembered
+
+    def _align(self, tid: int) -> tuple[str, bool]:
+        comm = Path(f"/proc/{self._pid}/task/{tid}/comm").read_text().strip()
+        allowed = allowed_of(self._pid, tid)
+        want = target(comm, allowed, self._plan)
+        if allowed == want:
+            return comm, False
+        os.sched_setaffinity(tid, want)
+        self._write({"tid": tid, "comm": comm, "from": cpulist(allowed), "to": cpulist(want)})
+        return comm, True
+
+    def _snapshot(self) -> None:
+        self._write({"snapshot": [
+            {"tid": t, "comm": c, "allowed": cpulist(allowed_of(self._pid, t))}
+            for t, c in sorted(self._seen.items()) if os.path.exists(f"/proc/{self._pid}/task/{t}")]})
+
+
 def enforce(pid: int, p: dict, log: Path, settle_s: float = 5.0) -> None:
     """Apply `target` to every thread of `pid` until it exits; log changes and, once the
     thread set has been stable for `settle_s`, a snapshot of every thread's mask."""
-    seen: dict[int, str] = {}
-    stable_since = time.time()
-    snapshotted = False
     with open(log, "a") as sink:
-        def write(record: dict) -> None:
-            sink.write(json.dumps({"t": time.time(), **record}) + "\n")
-            sink.flush()
-        while os.path.exists(f"/proc/{pid}"):
-            try:
-                tids = sorted(int(t) for t in os.listdir(f"/proc/{pid}/task"))
-            except OSError:
-                break
-            changed = False
-            for tid in tids:
-                try:
-                    comm = Path(f"/proc/{pid}/task/{tid}/comm").read_text().strip()
-                    allowed = allowed_of(pid, tid)
-                    want = target(comm, allowed, p)
-                    if allowed != want:
-                        os.sched_setaffinity(tid, want)
-                        write({"tid": tid, "comm": comm, "from": cpulist(allowed), "to": cpulist(want)})
-                        changed = True
-                except OSError:
-                    continue
-                if seen.get(tid) != comm:
-                    seen[tid] = comm
-                    changed = True
-            if changed:
-                stable_since, snapshotted = time.time(), False
-            elif not snapshotted and time.time() - stable_since >= settle_s:
-                write({"snapshot": [{"tid": t, "comm": c, "allowed": cpulist(allowed_of(pid, t))}
-                                    for t, c in sorted(seen.items()) if os.path.exists(f"/proc/{pid}/task/{t}")]})
-                snapshotted = True
-            time.sleep(0.2)
+        _Enforcer(pid, p, sink, settle_s).run()
 
 
 def main(argv: list[str]) -> int:

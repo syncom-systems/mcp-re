@@ -268,7 +268,7 @@ def _land(step: Step, run: Run) -> dict:
         return entry
     sha = _git("rev-parse", "--short", "HEAD").stdout.strip()
     _record_fixed(run.ledger, fixed, sha)
-    grew = size_debt.settle(run.work_dir, row["file"], sha, findings=fixed)
+    grew = size_debt.settle(run.work_dir, row["file"], size_debt.Change(sha, fixed))
     entry.update(commit=sha, fixed=fixed, **({"size_debt_rows": grew} if grew else {}))
     return entry
 

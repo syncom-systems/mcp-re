@@ -63,28 +63,35 @@ def ledger_identity(repo_root: Path) -> str:
     return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _checked_row(where: str, line: str) -> dict:
+    """One ledger line, parsed and held to the closed key set and to its own digest."""
+    try:
+        row = json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise ApprovalError(f"{where}: unparsable ({exc})") from exc
+    if not isinstance(row, dict) or not _REQUIRED <= set(row):
+        raise ApprovalError(f"{where}: missing {sorted(_REQUIRED - set(row or {}))}")
+    if text_digest(str(row["text"])) != row["sha256"]:
+        raise ApprovalError(
+            f"{where}: `sha256` is not the digest of `text` — the signature does "
+            f"not cover what the line says it signed"
+        )
+    return row
+
+
+def _file_rows(repo_root: Path, path: Path) -> list[dict]:
+    rel = path.relative_to(repo_root).as_posix()
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return [
+        {**_checked_row(f"{rel}:{number}", line), "_file": rel}
+        for number, line in enumerate(lines, 1)
+        if line.strip()
+    ]
+
+
 def load_ledger(repo_root: Path) -> list[dict]:
     """Every ledger line, each with `_file` set to its repository-relative path."""
-    out: list[dict] = []
-    for path in sorted(repo_root.glob(LEDGER_GLOB)):
-        rel = path.relative_to(repo_root).as_posix()
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if not line.strip():
-                continue
-            where = f"{rel}:{number}"
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ApprovalError(f"{where}: unparsable ({exc})") from exc
-            if not isinstance(row, dict) or not _REQUIRED <= set(row):
-                raise ApprovalError(f"{where}: missing {sorted(_REQUIRED - set(row or {}))}")
-            if text_digest(str(row["text"])) != row["sha256"]:
-                raise ApprovalError(
-                    f"{where}: `sha256` is not the digest of `text` — the signature does "
-                    f"not cover what the line says it signed"
-                )
-            out.append({**row, "_file": rel})
-    return out
+    return [row for path in sorted(repo_root.glob(LEDGER_GLOB)) for row in _file_rows(repo_root, path)]
 
 
 def entry_subject(row: dict) -> str | None:
@@ -98,6 +105,11 @@ def names(row: dict, subject: str) -> bool:
     return entry_subject(row) == subject or subject in row.get("surfaces", [])
 
 
+def _ends_block(line: str) -> bool:
+    """A blank or comment line: it ends an entry's block rather than belonging to it."""
+    return not line.strip() or line.lstrip().startswith("#")
+
+
 def entry_text(registry_text: str, subject: str) -> str | None:
     """`subject`'s registry entry as an entry approval signs it: from its `[[table]]` header
     to the next header, without the comment lines and blank lines that end the block — a
@@ -108,7 +120,7 @@ def entry_text(registry_text: str, subject: str) -> str | None:
     for block in blocks:
         if re.search(r'(?m)^id = "%s"$' % re.escape(subject), block):
             lines = block.rstrip().split("\n")
-            while lines and (not lines[-1].strip() or lines[-1].lstrip().startswith("#")):
+            while lines and _ends_block(lines[-1]):
                 lines.pop()
             return "\n".join(lines).rstrip() + "\n"
     return None

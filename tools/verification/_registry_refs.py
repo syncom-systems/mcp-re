@@ -18,6 +18,7 @@ read through, imports nothing back.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -82,74 +83,95 @@ def _resting(theorems: list[dict]) -> dict[str, set[str]]:
     return out
 
 
+def _probe_problems(unit: dict, probe: dict, theorems_on_unit: set[str], root: Path) -> list[str]:
+    """What is wrong with one mutation probe whose unit is declared."""
+    where = f"mutation probe {probe['id']}"
+    out: list[str] = []
+    theorem = probe.get("theorem")
+    if theorem and theorem not in theorems_on_unit:
+        out.append(
+            f"{where}: theorem {theorem} does not rest on unit {probe['unit']!r}. The probe "
+            f"defends a conjunct of the theorem it names; naming another states that a "
+            f"different proposition is protected."
+        )
+    unknown = undeclared_expectations(unit, probe)
+    if unknown:
+        out.append(f"{where}: expect_red names {unknown}, which the unit does not declare")
+    try:
+        weaken(root, probe, where)
+    except ManifestError as exc:
+        out.append(str(exc))
+    return out
+
+
 def _mutation_problems(reg: Registries, root: Path) -> list[str]:
     out: list[str] = []
     resting = _resting(reg.theorems)
     for probe in reg.mutation_probes:
-        where = f"mutation probe {probe['id']}"
         unit = reg.units.get(probe["unit"])
         if unit is None:
-            out.append(f"{where}: unit {probe['unit']!r} is not declared in verification.toml")
-            continue
-        theorem = probe.get("theorem")
-        if theorem and theorem not in resting.get(probe["unit"], set()):
-            out.append(
-                f"{where}: theorem {theorem} does not rest on unit {probe['unit']!r}. The probe "
-                f"defends a conjunct of the theorem it names; naming another states that a "
-                f"different proposition is protected."
-            )
-        unknown = undeclared_expectations(unit, probe)
-        if unknown:
-            out.append(f"{where}: expect_red names {unknown}, which the unit does not declare")
-        try:
-            weaken(root, probe, where)
-        except ManifestError as exc:
-            out.append(str(exc))
+            out.append(f"mutation probe {probe['id']}: unit {probe['unit']!r} is not declared "
+                       "in verification.toml")
+        else:
+            out += _probe_problems(unit, probe, resting.get(probe["unit"], set()), root)
     return out
+
+
+def _structural_problem(unit: dict, probe: dict, root: Path) -> str | None:
+    """What is wrong with one structural probe whose unit is declared."""
+    where = f"structural probe {probe['id']}"
+    if not any(str(e).startswith("structural://") for e in unit.get("evidence", [])):
+        return (
+            f"{where}: unit {probe['unit']!r} declares no structural:// evidence, so the "
+            f"refusal it witnesses is one no claim rests on and no fingerprint covers"
+        )
+    problem = provenance_problem(probe, unit, root)
+    return f"{where}: {problem}" if problem else None
 
 
 def _structural_problems(reg: Registries, root: Path) -> list[str]:
     out: list[str] = []
     for probe in reg.structural_probes:
-        where = f"structural probe {probe['id']}"
         unit = reg.units.get(probe["unit"])
         if unit is None:
-            out.append(f"{where}: unit {probe['unit']!r} is not declared in verification.toml")
+            out.append(f"structural probe {probe['id']}: unit {probe['unit']!r} is not "
+                       "declared in verification.toml")
             continue
-        if not any(str(e).startswith("structural://") for e in unit.get("evidence", [])):
-            out.append(
-                f"{where}: unit {probe['unit']!r} declares no structural:// evidence, so the "
-                f"refusal it witnesses is one no claim rests on and no fingerprint covers"
-            )
-            continue
-        problem = provenance_problem(probe, unit, root)
+        problem = _structural_problem(unit, probe, root)
         if problem:
-            out.append(f"{where}: {problem}")
+            out.append(problem)
     return out
 
 
+def _scope_problem(reg: Registries, entry: dict, target: str) -> str | None:
+    kind, _, ident = target.partition("://")
+    if kind == "unit" and ident not in reg.units:
+        return (
+            f"assumption {entry['id']}: scope {target} names a unit no [[unit]] "
+            f"declares, so the premise reaches no fingerprint while reading as scoped"
+        )
+    if kind == "boundary" and ident not in reg.boundaries:
+        return (
+            f"assumption {entry['id']}: scope {target} names a boundary "
+            f"trust-boundaries.toml does not declare"
+        )
+    return None
+
+
 def _assumption_problems(reg: Registries) -> list[str]:
-    out: list[str] = []
-    for entry in reg.assumptions:
-        for target in (str(t) for t in entry.get("scope", [])):
-            kind, _, ident = target.partition("://")
-            if kind == "unit" and ident not in reg.units:
-                out.append(
-                    f"assumption {entry['id']}: scope {target} names a unit no [[unit]] "
-                    f"declares, so the premise reaches no fingerprint while reading as scoped"
-                )
-            if kind == "boundary" and ident not in reg.boundaries:
-                out.append(
-                    f"assumption {entry['id']}: scope {target} names a boundary "
-                    f"trust-boundaries.toml does not declare"
-                )
+    scopes = (
+        _scope_problem(reg, entry, str(target))
+        for entry in reg.assumptions
+        for target in entry.get("scope", [])
+    )
+    out = [problem for problem in scopes if problem]
     for asm_id, gone in stale_sites(reg.assumptions, reg.live_sites).items():
-        for site in gone:
-            out.append(
-                f"assumption {asm_id}: site {site} names no seam the tree declares. A site "
-                f"that stopped resolving records trust in code that was renamed or removed; "
-                f"discharge the entry or point it at the seam that replaced it."
-            )
+        out += [
+            f"assumption {asm_id}: site {site} names no seam the tree declares. A site "
+            f"that stopped resolving records trust in code that was renamed or removed; "
+            f"discharge the entry or point it at the seam that replaced it."
+            for site in gone
+        ]
     return out
 
 
@@ -185,22 +207,37 @@ def structural_probe_paths(probes: list[dict]) -> dict[str, set[str]]:
     return found
 
 
+def _unit_paths(reg: Registries) -> Iterator[tuple[str, str]]:
+    for unit_id, unit in reg.units.items():
+        for file in expand_paths(unit.get("paths", [])):
+            yield file, f"unit:{unit_id}"
+
+
+def _probe_paths(reg: Registries) -> Iterator[tuple[str, str]]:
+    for probe in reg.mutation_probes:
+        for site in [probe, *probe.get("also", [])]:
+            yield str(site["path"]), f"mutation-probe:{probe['id']}"
+
+
+def _structural_paths(reg: Registries) -> Iterator[tuple[str, str]]:
+    for file, owners in structural_probe_paths(reg.structural_probes).items():
+        for owner in owners:
+            yield file, owner
+
+
+def _assumption_paths(reg: Registries) -> Iterator[tuple[str, str]]:
+    for entry in reg.assumptions:
+        for site in entry.get("sites", []):
+            yield str(site).partition("#")[0], f"assumption:{entry['id']}"
+
+
 def named_paths(reg: Registries) -> dict[str, frozenset[str]]:
     """Every repository file a registry names, mapped to the records that name it.
 
     A unit's `paths` are expanded globs. An owner is `<kind>:<id>`.
     """
     found: dict[str, set[str]] = {}
-    for unit_id, unit in reg.units.items():
-        for file in expand_paths(unit.get("paths", [])):
-            _add(found, file, f"unit:{unit_id}")
-    for probe in reg.mutation_probes:
-        for site in [probe, *probe.get("also", [])]:
-            _add(found, str(site["path"]), f"mutation-probe:{probe['id']}")
-    for file, owners in structural_probe_paths(reg.structural_probes).items():
-        for owner in owners:
+    for source in (_unit_paths, _probe_paths, _structural_paths, _assumption_paths):
+        for file, owner in source(reg):
             _add(found, file, owner)
-    for entry in reg.assumptions:
-        for site in entry.get("sites", []):
-            _add(found, str(site).partition("#")[0], f"assumption:{entry['id']}")
     return {file: frozenset(owners) for file, owners in sorted(found.items())}
