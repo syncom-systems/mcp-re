@@ -73,10 +73,8 @@
 //! to be either vacuous or wrong about at least one of them. A shared ownership MECHANISM
 //! is right; a shared semantic OUTCOME is not.
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use crate::config_snapshot;
 use crate::control_runtime::ControlRuntime;
 use crate::materializing_runtime::MaterializedLifecycle;
 use crate::runtime_state::RuntimeEvent;
@@ -86,9 +84,9 @@ use crate::signing_plane::SigningPlane;
 use crate::tls_plane::TlsPlane;
 use crate::trust_plane::TrustPlane;
 use crate::HttpProfileProxy;
-use crate::ServerOptions;
 
 pub(crate) mod fleet_serve_authorized;
+pub(crate) use fleet_serve_authorized::FleetServing;
 
 /// Everything startup established, owned together so that teardown can be ordered.
 ///
@@ -196,10 +194,8 @@ impl MaterializedRuntime {
     /// fleet's [`FleetServeAuthorized`](fleet_serve_authorized::FleetServeAuthorized).
     pub(crate) fn serve(
         mut self,
-        config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
-        serve_options: Arc<ServerOptions>,
+        serving: FleetServing,
         fleet_cfg: crate::async_fleet::FleetConfig,
-        shutdown: Arc<AtomicBool>,
     ) -> Result<(), String> {
         // PHASE 1 — drain. Returns only once every per-core worker has stopped, so no
         // request can be using anything below when phase 2 begins.
@@ -210,8 +206,7 @@ impl MaterializedRuntime {
                 .ok_or("the runtime has no proxy to drain")?,
         );
         let authorized = fleet_serve_authorized::FleetServeAuthorized::issue(fleet_cfg);
-        let served =
-            crate::app::serve_fleet(proxy, config_snapshot, serve_options, authorized, shutdown);
+        let served = crate::app::serve_fleet(proxy, serving, authorized);
 
         // WHICH lifecycle events are applied is decided by `served`, the only thing that
         // knows whether any of them happened; `serving_events` states why.

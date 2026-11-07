@@ -393,7 +393,7 @@ def test_gate_controls_enter_the_unit_fingerprint():
     assert unit.get("gate_controls"), "the fixture unit must declare gate controls"
     source = inspect.getsource(_fingerprint)
     assert 'if unit.get("gate_controls"):' in source
-    assert 'components["gate_controls"] = _digest_paths' in source
+    assert 'components["gate_controls"] = digest_paths' in source
 
 
 # --- the lane is inside the attestation closure --------------------------------

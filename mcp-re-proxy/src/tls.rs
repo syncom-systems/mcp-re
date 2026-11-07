@@ -314,19 +314,6 @@ pub(crate) fn assertion_header<'a>(
     }
 }
 
-/// Wall-clock Unix seconds for the transport-layer certificate-validity check.
-///
-/// The serving path's own `now` is threaded from `app.rs` for every EVIDENCE
-/// decision; this one is read here because the check runs at the transport layer,
-/// below the request pipeline, and a pre-epoch fault clamps to 0 — which fails every
-/// validity window closed.
-pub(crate) fn wall_clock_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
 /// ADR-MCPS-025 routing-header hygiene rejection — runs at the SAME per-connection
 /// point as [`cert_lifetime_rejection`] (after the verified handshake, before the
 /// handler). Returns `Some(error_bytes)` when a SEP-2243 routing header
@@ -343,13 +330,7 @@ pub(crate) fn routing_header_rejection(
 ) -> Option<Vec<u8>> {
     crate::transport::validate_routing_headers(headers)
         .err()
-        .map(|_rejection| {
-            let id = serde_json::from_slice::<serde_json::Value>(request)
-                .ok()
-                .and_then(|value| value.get("id").cloned())
-                .unwrap_or(serde_json::Value::Null);
-            json_rpc_error_object(&McpReError::TransportBindingFailed, &id)
-        })
+        .map(|_rejection| transport_binding_failure(request))
 }
 
 /// Online OCSP revocation rejection (#4030) — the online sibling of
@@ -378,16 +359,7 @@ pub(crate) fn ocsp_rejection_for_chain(
     request: &[u8],
 ) -> Option<Vec<u8>> {
     let checker = options.ocsp_checker.as_ref()?;
-    let reject = || {
-        let id = serde_json::from_slice::<serde_json::Value>(request)
-            .ok()
-            .and_then(|value| value.get("id").cloned())
-            .unwrap_or(serde_json::Value::Null);
-        Some(json_rpc_error_object(
-            &McpReError::TransportBindingFailed,
-            &id,
-        ))
-    };
+    let reject = || Some(transport_binding_failure(request));
 
     let leaf = chain.first()?;
     // The issuer is the next cert in the verified chain. Without it we cannot
@@ -579,6 +551,7 @@ pub(crate) mod fault_accept_any {
     use rustls::crypto::verify_tls12_signature;
     use rustls::crypto::verify_tls13_signature;
     use rustls::crypto::CryptoProvider;
+    use rustls::crypto::WebPkiSupportedAlgorithms;
     use rustls::server::danger::ClientCertVerified;
     use rustls::server::danger::ClientCertVerifier;
     use rustls::DigitallySignedStruct;
@@ -604,6 +577,10 @@ pub(crate) mod fault_accept_any {
         pub fn new(provider: Arc<CryptoProvider>) -> Self {
             AcceptAnyClientVerifier { provider }
         }
+
+        fn algorithms(&self) -> &WebPkiSupportedAlgorithms {
+            &self.provider.signature_verification_algorithms
+        }
     }
 
     impl ClientCertVerifier for AcceptAnyClientVerifier {
@@ -623,12 +600,7 @@ pub(crate) mod fault_accept_any {
             cert: &CertificateDer<'_>,
             dss: &DigitallySignedStruct,
         ) -> Result<HandshakeSignatureValid, RustlsError> {
-            verify_tls12_signature(
-                message,
-                cert,
-                dss,
-                &self.provider.signature_verification_algorithms,
-            )
+            verify_tls12_signature(message, cert, dss, self.algorithms())
         }
 
         fn verify_tls13_signature(
@@ -637,12 +609,7 @@ pub(crate) mod fault_accept_any {
             cert: &CertificateDer<'_>,
             dss: &DigitallySignedStruct,
         ) -> Result<HandshakeSignatureValid, RustlsError> {
-            verify_tls13_signature(
-                message,
-                cert,
-                dss,
-                &self.provider.signature_verification_algorithms,
-            )
+            verify_tls13_signature(message, cert, dss, self.algorithms())
         }
 
         fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
@@ -841,6 +808,36 @@ mod delegated_credential_key_correspondence_tests {
         );
     }
 
+    /// One characterized failure: its name, the two sides' evidence, and the refusal it
+    /// must be.
+    type CharacterizedFailure<'a> = (
+        &'a str,
+        CertificateChainEvidence<'a>,
+        SigningKeyExportEvidence<'a>,
+        CredentialKeyCorrespondenceRefusal,
+    );
+
+    /// Every case refuses as exactly the fact it states, and no two facts are equal.
+    fn assert_each_refusal_is_distinct(cases: Vec<CharacterizedFailure<'_>>) {
+        let mut seen = Vec::new();
+        for (name, credential, export, expected) in cases {
+            let refusal = establish_credential_key_correspondence(credential, export)
+                .err()
+                .unwrap_or_else(|| panic!("{name} must refuse"));
+            assert_eq!(refusal, expected, "{name} reported the wrong fact");
+            seen.push(refusal);
+        }
+
+        for (i, left) in seen.iter().enumerate() {
+            for right in seen.iter().skip(i + 1) {
+                assert_ne!(
+                    left, right,
+                    "every vector must be a DISTINCT value, not a distinct sentence"
+                );
+            }
+        }
+    }
+
     #[test]
     fn every_characterized_failure_is_a_distinct_typed_refusal() {
         // The replacement for the characterization test this suite opened with.
@@ -866,12 +863,7 @@ mod delegated_credential_key_correspondence_tests {
         let garbage = [0x30u8, 0x82, 0xff, 0xff, 0x00];
         let empty: [u8; 0] = [];
 
-        let cases: Vec<(
-            &str,
-            CertificateChainEvidence<'_>,
-            SigningKeyExportEvidence<'_>,
-            CredentialKeyCorrespondenceRefusal,
-        )> = vec![
+        let cases: Vec<CharacterizedFailure<'_>> = vec![
             (
                 "empty credential chain",
                 CertificateChainEvidence::absent(),
@@ -928,23 +920,7 @@ mod delegated_credential_key_correspondence_tests {
             ),
         ];
 
-        let mut seen = Vec::new();
-        for (name, credential, export, expected) in cases {
-            let refusal = establish_credential_key_correspondence(credential, export)
-                .err()
-                .unwrap_or_else(|| panic!("{name} must refuse"));
-            assert_eq!(refusal, expected, "{name} reported the wrong fact");
-            seen.push(refusal);
-        }
-
-        for (i, left) in seen.iter().enumerate() {
-            for right in seen.iter().skip(i + 1) {
-                assert_ne!(
-                    left, right,
-                    "every vector must be a DISTINCT value, not a distinct sentence"
-                );
-            }
-        }
+        assert_each_refusal_is_distinct(cases);
     }
 
     #[test]
@@ -1031,7 +1007,7 @@ mod channel_peer_resolution_tests {
         let peer = resolve_channel_peer(
             Some(&acceptance),
             &direct_tls(IdentityPolicy::UriSan),
-            wall_clock_unix(),
+            crate::clock::now_unix(),
         )
         .expect("the short-lived credential is current under the window")
         .expect("the accepted credential's leaf carries the configured field");
@@ -1049,7 +1025,7 @@ mod channel_peer_resolution_tests {
         let peer = resolve_channel_peer(
             Some(&acceptance),
             &direct_tls(IdentityPolicy::UriSan),
-            wall_clock_unix(),
+            crate::clock::now_unix(),
         )
         .expect("the short-lived credential is current under the window")
         .expect("resolution succeeds");
@@ -1065,10 +1041,10 @@ mod channel_peer_resolution_tests {
         let second = accepted(IDENTITY_B, IDENTITY_A);
         let options = direct_tls(IdentityPolicy::UriSan);
 
-        let from_first = resolve_channel_peer(Some(&first), &options, wall_clock_unix())
+        let from_first = resolve_channel_peer(Some(&first), &options, crate::clock::now_unix())
             .expect("the short-lived credential is current under the window")
             .expect("first resolves");
-        let from_second = resolve_channel_peer(Some(&second), &options, wall_clock_unix())
+        let from_second = resolve_channel_peer(Some(&second), &options, crate::clock::now_unix())
             .expect("the short-lived credential is current under the window")
             .expect("second resolves");
         assert_eq!(from_first.identity().as_str(), IDENTITY_A);
@@ -1091,10 +1067,10 @@ mod channel_peer_resolution_tests {
         let resumed = verified_credential(&resumed_conn).expect("accepts");
         let options = direct_tls(IdentityPolicy::DnsSan);
 
-        let from_full = resolve_channel_peer(Some(&full), &options, wall_clock_unix())
+        let from_full = resolve_channel_peer(Some(&full), &options, crate::clock::now_unix())
             .expect("the short-lived credential is current under the window")
             .expect("a peer");
-        let from_resumed = resolve_channel_peer(Some(&resumed), &options, wall_clock_unix())
+        let from_resumed = resolve_channel_peer(Some(&resumed), &options, crate::clock::now_unix())
             .expect("the short-lived credential is current under the window")
             .expect("a peer");
 
@@ -1127,7 +1103,7 @@ mod channel_peer_resolution_tests {
             resolve_channel_peer(
                 Some(&acceptance),
                 &direct_tls(IdentityPolicy::UriSan),
-                wall_clock_unix()
+                crate::clock::now_unix()
             )
             .expect("the short-lived credential is current under the window")
             .is_none(),
@@ -1141,7 +1117,11 @@ mod channel_peer_resolution_tests {
         // cannot be shown current under it: no peer, and no silent pass.
         assert!(
             matches!(
-                resolve_channel_peer(None, &direct_tls(IdentityPolicy::UriSan), wall_clock_unix()),
+                resolve_channel_peer(
+                    None,
+                    &direct_tls(IdentityPolicy::UriSan),
+                    crate::clock::now_unix()
+                ),
                 Err(CredentialCurrencyRefusal::CredentialUnreadable)
             ),
             "no acceptance is no authenticated peer, refused under the configured window"
@@ -1163,7 +1143,7 @@ mod channel_peer_resolution_tests {
             )
         };
         assert!(
-            resolve_channel_peer(Some(&acceptance), &options, wall_clock_unix())
+            resolve_channel_peer(Some(&acceptance), &options, crate::clock::now_unix())
                 .expect("the short-lived credential is current under the window")
                 .is_none()
         );

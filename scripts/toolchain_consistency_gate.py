@@ -75,11 +75,16 @@ def check(module_text: str, lock: dict, workflows: dict[str, str], merge_gate: s
     return problems
 
 
+def merge_gate_source() -> str:
+    """The merge-readiness gate's source: its entry script and every module of its package."""
+    parts = [REPO / "scripts/merge_readiness_gate.py", *sorted((REPO / "scripts/_merge_readiness").glob("*.py"))]
+    return "\n".join(part.read_text() for part in parts)
+
+
 def load() -> tuple[str, dict, dict[str, str], str]:
     lock = _registries.document("toolchains", REPO, required=True)
     flows = {f".github/workflows/{n}": (REPO / ".github/workflows" / n).read_text() for n in WORKFLOW_FILES}
-    return ((REPO / "MODULE.bazel").read_text(), lock, flows,
-            (REPO / "scripts/merge_readiness_gate.py").read_text())
+    return ((REPO / "MODULE.bazel").read_text(), lock, flows, merge_gate_source())
 
 
 def verdict() -> int:
