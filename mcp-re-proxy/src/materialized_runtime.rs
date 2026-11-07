@@ -162,37 +162,21 @@ fn serving_events(served: &Result<(), String>) -> &'static [RuntimeEvent] {
     }
 }
 
-/// The three planes startup establishes, handed to [`MaterializedRuntime::new`] together:
-/// the runtime owns them as one set and reclaims them in its own order.
-pub(crate) struct Planes {
-    trust: TrustPlane,
-    signing: SigningPlane,
-    tls: TlsPlane,
-}
-
-impl Planes {
-    pub(crate) fn new(trust: TrustPlane, signing: SigningPlane, tls: TlsPlane) -> Self {
-        Self {
-            trust,
-            signing,
-            tls,
-        }
-    }
-}
-
 impl MaterializedRuntime {
     /// Assemble what startup established. Takes every owned resource by value, so a
     /// caller cannot retain one and outlive the ordering this type enforces.
     pub(crate) fn new(
-        planes: Planes,
+        trust: TrustPlane,
+        signing: SigningPlane,
+        tls: TlsPlane,
         proxy: HttpProfileProxy,
         control: Option<ControlRuntime>,
         lifecycle: MaterializedLifecycle,
     ) -> Self {
         Self {
-            trust: Some(planes.trust),
-            signing: Some(planes.signing),
-            tls: Some(planes.tls),
+            trust: Some(trust),
+            signing: Some(signing),
+            tls: Some(tls),
             phase3: Reclaim {
                 consumer: Some(Arc::new(proxy)),
                 substrate: control,

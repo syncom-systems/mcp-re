@@ -34,7 +34,6 @@
 use crate::config_state::validation::ValidatedDeployment;
 use crate::control_runtime::ControlRuntimeProvision;
 use crate::materialized_runtime::MaterializedRuntime;
-use crate::materialized_runtime::Planes;
 use crate::runtime_state::RuntimeLifecycle;
 #[cfg(test)]
 use crate::runtime_state::RuntimeState;
@@ -167,7 +166,9 @@ impl MaterializingRuntime {
         let materialized = MaterializedLifecycle::reached(lifecycle)?;
 
         Ok(MaterializedRuntime::new(
-            Planes::new(trust, signing, tls),
+            trust,
+            signing,
+            tls,
             proxy,
             control,
             materialized,

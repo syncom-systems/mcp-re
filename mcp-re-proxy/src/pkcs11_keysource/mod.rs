@@ -197,16 +197,6 @@ impl LoginSessionFactory for Pkcs11Token {
     }
 }
 
-/// What names the token and its response-signing key: the Cryptoki module to load, the
-/// User PIN, the token's label and the label of the Ed25519 signing key objects.
-#[derive(Clone, Copy)]
-pub struct TokenAccess<'a> {
-    pub module_path: &'a str,
-    pub pin: &'a str,
-    pub token_label: &'a str,
-    pub key_label: &'a str,
-}
-
 impl Pkcs11KeySource {
     /// Open a PKCS#11 token and bind to the named Ed25519 signing key.
     ///
@@ -230,16 +220,13 @@ impl Pkcs11KeySource {
     /// neither requires the other, and a label resolving to multiple or non-Ed25519
     /// objects fails closed at `open` (proven by the live lane).
     pub fn open(
-        token: TokenAccess<'_>,
+        module_path: &str,
+        pin: &str,
+        token_label: &str,
+        key_label: &str,
         tls: FileKeySource,
         tls_key_label: Option<&str>,
     ) -> Result<Self, KeyError> {
-        let TokenAccess {
-            module_path,
-            pin,
-            token_label,
-            key_label,
-        } = token;
         if tls_key_label == Some(key_label) {
             return Err(KeyError::Malformed(
                 "pkcs11: the TLS key and the response-signing key must be distinct token objects"
@@ -487,13 +474,7 @@ mod tests {
             FileKeySource::tls_only("/dev/null", Some(key), "/dev/null").expect("valid key")
         };
         let open = |tls, label| {
-            let token = super::TokenAccess {
-                module_path: "/nonexistent/module.so",
-                pin: "pin",
-                token_label: "t",
-                key_label: "sign",
-            };
-            super::Pkcs11KeySource::open(token, tls, label)
+            super::Pkcs11KeySource::open("/nonexistent/module.so", "pin", "t", "sign", tls, label)
                 .err()
                 .expect("no module at that path")
         };
