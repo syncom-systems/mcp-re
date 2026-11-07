@@ -35,8 +35,9 @@ problem, `excessive_nesting`, any other lint — stays a hard failure.
   classify(gate, output) -> (soft, rows)   soft is True only when EVERY reported problem is
                                            size; rows describe each one
   record(work_dir, file, rows)             check.py: pending rows for this writer
-  settle(work_dir, file, commit, register) finalize: a committed writer's rows join the
-                                           tracked register with the commit that grew it
+  settle(work_dir, file, change, register) finalize: a committed writer's rows join the
+                                           tracked register with the `Change` (commit and
+                                           findings) that grew it
   drop(work_dir, file)                     finalize: a reverted writer's rows are discarded
 """
 from __future__ import annotations
@@ -45,6 +46,7 @@ import hashlib
 import json
 import os
 import re
+from typing import NamedTuple
 
 REGISTER = "docs/security/remediation-size-debt.jsonl"
 
@@ -129,32 +131,46 @@ def _shape(r: dict) -> dict:
 THRESHOLD = 200
 
 
-def _merge(register: str, rows: list[dict], commit: str, findings: list[str]) -> int:
+class Change(NamedTuple):
+    """What changed the rows: the commit, and the findings it fixed."""
+
+    commit: str
+    findings: list[str]
+
+
+def _load_book(register: str) -> dict[tuple[str, str], dict]:
+    if not os.path.exists(register):
+        return {}
+    with open(register, encoding="utf-8") as fh:
+        rows = [json.loads(line) for line in fh if line.strip()]
+    return {(r["metric"], r["path"]): r for r in rows}
+
+
+def _apply(book: dict[tuple[str, str], dict], raw: dict, change: Change) -> bool:
+    """Add or update the register row for `raw`; True when the row changed."""
+    r = _shape(raw)
+    key = (r["metric"], r["path"])
+    cur = book.get(key)
+    if cur is None:
+        book[key] = dict(r, delta=(r["after"] or 0) - (r["before"] or 0),
+                         commits=[change.commit], findings=sorted(set(change.findings)))
+        return True
+    if r["after"] == cur["after"]:
+        return False
+    cur["after"] = r["after"]
+    cur["delta"] = (cur["after"] or 0) - (cur["before"] or 0)
+    cur["commits"] = cur["commits"] + ([change.commit] if change.commit not in cur["commits"] else [])
+    cur["findings"] = sorted(set(cur["findings"]) | set(change.findings))
+    cur["registry"] = r["registry"]
+    return True
+
+
+def _merge(register: str, rows: list[dict], change: Change) -> int:
     """One register row per (metric, path): the size before the first remediation commit
     that touched it, the latest size, the delta, its origin, and every commit and finding
     that changed it. Returns how many rows changed."""
-    book: dict[tuple[str, str], dict] = {}
-    if os.path.exists(register):
-        for line in open(register, encoding="utf-8"):
-            if line.strip():
-                r = json.loads(line)
-                book[(r["metric"], r["path"])] = r
-    changed = 0
-    for raw in rows:
-        r = _shape(raw)
-        key = (r["metric"], r["path"])
-        cur = book.get(key)
-        if cur is None:
-            book[key] = dict(r, delta=(r["after"] or 0) - (r["before"] or 0),
-                             commits=[commit], findings=sorted(set(findings)))
-            changed += 1
-        elif r["after"] != cur["after"]:
-            cur["after"] = r["after"]
-            cur["delta"] = (cur["after"] or 0) - (cur["before"] or 0)
-            cur["commits"] = cur["commits"] + ([commit] if commit not in cur["commits"] else [])
-            cur["findings"] = sorted(set(cur["findings"]) | set(findings))
-            cur["registry"] = r["registry"]
-            changed += 1
+    book = _load_book(register)
+    changed = sum([_apply(book, raw, change) for raw in rows])
     os.makedirs(os.path.dirname(register) or ".", exist_ok=True)
     with open(register, "w", encoding="utf-8") as fh:
         for key in sorted(book):
@@ -162,20 +178,19 @@ def _merge(register: str, rows: list[dict], commit: str, findings: list[str]) ->
     return changed
 
 
-def settle(work_dir: str, file: str, commit: str, register: str = REGISTER,
-           findings: list[str] | None = None) -> int:
+def settle(work_dir: str, file: str, change: Change, register: str = REGISTER) -> int:
     p = _pending(work_dir, file)
     if not os.path.exists(p):
         return 0
     rows = json.load(open(p, encoding="utf-8")).get("rows", [])
     os.remove(p)
-    return _merge(register, rows, commit, findings or [])
+    return _merge(register, rows, change)
 
 
 def register_rows(rows: list[dict], commit: str, register: str = REGISTER) -> int:
     """Rows the batch gate measured: merged under the commit, so a re-run or a growth some
     writer already registered changes nothing."""
-    return _merge(register, rows, commit, [])
+    return _merge(register, rows, Change(commit, []))
 
 
 def encountered(touched: list[str], ref: str = "HEAD") -> list[dict]:
