@@ -28,6 +28,7 @@ from __future__ import annotations
 import re
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -81,29 +82,105 @@ def expected_version() -> str:
 BARE_TAG = re.compile(r"^\s*tag:\s*\"?(\d+\.\d+\.\d+)\"?\s*$")
 
 
+def _scanned_files(root: Path) -> Iterator[Path]:
+    for glob in SCAN_GLOBS:
+        yield from (path for path in sorted(root.glob(glob)) if path.is_file())
+
+
+def _line_findings(where: str, line: str, version: str) -> list[str]:
+    findings = [
+        f"{where}: {image}:{tag} != VERSION {version} — read the tag from VERSION "
+        f"rather than restating it"
+        for image, tag in IMAGE_TAG.findall(line)
+        if tag != version
+    ]
+    bare = BARE_TAG.match(line)
+    if bare and bare.group(1) != version:
+        findings.append(
+            f"{where}: image tag {bare.group(1)} != VERSION {version} — this is the tag "
+            f"the chart deploys; see docs/dev/version-bump.md"
+        )
+    return findings
+
+
 def scan(root: Path, version: str) -> list[str]:
     """Return one finding per image reference whose literal tag != version."""
     findings: list[str] = []
-    for glob in SCAN_GLOBS:
-        for path in sorted(root.glob(glob)):
-            if not path.is_file():
-                continue
-            for lineno, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
-                for image, tag in IMAGE_TAG.findall(line):
-                    if tag != version:
-                        findings.append(
-                            f"{path.relative_to(root)}:{lineno}: {image}:{tag} "
-                            f"!= VERSION {version} — read the tag from VERSION "
-                            f"rather than restating it"
-                        )
-                bare = BARE_TAG.match(line)
-                if bare and bare.group(1) != version:
-                    findings.append(
-                        f"{path.relative_to(root)}:{lineno}: image tag "
-                        f"{bare.group(1)} != VERSION {version} — this is the tag the "
-                        f"chart deploys; see docs/dev/version-bump.md"
-                    )
+    for path in _scanned_files(root):
+        lines = path.read_text(errors="replace").splitlines()
+        for lineno, line in enumerate(lines, 1):
+            findings += _line_findings(f"{path.relative_to(root)}:{lineno}", line, version)
     return findings
+
+
+def _expect_one_in(root: Path, name: str, what: str) -> str | None:
+    findings = scan(root, "9.9.9")
+    if len(findings) != 1 or name not in findings[0]:
+        return f"{what}, got {findings}"
+    return None
+
+
+def _expect_clean(root: Path, what: str) -> str | None:
+    return f"{what} still reported findings" if scan(root, "9.9.9") else None
+
+
+def _selftest_literal_pin(root: Path) -> str | None:
+    good = root / "deploy" / "good.yaml"
+    bad = root / "deploy" / "bad.yaml"
+    good.write_text("image: mcp-re-proxy:9.9.9\nimage: mcp-re-inner-fastmcp:${TAG}\n")
+    bad.write_text("image: mcp-re-proxy:0.12.1\n")
+    failure = _expect_one_in(root, "bad.yaml", "expected exactly one finding in bad.yaml")
+    bad.write_text("image: mcp-re-proxy:9.9.9\n")
+    return failure or _expect_clean(root, "a correctly-pinned tree")
+
+
+def _selftest_bare_tag(root: Path) -> str | None:
+    # A Helm-style BARE `tag:` must be caught too. Its own fixture, because the
+    # name:tag matcher cannot see this form at all — the check that missed it looked
+    # exactly as green as one that covers it.
+    values = root / "deploy" / "values.yaml"
+    values.write_text("image:\n  repository: mcp-re-proxy\n  tag: \"0.12.1\"\n")
+    failure = _expect_one_in(root, "values.yaml", "a drifted bare `tag:` was not caught")
+    values.write_text("image:\n  repository: mcp-re-proxy\n  tag: \"9.9.9\"\n")
+    failure = failure or _expect_clean(root, "a correct bare `tag:`")
+    values.unlink()
+    return failure
+
+
+def _selftest_dockerfile(root: Path) -> str | None:
+    # An extensionless Dockerfile. Its own fixture, because no suffix glob can reach
+    # one at all — the scan that missed four of them looked exactly as green as one
+    # that covers them, and the tag drifted five versions behind under a rule that
+    # forbids retyped tags.
+    (root / "deploy" / "docker").mkdir()
+    dockerfile = root / "deploy" / "docker" / "Dockerfile.x"
+    build = "FROM debian:bookworm-slim\n#   docker build -f deploy/docker/Dockerfile.x -t {}:{} .\n"
+    dockerfile.write_text(build.format("mcp-re-proxy", "0.12.1"))
+    failure = _expect_one_in(root, "Dockerfile.x", "a drifted Dockerfile pin was not caught")
+    dockerfile.write_text(build.format("mcp-re-proxy", "9.9.9"))
+    failure = failure or _expect_clean(root, "a correctly-pinned Dockerfile")
+    dockerfile.unlink()
+    return failure
+
+
+def _selftest_coverage(root: Path) -> str | None:
+    # Coverage: an image something DEPLOYS but no cloudbuild config BUILDS. Its own
+    # fixture, so the two checks cannot mask each other. The orphan is asserted with an
+    # EXPANSION tag, not a literal — that is the form the drift fix produces, and a
+    # literal-only matcher would go blind on exactly the files the drift fix touches.
+    (root / "deploy" / "cloudbuild").mkdir(parents=True)
+    (root / "tools").mkdir()
+    cb = root / "deploy" / "cloudbuild" / "images.yaml"
+    cb.write_text('args: [build, -t, "${_AR}/mcp-re-proxy:9.9.9", .]\n')
+    (root / "tools" / "run_job.sh").write_text('IMG="${_AR}/mcp-re-slo-bench:$BENCH_TAG"\n')
+    orphans = unbuilt_images(root)
+    if orphans != ["mcp-re-slo-bench"]:
+        return f"expected ['mcp-re-slo-bench'] unbuilt, got {orphans}"
+    cb.write_text(
+        'args: [build, -t, "${_AR}/mcp-re-proxy:9.9.9", .]\n'
+        'args: [build, -t, "${_AR}/mcp-re-slo-bench:9.9.9", .]\n'
+    )
+    return "a fully-built tree still reported unbuilt images" if unbuilt_images(root) else None
 
 
 def selftest() -> int:
@@ -112,84 +189,20 @@ def selftest() -> int:
         root = Path(tmp)
         (root / "VERSION").write_text("9.9.9\n")
         (root / "deploy").mkdir()
-        good = root / "deploy" / "good.yaml"
-        bad = root / "deploy" / "bad.yaml"
-        good.write_text("image: mcp-re-proxy:9.9.9\nimage: mcp-re-inner-fastmcp:${TAG}\n")
-        bad.write_text("image: mcp-re-proxy:0.12.1\n")
-
-        findings = scan(root, "9.9.9")
-        if len(findings) != 1 or "bad.yaml" not in findings[0]:
-            print(f"SELFTEST FAILED: expected exactly one finding in bad.yaml, got {findings}")
-            return 1
-        bad.write_text("image: mcp-re-proxy:9.9.9\n")
-        if scan(root, "9.9.9"):
-            print("SELFTEST FAILED: a correctly-pinned tree still reported findings")
-            return 1
-
-        # A Helm-style BARE `tag:` must be caught too. Its own fixture, because the
-        # name:tag matcher cannot see this form at all — the check that missed it looked
-        # exactly as green as one that covers it.
-        values = root / "deploy" / "values.yaml"
-        values.write_text("image:\n  repository: mcp-re-proxy\n  tag: \"0.12.1\"\n")
-        findings = scan(root, "9.9.9")
-        if len(findings) != 1 or "values.yaml" not in findings[0]:
-            print(f"SELFTEST FAILED: a drifted bare `tag:` was not caught, got {findings}")
-            return 1
-        values.write_text("image:\n  repository: mcp-re-proxy\n  tag: \"9.9.9\"\n")
-        if scan(root, "9.9.9"):
-            print("SELFTEST FAILED: a correct bare `tag:` still reported findings")
-            return 1
-        values.unlink()
-
-        # An extensionless Dockerfile. Its own fixture, because no suffix glob can reach
-        # one at all — the scan that missed four of them looked exactly as green as one
-        # that covers them, and the tag drifted five versions behind under a rule that
-        # forbids retyped tags.
-        (root / "deploy" / "docker").mkdir()
-        dockerfile = root / "deploy" / "docker" / "Dockerfile.x"
-        dockerfile.write_text(
-            "FROM debian:bookworm-slim\n"
-            "#   docker build -f deploy/docker/Dockerfile.x -t mcp-re-proxy:0.12.1 .\n"
-        )
-        findings = scan(root, "9.9.9")
-        if len(findings) != 1 or "Dockerfile.x" not in findings[0]:
-            print(f"SELFTEST FAILED: a drifted Dockerfile pin was not caught, got {findings}")
-            return 1
-        dockerfile.write_text(
-            "FROM debian:bookworm-slim\n"
-            "#   docker build -f deploy/docker/Dockerfile.x -t mcp-re-proxy:9.9.9 .\n"
-        )
-        if scan(root, "9.9.9"):
-            print("SELFTEST FAILED: a correctly-pinned Dockerfile still reported findings")
-            return 1
-        dockerfile.unlink()
-
-    # Coverage: an image something DEPLOYS but no cloudbuild config BUILDS. Its own
-    # fixture, so the two checks cannot mask each other. The orphan is asserted with an
-    # EXPANSION tag, not a literal — that is the form the drift fix produces, and a
-    # literal-only matcher would go blind on exactly the files the drift fix touches.
+        for case in (_selftest_literal_pin, _selftest_bare_tag, _selftest_dockerfile):
+            if failure := case(root):
+                print(f"SELFTEST FAILED: {failure}")
+                return 1
     with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        (root / "deploy" / "cloudbuild").mkdir(parents=True)
-        (root / "tools").mkdir()
-        cb = root / "deploy" / "cloudbuild" / "images.yaml"
-        cb.write_text('args: [build, -t, "${_AR}/mcp-re-proxy:9.9.9", .]\n')
-        (root / "tools" / "run_job.sh").write_text(
-            'IMG="${_AR}/mcp-re-slo-bench:$BENCH_TAG"\n'
-        )
-        orphans = unbuilt_images(root)
-        if orphans != ["mcp-re-slo-bench"]:
-            print(f"SELFTEST FAILED: expected ['mcp-re-slo-bench'] unbuilt, got {orphans}")
-            return 1
-        cb.write_text(
-            'args: [build, -t, "${_AR}/mcp-re-proxy:9.9.9", .]\n'
-            'args: [build, -t, "${_AR}/mcp-re-slo-bench:9.9.9", .]\n'
-        )
-        if unbuilt_images(root):
-            print("SELFTEST FAILED: a fully-built tree still reported unbuilt images")
+        if failure := _selftest_coverage(Path(tmp)):
+            print(f"SELFTEST FAILED: {failure}")
             return 1
     print("deploy image-tag gate selftest: PASS")
     return 0
+
+
+def _images_named_in(path: Path) -> set[str]:
+    return {image for image, _ in IMAGE_REF.findall(path.read_text(errors="replace"))}
 
 
 def unbuilt_images(root: Path) -> list[str]:
@@ -204,15 +217,11 @@ def unbuilt_images(root: Path) -> list[str]:
     """
     built: set[str] = set()
     for cfg in sorted((root / "deploy" / "cloudbuild").glob("*.yaml")):
-        for image, _ in IMAGE_REF.findall(cfg.read_text(errors="replace")):
-            built.add(image)
+        built |= _images_named_in(cfg)
     deployed: set[str] = set()
-    for glob in SCAN_GLOBS:
-        for path in sorted(root.glob(glob)):
-            if not path.is_file() or "cloudbuild" in path.parts:
-                continue
-            for image, _ in IMAGE_REF.findall(path.read_text(errors="replace")):
-                deployed.add(image)
+    for path in _scanned_files(root):
+        if "cloudbuild" not in path.parts:
+            deployed |= _images_named_in(path)
     return sorted(deployed - built)
 
 
