@@ -4,7 +4,8 @@
 
 WHAT THIS PROVES, exactly: every variant of `startup_posture::Seam` appears in
 `Seam::ALL`, and every variant is passed to `posture.declare(Seam::<X>, ..)` exactly once
-in `app.rs`. That is a syntactic check over two files, and the claim stops there.
+in `app.rs` or a stage module under `app/`. That is a syntactic check over the source of those
+modules, and the claim stops there.
 
 WHAT IT DOES NOT PROVE: that the declared state is the RIGHT one, that the ON and OFF
 lines say anything useful, or that the branch producing them matches what was actually
@@ -52,7 +53,9 @@ POSTURE_MODULE = "mcp-re-proxy/src/startup_posture.rs"
 # rather than as a pass, which is why this is the correction and not a skip.
 POSTURE_MODULE_DIR = "mcp-re-proxy/src/startup_posture"
 # The composition root. Declarations live at the decision sites, which are all here.
+# Its stage modules under `app/` hold decision sites too, so they are read with it.
 DECLARING_MODULE = "mcp-re-proxy/src/app.rs"
+DECLARING_MODULE_DIR = "mcp-re-proxy/src/app"
 
 # `    SecurityAuditRecord,` inside `pub enum Seam { .. }`.
 ENUM_BLOCK = re.compile(r"pub enum Seam \{(.*?)\n\}", re.S)
@@ -114,9 +117,10 @@ def _declaration_failures(variants: list[str], declared: list[str]) -> list[str]
     return failures
 
 
-def _posture_source(root: Path) -> str:
-    source = (root / POSTURE_MODULE).read_text(encoding="utf-8")
-    for child in sorted((root / POSTURE_MODULE_DIR).glob("*.rs")):
+def _module_source(root: Path, module: str, module_dir: str) -> str:
+    """A module's root file followed by its direct children, as one text."""
+    source = (root / module).read_text(encoding="utf-8")
+    for child in sorted((root / module_dir).glob("*.rs")):
         source += child.read_text(encoding="utf-8")
     return source
 
@@ -127,8 +131,8 @@ def check(root: Path) -> list[str]:
         if not path.is_file():
             return [f"missing {path.relative_to(root)}"]
 
-    posture_src = _posture_source(root)
-    declaring_src = (root / DECLARING_MODULE).read_text(encoding="utf-8")
+    posture_src = _module_source(root, POSTURE_MODULE, POSTURE_MODULE_DIR)
+    declaring_src = _module_source(root, DECLARING_MODULE, DECLARING_MODULE_DIR)
 
     variants = ENUM_VARIANT.findall(
         _find(ENUM_BLOCK, posture_src, "`pub enum Seam`", POSTURE_MODULE)
@@ -244,7 +248,7 @@ def main(argv: list[str]) -> int:
             print(f"  - {failure}")
         return 1
 
-    print("seam-posture gate: every Seam states its posture in app.rs")
+    print("seam-posture gate: every Seam states its posture in app.rs or app/")
     return 0
 
 

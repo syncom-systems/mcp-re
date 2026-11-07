@@ -290,7 +290,36 @@ M92/M93 are retired, since their weakening no longer compiles.
 
 ---
 
-## EX-002 — `mcp-re-proxy/src/app.rs` — **census complete, disposition: decompose first**
+## EX-002 — `mcp-re-proxy/src/app.rs` — **decomposed; the file left the register**
+
+### Update — `run_validated` decomposed into stages
+
+The owner ordered `run_validated` brought under the function threshold, overriding its
+function-level exception. The §8 questions answered for it:
+
+1. *What does it own?* The order startup acts in. 2. *Independent authorities?* None that
+remain in it: classification lives in `startup_plan` and `config_state`, teardown in each
+plane and in `MaterializingRuntime`. What was left was a sequence of named steps that
+each hand a value to the next. 6–7. *Facts reconstructed or ordered only by locals?* The
+order of effects and the unwind order. Both survive the split: the stages are called in the
+transcript's order from one 44-line function, and `Startup` holds the runtime as its last
+field, with the proxy a caller-owned local declared after it, so a failure at any `?` still
+reclaims in the runtime's own order.
+
+The stages live under `app/`: `boot` (clock reading, key source, plans, `Startup::begin`),
+`planes` (trust, replay, inner pool, signing), `transport` (TLS plane, revocation posture,
+serving options), `capabilities` (the proxy and each optional capability with its posture)
+and `serving` (the fleet). The `too_many_lines` allowance is gone with the function it
+covered. `app.rs` is 195 production lines and is no longer in
+`config/module-size-debt.toml`. The guards that read the root as source now read `app.rs`
+and `app/` together (`composition_source`), and the probes whose anchors moved were
+re-anchored.
+
+The record below is the census as it stood before this change.
+
+---
+
+## EX-002 (historical) — `mcp-re-proxy/src/app.rs` — census complete, disposition: decompose first
 
 **Status:** `reviewed-action-required` — the census is complete and the disposition is
 *decompose first*. **Remediation:** [#592](https://github.com/matssun/mcp-re/issues/592).

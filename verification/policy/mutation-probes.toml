@@ -4759,13 +4759,15 @@ id = "M172-composition-root-raw-read"
 unit = "proxy.trust_composition_root"
 theorem = "THM-0067"
 conjunct = "every DeploymentRequest field the composition root reads directly is a pinned ordinary validated parameter"
-path = "mcp-re-proxy/src/app.rs"
+path = "mcp-re-proxy/src/app/boot.rs"
 anchor = """
     let values = config.config();
+    let admitted_key_files = admit_key_files(
 """
 weakening = """
     let values = config.config();
     let _unowned_decision: i64 = values.max_clock_skew;
+    let admitted_key_files = admit_key_files(
 """
 expect_red = [
   "//mcp-re-proxy:integration_test#composition_raw_read_test::the_composition_root_reads_only_ordinary_validated_parameters",
@@ -7031,7 +7033,7 @@ id = "M253-proxy-no-production-path-installs-a-node-local-continuation-tier"
 unit = "proxy.continuation_installation"
 theorem = "THM-0096"
 conjunct = "no production path installs a node-local continuation tier — a deployment that selected nothing installs NO store"
-path = "mcp-re-proxy/src/app.rs"
+path = "mcp-re-proxy/src/app/capabilities.rs"
 anchor = """
     if let Some(store) = continuation_store {
 """
@@ -7060,21 +7062,15 @@ id = "M254-proxy-the-signing-plane-comes-from-the-materialized-source"
 unit = "proxy.signing_credential_provenance"
 theorem = "THM-0082"
 conjunct = "the signing plane is installed from the key source the materializer opened, not from one the root named itself"
-path = "mcp-re-proxy/src/app.rs"
+path = "mcp-re-proxy/src/app/planes.rs"
 anchor = """
-    building.install_signing(crate::signing_plane::SigningPlane::materialize(
-        &signing_plan,
-        roots,
-        &startup_reading,
-    )?)?;
+    let signing =
+        crate::signing_plane::SigningPlane::materialize(&start.plans.signing, roots, reading)?;
 """
 weakening = """
     let rival = roots;
-    building.install_signing(crate::signing_plane::SigningPlane::materialize(
-        &signing_plan,
-        rival,
-        &startup_reading,
-    )?)?;
+    let signing =
+        crate::signing_plane::SigningPlane::materialize(&start.plans.signing, rival, reading)?;
 """
 expect_red = [
   "//mcp-re-proxy:integration_test#signing_credential_provenance_test::the_signing_plane_is_materialized_from_the_materialized_source",
