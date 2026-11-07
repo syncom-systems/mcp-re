@@ -59,13 +59,9 @@ from _fingerprint import (  # noqa: E402
     theorem_review_digests,
 )
 from _graph import evaluate, load_attestations  # noqa: E402
-from _manifest import (  # noqa: E402
-    REPO_ROOT,
-    ManifestError,
-    load_assumptions,
-    load_toolchains,
-    load_verification,
-)
+from _manifest import REPO_ROOT, ManifestError, load_verification  # noqa: E402
+from _assumptions import load_assumptions  # noqa: E402
+from _toolchain_lock import load_toolchains  # noqa: E402
 from _review import (  # noqa: E402
     UNDECLARED,
     closure_satisfied,

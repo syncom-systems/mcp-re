@@ -25,7 +25,8 @@ from _extraction_identity import (  # noqa: E402
     definition_drift,
     identity_problems,
 )
-from _manifest import ManifestError, load_toolchains  # noqa: E402
+from _manifest import ManifestError  # noqa: E402
+from _toolchain_lock import load_toolchains  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent.parent
 LOCK = REPO / "verification" / "policy" / "toolchains.lock.toml"
@@ -174,11 +175,11 @@ def test_the_dockerfile_the_identity_reads_is_the_one_the_image_is_built_from():
 def test_the_loader_refuses_an_inconsistent_lock_rather_than_returning_it():
     """The consumer-facing half: every caller of `load_toolchains` inherits the refusal, so
     no script has to remember to ask."""
-    import _manifest
+    import _toolchain_lock
 
-    original = _manifest.identity_problems
+    original = _toolchain_lock.identity_problems
     try:
-        _manifest.identity_problems = lambda _doc: ["synthetic inconsistency"]
+        _toolchain_lock.identity_problems = lambda _doc: ["synthetic inconsistency"]
         try:
             load_toolchains()
         except ManifestError as exc:
@@ -186,7 +187,7 @@ def test_the_loader_refuses_an_inconsistent_lock_rather_than_returning_it():
         else:
             raise AssertionError("load_toolchains returned a lock it should have refused")
     finally:
-        _manifest.identity_problems = original
+        _toolchain_lock.identity_problems = original
 
 
 if __name__ == "__main__":

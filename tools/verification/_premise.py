@@ -48,7 +48,7 @@ WHY A WITHDRAWN RECORD CARRIES NO CLASS
 
 `premise_class` is required of every LIVE premise and refused on a withdrawn one. A
 withdrawn assumption trusts nothing — that is what withdrawing it meant — so typing it would
-make a retired premise read as a live one. `_manifest._require_boundary_edge` already draws
+make a retired premise read as a live one. `_assumptions._require_boundary_edge` already draws
 the line in exactly that place, by exactly that argument, and liveness is the same test
 there: a non-empty `scope`.
 

@@ -152,16 +152,10 @@ import _rust_targets
 import _tree
 from _premise import is_model_registration
 from _lanes import claims
-from _manifest import (
-    ASSUMPTIONS_TOML,
-    expand_paths,
-    FORMAL_CLASSES,
-    load_trust_boundaries,
-    REPO_ROOT,
-    TOOLCHAINS_LOCK_TOML,
-    TRUST_BOUNDARIES_TOML,
-    VERIFICATION_TOML,
-)
+from _manifest import REPO_ROOT, TOOLCHAINS_LOCK_TOML, VERIFICATION_TOML
+from _assumptions import ASSUMPTIONS_TOML
+from _boundary_crossings import expand_paths, FORMAL_CLASSES
+from _trust_boundaries import load_trust_boundaries, TRUST_BOUNDARIES_TOML
 
 # Every attestation carrying an earlier version is UNKNOWN from the moment this moves, which
 # is the intended cost: an attestation computed over a narrower set of inputs cannot answer
@@ -442,6 +436,9 @@ def _test_sources(unit: dict) -> dict[str, str]:
 TEST_LANE_INPUTS = (
     "tools/verification/verify-tests",
     "tools/verification/_manifest.py",
+    # The admission primitives every unit record passes through: which keys it may carry,
+    # which it must, and the one read of the registry from the source tree.
+    "tools/verification/_record_rules.py",
     # The adapter registry: which ecosystem a path belongs to, which project runs the
     # battery, and how a selected result is read. It decides what a symbol NAMES, so a
     # change to it changes what the recorded evidence means — the same argument that put
@@ -639,6 +636,17 @@ LEAN_LANE_INPUTS = (
     # class rules. It rides in on `test_lane_identity` today only because the one lean unit
     # ALSO claims `test://`; a lean-only unit would have it measured by nobody.
     "tools/verification/_manifest.py",
+    # The admission primitives under that loader and under the premise registry's.
+    "tools/verification/_record_rules.py",
+    # The V2/V3 class rules `selection(doc)` rests on: which selection keys a class must
+    # declare and that its evidence says so.
+    "tools/verification/_unit_rules.py",
+    # Which premises the registry admits: a registered premise is what excuses an axiom, so
+    # a loader that admits a malformed one widens what the lane accepts.
+    "tools/verification/_assumptions.py",
+    # Whether a tool the lane needs is pinned at all: an unpinned or absent identity makes
+    # the run UNAVAILABLE rather than a verdict.
+    "tools/verification/_toolchain_lock.py",
     # Which units the lane covers: the scheme that claims it and the tiers it applies to are
     # read from the lane catalogue.
     "tools/verification/_lanes.py",

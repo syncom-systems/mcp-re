@@ -71,13 +71,10 @@ parse_yaml = functools.lru_cache(maxsize=None)(workflow_reader.parse_yaml)
 
 sys.path.insert(0, str(REPO / "tools" / "verification"))
 from _fingerprint import fingerprint_read_set  # noqa: E402
-from _manifest import (  # noqa: E402
-    ManifestError,
-    load_assumptions,
-    load_toolchains,
-    load_trust_boundaries,
-    load_verification,
-)
+from _manifest import ManifestError, load_verification  # noqa: E402
+from _assumptions import load_assumptions  # noqa: E402
+from _toolchain_lock import load_toolchains  # noqa: E402
+from _trust_boundaries import load_trust_boundaries  # noqa: E402
 import _affected  # noqa: E402
 import _registries  # noqa: E402
 from _registry_refs import structural_probe_paths  # noqa: E402

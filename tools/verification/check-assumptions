@@ -65,13 +65,9 @@ from _seams import (  # noqa: E402
     stale_sites,
     unit_files,
 )
-from _manifest import (  # noqa: E402
-    REPO_ROOT,
-    ManifestError,
-    load_assumptions,
-    load_toolchains,
-    load_verification,
-)
+from _manifest import REPO_ROOT, ManifestError, load_verification  # noqa: E402
+from _assumptions import load_assumptions  # noqa: E402
+from _toolchain_lock import load_toolchains  # noqa: E402
 from _premise import stale_obligations  # noqa: E402
 
 #: Tokens that mean "there is Verus specification text here". A production file carrying

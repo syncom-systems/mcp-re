@@ -4,7 +4,7 @@
 The lock pins every tool identity a lane, a gate or an installer depends on. Its readers
 are of three kinds, and all of them read it here:
 
-  * the assurance tooling, through `_manifest.load_toolchains`, which adds the extraction
+  * the assurance tooling, through `_toolchain_lock.load_toolchains`, which adds the extraction
     container's identity and artifact checks on top of `load`;
   * the gates that hold a support claim to its runtime pin (`node_runtime_gate.py`,
     `python_runtime_gate.py`) and the extraction-image gate, through `load` and

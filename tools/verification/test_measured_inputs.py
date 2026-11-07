@@ -32,15 +32,12 @@ from _load_tool import load_tool  # noqa: E402
 
 from _fingerprint import fingerprint_unit, MUTATION_LANE_INPUTS, VERUS_LANE_INPUTS  # noqa: E402
 from _rust_source import production_view  # noqa: E402
-from _manifest import (  # noqa: E402
-    assumption_scope_defects,
-    boundary_class_violations,
-    load_assumptions,
-    load_toolchains,
-    load_trust_boundaries,
-    load_verification,
-    unit_assumptions,
-)
+from _manifest import load_verification  # noqa: E402
+from _assumption_scope import assumption_scope_defects, unit_assumptions  # noqa: E402
+from _assumptions import load_assumptions  # noqa: E402
+from _boundary_crossings import boundary_class_violations  # noqa: E402
+from _toolchain_lock import load_toolchains  # noqa: E402
+from _trust_boundaries import load_trust_boundaries  # noqa: E402
 
 verify_cli = load_tool('verify', 'verify_cli')
 
@@ -285,6 +282,7 @@ def test_the_test_lane_instrument_is_part_of_the_evidence_identity():
     assert set(lane) == {
         "tools/verification/verify-tests",
         "tools/verification/_manifest.py",
+        "tools/verification/_record_rules.py",
         "tools/verification/_ecosystems.py",
         "tools/verification/_rust_targets.py",
         # Which units are in scope: `test://` claims the lane through the catalogue.
@@ -334,6 +332,10 @@ def test_the_extraction_lane_instruments_are_part_of_the_evidence_identity():
         "tools/verification/_lean_model.py",
         "tools/verification/_extraction_identity.py",
         "tools/verification/_manifest.py",
+        "tools/verification/_record_rules.py",
+        "tools/verification/_unit_rules.py",
+        "tools/verification/_assumptions.py",
+        "tools/verification/_toolchain_lock.py",
         # Which tiers the lane covers and which scheme claims it: the lane catalogue.
         "tools/verification/_lanes.py",
     }
@@ -511,7 +513,9 @@ def test_the_fingerprint_reads_nothing_beside_its_tree():
         "from pathlib import Path\n"
         "import _tree\n"
         "from _fingerprint import fingerprint_unit\n"
-        "from _manifest import load_assumptions, load_toolchains, load_verification\n"
+        "from _manifest import load_verification\n"
+        "from _assumptions import load_assumptions\n"
+        "from _toolchain_lock import load_toolchains\n"
         "tree = _tree.CommitTree('HEAD', Path(sys.argv[2]))\n"
         "with _tree.reading(tree):\n"
         "    doc = load_verification(tree_checks=False)\n"
@@ -1233,10 +1237,11 @@ def test_a_unit_may_not_declare_its_own_assumptions():
     """The schema is what makes divergence unrepresentable. A migration gate comparing two
     sources would leave both sources in place, and the second one is the defect."""
     import _manifest
+    import _record_rules
 
     assert "assumptions" not in _manifest._UNIT_KEYS
     try:
-        _manifest.reject_unknown("unit u", {"assumptions": ["ASM-A"]}, _manifest._UNIT_KEYS)
+        _record_rules.reject_unknown("unit u", {"assumptions": ["ASM-A"]}, _manifest._UNIT_KEYS)
     except _manifest.ManifestError as refused:
         assert "assumptions" in str(refused)
     else:
@@ -1305,7 +1310,7 @@ def test_control_1_compilation_proximity_alone_invents_no_assumption():
     whose cone contains `mcp-re-core/src/crypto.rs` and `hash.rs`, and NEITHER file carries
     a single trusted seam. The proofs are compiled beside the primitives and consume nothing
     from them."""
-    from _manifest import evidence_cone, semantic_boundary_crossings
+    from _boundary_crossings import evidence_cone, semantic_boundary_crossings
 
     boundaries = load_trust_boundaries()
     crypto_files = {"mcp-re-core/src/crypto.rs", "mcp-re-core/src/hash.rs"}
@@ -1394,7 +1399,7 @@ def test_control_6_a_lean_units_invalidation_cone_is_still_the_whole_crate():
     the tool and is not reported by it. The cone stays the crate, and a file that
     contributes no premise still stales the evidence.
     """
-    from _manifest import evidence_cone
+    from _boundary_crossings import evidence_cone
 
     unit = {
         "id": "u",
@@ -1413,7 +1418,7 @@ def test_the_frontier_is_seams_and_the_cone_is_files():
     """The distinction stated as an assertion rather than a comment: for a formal unit the
     cone is strictly larger than the frontier's file set, and the frontier is a subset of
     files that actually carry a seam."""
-    from _manifest import evidence_cone, semantic_boundary_crossings
+    from _boundary_crossings import evidence_cone, semantic_boundary_crossings
     from _seams import files_with_seams
     from _manifest import REPO_ROOT as ROOT
 
@@ -1452,7 +1457,8 @@ def test_the_consumed_contracts_component_is_derived_and_not_authored():
     """The unit key is gone, so there is nothing to author. The component still exists and
     still participates — it is now a reading of the graph rather than a second claim about
     it."""
-    from _manifest import ManifestError, reject_unknown, _UNIT_KEYS
+    from _manifest import ManifestError, _UNIT_KEYS
+    from _record_rules import reject_unknown
 
     assert "consumed_contracts" not in _UNIT_KEYS
     try:

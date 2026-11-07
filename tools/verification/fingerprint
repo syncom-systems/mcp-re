@@ -16,12 +16,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _fingerprint import fingerprint_unit  # noqa: E402
-from _manifest import (  # noqa: E402
-    ManifestError,
-    load_assumptions,
-    load_toolchains,
-    load_verification,
-)
+from _manifest import ManifestError, load_verification  # noqa: E402
+from _assumptions import load_assumptions  # noqa: E402
+from _toolchain_lock import load_toolchains  # noqa: E402
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])

@@ -57,13 +57,9 @@ from _affected import consumer_closure, platform_change  # noqa: E402
 from _compose import requirements  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _lanes import FORMAL  # noqa: E402
-from _manifest import (  # noqa: E402
-    REPO_ROOT,
-    ManifestError,
-    load_assumptions,
-    load_toolchains,
-    load_verification,
-)
+from _manifest import REPO_ROOT, ManifestError, load_verification  # noqa: E402
+from _assumptions import load_assumptions  # noqa: E402
+from _toolchain_lock import load_toolchains  # noqa: E402
 
 
 def changed_paths(base: str) -> list[str]:

@@ -32,7 +32,7 @@ budget_report.rs` and `audit_sink/writer.rs` — while this gate was being speci
 target's `srcs`. It fired on the `signing_plane` split and was satisfied the moment the new
 files joined the Bazel list — which says nothing about `verification.toml`.
 
-`tools/verification/_manifest.py` raises when a declared path matches nothing, so a
+`tools/verification/_unit_rules.py` raises when a declared path matches nothing, so a
 DELETED path is caught. That check is one-directional: declared ⇒ exists. A file that
 quietly appears NEXT TO a declared one is invisible, because nothing walks from the file
 system back toward the declarations. This gate is the other direction:
@@ -173,7 +173,7 @@ def exclusions(root: Path = REPO) -> _ratchet.Register:
 def expand(root: Path, patterns) -> set[str]:
     """The repo-relative files a `paths` list names, with its globs expanded.
 
-    Mirrors `tools/verification/_manifest.py::expand_paths`, which is not reused directly
+    Mirrors `tools/verification/_boundary_crossings.py::expand_paths`, which is not reused directly
     because it resolves against a module-level `REPO_ROOT` and this gate must run against a
     synthetic tree. The two are held to the same answer by `expansion_disagreements`, which
     runs on every real invocation — a mirror checked by measurement rather than by promise.
@@ -316,9 +316,9 @@ def expansion_disagreements(root: Path, units) -> list[str]:
 
     The gate carries its own `expand` so it can run against a synthetic tree. That is a
     mirror, and an unchecked mirror drifts. Run only against the real repository, where
-    `_manifest.expand_paths` resolves against the same root.
+    `_boundary_crossings.expand_paths` resolves against the same root.
     """
-    from _manifest import expand_paths  # noqa: PLC0415 - real-run only
+    from _boundary_crossings import expand_paths  # noqa: PLC0415 - real-run only
 
     problems = []
     for unit in units:
@@ -327,7 +327,7 @@ def expansion_disagreements(root: Path, units) -> list[str]:
         if mine != theirs:
             problems.append(
                 f"{unit['id']}: this gate expands `paths` to {sorted(mine ^ theirs)} "
-                f"differently from tools/verification/_manifest.py — the two must agree "
+                f"differently from tools/verification/_boundary_crossings.py — the two must agree "
                 f"about what a unit measures"
             )
     return problems

@@ -429,7 +429,9 @@ def test_the_probe_set_participates_in_the_units_fingerprint():
     """A closure over a suite that can silently shrink proves as little as the v3 test
     component did: deleting a probe must invalidate the standing mutation PASS."""
     from _fingerprint import fingerprint_unit
-    from _manifest import load_assumptions, load_toolchains, load_verification
+    from _manifest import load_verification
+    from _assumptions import load_assumptions
+    from _toolchain_lock import load_toolchains
 
     doc = load_verification()
     toolchains, assumptions = load_toolchains(), load_assumptions()

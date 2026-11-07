@@ -21,7 +21,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from _manifest import expand_paths, load_assumptions, load_trust_boundaries, load_verification
+from _manifest import load_verification
+from _assumptions import load_assumptions
+from _boundary_crossings import expand_paths
+from _trust_boundaries import load_trust_boundaries
 from _measured import declaration_problems, load_measurements
 from _mutation import load_probes as load_mutation_probes
 from _mutation import undeclared_expectations, weaken

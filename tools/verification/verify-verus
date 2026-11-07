@@ -60,14 +60,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _lanes import BY_NAME  # noqa: E402
-from _manifest import (  # noqa: E402
-    REPO_ROOT,
-    ManifestError,
-    load_assumptions,
-    load_toolchains,
-    load_verification,
-    unpinned_identities,
-)
+from _manifest import REPO_ROOT, ManifestError, load_verification  # noqa: E402
+from _assumptions import load_assumptions  # noqa: E402
+from _toolchain_lock import load_toolchains, unpinned_identities  # noqa: E402
 from _unit_selection import (  # noqa: E402
     add_unit_argument,
     basis,

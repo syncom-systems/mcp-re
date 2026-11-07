@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _load_tool import load_tool  # noqa: E402
-from _manifest import LANE_VERDICTS, aggregate_verdict  # noqa: E402
+from _verdict import LANE_VERDICTS, aggregate_verdict  # noqa: E402
 
 from _lean_query import external_termination  # noqa: E402
 

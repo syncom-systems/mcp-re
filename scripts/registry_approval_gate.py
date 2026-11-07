@@ -66,7 +66,7 @@ PERMITTED = {"review_requirement", "reviewed_fingerprint", "reviewer", "subject"
 #: The one exemption, named rather than implied, because a gate's exemption is part of what
 #: it measured. `toolchains.lock.toml` uses `state = "resolved" | "unresolved"` to say
 #: whether a TOOL'S IDENTITY is pinned — a fact about the lock file, not a review verdict
-#: about code — and `_manifest.load_toolchains` already validates it as a closed enum and
+#: about code — and `_toolchain_lock.load_toolchains` already validates it as a closed enum and
 #: refuses anything else. Every other file, including any future registry, is covered.
 EXEMPT_KEYS: dict[str, set[str]] = {"toolchains.lock.toml": {"state"}}
 

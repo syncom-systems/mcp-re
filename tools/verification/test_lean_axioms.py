@@ -30,7 +30,7 @@ from _lean_axioms import (  # noqa: E402
     unused_registrations,
 )
 
-from _manifest import load_toolchains  # noqa: E402
+from _toolchain_lock import load_toolchains  # noqa: E402
 
 #: Read from the lock, never restated. The tests measure the baseline the lane will actually
 #: use; a copy here would pass while the declared one said something else.
@@ -270,7 +270,7 @@ def test_the_live_registry_is_the_shape_these_functions_take():
     moment anyone wants to discover a caller mismatch. Calling the real loader is what ties
     the tests to the caller.
     """
-    from _manifest import load_assumptions
+    from _assumptions import load_assumptions
 
     live = load_assumptions()
     assert isinstance(live, dict) and "assumption" in live

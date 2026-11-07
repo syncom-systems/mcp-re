@@ -69,13 +69,9 @@ from _unit_selection import (  # noqa: E402
 )
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _lanes import claims  # noqa: E402
-from _manifest import (  # noqa: E402
-    REPO_ROOT,
-    ManifestError,
-    load_assumptions,
-    load_toolchains,
-    load_verification,
-)
+from _manifest import REPO_ROOT, ManifestError, load_verification  # noqa: E402
+from _assumptions import load_assumptions  # noqa: E402
+from _toolchain_lock import load_toolchains  # noqa: E402
 from _mutation import load_probes, undeclared_expectations, weaken  # noqa: E402
 from _ecosystems import test_project_for  # noqa: E402
 from _scratch import copy_tracked_tree, lane_scratch, release  # noqa: E402

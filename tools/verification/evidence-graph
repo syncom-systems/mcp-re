@@ -25,14 +25,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _graph import evaluate, load_attestations  # noqa: E402
-from _manifest import (  # noqa: E402
-    REPO_ROOT,
-    ManifestError,
-    load_assumptions,
-    load_toolchains,
-    load_trust_boundaries,
-    load_verification,
-)
+from _manifest import REPO_ROOT, ManifestError, load_verification  # noqa: E402
+from _assumptions import load_assumptions  # noqa: E402
+from _toolchain_lock import load_toolchains  # noqa: E402
+from _trust_boundaries import load_trust_boundaries  # noqa: E402
 from _toolchains import unresolved_pins  # noqa: E402
 
 

@@ -50,7 +50,7 @@ def is_glob(declared: str) -> bool:
 def declares(declared: str, changed: str) -> bool:
     """Whether the declared `paths` entry `declared` names the changed file `changed`.
 
-    A glob entry is matched with the syntax `_manifest.expand_paths` expands it with, as a
+    A glob entry is matched with the syntax `_boundary_crossings.expand_paths` expands it with, as a
     pattern rather than against a tree, so the answer holds for a commit that is not checked
     out. A literal entry names a file, or a directory and everything under it.
     """

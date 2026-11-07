@@ -775,7 +775,7 @@ def selftest() -> int:
             bad += 1
     # The same, over the registry as declared: every glob entry reaches its unit through a
     # file only the glob names. Counted, so an empty population cannot read as a pass.
-    from _manifest import expand_paths
+    from _boundary_crossings import expand_paths
 
     globbed = 0
     for unit in manifest["unit"]:
