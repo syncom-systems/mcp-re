@@ -4,7 +4,7 @@
 //!
 //! Client-side mirror of the proxy's `verify_request_full` /
 //! `sign_delegated_response_full`:
-//! it constructs a signed **RFC 9421 + RFC 9530** request ([`build_signed_request`])
+//! it constructs a signed **RFC 9421 + RFC 9530** request ([`build_signed_message`])
 //! and verifies the bound signed response ([`verify_delegated_response`]).
 //! Verification is **delegated-required**: a response signed directly by a root key
 //! fails closed, and there is no second entry point that would accept one. The sole
@@ -72,11 +72,9 @@ pub use dpop_credential::EmptyDpopCredential;
 pub use execution_contract::ExecutionContract;
 pub use execution_contract::ExecutionStatus;
 pub use execution_contract::RetrySafety;
-pub use request::build_signed_notification;
-pub use request::build_signed_notification_with_signer;
-pub use request::build_signed_request;
-pub use request::build_signed_request_with_signer;
-pub use request::build_signed_tool_call;
+pub use request::build_signed_message;
+pub use request::build_signed_message_with_signer;
+pub use request::McpMessage;
 pub use request::SignedRequest;
 pub use request::MIN_NONCE_CHARS;
 pub use request_signing_inputs::RequestSigningInputs;

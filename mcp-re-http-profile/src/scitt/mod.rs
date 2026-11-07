@@ -242,30 +242,31 @@ mod fixtures {
         |k: &str| (k == ISSUER_KID).then(|| issuer().public_key().into())
     }
 
-    pub(super) fn tr() -> impl Fn(&str) -> Option<ResolvedTransparencyService> {
-        |k: &str| {
+    /// A resolver that answers for the one service `TS_KID`, with `key` and the given
+    /// position contract, logging the statement's own octets.
+    fn resolver_for(
+        key: CoseVerificationKey,
+        position: ReceiptPositionProfile,
+    ) -> impl Fn(&str) -> Option<ResolvedTransparencyService> {
+        move |k: &str| {
             (k == TS_KID).then(|| {
                 ResolvedTransparencyService::stated(
-                    ts().public_key().into(),
+                    key.clone(),
                     StatementLeafProfile::StatementBytes,
-                    ReceiptPositionProfile::Bound,
+                    position,
                 )
             })
         }
     }
 
+    pub(super) fn tr() -> impl Fn(&str) -> Option<ResolvedTransparencyService> {
+        resolver_for(ts().public_key().into(), ReceiptPositionProfile::Bound)
+    }
+
     /// A resolver for the prototype service under the PRE-v2 contract, so a test can
     /// show what the position commitment actually buys.
     pub(super) fn tr_unbound() -> impl Fn(&str) -> Option<ResolvedTransparencyService> {
-        |k: &str| {
-            (k == TS_KID).then(|| {
-                ResolvedTransparencyService::stated(
-                    ts().public_key().into(),
-                    StatementLeafProfile::StatementBytes,
-                    ReceiptPositionProfile::Unbound,
-                )
-            })
-        }
+        resolver_for(ts().public_key().into(), ReceiptPositionProfile::Unbound)
     }
 
     /// Re-issue a receipt in the PRE-v2 shape: same tree, same signature discipline, no
@@ -349,15 +350,7 @@ mod fixtures {
     }
 
     pub(super) fn ts_p256_bound() -> impl Fn(&str) -> Option<ResolvedTransparencyService> {
-        move |k: &str| {
-            (k == TS_KID).then(|| {
-                ResolvedTransparencyService::stated(
-                    ts_p256_key(),
-                    StatementLeafProfile::StatementBytes,
-                    ReceiptPositionProfile::Bound,
-                )
-            })
-        }
+        resolver_for(ts_p256_key(), ReceiptPositionProfile::Bound)
     }
 
     /// A resolver for a FOREIGN service using `key`, logging the statement's own octets.
@@ -367,15 +360,7 @@ mod fixtures {
     pub(super) fn ts_with(
         key: CoseVerificationKey,
     ) -> impl Fn(&str) -> Option<ResolvedTransparencyService> {
-        move |k: &str| {
-            (k == TS_KID).then(|| {
-                ResolvedTransparencyService::stated(
-                    key.clone(),
-                    StatementLeafProfile::StatementBytes,
-                    ReceiptPositionProfile::Unbound,
-                )
-            })
-        }
+        resolver_for(key, ReceiptPositionProfile::Unbound)
     }
 
     pub(super) fn register(

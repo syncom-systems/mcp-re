@@ -35,9 +35,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _evidence import decide_issuance, evidence_store, load_bundle, load_records  # noqa: E402
-from _fingerprint import Registries  # noqa: E402
-from _fingerprint import fingerprint_unit  # noqa: E402
+from _evidence import IssuanceBasis, decide_issuance, evidence_store, load_bundle, load_records  # noqa: E402
+from _fingerprint import Registries, fingerprint_unit  # noqa: E402
 from _manifest import ManifestError, load_verification  # noqa: E402
 from _assumptions import load_assumptions  # noqa: E402
 from _toolchain_lock import load_toolchains  # noqa: E402
@@ -109,7 +108,7 @@ def main() -> int:
     # Decided over the WHOLE graph even when one unit was asked for: a prerequisite's
     # evidence governs whether its consumer may be issued, so narrowing the input would
     # narrow the check rather than the output.
-    decisions = decide_issuance(units, edges, current, records, aggregate)
+    decisions = decide_issuance(IssuanceBasis(units, edges, current, records, aggregate))
 
     selected = [unit for unit in units if not args.unit or unit["id"] == args.unit]
     if args.unit and not selected:

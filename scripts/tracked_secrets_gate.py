@@ -317,10 +317,29 @@ def asymmetric_upload_exclusions(bodies: dict[str, str]) -> list[tuple[str, str]
     return found
 
 
+def _gap_hits(name: str, body: str) -> list[tuple[str, int, str, str]]:
+    return [
+        (name, 0, "upload-ignore-gap",
+         f"{pattern!r} is not excluded, so it ships with the build context")
+        for pattern in missing_upload_exclusions(body)
+    ]
+
+
+def _asymmetry_hits(bodies: dict[str, str]) -> list[tuple[str, int, str, str]]:
+    hits = []
+    for name, pattern in asymmetric_upload_exclusions(bodies):
+        missing_from = ", ".join(n for n in UPLOAD_IGNORE_FILES if n != name)
+        hits.append((name, 0, "upload-ignore-asymmetry",
+                     f"{pattern!r} is excluded here and not in {missing_from}. Add it "
+                     f"there, or declare it in FILE_SPECIFIC_UPLOAD_EXCLUSIONS with "
+                     f"the reason it is build-size only"))
+    return hits
+
+
 def scan_upload_ignores() -> list[tuple[str, int, str, str]]:
     """Every credential exclusion missing from, or unmatched between, the ignore files."""
-    hits = []
-    bodies = {}
+    hits: list[tuple[str, int, str, str]] = []
+    bodies: dict[str, str] = {}
     for name in UPLOAD_IGNORE_FILES:
         path = REPO / name
         if not path.is_file():
@@ -328,17 +347,9 @@ def scan_upload_ignores() -> list[tuple[str, int, str, str]]:
                          "this file decides what leaves the repo; its absence is not a default"))
             continue
         bodies[name] = path.read_text(encoding="utf-8")
-        for pattern in missing_upload_exclusions(bodies[name]):
-            hits.append((name, 0, "upload-ignore-gap",
-                         f"{pattern!r} is not excluded, so it ships with the build context"))
+        hits.extend(_gap_hits(name, bodies[name]))
     if len(bodies) == len(UPLOAD_IGNORE_FILES):
-        others = [n for n in UPLOAD_IGNORE_FILES]
-        for name, pattern in asymmetric_upload_exclusions(bodies):
-            missing_from = ", ".join(n for n in others if n != name)
-            hits.append((name, 0, "upload-ignore-asymmetry",
-                         f"{pattern!r} is excluded here and not in {missing_from}. Add it "
-                         f"there, or declare it in FILE_SPECIFIC_UPLOAD_EXCLUSIONS with "
-                         f"the reason it is build-size only"))
+        hits.extend(_asymmetry_hits(bodies))
     return hits
 
 
@@ -520,34 +531,29 @@ UPLOAD_IGNORE_SELFTEST_CASES: list[tuple[bool, str, str]] = [
 ]
 
 
+#: One row per detector the selftest proves: its cases (each led by "should it flag"), how
+#: it decides whether a case flagged, what names the case in a failure, and what the
+#: detector is called there.
+SELFTEST_SUITES = (
+    (SELFTEST_CASES, lambda c: bool(scan_text("<selftest>", c[1])), lambda c: repr(c[1]), "detector"),
+    (BINARY_SELFTEST_CASES, lambda c: bool(scan_binary(c[1], c[2])),
+     lambda c: f"{c[1]} {c[2][:16]!r}", "binary detector"),
+    (UPLOAD_IGNORE_SELFTEST_CASES, lambda c: bool(missing_upload_exclusions(c[2])),
+     lambda c: c[1], "upload-ignore check"),
+    (UPLOAD_PARITY_SELFTEST_CASES, lambda c: bool(asymmetric_upload_exclusions(c[2])),
+     lambda c: c[1], "upload-ignore parity"),
+)
+
+
 def selftest() -> int:
     failures = 0
-    for should_flag, sample in SELFTEST_CASES:
-        flagged = bool(scan_text("<selftest>", sample))
-        if flagged != should_flag:
-            verb = "did not flag" if should_flag else "wrongly flagged"
-            print(f"SELFTEST FAIL: detector {verb}: {sample!r}")
-            failures += 1
-    for should_flag, name, data in BINARY_SELFTEST_CASES:
-        flagged = bool(scan_binary(name, data))
-        if flagged != should_flag:
-            verb = "did not flag" if should_flag else "wrongly flagged"
-            print(f"SELFTEST FAIL: binary detector {verb}: {name} {data[:16]!r}")
-            failures += 1
-    for should_flag, label, body in UPLOAD_IGNORE_SELFTEST_CASES:
-        flagged = bool(missing_upload_exclusions(body))
-        if flagged != should_flag:
-            verb = "did not flag" if should_flag else "wrongly flagged"
-            print(f"SELFTEST FAIL: upload-ignore check {verb}: {label}")
-            failures += 1
-    for should_flag, label, bodies in UPLOAD_PARITY_SELFTEST_CASES:
-        flagged = bool(asymmetric_upload_exclusions(bodies))
-        if flagged != should_flag:
-            verb = "did not flag" if should_flag else "wrongly flagged"
-            print(f"SELFTEST FAIL: upload-ignore parity {verb}: {label}")
-            failures += 1
-    total = (len(SELFTEST_CASES) + len(BINARY_SELFTEST_CASES)
-             + len(UPLOAD_IGNORE_SELFTEST_CASES) + len(UPLOAD_PARITY_SELFTEST_CASES))
+    for cases, flagged, subject, noun in SELFTEST_SUITES:
+        for case in cases:
+            if flagged(case) != case[0]:
+                verb = "did not flag" if case[0] else "wrongly flagged"
+                print(f"SELFTEST FAIL: {noun} {verb}: {subject(case)}")
+                failures += 1
+    total = sum(len(cases) for cases, *_ in SELFTEST_SUITES)
     if failures:
         print(f"\n{failures} selftest case(s) failed — the gate is not trustworthy.")
         return 1

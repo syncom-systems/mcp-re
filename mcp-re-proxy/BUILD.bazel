@@ -85,6 +85,7 @@ _PROXY_LIB_SRCS = [
     "src/authorization/action_harness.rs",
     "src/aws_kms_keysource.rs",
     "src/aws_kms_keysource/credential_refusal.rs",
+    "src/aws_kms_keysource/credential_refusal/suspension.rs",
     "src/aws_sigv4.rs",
     "src/aws_sigv4/amz_date.rs",
     # ADR-MCPRE-063 Slice 1: the compatibility surface of the certificate identity
@@ -104,6 +105,12 @@ _PROXY_LIB_SRCS = [
     # place `peer_certificates()` is read.
     "src/communication_assurance/channel_associated_credential/mod.rs",
     "src/communication_assurance/channel_associated_credential/rustls_adapter.rs",
+    "src/communication_assurance/channel_associated_credential/mechanism_harness/authority.rs",
+    "src/communication_assurance/channel_associated_credential/mechanism_harness/handshake.rs",
+    "src/communication_assurance/channel_associated_credential/mechanism_harness/leaf.rs",
+    "src/communication_assurance/channel_associated_credential/mechanism_harness/mod.rs",
+    "src/communication_assurance/channel_associated_credential/mechanism_harness/peers.rs",
+    "src/communication_assurance/channel_associated_credential/mechanism_harness/tls_config.rs",
     "src/communication_assurance/channel_associated_identity.rs",
     "src/communication_assurance/mechanism_verified_credential/mod.rs",
     "src/communication_assurance/mechanism_verified_credential/rustls_adapter.rs",
@@ -346,6 +353,7 @@ _PROXY_LIB_SRCS = [
     # behind `scitt_registration`, and a `#[cfg]`-ed module still needs its source listed.
     "src/transparency/auditor/registration/mod.rs",
     "src/transparency/auditor/registration/capability.rs",
+    "src/transparency/auditor/registration/trust.rs",
     "src/transparency/auditor/registration/exchange.rs",
     "src/transparency/auditor/registration/policy.rs",
     "src/transparency/auditor/registration/protocol.rs",
@@ -606,6 +614,7 @@ _PROXY_LIB_SRCS = [
     # snapshot and rotation worker; retires the snapshot before it stops rotating.
     "src/signing_plane/mod.rs",
     "src/signing_plane/rotation.rs",
+    "src/signing_plane/rotation/wait.rs",
     "src/signing_plane/trust_epoch_advance.rs",
     "src/signing_plane/epoch_watch.rs",
     "src/signing_plane/epoch_watch/refusal.rs",
@@ -1416,6 +1425,7 @@ nt_rust_test(
     ]) + [
         # `main.rs` reaches the shared helpers via `#[path = "../common/mod.rs"]`.
         "tests/common/mod.rs",
+        "tests/common/rotation.rs",
     ],
     crate_root = "tests/integration_async/main.rs",
     crate_features = ["async_serve", "audit_commitment_reference"],
@@ -1475,6 +1485,7 @@ nt_rust_test(
     ]) + [
         # `main.rs` reaches the shared helpers in tests/common/mod.rs.
         "tests/common/mod.rs",
+        "tests/common/rotation.rs",
     ],
     crate_root = "tests/integration_async/main.rs",
     crate_features = ["async_serve", "audit_commitment_reference"] + _PROXY_EXT_FEATURES,
@@ -1757,9 +1768,13 @@ nt_rust_test(
 # why the target inherits the endpoint, key and credential variables they read.
 nt_rust_test(
     name = "integration_live_test",
-    srcs = glob(["tests/integration_live/*.rs"]) + [
+    srcs = glob([
+        "tests/integration_live/*.rs",
+        "tests/integration_live/*/*.rs",
+    ]) + [
         # `main.rs` reaches the shared helpers in tests/common/mod.rs.
         "tests/common/mod.rs",
+        "tests/common/rotation.rs",
     ],
     crate_root = "tests/integration_live/main.rs",
     crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
@@ -1970,6 +1985,10 @@ nt_rust_binary(
     srcs = [
         "examples/hpp_common/mod.rs",
         "examples/http_profile_proxy.rs",
+        "examples/http_profile_proxy/body.rs",
+        "examples/http_profile_proxy/pipeline.rs",
+        "examples/http_profile_proxy/receipts.rs",
+        "examples/http_profile_proxy/replay.rs",
     ],
     crate_features = _PROXY_DEPLOY_FEATURES,
     crate_root = "examples/http_profile_proxy.rs",

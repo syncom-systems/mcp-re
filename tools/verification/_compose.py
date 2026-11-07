@@ -178,11 +178,78 @@ def _malformed(store: Path, lane: str) -> list[str]:
     return bad
 
 
+@dataclass(frozen=True)
+class ManifestInputs:
+    """The manifest document and the two lock files a requirement's fingerprint is taken over."""
+
+    doc: dict
+    toolchains: dict
+    assumptions: dict
+
+
+def _store_problems(store: Path, lane: str) -> list[str]:
+    """Why this lane's directory cannot be read as a set of records, one line per defect."""
+    problems = [
+        f"{lane}: {name} is not a readable evidence record. A lane wrote it this "
+        "run and the composer cannot tell what it says; unknown is dirty."
+        for name in _malformed(store, lane)
+    ]
+    problems.extend(
+        f"{lane}/{unit_id}: more than one record. Two records about one unit is a "
+        "store that cannot be read, and picking one is choosing a claim silently."
+        for unit_id in _duplicates(store, lane)
+    )
+    return problems
+
+
+def _judge(
+    lane: str, requirement: Requirement, record: EvidenceRecord | None, inputs: ManifestInputs
+) -> tuple[str, str] | None:
+    """The refusal and the severity it carries for one requirement, or None if it is met."""
+    if record is None:
+        return (
+            f"{lane}/{requirement.unit_id}: no evidence record. The manifest "
+            f"requires this lane for a {_class_of(inputs.doc, requirement.unit_id)} "
+            "unit, and absence of measurement is not measurement.",
+            "UNAVAILABLE",
+        )
+    severity, problem = _unacceptable(record, requirement, inputs.toolchains)
+    if problem:
+        return f"{lane}/{requirement.unit_id}: {problem}", severity
+    if record.result != "pass":
+        return (
+            f"{lane}/{requirement.unit_id}: recorded {record.result!r} — "
+            f"{record.detail or 'no detail'}",
+            "FAIL",
+        )
+    return None
+
+
+def _lane_verdict(
+    store: Path, lane: str, wanted: list[Requirement], inputs: ManifestInputs
+) -> tuple[str, list[str]]:
+    """One lane's verdict over the requirements the manifest places on it, and its refusals."""
+    refusals = _store_problems(store, lane)
+    verdict = "FAIL" if refusals else "PASS"
+    if not wanted:
+        # NOT_REQUIRED, and it must stay distinguishable from a pass: "the manifest
+        # asked nothing of this lane" is not evidence about the code. A lane the
+        # manifest asks nothing of, whose directory nonetheless holds something
+        # unreadable, is still a store that cannot be read.
+        return ("NOT_REQUIRED" if verdict == "PASS" else "FAIL"), refusals
+    records = load_records(store, lane)
+    for requirement in wanted:
+        judged = _judge(lane, requirement, records.get(requirement.unit_id), inputs)
+        if judged is not None:
+            refusal, severity = judged
+            refusals.append(refusal)
+            verdict = _weaken(verdict, severity)
+    return verdict, refusals
+
+
 def compose(
     store: Path,
-    doc: dict,
-    toolchains: dict,
-    assumptions: dict,
+    inputs: ManifestInputs,
     hygiene: dict[str, str],
     units: frozenset[str] | None = None,
 ) -> tuple[str, dict[str, str], list[str]]:
@@ -194,57 +261,13 @@ def compose(
 
     `units` confines the verdict to those units (a scoped run); see `within`.
     """
-    required = within(requirements(doc, toolchains, assumptions), units)
+    required = within(requirements(inputs.doc, inputs.toolchains, inputs.assumptions), units)
     refusals: list[str] = []
     lane_verdicts: dict[str, str] = {}
-
     for lane in sorted(FORMAL_LANE_NAMES):
         wanted = [r for r in required if r.lane == lane]
-        unreadable = "PASS"
-        for name in _malformed(store, lane):
-            refusals.append(
-                f"{lane}: {name} is not a readable evidence record. A lane wrote it this "
-                "run and the composer cannot tell what it says; unknown is dirty."
-            )
-            unreadable = "FAIL"
-        for unit_id in _duplicates(store, lane):
-            refusals.append(
-                f"{lane}/{unit_id}: more than one record. Two records about one unit is a "
-                "store that cannot be read, and picking one is choosing a claim silently."
-            )
-            unreadable = "FAIL"
-        if not wanted:
-            # NOT_REQUIRED, and it must stay distinguishable from a pass: "the manifest
-            # asked nothing of this lane" is not evidence about the code. A lane the
-            # manifest asks nothing of, whose directory nonetheless holds something
-            # unreadable, is still a store that cannot be read.
-            lane_verdicts[lane] = "NOT_REQUIRED" if unreadable == "PASS" else "FAIL"
-            continue
-        records = load_records(store, lane)
-        verdict = unreadable
-        for requirement in wanted:
-            record = records.get(requirement.unit_id)
-            if record is None:
-                refusals.append(
-                    f"{lane}/{requirement.unit_id}: no evidence record. The manifest "
-                    f"requires this lane for a {_class_of(doc, requirement.unit_id)} "
-                    "unit, and absence of measurement is not measurement."
-                )
-                verdict = _weaken(verdict, "UNAVAILABLE")
-                continue
-            severity, problem = _unacceptable(record, requirement, toolchains)
-            if problem:
-                refusals.append(f"{lane}/{requirement.unit_id}: {problem}")
-                verdict = _weaken(verdict, severity)
-                continue
-            if record.result != "pass":
-                refusals.append(
-                    f"{lane}/{requirement.unit_id}: recorded {record.result!r} — "
-                    f"{record.detail or 'no detail'}"
-                )
-                verdict = _weaken(verdict, "FAIL")
-        lane_verdicts[lane] = verdict
-
+        lane_verdicts[lane], lane_refusals = _lane_verdict(store, lane, wanted, inputs)
+        refusals.extend(lane_refusals)
     aggregate = aggregate_verdict(
         list(lane_verdicts.values()), list(hygiene.values())
     )
@@ -264,6 +287,45 @@ def _weaken(current: str, candidate: str) -> str:
     return candidate if order[candidate] > order[current] else current
 
 
+def _misfiled(record: EvidenceRecord, requirement: Requirement) -> str | None:
+    """How the record misdescribes where it is filed, or None."""
+    if record.unit_id != requirement.unit_id:
+        return (
+            f"the record names unit {record.unit_id!r}; it is filed under "
+            f"{requirement.unit_id!r}"
+        )
+    if record.lane != requirement.lane:
+        return (
+            f"the record names lane {record.lane!r}; it is filed under "
+            f"{requirement.lane!r}"
+        )
+    if record.result not in {"pass", "fail"}:
+        return f"result {record.result!r} is neither 'pass' nor 'fail'"
+    return None
+
+
+def _wrong_instrument(
+    record: EvidenceRecord, requirement: Requirement, toolchains: dict
+) -> str | None:
+    """Why an extraction-lane record was not produced in the pinned artifact, or None."""
+    if requirement.lane not in EXTRACTION_LANES:
+        return None
+    pinned = str(toolchains.get("extraction_container", {}).get("artifact_digest", ""))
+    named = str((record.prover or {}).get("extraction_artifact", ""))
+    if not named:
+        return (
+            "an extraction-lane record that does not name the artifact it ran in. The "
+            "instrument is part of what the evidence is about."
+        )
+    if named != pinned:
+        return (
+            f"produced in extraction artifact {named[:23]}…, and the lock pins "
+            f"{pinned[:23]}…. A different build of the same declared pins is a "
+            "different instrument."
+        )
+    return None
+
+
 def _unacceptable(
     record: EvidenceRecord, requirement: Requirement, toolchains: dict
 ) -> tuple[str, str | None]:
@@ -276,36 +338,16 @@ def _unacceptable(
     itself or names the wrong instrument is `FAIL`, because something wrote a claim that is
     not true of what it measured, and re-running is not the remedy for that.
     """
-    if record.unit_id != requirement.unit_id:
-        return "FAIL", (
-            f"the record names unit {record.unit_id!r}; it is filed under "
-            f"{requirement.unit_id!r}"
-        )
-    if record.lane != requirement.lane:
-        return "FAIL", (
-            f"the record names lane {record.lane!r}; it is filed under "
-            f"{requirement.lane!r}"
-        )
-    if record.result not in {"pass", "fail"}:
-        return "FAIL", f"result {record.result!r} is neither 'pass' nor 'fail'"
+    misfiled = _misfiled(record, requirement)
+    if misfiled is not None:
+        return "FAIL", misfiled
     if record.fingerprint != requirement.fingerprint:
         return "UNAVAILABLE", (
             f"STALE — measured at {record.fingerprint[:23]}…, and this tree fingerprints "
             f"{requirement.fingerprint[:23]}…. A record is evidence about the tree it was "
             "taken over, and this is not that tree."
         )
-    if requirement.lane in EXTRACTION_LANES:
-        pinned = str(toolchains.get("extraction_container", {}).get("artifact_digest", ""))
-        named = str((record.prover or {}).get("extraction_artifact", ""))
-        if not named:
-            return "FAIL", (
-                "an extraction-lane record that does not name the artifact it ran in. The "
-                "instrument is part of what the evidence is about."
-            )
-        if named != pinned:
-            return "FAIL", (
-                f"produced in extraction artifact {named[:23]}…, and the lock pins "
-                f"{pinned[:23]}…. A different build of the same declared pins is a "
-                "different instrument."
-            )
+    instrument = _wrong_instrument(record, requirement, toolchains)
+    if instrument is not None:
+        return "FAIL", instrument
     return "PASS", None

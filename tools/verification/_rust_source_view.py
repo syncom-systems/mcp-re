@@ -12,6 +12,15 @@ from _rust_source_lex import code_only
 #: ADR-MCPRE-061 §5.1. Both `#[cfg(test)]` and `#[cfg(all(test, ...))]` open a test region.
 TEST_ATTR = re.compile(r"^#\[cfg\((all\()?test\b")
 
+#: The inner form: a file whose first code line is `#![cfg(test)]` is test code throughout.
+TEST_FILE_ATTR = re.compile(r"^#!\[cfg\((all\()?test\b")
+
+
+def _is_test_file(code_lines: list[str]) -> bool:
+    """Whether the first line carrying code is the whole-file `#![cfg(test)]` attribute."""
+    first = next((line.strip() for line in code_lines if line.strip()), "")
+    return bool(TEST_FILE_ATTR.match(first))
+
 
 def _closes_region(opened: bool, depth: int, code: str) -> bool:
     """A braced item closes when its braces balance; a braceless one at its `;`."""
@@ -81,6 +90,8 @@ def production_view(source: str | Path) -> ProductionView:
     text = source.read_text(encoding="utf-8") if isinstance(source, Path) else source
     raw = _lines(text)
     code_lines = _lines(code_only(text))
+    if _is_test_file(code_lines):
+        return ProductionView(())
     kept: list[tuple[int, str]] = []
     i = 0
     while i < len(raw):

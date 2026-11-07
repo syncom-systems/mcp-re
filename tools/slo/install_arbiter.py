@@ -56,6 +56,10 @@ SOURCES = ("host_gate.py", "host_gate_config.py", "host_gate_state.py", "host_ga
            "run_supervisor.py", "run_supervisor_record.py", "run_supervisor_resources.py",
            "run_supervisor_reconcile.py", "run_supervisor_teardown.py")
 
+#: (arbiter command, wrapper file name) for the host's hooks and for the VM's.
+HOST_WRAPPERS = (("job-started", "job-started.sh"), ("job-completed", "job-completed.sh"))
+VM_WRAPPERS = (("job-started", "vm-job-started.sh"), ("job-completed", "vm-job-completed.sh"))
+
 STARTED_VAR = "ACTIONS_RUNNER_HOOK_JOB_STARTED"
 COMPLETED_VAR = "ACTIONS_RUNNER_HOOK_JOB_COMPLETED"
 
@@ -116,11 +120,9 @@ def installed_drift(root: Path = ROOT, mirror: Path = MIRROR, here: Path = HERE)
     """
     drift = [_compare(here / name, root / "bin" / name) for name in SOURCES]
     drift.append(_compare(here / "vm_admission_hook.py", mirror / "bin" / "vm_admission_hook.py"))
-    for command, filename in (("job-started", "job-started.sh"),
-                              ("job-completed", "job-completed.sh")):
+    for command, filename in HOST_WRAPPERS:
         drift.append(_expect(root / "bin" / filename, WRAPPER.format(root=root, command=command)))
-    for command, filename in (("job-started", "vm-job-started.sh"),
-                              ("job-completed", "vm-job-completed.sh")):
+    for command, filename in VM_WRAPPERS:
         # VM_WRAPPER, not WRAPPER. These two templates differ in the interpreter path they
         # exec -- the VM's names `vm_admission_hook.py` under the mirror, because /opt is
         # not mounted in the guest at all. Comparing the VM wrapper against the HOST
@@ -171,6 +173,22 @@ def verify(root: Path = ROOT, mirror: Path = MIRROR, here: Path = HERE) -> int:
     return 0
 
 
+def _seed_exact_install(src: Path, root: Path, mirror: Path) -> None:
+    """Lay out a checkout and an install of it that agree on every byte."""
+    (root / "bin").mkdir(parents=True)
+    (mirror / "bin").mkdir(parents=True)
+    src.mkdir()
+    for name in SOURCES + ("vm_admission_hook.py",):
+        (src / name).write_text(f"# {name}\n")
+        if name in SOURCES:
+            shutil.copy2(src / name, root / "bin" / name)
+    shutil.copy2(src / "vm_admission_hook.py", mirror / "bin" / "vm_admission_hook.py")
+    for command, filename in HOST_WRAPPERS:
+        (root / "bin" / filename).write_text(WRAPPER.format(root=root, command=command))
+    for command, filename in VM_WRAPPERS:
+        (mirror / "bin" / filename).write_text(VM_WRAPPER.format(mirror=mirror, command=command))
+
+
 def selftest() -> int:
     """The mutation probe. A comparison that cannot be shown to fail compares nothing."""
     import tempfile
@@ -178,20 +196,7 @@ def selftest() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
         src, root, mirror = base / "src", base / "root", base / "mirror"
-        (root / "bin").mkdir(parents=True)
-        (mirror / "bin").mkdir(parents=True)
-        src.mkdir()
-        for name in SOURCES + ("vm_admission_hook.py",):
-            (src / name).write_text(f"# {name}\n")
-            if name in SOURCES:
-                shutil.copy2(src / name, root / "bin" / name)
-        shutil.copy2(src / "vm_admission_hook.py", mirror / "bin" / "vm_admission_hook.py")
-        for command, filename in (("job-started", "job-started.sh"),
-                                  ("job-completed", "job-completed.sh")):
-            (root / "bin" / filename).write_text(WRAPPER.format(root=root, command=command))
-        for command, filename in (("job-started", "vm-job-started.sh"),
-                                  ("job-completed", "vm-job-completed.sh")):
-            (mirror / "bin" / filename).write_text(WRAPPER.format(root=root, command=command))
+        _seed_exact_install(src, root, mirror)
 
         assert verify(root, mirror, src) == 0, "an exact install must verify"
 
@@ -215,6 +220,15 @@ def selftest() -> int:
     return 0
 
 
+def _write_wrappers(directory: Path, wrappers, render, actions: list[str]) -> None:
+    """Write each generated wrapper, executable, and record it. `render(command)` is its text."""
+    for command, filename in wrappers:
+        target = directory / filename
+        target.write_text(render(command))
+        target.chmod(0o755)
+        actions.append(f"wrote {target}")
+
+
 def install_host(apply: bool) -> dict:
     report: dict = {"root": str(ROOT), "mirror": str(MIRROR), "actions": []}
     bin_dir = ROOT / "bin"
@@ -227,64 +241,61 @@ def install_host(apply: bool) -> dict:
             shutil.copy2(HERE / name, bin_dir / name)
         # The VM executes this one over virtiofs, so it lives in the shared mirror.
         shutil.copy2(HERE / "vm_admission_hook.py", mirror_bin / "vm_admission_hook.py")
-
-        for command, filename in (("job-started", "job-started.sh"),
-                                  ("job-completed", "job-completed.sh")):
-            target = bin_dir / filename
-            target.write_text(WRAPPER.format(root=ROOT, command=command))
-            target.chmod(0o755)
-            report["actions"].append(f"wrote {target}")
-
-        for command, filename in (("job-started", "vm-job-started.sh"),
-                                  ("job-completed", "vm-job-completed.sh")):
-            target = mirror_bin / filename
-            target.write_text(VM_WRAPPER.format(mirror=MIRROR, command=command))
-            target.chmod(0o755)
-            report["actions"].append(f"wrote {target}")
+        actions = report["actions"]
+        _write_wrappers(bin_dir, HOST_WRAPPERS, lambda c: WRAPPER.format(root=ROOT, command=c), actions)
+        _write_wrappers(mirror_bin, VM_WRAPPERS, lambda c: VM_WRAPPER.format(mirror=MIRROR, command=c), actions)
 
     report["host_installed"] = (ROOT / "bin" / "runner_arbiter.py").exists()
     report["vm_hook_published"] = (mirror_bin / "vm_admission_hook.py").exists()
     return report
 
 
+def _configure_runner(runner: Path, hooks: tuple[str, str], apply: bool) -> dict:
+    """One macOS runner's `.env`, brought to name the installed hooks when `apply`."""
+    entry = {"runner": runner.name, "path": str(runner), "present": runner.exists()}
+    if not runner.exists():
+        return entry
+    env_path = runner / ".env"
+    current = env_lines(env_path)
+    desired = env_with_hooks(current, *hooks)
+    entry["already_configured"] = (current == desired)
+    if apply and not entry["already_configured"]:
+        # Rewritten whole, preserving unrelated lines: an .env is small and a partial
+        # edit is how a PATH line gets lost.
+        env_path.write_text("\n".join(desired) + "\n")
+        entry["written"] = True
+    entry["env_now"] = env_lines(env_path)
+    return entry
+
+
 def configure_macos_runners(apply: bool) -> list[dict]:
-    started = str(ROOT / "bin" / "job-started.sh")
-    completed = str(ROOT / "bin" / "job-completed.sh")
-    out = []
-    for runner in MACOS_RUNNERS:
-        entry = {"runner": runner.name, "path": str(runner), "present": runner.exists()}
-        if not runner.exists():
-            out.append(entry)
-            continue
-        env_path = runner / ".env"
-        current = env_lines(env_path)
-        desired = env_with_hooks(current, started, completed)
-        entry["already_configured"] = (current == desired)
-        if apply and not entry["already_configured"]:
-            # Rewritten whole, preserving unrelated lines: an .env is small and a partial
-            # edit is how a PATH line gets lost.
-            env_path.write_text("\n".join(desired) + "\n")
-            entry["written"] = True
-        entry["env_now"] = env_lines(env_path)
-        out.append(entry)
-    return out
+    hooks = (str(ROOT / "bin" / "job-started.sh"), str(ROOT / "bin" / "job-completed.sh"))
+    return [_configure_runner(runner, hooks, apply) for runner in MACOS_RUNNERS]
+
+
+def _vm_env() -> str:
+    return vm_ssh("sh", "-c", f"cat {VM_RUNNER_HOME}/.env 2>/dev/null || true").stdout or ""
+
+
+def _vm_unreachable(entry: dict) -> bool:
+    """Whether the VM cannot be reached; says why in `entry` when an error was raised."""
+    try:
+        reachable = vm_ssh("true", timeout=30).returncode == 0
+    except (OSError, subprocess.SubprocessError) as exc:
+        entry["detail"] = str(exc)
+        reachable = False
+    entry["reachable"] = reachable
+    return not reachable
 
 
 def configure_vm_runner(apply: bool) -> dict:
     entry: dict = {"runner": "dev1-linux", "profile": VM_PROFILE}
-    try:
-        if vm_ssh("true", timeout=30).returncode != 0:
-            entry["reachable"] = False
-            return entry
-    except (OSError, subprocess.SubprocessError) as exc:
-        entry["reachable"] = False
-        entry["detail"] = str(exc)
+    if _vm_unreachable(entry):
         return entry
-    entry["reachable"] = True
 
     started = f"{MIRROR}/bin/vm-job-started.sh"
     completed = f"{MIRROR}/bin/vm-job-completed.sh"
-    current = (vm_ssh("sh", "-c", f"cat {VM_RUNNER_HOME}/.env 2>/dev/null || true").stdout or "")
+    current = _vm_env()
     desired = env_with_hooks(current.splitlines(), started, completed)
     entry["already_configured"] = (current.splitlines() == desired)
 
@@ -300,9 +311,7 @@ def configure_vm_runner(apply: bool) -> dict:
                         f"cat > {VM_RUNNER_HOME}/.env <<'ARBITER_ENV_EOF'\n{body}ARBITER_ENV_EOF")
         entry["written"] = result.returncode == 0
         entry["detail"] = (result.stderr or "").strip()[:200]
-    entry["env_now"] = (
-        vm_ssh("sh", "-c", f"cat {VM_RUNNER_HOME}/.env 2>/dev/null || true").stdout or ""
-    ).splitlines()
+    entry["env_now"] = _vm_env().splitlines()
     return entry
 
 

@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _evidence import (  # noqa: E402
     EvidenceRecord,
+    IssuanceBasis,
     decide_issuance,
     load_records,
     required_lanes,
@@ -65,7 +66,7 @@ def verus(**results):
 
 
 def decide(*args, **kwargs):
-    return decide_issuance(*args, **kwargs)
+    return decide_issuance(IssuanceBasis(*args, **kwargs))
 
 
 # --- the happy path, so the refusals below mean something ---------------------

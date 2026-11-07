@@ -3,6 +3,10 @@
 
 use std::fmt;
 
+use crate::locator_parts::HostPort;
+use crate::locator_parts::Scheme;
+use crate::locator_parts::Tail;
+
 /// What is rendered when the input cannot be decomposed at all: the input is not echoed,
 /// so nothing about its contents — including whether it held a credential — is published.
 const UNPARSEABLE: &str = "<unparseable>";
@@ -49,7 +53,7 @@ fn project(raw: &str) -> String {
         }
         return UNPARSEABLE.to_string();
     };
-    if !is_scheme(scheme) {
+    if !Scheme(scheme).is_valid() {
         return UNPARSEABLE.to_string();
     }
     // RFC 3986: the authority ends at the first `/`, `?` or `#`.
@@ -62,105 +66,15 @@ fn project(raw: &str) -> String {
         Some((_userinfo, after_at)) => (true, after_at),
         None => (false, authority),
     };
-    let Some(coordinates) = routing_coordinates(host_port) else {
+    let Some(coordinates) = HostPort(host_port).coordinates() else {
         return UNPARSEABLE.to_string();
     };
     // `authority` is a prefix of `rest` by construction, so this is a char boundary.
     let tail = rest.get(authority.len()..).unwrap_or("");
     format!(
         "{scheme}://{coordinates}{}",
-        removed(userinfo_present, tail)
+        Tail(tail).removed(userinfo_present)
     )
-}
-
-/// Whether `scheme` is an RFC 3986 scheme, which is the only form echoed verbatim.
-fn is_scheme(scheme: &str) -> bool {
-    let mut chars = scheme.chars();
-    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
-        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
-}
-
-/// The `host[:port]` a request would reach, or `None` when it cannot be established.
-///
-/// The host is the one component echoed, so it is held to the characters a name or an
-/// address is written with. Anything else — percent-encoding, a separator a parser
-/// resolves differently, a non-numeric port — is not confidently a routing coordinate,
-/// and the caller names the whole locator instead of publishing it.
-fn routing_coordinates(host_port: &str) -> Option<String> {
-    if let Some(after_bracket) = host_port.strip_prefix('[') {
-        let (literal, after) = after_bracket.split_once(']')?;
-        let ipv6 = !literal.is_empty()
-            && literal
-                .chars()
-                .all(|c| c.is_ascii_hexdigit() || matches!(c, ':' | '.'));
-        if !ipv6 {
-            return None;
-        }
-        return Some(format!("[{literal}]{}", port_suffix(after)?));
-    }
-    let (host, port) = match host_port.rsplit_once(':') {
-        Some((host, port)) => (host, Some(port)),
-        None => (host_port, None),
-    };
-    let named = !host.is_empty()
-        && host
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
-    if !named {
-        return None;
-    }
-    match port {
-        None => Some(host.to_string()),
-        Some(port) if is_port(port) => Some(format!("{host}:{port}")),
-        Some(_) => None,
-    }
-}
-
-/// The text after an IPv6 literal's closing bracket, as a renderable port suffix.
-fn port_suffix(after: &str) -> Option<String> {
-    if after.is_empty() {
-        return Some(String::new());
-    }
-    let port = after.strip_prefix(':')?;
-    is_port(port).then(|| format!(":{port}"))
-}
-
-/// Whether `port` is a TCP port written as itself: digits only, and in range.
-fn is_port(port: &str) -> bool {
-    !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) && port.parse::<u16>().is_ok()
-}
-
-/// What was removed, in a stable order, naming each component and never its contents.
-///
-/// `tail` is everything after the authority. A path made only of `/` carried nothing, so
-/// it is not reported as removed; every other non-empty path was material an operator
-/// configured and must be told is missing from this line.
-fn removed(userinfo_present: bool, tail: &str) -> String {
-    let (before_fragment, fragment) = match tail.split_once('#') {
-        Some((before, fragment)) => (before, Some(fragment)),
-        None => (tail, None),
-    };
-    let (path, query) = match before_fragment.split_once('?') {
-        Some((path, query)) => (path, Some(query)),
-        None => (before_fragment, None),
-    };
-    let mut components = Vec::new();
-    if userinfo_present {
-        components.push("userinfo removed");
-    }
-    if path.chars().any(|c| c != '/') {
-        components.push("path removed");
-    }
-    if query.is_some() {
-        components.push("query removed");
-    }
-    if fragment.is_some() {
-        components.push("fragment removed");
-    }
-    if components.is_empty() {
-        return String::new();
-    }
-    format!(" ({})", components.join(", "))
 }
 
 #[cfg(test)]

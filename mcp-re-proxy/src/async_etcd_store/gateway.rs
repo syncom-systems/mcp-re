@@ -107,16 +107,26 @@ impl Connection for GatewayStream {
     }
 }
 
+/// Both stream variants as one object, so the I/O traits are written once.
+trait Duplex: AsyncRead + AsyncWrite + Unpin {}
+impl<T: AsyncRead + AsyncWrite + Unpin> Duplex for T {}
+
+impl GatewayStream {
+    fn duplex(self: Pin<&mut Self>) -> Pin<&mut dyn Duplex> {
+        match self.get_mut() {
+            GatewayStream::Plain(s) => Pin::new(s),
+            GatewayStream::Tls(s) => Pin::new(s),
+        }
+    }
+}
+
 impl AsyncRead for GatewayStream {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        match self.get_mut() {
-            GatewayStream::Plain(s) => Pin::new(s).poll_read(cx, buf),
-            GatewayStream::Tls(s) => Pin::new(s).poll_read(cx, buf),
-        }
+        self.duplex().poll_read(cx, buf)
     }
 }
 
@@ -126,24 +136,15 @@ impl AsyncWrite for GatewayStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        match self.get_mut() {
-            GatewayStream::Plain(s) => Pin::new(s).poll_write(cx, buf),
-            GatewayStream::Tls(s) => Pin::new(s).poll_write(cx, buf),
-        }
+        self.duplex().poll_write(cx, buf)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        match self.get_mut() {
-            GatewayStream::Plain(s) => Pin::new(s).poll_flush(cx),
-            GatewayStream::Tls(s) => Pin::new(s).poll_flush(cx),
-        }
+        self.duplex().poll_flush(cx)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        match self.get_mut() {
-            GatewayStream::Plain(s) => Pin::new(s).poll_shutdown(cx),
-            GatewayStream::Tls(s) => Pin::new(s).poll_shutdown(cx),
-        }
+        self.duplex().poll_shutdown(cx)
     }
 }
 

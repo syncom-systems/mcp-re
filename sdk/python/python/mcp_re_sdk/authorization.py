@@ -83,6 +83,30 @@ def _b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
+def _require_registered(artifact_type: str) -> None:
+    if artifact_type not in _REGISTRY:
+        raise McpReError(
+            "mcp-re.authorization_binding_type_unsupported",
+            f"{artifact_type!r} is not an artifact-type registry token",
+        )
+
+
+def _require_material(material, refusal: str) -> None:
+    if not isinstance(material, (bytes, bytearray)) or not material:
+        raise McpReError("mcp-re.authorization_binding_missing", refusal)
+
+
+def _require_reference_fields(system_id: str, scheme_id: str, value: str) -> None:
+    if not all((system_id, scheme_id, value)):
+        # The core rejects a partial reference form; catch it here with a message
+        # that names the hook rather than the wire shape.
+        raise McpReError(
+            "mcp-re.authorization_binding_malformed",
+            "reference binding requires authorization_system_id, reference_scheme_id, "
+            "and reference_value",
+        )
+
+
 @dataclass(frozen=True)
 class BindingRequestContext:
     """What a provider may branch on when choosing a binding.
@@ -121,11 +145,7 @@ class OpaqueBytesProvider(AuthorizationBindingProvider):
     """
 
     def __init__(self, artifact_type: str, material: bytes) -> None:
-        if artifact_type not in _REGISTRY:
-            raise McpReError(
-                "mcp-re.authorization_binding_type_unsupported",
-                f"{artifact_type!r} is not an artifact-type registry token",
-            )
+        _require_registered(artifact_type)
         if artifact_type == _DECISION_TYPE:
             # Ergonomics only — the native seam refuses this pair independently, because
             # a caller composing the spec JSON never passes through this class.
@@ -136,11 +156,7 @@ class OpaqueBytesProvider(AuthorizationBindingProvider):
                 "Use AuthorizationDecisionProvider, or AuthzSystemReferenceProvider for "
                 "external decision linkage.",
             )
-        if not isinstance(material, (bytes, bytearray)) or not material:
-            raise McpReError(
-                "mcp-re.authorization_binding_missing",
-                "opaque binding requires non-empty artifact material",
-            )
+        _require_material(material, "opaque binding requires non-empty artifact material")
         self._artifact_type = artifact_type
         self._material = bytes(material)
 
@@ -172,24 +188,9 @@ class AuthzSystemReferenceProvider(AuthorizationBindingProvider):
         reference_scheme_id: str,
         reference_value: str,
     ) -> None:
-        if artifact_type not in _REGISTRY:
-            raise McpReError(
-                "mcp-re.authorization_binding_type_unsupported",
-                f"{artifact_type!r} is not an artifact-type registry token",
-            )
-        if not isinstance(material, (bytes, bytearray)) or not material:
-            raise McpReError(
-                "mcp-re.authorization_binding_missing",
-                "reference binding requires non-empty artifact material",
-            )
-        if not (authorization_system_id and reference_scheme_id and reference_value):
-            # The core rejects a partial reference form; catch it here with a message
-            # that names the hook rather than the wire shape.
-            raise McpReError(
-                "mcp-re.authorization_binding_malformed",
-                "reference binding requires authorization_system_id, reference_scheme_id, "
-                "and reference_value",
-            )
+        _require_registered(artifact_type)
+        _require_material(material, "reference binding requires non-empty artifact material")
+        _require_reference_fields(authorization_system_id, reference_scheme_id, reference_value)
         self._artifact_type = artifact_type
         self._material = bytes(material)
         self._authorization_system_id = authorization_system_id
@@ -225,11 +226,7 @@ class AuthorizationDecisionProvider(AuthorizationBindingProvider):
 
     def __init__(self, decision: bytes | str) -> None:
         material = decision.encode() if isinstance(decision, str) else decision
-        if not isinstance(material, (bytes, bytearray)) or not material:
-            raise McpReError(
-                "mcp-re.authorization_binding_missing",
-                "an authorization decision requires the compact decision document",
-            )
+        _require_material(material, "an authorization decision requires the compact decision document")
         self._material = bytes(material)
 
     def binding_type(self) -> str:

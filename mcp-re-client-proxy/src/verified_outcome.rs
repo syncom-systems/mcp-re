@@ -133,7 +133,7 @@ pub(crate) fn read_notification_rejection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mcp_re_client_core::build_signed_request;
+    use mcp_re_client_core::build_signed_message;
     use mcp_re_client_core::verify_delegated_response;
     use mcp_re_client_core::ArtifactBinding;
     use mcp_re_client_core::ArtifactType;
@@ -141,6 +141,7 @@ mod tests {
     use mcp_re_client_core::CompositeResponseTrust;
     use mcp_re_client_core::DelegationPolicy;
     use mcp_re_client_core::HttpProfileError;
+    use mcp_re_client_core::McpMessage;
     use mcp_re_client_core::RequestSigningInputs;
     use mcp_re_client_core::ResolvedActor;
     use mcp_re_client_core::ResponseExpectation;
@@ -258,10 +259,8 @@ mod tests {
             .as_object()
             .cloned()
             .expect("an object");
-        build_signed_request(
-            &json!(1),
-            "tools/call",
-            params,
+        build_signed_message(
+            McpMessage::new(Some(&json!(1)), "tools/call", params),
             TARGET,
             &inputs,
             &SigningKey::from_seed_bytes(&CLIENT_SEED),

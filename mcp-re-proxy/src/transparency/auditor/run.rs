@@ -71,6 +71,7 @@ use super::inputs::AuditInputs;
 use super::invocation::AuditInvocation;
 use super::profile::AuditProfile;
 use super::refusal::AuditError;
+use super::registration::RegistrationTrust;
 use super::trust_view::AuditorTrustView;
 
 /// Perform one audit: reconstruct the named record, attest to it, write the artifact, and
@@ -113,10 +114,12 @@ pub fn attest(invocation: &AuditInvocation) -> Result<AttestationArtifact, Audit
     let registered = target
         .register(
             &attestation.statement,
-            &inputs.issuer.public_key(),
-            &inputs.pin,
-            &ts_key,
-            &crate::clock::now_unix,
+            &RegistrationTrust {
+                issuer_key: &inputs.issuer.public_key(),
+                pin: &inputs.pin,
+                ts_key: &ts_key,
+                clock: &crate::clock::now_unix,
+            },
         )
         .map_err(AuditError::Registration)?;
     let artifact = artifact

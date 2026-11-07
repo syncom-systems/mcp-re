@@ -848,10 +848,12 @@ fn sdk_signed_call(tool: &str, nonce: &str, bindings_json: &str) -> HttpRequest 
     }
     let mut params = serde_json::Map::new();
     params.insert("name".into(), serde_json::Value::String(tool.into()));
-    mcp_re_client_core::build_signed_request(
-        &serde_json::Value::from(1),
-        "tools/call",
-        params,
+    mcp_re_client_core::build_signed_message(
+        mcp_re_client_core::McpMessage::new(
+            Some(&serde_json::Value::from(1)),
+            "tools/call",
+            params,
+        ),
         TARGET,
         &inputs,
         &client_key(),

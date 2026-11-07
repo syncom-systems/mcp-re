@@ -141,45 +141,57 @@ pub(crate) fn unescape_scalar(rendered: &str) -> Option<String> {
     let mut out = String::with_capacity(rendered.len());
     let mut chars = rendered.chars();
     while let Some(c) = chars.next() {
-        if c != '\\' {
-            // A byte that `escape_scalar` would have escaped cannot appear literally in an
-            // image of it, so admitting one here would make the inverse accept strings the
-            // forward direction never produces — and the round trip would stop being a
-            // statement about injectivity.
-            if c == ' ' || c == '=' || is_render_hazard(c) {
-                return None;
-            }
-            out.push(c);
-            continue;
-        }
-        match chars.next()? {
-            '\\' => out.push('\\'),
-            'n' => out.push('\n'),
-            'r' => out.push('\r'),
-            't' => out.push('\t'),
-            's' => out.push(' '),
-            'e' => out.push('='),
-            'x' => {
-                let hex: String = [chars.next()?, chars.next()?].iter().collect();
-                out.push(decode_codepoint(&hex)?);
-            }
-            'u' => {
-                if chars.next()? != '{' {
-                    return None;
-                }
-                let mut hex = String::new();
-                loop {
-                    match chars.next()? {
-                        '}' => break,
-                        h => hex.push(h),
-                    }
-                }
-                out.push(decode_codepoint(&hex)?);
-            }
-            _ => return None,
-        }
+        out.push(if c == '\\' {
+            unescape_body(&mut chars)?
+        } else {
+            literal_char(c)?
+        });
     }
     Some(out)
+}
+
+/// A character that appears verbatim in an image of [`escape_scalar`].
+///
+/// A byte that `escape_scalar` would have escaped cannot appear literally in an image of it,
+/// so admitting one here would make the inverse accept strings the forward direction never
+/// produces — and the round trip would stop being a statement about injectivity.
+#[cfg(test)]
+fn literal_char(c: char) -> Option<char> {
+    (!is_escaped_char(c)).then_some(c)
+}
+
+/// The character named by the text after one backslash.
+#[cfg(test)]
+fn unescape_body(chars: &mut std::str::Chars<'_>) -> Option<char> {
+    match chars.next()? {
+        '\\' => Some('\\'),
+        'n' => Some('\n'),
+        'r' => Some('\r'),
+        't' => Some('\t'),
+        's' => Some(' '),
+        'e' => Some('='),
+        'x' => {
+            let hex: String = [chars.next()?, chars.next()?].iter().collect();
+            decode_codepoint(&hex)
+        }
+        'u' => decode_codepoint(&braced_hex(chars)?),
+        _ => None,
+    }
+}
+
+/// The hexadecimal digits of a `{...}` escape body, braces consumed.
+#[cfg(test)]
+fn braced_hex(chars: &mut std::str::Chars<'_>) -> Option<String> {
+    if chars.next()? != '{' {
+        return None;
+    }
+    let mut hex = String::new();
+    loop {
+        match chars.next()? {
+            '}' => return Some(hex),
+            h => hex.push(h),
+        }
+    }
 }
 
 /// One hexadecimal escape body as the character it names.
@@ -212,90 +224,123 @@ mod tests {
         );
     }
 
-    /// Every scalar round-trips, over a corpus chosen to contain each escape family.
-    #[test]
-    fn every_scalar_round_trips() {
-        let mut corpus: Vec<String> = vec![
-            String::new(),
-            "-".to_owned(),
-            "--".to_owned(),
-            "a-b".to_owned(),
-            "\\".to_owned(),
-            "=".to_owned(),
-            " ".to_owned(),
-            "\"".to_owned(),
-            "read\\nx".to_owned(),
-            "tools/call".to_owned(),
-            "client:example.com:did%3Aexample%3Aa:kid-1".to_owned(),
-            "\u{1F600}".to_owned(),
-            "\u{85}".to_owned(),
-            "\u{2028}".to_owned(),
-            "\u{2029}".to_owned(),
-            "\u{061C}".to_owned(),
-            "\u{200E}".to_owned(),
-            "\u{202E}".to_owned(),
-            "\u{2066}".to_owned(),
-            "\u{FEFF}".to_owned(),
-            "\u{00A0}".to_owned(),
-            "\u{2000}".to_owned(),
-            "\u{3000}".to_owned(),
-            "\u{200B}".to_owned(),
-            "\u{E0041}".to_owned(),
-        ];
-        for code in (0..=0x1Fu32)
+    /// The C0 range, DEL and the C1 range as one-character strings.
+    fn control_strings() -> Vec<String> {
+        (0..=0x1Fu32)
             .chain(std::iter::once(0x7F))
             .chain(0x80..=0x9F)
-        {
-            corpus.push(char::from_u32(code).expect("scalar value").to_string());
-        }
-        // Each of the above at the start, in the middle and at the end, because the leading
-        // `-` rule is positional and an off-by-one there would otherwise pass.
-        let seeds = corpus.clone();
+            .map(|code| char::from_u32(code).expect("scalar value").to_string())
+            .collect()
+    }
+
+    /// Each seed alone, then at the end, at the start and in the middle of ordinary text,
+    /// because the leading `-` rule is positional and an off-by-one there would otherwise
+    /// pass.
+    fn in_context(seeds: Vec<String>) -> Vec<String> {
+        let mut corpus = seeds.clone();
         for seed in &seeds {
             corpus.push(format!("{seed}tail"));
             corpus.push(format!("head{seed}"));
             corpus.push(format!("head{seed}tail"));
         }
-        // Two escapes with nothing between them. The seeds above are each isolated by
-        // ordinary text, so they say nothing about an escape whose neighbour is another
-        // escape — and the backslash's escape is the one whose correctness depends on that
-        // neighbour. The cross product is over ONE representative of each family
-        // (backslash, the named escapes, the positional `-`, `\xNN`, `\u{...}`) rather than
-        // over every seed, which bounds it at 121 members and keeps it readable.
+        corpus
+    }
+
+    /// Two escapes with nothing between them. The seeds are each isolated by ordinary text,
+    /// so they say nothing about an escape whose neighbour is another escape — and the
+    /// backslash's escape is the one whose correctness depends on that neighbour. The cross
+    /// product is over ONE representative of each family (backslash, the named escapes, the
+    /// positional `-`, `\xNN`, `\u{...}`) rather than over every seed, which bounds it at 121
+    /// members and keeps it readable.
+    fn adjacent_escapes() -> Vec<String> {
         let families = [
             "\\", "\n", "\r", "\t", " ", "=", "-", "\u{0}", "\u{7F}", "\u{202E}", "\u{2028}",
         ];
-        for left in families {
-            for right in families {
-                corpus.push(format!("{left}{right}"));
-            }
-        }
-        // Values that are ALREADY images of the escape: a backslash followed by an escape
-        // body, written literally. Each must come back as the characters it is made of and
-        // never as the character that body names — `\x41` is four characters, not `A`.
-        for already_an_image in ["\\x41", "\\u{202e}", "\\n", "\\\\n", "\\e", "\\s", "-\\n"] {
-            corpus.push(already_an_image.to_owned());
-        }
+        families
+            .iter()
+            .flat_map(|left| families.iter().map(move |right| format!("{left}{right}")))
+            .collect()
+    }
+
+    /// Values that are ALREADY images of the escape: a backslash followed by an escape
+    /// body, written literally. Each must come back as the characters it is made of and
+    /// never as the character that body names — `\x41` is four characters, not `A`.
+    fn literal_images() -> Vec<String> {
+        ["\\x41", "\\u{202e}", "\\n", "\\\\n", "\\e", "\\s", "-\\n"]
+            .map(str::to_owned)
+            .to_vec()
+    }
+
+    fn round_trip_corpus() -> Vec<String> {
+        let mut seeds: Vec<String> = [
+            "",
+            "-",
+            "--",
+            "a-b",
+            "\\",
+            "=",
+            " ",
+            "\"",
+            "read\\nx",
+            "tools/call",
+            "client:example.com:did%3Aexample%3Aa:kid-1",
+            "\u{1F600}",
+            "\u{85}",
+            "\u{2028}",
+            "\u{2029}",
+            "\u{061C}",
+            "\u{200E}",
+            "\u{202E}",
+            "\u{2066}",
+            "\u{FEFF}",
+            "\u{00A0}",
+            "\u{2000}",
+            "\u{3000}",
+            "\u{200B}",
+            "\u{E0041}",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        seeds.extend(control_strings());
+        let mut corpus = in_context(seeds);
+        corpus.extend(adjacent_escapes());
+        corpus.extend(literal_images());
+        corpus
+    }
+
+    fn assert_round_trips(s: &str, escaped: &str) {
+        assert_eq!(
+            unescape_scalar(escaped).as_deref(),
+            Some(s),
+            "round trip failed for {s:?} -> {escaped:?}"
+        );
+    }
+
+    fn assert_image_is_hazard_free(s: &str, escaped: &str) {
+        assert!(
+            escaped.chars().all(|c| c != ' '
+                && c != '='
+                && (c as u32) >= 0x20
+                && c as u32 != 0x7F
+                && !is_render_hazard(c)),
+            "the image carries a hazard: {s:?} -> {escaped:?}"
+        );
+    }
+
+    /// Every scalar round-trips, over a corpus chosen to contain each escape family.
+    ///
+    /// Injectivity is stated rather than inferred: the word the proposition uses is the one
+    /// the corpus is evidence for. A repeated corpus member is not a collision, so the
+    /// comparison is between the preimages, not the images.
+    #[test]
+    fn every_scalar_round_trips() {
+        let corpus = round_trip_corpus();
         let mut images: std::collections::HashMap<String, &String> =
             std::collections::HashMap::new();
         for s in &corpus {
             let escaped = escape_scalar(s);
-            assert_eq!(
-                unescape_scalar(&escaped).as_ref(),
-                Some(s),
-                "round trip failed for {s:?} -> {escaped:?}"
-            );
-            assert!(
-                escaped.chars().all(|c| c != ' '
-                    && c != '='
-                    && (c as u32) >= 0x20
-                    && c as u32 != 0x7F
-                    && !is_render_hazard(c)),
-                "the image carries a hazard: {s:?} -> {escaped:?}"
-            );
-            // Injectivity, stated rather than inferred: the word the proposition uses is
-            // the one the corpus is evidence for. A repeated corpus member is not a
-            // collision, so the comparison is between the preimages, not the images.
+            assert_round_trips(s, &escaped);
+            assert_image_is_hazard_free(s, &escaped);
             let collision = images.insert(escaped.clone(), s);
             assert!(
                 !matches!(collision, Some(previous) if previous != s),
@@ -407,38 +452,30 @@ mod tests {
     /// family, which must not be.
     #[test]
     fn is_separator_free_is_exactly_the_escapes_fixed_point() {
-        let mut corpus: Vec<String> = vec![
-            String::new(),
-            "-".to_owned(),
-            "-leading".to_owned(),
-            "a-b".to_owned(),
-            "event".to_owned(),
-            "authz_policy_reason".to_owned(),
-            "mcp-re.request.accepted".to_owned(),
-            "\\".to_owned(),
-            "=".to_owned(),
-            " ".to_owned(),
-            "\n".to_owned(),
-            "\r".to_owned(),
-            "\t".to_owned(),
-            "\u{7F}".to_owned(),
-            "\u{85}".to_owned(),
-            "\u{2028}".to_owned(),
-            "\u{202E}".to_owned(),
-            "\u{FEFF}".to_owned(),
-        ];
-        for code in (0..=0x1Fu32)
-            .chain(std::iter::once(0x7F))
-            .chain(0x80..=0x9F)
-        {
-            corpus.push(char::from_u32(code).expect("scalar value").to_string());
-        }
-        let seeds = corpus.clone();
-        for seed in &seeds {
-            corpus.push(format!("{seed}tail"));
-            corpus.push(format!("head{seed}"));
-            corpus.push(format!("head{seed}tail"));
-        }
+        let mut seeds: Vec<String> = [
+            "",
+            "-",
+            "-leading",
+            "a-b",
+            "event",
+            "authz_policy_reason",
+            "mcp-re.request.accepted",
+            "\\",
+            "=",
+            " ",
+            "\n",
+            "\r",
+            "\t",
+            "\u{7F}",
+            "\u{85}",
+            "\u{2028}",
+            "\u{202E}",
+            "\u{FEFF}",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        seeds.extend(control_strings());
+        let corpus = in_context(seeds);
         for s in &corpus {
             assert_eq!(
                 is_separator_free(s),
@@ -478,6 +515,19 @@ mod tests {
         }
     }
 
+    fn in_format_table(code: u32) -> bool {
+        FORMAT_CONTROLS
+            .iter()
+            .any(|&(a, b)| (a..=b).contains(&code))
+    }
+
+    /// The codepoints just below and just above one range.
+    fn range_neighbours(first: u32, last: u32) -> impl Iterator<Item = u32> {
+        [first.checked_sub(1), last.checked_add(1)]
+            .into_iter()
+            .flatten()
+    }
+
     /// Both ends of every range in the table are hazards, and the codepoint just outside
     /// each end is a hazard only for a reason other than the table.
     #[test]
@@ -488,19 +538,14 @@ mod tests {
                 let c = char::from_u32(edge).expect("scalar value");
                 assert!(is_render_hazard(c), "U+{edge:04X} ends a format range");
             }
-            for outside in [first.checked_sub(1), last.checked_add(1)]
-                .into_iter()
-                .flatten()
-            {
-                if let Some(c) = char::from_u32(outside) {
-                    if !FORMAT_CONTROLS
-                        .iter()
-                        .any(|&(a, b)| (a..=b).contains(&outside))
-                    {
-                        assert_eq!(is_render_hazard(c), otherwise(c), "U+{outside:04X}");
-                    }
-                }
-            }
+        }
+        let outside = FORMAT_CONTROLS
+            .iter()
+            .flat_map(|&(first, last)| range_neighbours(first, last))
+            .filter(|&n| !in_format_table(n))
+            .filter_map(char::from_u32);
+        for c in outside {
+            assert_eq!(is_render_hazard(c), otherwise(c), "U+{:04X}", c as u32);
         }
     }
 }

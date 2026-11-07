@@ -164,25 +164,24 @@ def dependency_direction_problems() -> list[str]:
     return problems
 
 
+def _struct_body(text: str) -> str:
+    """The text of `pub struct DeploymentRequest { ... }`, from its opening to its closing brace."""
+    start = text.index(f"pub struct {REQUEST_TYPE} {{")
+    depth = 0
+    for index in range(start, len(text)):
+        depth += (text[index] == "{") - (text[index] == "}")
+        if depth == 0 and text[index] == "}":
+            return text[start:index]
+    return text[start:start]
+
+
 def request_fields(text: str) -> list[str]:
     """The field names declared by `struct DeploymentRequest { ... }`.
 
     Read from the struct body only. A `pub x:` inside another type in the same file, or
     inside a doc comment, is not a field of the subject.
     """
-    start = text.index(f"pub struct {REQUEST_TYPE} {{")
-    depth = 0
-    end = start
-    for index in range(start, len(text)):
-        if text[index] == "{":
-            depth += 1
-        elif text[index] == "}":
-            depth -= 1
-            if depth == 0:
-                end = index
-                break
-    body = text[start:end]
-    return [match.group(1) for match in FIELD.finditer(body)]
+    return [match.group(1) for match in FIELD.finditer(_struct_body(text))]
 
 
 def qualifier_hits(field: str, qualifiers: dict[str, str]) -> list[str]:
@@ -194,6 +193,17 @@ def qualifier_hits(field: str, qualifiers: dict[str, str]) -> list[str]:
     """
     parts = set(field.split("_"))
     return sorted(q for q in qualifiers if q in parts)
+
+
+def _sibling_problems(field: str) -> list[str]:
+    """One field's refusals: a mechanism qualifier whose family already has a typed payload."""
+    return [
+        f"`{REQUEST_TYPE}::{field}` carries the mechanism qualifier "
+        f"`{qualifier}`. That family already has a typed mechanism payload "
+        f"({MIGRATED[qualifier]}); a new value belongs inside it, not beside "
+        f"the selector"
+        for qualifier in qualifier_hits(field, MIGRATED)
+    ]
 
 
 def check(
@@ -209,13 +219,7 @@ def check(
     known: list[str] = []
     seen_families: set[str] = set()
     for field in request_fields(text):
-        for qualifier in qualifier_hits(field, MIGRATED):
-            problems.append(
-                f"`{REQUEST_TYPE}::{field}` carries the mechanism qualifier "
-                f"`{qualifier}`. That family already has a typed mechanism payload "
-                f"({MIGRATED[qualifier]}); a new value belongs inside it, not beside "
-                f"the selector"
-            )
+        problems.extend(_sibling_problems(field))
         outstanding = qualifier_hits(field, registry)
         seen_families.update(outstanding)
         # One line per FIELD, not per qualifier: `cpstore_etcd_endpoint` carries two and
@@ -231,70 +235,61 @@ def check(
     return problems, known
 
 
-def selftest() -> int:
-    """Prove the gate fails on the shape it exists to refuse."""
-    failures = 0
+#: The sibling fields a regressed request re-adds, each with the family it belongs to.
+REGRESSED_FIELDS = (
+    ("aws_kms_region", "AWS", "    pub aws_kms_region: Option<String>,\n"),
+    ("tls_key", "channel-credential", "    pub tls_key: String,\n"),
+    ("replay_redis_url", "storage", "    pub replay_redis_url: Option<String>,\n"),
+    ("client_crl_paths", "revocation", "    pub client_crl_paths: Vec<String>,\n"),
+    ("ingress_pinned_mtls", "ingress", "    pub ingress_pinned_mtls: bool,\n"),
+)
+_REGRESSED_REQUEST = (
+    "pub struct DeploymentRequest {\n"
+    "    /// doc\n"
+    + "".join(line for _field, _family, line in REGRESSED_FIELDS)
+    + "    pub client_ocsp: OcspKind,\n"
+    "}\n"
+)
+_CLEAN_REQUEST = (
+    "pub struct DeploymentRequest {\n"
+    "    /// doc\n"
+    "}\n"
+)
 
-    regressed = (
-        "pub struct DeploymentRequest {\n"
-        "    /// doc\n"
-        "    pub aws_kms_region: Option<String>,\n"
-        "    pub tls_key: String,\n"
-        "    pub client_crl_paths: Vec<String>,\n"
-        "    pub ingress_pinned_mtls: bool,\n"
-        "    pub replay_redis_url: Option<String>,\n"
-        "    pub client_ocsp: OcspKind,\n"
-        "}\n"
-    )
-    problems, known = check(regressed)
-    if not any("aws_kms_region" in p for p in problems):
-        print("selftest FAIL: a re-added AWS sibling field was accepted")
-        failures += 1
-    if not any("tls_key" in p for p in problems):
-        print("selftest FAIL: a re-added channel-credential sibling field was accepted")
-        failures += 1
-    if not any("replay_redis_url" in p for p in problems):
-        print("selftest FAIL: a re-added storage sibling field was accepted")
-        failures += 1
-    if not any("client_crl_paths" in p for p in problems):
-        print("selftest FAIL: a re-added revocation sibling field was accepted")
-        failures += 1
-    if not any("ingress_pinned_mtls" in p for p in problems):
-        print("selftest FAIL: a re-added ingress sibling field was accepted")
-        failures += 1
 
-    clean = (
-        regressed.replace("    pub aws_kms_region: Option<String>,\n", "")
-        .replace("    pub tls_key: String,\n", "")
-        .replace("    pub replay_redis_url: Option<String>,\n", "")
-        .replace("    pub client_crl_paths: Vec<String>,\n", "")
-        .replace("    pub client_ocsp: OcspKind,\n", "")
-        .replace("    pub ingress_pinned_mtls: bool,\n", "")
+def _selftest_failures() -> list[str]:
+    """What the gate gets wrong on the shapes it exists to refuse, one line per defect."""
+    failures: list[str] = []
+    problems, _ = check(_REGRESSED_REQUEST)
+    failures.extend(
+        f"a re-added {family} sibling field was accepted"
+        for field, family, _line in REGRESSED_FIELDS
+        if not any(field in p for p in problems)
     )
-    problems, _ = check(clean)
+    problems, _ = check(_CLEAN_REQUEST)
     if problems:
-        print(f"selftest FAIL: a clean request was refused: {problems}")
-        failures += 1
-
+        failures.append(f"a clean request was refused: {problems}")
     # A family whose fields have all gone must leave the registry. The live registry is
     # empty, so the probe supplies one rather than asserting over nothing.
     stale = {"nothing": "Phase 99 — a family with no field"}
-    problems, _ = check(clean, not_yet_migrated=stale)
+    problems, _ = check(_CLEAN_REQUEST, not_yet_migrated=stale)
     if not any("`nothing` is registered" in p for p in problems):
-        print("selftest FAIL: a stale NOT_YET_MIGRATED entry was accepted")
-        failures += 1
-
+        failures.append("a stale NOT_YET_MIGRATED entry was accepted")
     # The dependency-direction half must be alive: it fails on an inverted import, and it
     # refuses to report a clean scope it never examined.
     if dependency_direction_problems():
-        print("selftest FAIL: the dependency-direction check is red on a clean tree")
-        failures += 1
-
+        failures.append("the dependency-direction check is red on a clean tree")
     # Substring matching would make `sts` fire on a field it does not qualify.
     if qualifier_hits("hosts_checked", MIGRATED):
-        print("selftest FAIL: a qualifier matched a substring rather than a word part")
-        failures += 1
+        failures.append("a qualifier matched a substring rather than a word part")
+    return failures
 
+
+def selftest() -> int:
+    """Prove the gate fails on the shape it exists to refuse."""
+    failures = _selftest_failures()
+    for failure in failures:
+        print(f"selftest FAIL: {failure}")
     if failures:
         return 1
     print("semantic-altitude gate selftest: OK")

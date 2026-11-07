@@ -25,7 +25,7 @@
 //! direct-root — is a SERVER-side rotor property, proven by
 //! `mcp-re-proxy/tests/delegated_production_wiring_test.rs::issuance_failure_serves_the_valid_key_then_fails_closed_at_expiry`.)
 
-use mcp_re_client_core::build_signed_request;
+use mcp_re_client_core::build_signed_message;
 use mcp_re_client_core::verify_delegated_response;
 use mcp_re_client_core::ActorIdentity;
 use mcp_re_client_core::ArtifactBinding;
@@ -35,6 +35,7 @@ use mcp_re_client_core::CompositeResponseTrust;
 use mcp_re_client_core::DelegatedOutcome;
 use mcp_re_client_core::DelegatedResponseTrust;
 use mcp_re_client_core::DelegationPolicy;
+use mcp_re_client_core::McpMessage;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResolvedActor;
 use mcp_re_client_core::ResponseExpectation;
@@ -119,10 +120,8 @@ fn signed_request() -> SignedRequest {
         EXPIRES,
     );
     let params: Map<String, Value> = json!({ "name": "read" }).as_object().cloned().unwrap();
-    build_signed_request(
-        &json!(1),
-        "tools/call",
-        params,
+    build_signed_message(
+        McpMessage::new(Some(&json!(1)), "tools/call", params),
         TARGET,
         &inputs,
         &client_key(),

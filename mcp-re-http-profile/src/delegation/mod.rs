@@ -286,6 +286,26 @@ mod tests {
         verify_delegation_credential(jws, p, resolver(root_pub), never_revoked)
     }
 
+    /// The claims of a credential the trusted root issued for the delegated key.
+    fn claims() -> DelegationClaims {
+        good_claims(&delegated().public_key())
+    }
+
+    /// The refusal for a credential the trusted root minted from `header` and `claims`,
+    /// verified under the standard parameters.
+    fn refusal_for(header: &DelegationHeader, claims: &DelegationClaims) -> HttpProfileError {
+        let jws = mint(&root(), header, claims);
+        verify(&jws, &params(&[AUD], &[EPOCH]), root().public_key()).unwrap_err()
+    }
+
+    /// The refusal for a standard credential when `is_revoked` names something it carries.
+    fn revoked_when(is_revoked: impl Fn(&str) -> bool) -> HttpProfileError {
+        let jws = mint(&root(), &good_header(), &claims());
+        let p = params(&[AUD], &[EPOCH]);
+        verify_delegation_credential(&jws, &p, resolver(root().public_key()), is_revoked)
+            .unwrap_err()
+    }
+
     #[test]
     fn valid_credential_accepts_and_yields_delegated_key() {
         let (r, d) = (root(), delegated());
@@ -298,24 +318,20 @@ mod tests {
 
     #[test]
     fn wrong_alg_is_credential_invalid() {
-        let (r, d) = (root(), delegated());
         let mut h = good_header();
         h.alg = "none".into();
-        let jws = mint(&r, &h, &good_claims(&d.public_key()));
         assert_eq!(
-            verify(&jws, &params(&[AUD], &[EPOCH]), r.public_key()).unwrap_err(),
+            refusal_for(&h, &claims()),
             HttpProfileError::DelegationCredentialInvalid
         );
     }
 
     #[test]
     fn wrong_typ_is_credential_invalid() {
-        let (r, d) = (root(), delegated());
         let mut h = good_header();
         h.typ = "jwt".into();
-        let jws = mint(&r, &h, &good_claims(&d.public_key()));
         assert_eq!(
-            verify(&jws, &params(&[AUD], &[EPOCH]), r.public_key()).unwrap_err(),
+            refusal_for(&h, &claims()),
             HttpProfileError::DelegationCredentialInvalid
         );
     }
@@ -334,14 +350,12 @@ mod tests {
 
     #[test]
     fn unknown_issuer_is_untrusted() {
-        let (r, d) = (root(), delegated());
         let mut h = good_header();
-        let mut c = good_claims(&d.public_key());
+        let mut c = claims();
         h.kid = "unknown-root".into();
         c.issuer_kid = "unknown-root".into();
-        let jws = mint(&r, &h, &c);
         assert_eq!(
-            verify(&jws, &params(&[AUD], &[EPOCH]), r.public_key()).unwrap_err(),
+            refusal_for(&h, &c),
             HttpProfileError::DelegationIssuerUntrusted
         );
     }
@@ -436,36 +450,30 @@ mod tests {
 
     #[test]
     fn wrong_audience_hash_or_server_signer_is_audience_mismatch() {
-        let (r, d) = (root(), delegated());
-        let mut c = good_claims(&d.public_key());
+        let mut c = claims();
         c.mcp_re_audience_hash = "other-scope".into();
-        let jws = mint(&r, &good_header(), &c);
         assert_eq!(
-            verify(&jws, &params(&[AUD], &[EPOCH]), r.public_key()).unwrap_err(),
+            refusal_for(&good_header(), &c),
             HttpProfileError::DelegationAudienceMismatch
         );
     }
 
     #[test]
     fn wrong_profile_is_profile_mismatch() {
-        let (r, d) = (root(), delegated());
-        let mut c = good_claims(&d.public_key());
+        let mut c = claims();
         c.mcp_re_profile = "someone-else".into();
-        let jws = mint(&r, &good_header(), &c);
         assert_eq!(
-            verify(&jws, &params(&[AUD], &[EPOCH]), r.public_key()).unwrap_err(),
+            refusal_for(&good_header(), &c),
             HttpProfileError::DelegationProfileMismatch
         );
     }
 
     #[test]
     fn wrong_key_use_is_key_use_invalid() {
-        let (r, d) = (root(), delegated());
-        let mut c = good_claims(&d.public_key());
+        let mut c = claims();
         c.mcp_re_key_use = "request-signing".into();
-        let jws = mint(&r, &good_header(), &c);
         assert_eq!(
-            verify(&jws, &params(&[AUD], &[EPOCH]), r.public_key()).unwrap_err(),
+            refusal_for(&good_header(), &c),
             HttpProfileError::DelegationKeyUseInvalid
         );
     }
@@ -492,37 +500,27 @@ mod tests {
 
     #[test]
     fn revoked_delegated_or_issuer_is_revoked() {
-        let (r, d) = (root(), delegated());
-        let jws = mint(&r, &good_header(), &good_claims(&d.public_key()));
-        let p = params(&[AUD], &[EPOCH]);
-        let err = verify_delegation_credential(&jws, &p, resolver(r.public_key()), |kid: &str| {
-            kid == DELEGATED_KID
-        })
-        .unwrap_err();
-        assert_eq!(err, HttpProfileError::DelegationRevoked);
+        assert_eq!(
+            revoked_when(|kid| kid == DELEGATED_KID),
+            HttpProfileError::DelegationRevoked
+        );
     }
 
     #[test]
     fn revoked_by_jti_is_revoked() {
         // Revocation keyed on the per-credential jti (not a kid) also fails closed.
-        let (r, d) = (root(), delegated());
-        let jws = mint(&r, &good_header(), &good_claims(&d.public_key()));
-        let p = params(&[AUD], &[EPOCH]);
-        let err = verify_delegation_credential(&jws, &p, resolver(r.public_key()), |id: &str| {
-            id == "evt-1"
-        })
-        .unwrap_err();
-        assert_eq!(err, HttpProfileError::DelegationRevoked);
+        assert_eq!(
+            revoked_when(|id| id == "evt-1"),
+            HttpProfileError::DelegationRevoked
+        );
     }
 
     #[test]
     fn cnf_kid_not_delegated_kid_is_credential_invalid() {
-        let (r, d) = (root(), delegated());
-        let mut c = good_claims(&d.public_key());
+        let mut c = claims();
         c.cnf.jwk.kid = "some-other-kid".into();
-        let jws = mint(&r, &good_header(), &c);
         assert_eq!(
-            verify(&jws, &params(&[AUD], &[EPOCH]), r.public_key()).unwrap_err(),
+            refusal_for(&good_header(), &c),
             HttpProfileError::DelegationCredentialInvalid
         );
     }

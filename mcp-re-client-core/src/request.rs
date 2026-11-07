@@ -69,58 +69,125 @@ impl SignedRequest {
     }
 }
 
-/// Construct and sign an RFC 9421 MCP-RE request with a local in-process key.
-///
-/// `id`/`method`/`params` are the ordinary MCP request fields. `target_uri` is the
-/// canonical absolute `@target-uri` both sides sign over (must equal
-/// `inputs.audience.target_uri`). The client core is the sole author of the request
-/// evidence block by construction: the body is rebuilt from `id`/`jsonrpc`/`method`/
-/// `params`, so no caller value can reach the body-root `_meta` the block occupies.
-/// `params._meta` is ordinary MCP metadata and is passed through, covered by the
-/// `Content-Digest` like the rest of the body.
-pub fn build_signed_request(
-    id: &Value,
-    method: &str,
-    params: Map<String, Value>,
-    target_uri: &str,
-    inputs: &RequestSigningInputs,
-    signing_key: &SigningKey,
-) -> Result<SignedRequest, HttpProfileError> {
-    build_signed_request_with(
-        Some(id),
-        method,
-        params,
-        target_uri,
-        inputs,
-        |request, block| {
-            sign_request_full(
-                request,
-                block,
-                signing_key,
-                &inputs.key_id,
-                inputs.created,
-                inputs.expires,
-                &inputs.nonce,
-            )
-        },
-    )
-}
-
-/// The shared request-construction core, generic over HOW the RFC 9421 message is
-/// signed. `sign` receives the reconstructed [`HttpRequest`] (body already the
-/// clean JSON-RPC) and the evidence block, composes + signs, and returns the
-/// [`RequestRoleEvidence`]. This is the single seam every signing mechanism (in-process
-/// key, KMS/HSM via [`sign_request_with_signer`], delegated service) flows through.
 /// The shortest nonce this core will SIGN: 128 bits of base64url is 22 characters.
 ///
 /// A floor on emission only — the verifier's accepted language is unchanged, so this
 /// needs no cross-implementation coordination. Matches the two SDKs' own floors.
 pub const MIN_NONCE_CHARS: usize = 22;
 
-pub(crate) fn build_signed_request_with(
-    id: Option<&Value>,
-    method: &str,
+/// The JSON-RPC message to be signed: a request when it carries an `id`, a one-way
+/// notification (§4.1) when it carries none.
+///
+/// `params._meta` is ORDINARY MCP metadata (`progressToken` and friends) and is passed
+/// through untouched. The request evidence block lives at the body ROOT `_meta`, which
+/// signing composes in and which a caller cannot reach: the body is rebuilt from
+/// `id`/`jsonrpc`/`method`/`params` alone. It is covered by `Content-Digest` either way,
+/// so caller metadata is signed, not trusted.
+#[derive(Debug, Clone)]
+pub struct McpMessage<'a> {
+    id: Option<&'a Value>,
+    method: &'a str,
     params: Map<String, Value>,
+}
+
+impl<'a> McpMessage<'a> {
+    /// A message with the given `id`, or a notification when `id` is `None`.
+    ///
+    /// `id` ABSENT is what makes a message a JSON-RPC notification, and the serving path
+    /// classifies on exactly that: a `method` with no `id` key. `null` is not the same
+    /// thing — it is a present id, so a notification signed with one would be dispatched
+    /// as a request and answered with a bodied reply the client is not expecting. The key
+    /// is therefore omitted, never emitted as null.
+    pub fn new(id: Option<&'a Value>, method: &'a str, params: Map<String, Value>) -> Self {
+        McpMessage { id, method, params }
+    }
+
+    /// The common `tools/call` request.
+    pub fn tool_call(id: &'a Value, tool_name: &str, arguments: Value) -> Self {
+        let mut params = Map::new();
+        params.insert("name".to_string(), Value::String(tool_name.to_string()));
+        params.insert("arguments".to_string(), arguments);
+        McpMessage::new(Some(id), "tools/call", params)
+    }
+
+    /// The JSON-RPC envelope bytes.
+    fn body(self) -> Result<Vec<u8>, HttpProfileError> {
+        let mut envelope = Map::new();
+        if let Some(id) = self.id {
+            envelope.insert("id".to_owned(), id.clone());
+        }
+        envelope.insert("jsonrpc".to_owned(), json!("2.0"));
+        envelope.insert("method".to_owned(), json!(self.method));
+        envelope.insert("params".to_owned(), Value::Object(self.params));
+        serde_json::to_vec(&Value::Object(envelope))
+            .map_err(|_| HttpProfileError::MalformedEvidence("request body serialization"))
+    }
+}
+
+/// Construct and sign an RFC 9421 MCP-RE message with a local in-process key.
+///
+/// `target_uri` is the canonical absolute `@target-uri` both sides sign over (must equal
+/// `inputs.audience.target_uri`). The client core is the sole author of the request
+/// evidence block by construction: the body is rebuilt from the message alone, so no
+/// caller value can reach the body-root `_meta` the block occupies.
+///
+/// A message without an `id` is a notification, signed by the ORDINARY request rules:
+/// same evidence block, same covered components, same freshness triple. What differs is
+/// only the JSON-RPC envelope (no `id`) and therefore the answer: an accepted
+/// notification earns a signed bodyless `202`, verified with
+/// [`crate::verify_delegated_accepted_202`], not a bodied reply. A notification cannot
+/// carry an ADR-MCPS-047 continuation: an answer leg answers an `InputRequiredResult`, and
+/// a message with no `id` can receive no such result, so a continuation on `inputs` fails
+/// closed rather than being signed into evidence that describes an exchange that cannot
+/// exist.
+pub fn build_signed_message(
+    message: McpMessage<'_>,
+    target_uri: &str,
+    inputs: &RequestSigningInputs,
+    signing_key: &SigningKey,
+) -> Result<SignedRequest, HttpProfileError> {
+    build_signed_request_with(message, target_uri, inputs, |request, block| {
+        sign_request_full(
+            request,
+            block,
+            signing_key,
+            &inputs.key_id,
+            inputs.created,
+            inputs.expires,
+            &inputs.nonce,
+        )
+    })
+}
+
+/// Non-exporting-custody variant: sign the RFC 9421 message through an external signer
+/// closure (Cloud KMS / HSM) that returns the raw 64-byte Ed25519 signature over the
+/// exact signature base. Wire-identical to [`build_signed_message`].
+pub fn build_signed_message_with_signer(
+    message: McpMessage<'_>,
+    target_uri: &str,
+    inputs: &RequestSigningInputs,
+    sign_base: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
+) -> Result<SignedRequest, HttpProfileError> {
+    // The full-profile client composes the evidence block first, then signs over it.
+    build_signed_request_with(message, target_uri, inputs, |request, block| {
+        sign_request_full_with_signer(
+            request,
+            block,
+            sign_base,
+            &inputs.key_id,
+            inputs.created,
+            inputs.expires,
+            &inputs.nonce,
+        )
+    })
+}
+
+/// The shared construction core, generic over HOW the RFC 9421 message is signed. `sign`
+/// receives the reconstructed [`HttpRequest`] (body already the clean JSON-RPC) and the
+/// evidence block, composes + signs, and returns the [`RequestRoleEvidence`]. Every
+/// signing mechanism (in-process key, KMS/HSM, delegated service) flows through this seam.
+pub(crate) fn build_signed_request_with(
+    message: McpMessage<'_>,
     target_uri: &str,
     inputs: &RequestSigningInputs,
     sign: impl FnOnce(
@@ -128,20 +195,55 @@ pub(crate) fn build_signed_request_with(
         &HttpRequestEvidenceBlock,
     ) -> Result<RequestRoleEvidence, HttpProfileError>,
 ) -> Result<SignedRequest, HttpProfileError> {
-    // The @target-uri the client signs MUST match the audience tuple's target_uri
-    // (the verifier cross-checks them); a mismatch is a client misconfiguration —
-    // fail closed rather than emit evidence that can never verify.
+    check_preconditions(&message, target_uri, inputs)?;
+    let mut headers = vec![("content-type".to_owned(), "application/json".to_owned())];
+    headers.extend(inputs.extra_headers.iter().cloned());
+    let mut request = HttpRequest {
+        method: "POST".to_owned(),
+        target_uri: target_uri.to_owned(),
+        headers,
+        body: message.body()?,
+    };
+    let block = inputs.evidence_block();
+    // Hold the block to the SAME structural rules the verifier applies, before signing
+    // it. `artifact_bindings` is documented as required and non-empty, and the server
+    // rejects an empty (or structurally invalid) set as `malformed_evidence` — but the
+    // client would compose it, sign it, and spend a round trip discovering that, then
+    // report it as a server-side evidence fault rather than the local misconfiguration
+    // it is. This is the same fail-fast the `@target-uri` / audience cross-check already
+    // performs: never emit evidence that can never verify. Reusing
+    // `HttpRequestEvidenceBlock::validate` rather than re-spelling the rules keeps the
+    // two ends from drifting apart.
+    block.validate(PROFILE_TAG)?;
+    let evidence = sign(&mut request, &block)?;
+    Ok(SignedRequest { request, evidence })
+}
+
+/// Everything the client refuses to sign, decided before any byte is composed.
+///
+/// The `@target-uri` the client signs MUST match the audience tuple's target_uri (the
+/// verifier cross-checks them); a mismatch is a client misconfiguration — fail closed
+/// rather than emit evidence that can never verify.
+///
+/// The FRESHNESS TRIPLE is enforced here, at the seam every signing mechanism flows
+/// through. Both SDKs enforce a 128-bit nonce floor at sign time; without it an embedder
+/// using this core directly could sign and emit a request with an empty or guessable
+/// nonce — exactly as replayable as the case the SDK floor exists to prevent — or with
+/// `expires <= created`, a window no verifier can accept. Enforced where a nonce is
+/// EMITTED, so the accepted wire language is unchanged and no fixture moves.
+fn check_preconditions(
+    message: &McpMessage<'_>,
+    target_uri: &str,
+    inputs: &RequestSigningInputs,
+) -> Result<(), HttpProfileError> {
+    if message.id.is_none() && inputs.continuation.is_some() {
+        return Err(HttpProfileError::MalformedEvidence(
+            "continuation on a notification",
+        ));
+    }
     if target_uri != inputs.audience.target_uri {
         return Err(HttpProfileError::AudienceMismatch);
     }
-    // The FRESHNESS TRIPLE, at the seam every signing mechanism flows through.
-    //
-    // Both SDKs enforce a 128-bit nonce floor at sign time; this shared Rust core and
-    // the client proxy did not, so an embedder using them directly could sign and emit
-    // a request with an empty or guessable nonce — exactly as replayable as the case
-    // the SDK floor exists to prevent — or with `expires <= created`, a window no
-    // verifier can accept. Enforced where a nonce is EMITTED, so the accepted wire
-    // language is unchanged and no fixture moves.
     if inputs.nonce.len() < MIN_NONCE_CHARS {
         return Err(HttpProfileError::MalformedEvidence(
             "nonce is below the 128-bit entropy floor",
@@ -152,179 +254,7 @@ pub(crate) fn build_signed_request_with(
             "signature window expires at or before created",
         ));
     }
-
-    // `params._meta` is ORDINARY MCP metadata (`progressToken` and friends) and is
-    // passed through untouched. The request evidence block lives at the body ROOT
-    // `_meta`, which `sign_request_full` composes in and which a caller cannot reach:
-    // the body below is rebuilt from `id`/`jsonrpc`/`method`/`params` alone. It is
-    // covered by `Content-Digest` either way, so caller metadata is signed, not trusted.
-    // `id` ABSENT is what makes a message a JSON-RPC notification (§4.1), and the
-    // serving path classifies on exactly that: a `method` with no `id` key. `null` is
-    // not the same thing — it is a present id, so a notification signed with one would
-    // be dispatched as a request and answered with a bodied reply the client is not
-    // expecting. The key is therefore omitted, never emitted as null.
-    let mut envelope = Map::new();
-    if let Some(id) = id {
-        envelope.insert("id".to_owned(), id.clone());
-    }
-    envelope.insert("jsonrpc".to_owned(), json!("2.0"));
-    envelope.insert("method".to_owned(), json!(method));
-    envelope.insert("params".to_owned(), Value::Object(params));
-    let body = serde_json::to_vec(&Value::Object(envelope))
-        .map_err(|_| HttpProfileError::MalformedEvidence("request body serialization"))?;
-
-    let mut headers = vec![("content-type".to_owned(), "application/json".to_owned())];
-    headers.extend(inputs.extra_headers.iter().cloned());
-    let mut request = HttpRequest {
-        method: "POST".to_owned(),
-        target_uri: target_uri.to_owned(),
-        headers,
-        body,
-    };
-    let block = inputs.evidence_block();
-    // Hold the block to the SAME structural rules the verifier applies, before signing
-    // it. `artifact_bindings` is documented as required and non-empty, and the server
-    // rejects an empty (or structurally invalid) set as `malformed_evidence` — but the
-    // client would compose it, sign it, and spend a round trip discovering that, then
-    // report it as a server-side evidence fault rather than the local misconfiguration
-    // it is. This is the same fail-fast the `@target-uri` / audience cross-check above
-    // already performs: never emit evidence that can never verify. Reusing
-    // `HttpRequestEvidenceBlock::validate` rather than re-spelling the rules keeps the
-    // two ends from drifting apart.
-    block.validate(PROFILE_TAG)?;
-    let evidence = sign(&mut request, &block)?;
-    Ok(SignedRequest { request, evidence })
-}
-
-/// Non-exporting-custody variant: sign the RFC 9421 request through an external
-/// signer closure (Cloud KMS / HSM) that returns the raw 64-byte Ed25519 signature
-/// over the exact signature base. Wire-identical to [`build_signed_request`].
-pub fn build_signed_request_with_signer(
-    id: &Value,
-    method: &str,
-    params: Map<String, Value>,
-    target_uri: &str,
-    inputs: &RequestSigningInputs,
-    sign_base: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
-) -> Result<SignedRequest, HttpProfileError> {
-    // sign_request_with_signer signs but does NOT compose the evidence block; the
-    // full-profile client composes the block first, then signs over it.
-    build_signed_request_with(
-        Some(id),
-        method,
-        params,
-        target_uri,
-        inputs,
-        |request, block| {
-            sign_request_full_with_signer(
-                request,
-                block,
-                sign_base,
-                &inputs.key_id,
-                inputs.created,
-                inputs.expires,
-                &inputs.nonce,
-            )
-        },
-    )
-}
-
-/// Construct and sign a one-way MCP **notification** — a JSON-RPC message with a
-/// `method` and no `id` (§4.1) — with a local in-process key.
-///
-/// A notification is signed by the ORDINARY request rules: same evidence block, same
-/// covered components, same freshness triple. Nothing about the signing changes, which
-/// is why this is a thin sibling of [`build_signed_request`] rather than a second
-/// profile. What differs is only the JSON-RPC envelope (no `id`) and therefore the
-/// answer: an accepted notification earns a signed bodyless `202`, verified with
-/// [`crate::verify_delegated_accepted_202`], not a bodied reply.
-///
-/// A notification cannot carry an ADR-MCPS-047 continuation: an answer leg answers an
-/// `InputRequiredResult`, and a message with no `id` can receive no such result. A
-/// continuation on `inputs` is therefore a client construction error and fails closed
-/// here rather than being signed into evidence that describes an exchange that cannot
-/// exist.
-pub fn build_signed_notification(
-    method: &str,
-    params: Map<String, Value>,
-    target_uri: &str,
-    inputs: &RequestSigningInputs,
-    signing_key: &SigningKey,
-) -> Result<SignedRequest, HttpProfileError> {
-    reject_continuation_on_notification(inputs)?;
-    build_signed_request_with(
-        None,
-        method,
-        params,
-        target_uri,
-        inputs,
-        |request, block| {
-            sign_request_full(
-                request,
-                block,
-                signing_key,
-                &inputs.key_id,
-                inputs.created,
-                inputs.expires,
-                &inputs.nonce,
-            )
-        },
-    )
-}
-
-/// Non-exporting-custody variant of [`build_signed_notification`]. Wire-identical.
-pub fn build_signed_notification_with_signer(
-    method: &str,
-    params: Map<String, Value>,
-    target_uri: &str,
-    inputs: &RequestSigningInputs,
-    sign_base: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
-) -> Result<SignedRequest, HttpProfileError> {
-    reject_continuation_on_notification(inputs)?;
-    build_signed_request_with(
-        None,
-        method,
-        params,
-        target_uri,
-        inputs,
-        |request, block| {
-            sign_request_full_with_signer(
-                request,
-                block,
-                sign_base,
-                &inputs.key_id,
-                inputs.created,
-                inputs.expires,
-                &inputs.nonce,
-            )
-        },
-    )
-}
-
-fn reject_continuation_on_notification(
-    inputs: &RequestSigningInputs,
-) -> Result<(), HttpProfileError> {
-    if inputs.continuation.is_some() {
-        return Err(HttpProfileError::MalformedEvidence(
-            "continuation on a notification",
-        ));
-    }
     Ok(())
-}
-
-/// Convenience for the common `tools/call` case.
-pub fn build_signed_tool_call(
-    id: &Value,
-    tool_name: &str,
-    arguments: Value,
-    target_uri: &str,
-    inputs: &RequestSigningInputs,
-    signing_key: &SigningKey,
-) -> Result<SignedRequest, HttpProfileError> {
-    let mut params = Map::new();
-    params.insert("name".to_string(), Value::String(tool_name.to_string()));
-    params.insert("arguments".to_string(), arguments);
-    build_signed_request(id, "tools/call", params, target_uri, inputs, signing_key)
 }
 
 #[cfg(test)]
@@ -368,10 +298,8 @@ mod evidence_precondition_tests {
             .as_object()
             .cloned()
             .unwrap();
-        build_signed_request(
-            &Value::from(1),
-            "tools/call",
-            params,
+        build_signed_message(
+            McpMessage::new(Some(&Value::from(1)), "tools/call", params),
             TARGET,
             &inputs(bindings),
             &SigningKey::from_seed_bytes(&[11u8; 32]),
@@ -388,10 +316,8 @@ mod evidence_precondition_tests {
         .as_object()
         .cloned()
         .unwrap();
-        build_signed_request(
-            &Value::from(1),
-            "tools/call",
-            params,
+        build_signed_message(
+            McpMessage::new(Some(&Value::from(1)), "tools/call", params),
             TARGET,
             &inputs(vec![ArtifactBinding::opaque_digest(
                 ArtifactType::OauthDpop,
@@ -466,10 +392,8 @@ mod evidence_precondition_tests {
             .as_object()
             .cloned()
             .unwrap();
-        build_signed_request(
-            &Value::from(1),
-            "tools/call",
-            params,
+        build_signed_message(
+            McpMessage::new(Some(&Value::from(1)), "tools/call", params),
             target,
             &RequestSigningInputs::new(
                 "client-key-1",
@@ -588,9 +512,8 @@ mod notification_tests {
     }
 
     fn signed_notification() -> SignedRequest {
-        build_signed_notification(
-            "notifications/initialized",
-            Map::new(),
+        build_signed_message(
+            McpMessage::new(None, "notifications/initialized", Map::new()),
             TARGET,
             &inputs(),
             &key(),
@@ -663,9 +586,8 @@ mod notification_tests {
             b"state-1",
         ));
         assert_eq!(
-            build_signed_notification(
-                "notifications/cancelled",
-                Map::new(),
+            build_signed_message(
+                McpMessage::new(None, "notifications/cancelled", Map::new()),
                 TARGET,
                 &with_continuation,
                 &key(),
@@ -683,9 +605,8 @@ mod notification_tests {
     #[test]
     fn both_custody_classes_emit_identical_notification_bytes() {
         let software = signed_notification();
-        let delegated = build_signed_notification_with_signer(
-            "notifications/initialized",
-            Map::new(),
+        let delegated = build_signed_message_with_signer(
+            McpMessage::new(None, "notifications/initialized", Map::new()),
             TARGET,
             &inputs(),
             |preimage| {

@@ -23,6 +23,7 @@
 use mcp_re_core::ReplayCache;
 use mcp_re_core::ReplayCacheError;
 use mcp_re_core::ReplayDecision;
+use mcp_re_core::ReplayTriple;
 
 /// Field separator for the composite slots. `0x1F` (unit separator) cannot
 /// appear in a profile id, an RFC 9421 label, an escaped `actor_id`, or a
@@ -114,9 +115,7 @@ impl HttpReplayKey {
         expires_at_unix: i64,
     ) -> Result<ReplayDecision, ReplayCacheError> {
         cache.check_and_insert(
-            &self.signer_slot(),
-            self.audience_slot(),
-            &self.nonce,
+            ReplayTriple::new(&self.signer_slot(), self.audience_slot(), &self.nonce),
             expires_at_unix,
         )
     }

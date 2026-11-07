@@ -3452,7 +3452,7 @@ responses carry evidence does not contain a claim fixing it for the notification
 clause 2 fails; and *an accepted notification is answered with a signed bodyless 202* is an
 externally meaningful promise between two ends, settled by the #424 owner ruling, so clause 3
 fails independently. `the_client_cores_own_notification_envelope_earns_a_202` fails a third
-way: it asserts that `mcp_re_client_core::build_signed_notification`'s PRODUCER and the
+way: it asserts that `mcp_re_client_core::build_signed_message`'s PRODUCER and the
 proxy's classifier agree on the absence of `id`, a cross-crate correspondence whose client
 half is THM-0125's and whose server half no theorem states.
 
@@ -3582,7 +3582,7 @@ reject at serving time.
 registered evidence under THM-0069 in `proxy.audit_authority_coordinates`, and one became NP-191.
 This residue is refused for two independent reasons and needs only the first. THE PRODUCER IS IN
 ANOTHER CRATE: the proposition is about `mcp-re-client-core`'s `build_authorization` and
-`build_signed_request`, which is in no proxy unit's `paths`, and a unit's `paths` may not be widened
+`build_signed_message`, which is in no proxy unit's `paths`, and a unit's `paths` may not be widened
 to reach a control. And THM-0040 excludes the second row's subject in terms — *"The reference
 binding form produces no authorization at all and is outside this claim"* — so the construction this
 control proves impossible is one the theorem already declines to reason about. Packet at
