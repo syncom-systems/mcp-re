@@ -5908,7 +5908,10 @@ tested_symbols = [
 id = "sdk_typescript.exchange_binding"
 class = "V0"
 description = "The verdict the TypeScript SDK acts on was computed over the exact request bytes this exchange signed and transmitted: the value returned by `signRequest` is the one POSTed and the one passed to the verifier, and nothing is re-derived, re-serialized or reconstructed for it."
-paths = ["sdk/typescript/src/transport.ts"]
+paths = [
+  "sdk/typescript/src/transport.ts",
+  "sdk/typescript/src/transport_verify.ts",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -6039,7 +6042,10 @@ tested_symbols = [
 id = "sdk_typescript.verdict_delivery"
 class = "V0"
 description = "A verdict whose outcome is not `success` reaches the application as a correlated JSON-RPC error and never as a result; an EMPTY wire code is substituted rather than passed through as an error the application cannot act on; and the receipt's request-binding fact travels beside the frozen token rather than inside it."
-paths = ["sdk/typescript/src/transport.ts"]
+paths = [
+  "sdk/typescript/src/transport.ts",
+  "sdk/typescript/src/transport_errors.ts",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -6072,7 +6078,7 @@ tested_symbols = [
 id = "sdk_typescript.execution_report"
 class = "V0"
 description = "The application is told exactly the execution and retry members the verified receipt carried, and a member the receipt did not carry is not invented for it."
-paths = ["sdk/typescript/src/transport.ts"]
+paths = ["sdk/typescript/src/transport_errors.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -6093,7 +6099,10 @@ tested_symbols = [
 id = "sdk_typescript.local_failure_provenance"
 class = "V0"
 description = "A condition this SDK originated — a transport abort, a local signing failure, a network error, a defect — is reported under the SDK's own prefix, never as a frozen `mcp-re.*` token the peer did not send and never as an execution or retry verdict."
-paths = ["sdk/typescript/src/transport.ts"]
+paths = [
+  "sdk/typescript/src/transport.ts",
+  "sdk/typescript/src/transport_errors.ts",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -6127,7 +6136,10 @@ tested_symbols = [
 id = "sdk_typescript.reply_envelope"
 class = "V0"
 description = "What reaches the MCP client is rebuilt from the one member the verified reply carried plus the caller's own id; a verified reply that is not a JSON-RPC response — one carrying a `method`, one that is not a response at all — is refused rather than dispatched."
-paths = ["sdk/typescript/src/transport.ts"]
+paths = [
+  "sdk/typescript/src/transport_envelope.ts",
+  "sdk/typescript/src/transport.ts",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -6150,6 +6162,7 @@ description = "Only a terminal verified reply resolves the call: a non-terminal 
 paths = [
   "sdk/typescript/src/transport.ts",
   "sdk/typescript/src/correlation.ts",
+  "sdk/typescript/src/transport_continuation.ts",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -6264,7 +6277,10 @@ tested_symbols = [
 id = "sdk_typescript.nonce_floor"
 class = "V0"
 description = "No request and no notification is signed under a nonce below the 128-bit floor — a sub-floor or non-string factory result fails closed at sign time, under the SDK's own prefix rather than an invented wire token — and the freshness triple is generated per leg rather than taken from the caller."
-paths = ["sdk/typescript/src/transport.ts"]
+paths = [
+  "sdk/typescript/src/transport_freshness.ts",
+  "sdk/typescript/src/transport.ts",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
@@ -6302,7 +6318,10 @@ tested_symbols = [
 id = "sdk_typescript.notification_delivery"
 class = "V0"
 description = "A notification is treated as delivered only against an acknowledgement that verified as bound to THAT transmission; `send()` throws rather than returning when one does not verify. A client->server response, which MCP-RE profiles no carrier for, is refused rather than signed as a fabricated notification."
-paths = ["sdk/typescript/src/transport.ts"]
+paths = [
+  "sdk/typescript/src/transport.ts",
+  "sdk/typescript/src/transport_errors.ts",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
@@ -6327,7 +6346,7 @@ tested_symbols = [
 id = "sdk_typescript.trust_anchor_completeness"
 class = "V0"
 description = "The trust picture the whole acceptance chain is evaluated against is complete or the transport is refused at construction — no member of the anchor is defaulted — and the revocation denylist's SHAPE is checked, so a bare string cannot spread into a per-character list and a non-string entry cannot sit in one."
-paths = ["sdk/typescript/src/transport.ts"]
+paths = ["sdk/typescript/src/transport_config.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -6519,6 +6538,7 @@ description = "The authorization binding specs a request carries are the ones th
 paths = [
   "sdk/typescript/src/authorization.ts",
   "sdk/typescript/src/transport.ts",
+  "sdk/typescript/src/transport_binding.ts",
 ]
 exported_contracts = []
 evidence_class = "tested"
