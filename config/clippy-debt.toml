@@ -201,11 +201,13 @@ count = 29
 # 71 -> 70: the blocking-mtls `Content-Length` scan became an iterator pipeline; 70 -> 69: the
 # stray-value refusal's flag table and the CRL issuer match became separate functions; count
 # measured by this gate; 66 -> 65 measured by this
-# gate after the key-source and signature-verifier changes.
+# gate after the key-source and signature-verifier changes; 65 -> 61: the etcd store's
+# insert sequence, the attested-ingress verifier and the delegated signer's tests lost nested
+# sites; count measured by this gate.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 65
+count = 61
 
 # 0 -> 4: the same measurement correction as `arithmetic_side_effects` above; 1 -> 0 when
 # the trust-epoch reader's second, GET-based read path was folded into the one MGET read.
@@ -226,10 +228,11 @@ count = 11
 # re-maps posture and availability field by field.
 # 2 -> 1: #1204 (ADR-MCPRE-070 G1) — the pre-dispatch sequence in `http_profile_serve`
 # was restructured around the intent gate; count measured by this gate.
+# 1 -> 0: the etcd store's insert sequence became named stages.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "too_many_lines"
-count = 1
+count = 0
 
 # 3 -> 0: the runfiles-only resolver replaced the source-tree fallbacks.
 [[debt]]

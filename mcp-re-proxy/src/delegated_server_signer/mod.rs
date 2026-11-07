@@ -597,14 +597,12 @@ mod tests {
             .expect("K1 serves")
             .delegated_kid()
             .to_owned();
-        assert_eq!(
-            k1,
-            mcp_re_http_profile::jwk_thumbprint_ed25519(
-                &SigningKey::from_seed_bytes(&[101u8; 32])
-                    .public_key()
-                    .to_b64url()
-            )
+        let expected_k1 = mcp_re_http_profile::jwk_thumbprint_ed25519(
+            &SigningKey::from_seed_bytes(&[101u8; 32])
+                .public_key()
+                .to_b64url(),
         );
+        assert_eq!(k1, expected_k1);
 
         // Inside the overlap window the successor cannot be minted. The rotor keeps K1
         // (rotate stays Ok) instead of retiring — serving does not gap while K1 is
@@ -613,28 +611,21 @@ mod tests {
         rotor
             .rotate(in_overlap)
             .expect("K1 kept despite failed successor issuance");
-        assert_eq!(
-            signer
-                .current(in_overlap)
-                .expect("K1 still serves")
-                .delegated_kid(),
-            k1,
-            "still the same key — no stale successor minted, no signing gap"
-        );
-        assert!(
-            signer.current(NOW + T - 1).is_some(),
-            "…right up to just before exp"
-        );
+        let still_serving = signer.current(in_overlap).expect("K1 still serves");
+        // The same key — no stale successor minted, no signing gap.
+        assert_eq!(still_serving.delegated_kid(), k1);
+        // …right up to just before exp.
+        let just_before_exp = signer.current(NOW + T - 1);
+        assert!(just_before_exp.is_some());
 
         // At K1's own exp the hot path fails closed even though K1 was never retired.
-        assert!(signer.current(NOW + T).is_none(), "fails closed at K1 exp");
+        let at_exp = signer.current(NOW + T);
+        assert!(at_exp.is_none(), "fails closed at K1 exp");
 
         // Past exp with issuance still down, the rotor retires and surfaces the
         // fail-closed error — the hot path stays closed (no direct-root fallback).
-        assert_eq!(
-            rotor.rotate(NOW + T + 1),
-            Err(CustodyError::FailClosedIssuance)
-        );
+        let past_exp = rotor.rotate(NOW + T + 1);
+        assert_eq!(past_exp, Err(CustodyError::FailClosedIssuance));
         assert!(signer.current(NOW + T + 1).is_none());
     }
 
@@ -652,17 +643,17 @@ mod tests {
     #[test]
     fn metrics_count_success_and_reset_the_failure_streak() {
         let m = DelegatedRotationMetrics::default();
-        assert_eq!(m.record_failure(), 1);
-        assert_eq!(m.record_failure(), 2);
-        assert_eq!(m.consecutive_failures(), 2);
-        assert_eq!(m.rotation_failures(), 2);
+        let streak = (m.record_failure(), m.record_failure());
+        assert_eq!(streak, (1, 2));
+        let counted = (m.consecutive_failures(), m.rotation_failures());
+        assert_eq!(counted, (2, 2));
         m.record_success(NOW);
         assert_eq!(m.consecutive_failures(), 0, "success resets the streak");
-        assert_eq!(m.rotations_ok(), 1);
-        assert_eq!(m.last_success_unix(), NOW);
+        let successes = (m.rotations_ok(), m.last_success_unix());
+        assert_eq!(successes, (1, NOW));
         // The failure total is cumulative — a later failure resumes the streak at 1.
-        assert_eq!(m.record_failure(), 1);
-        assert_eq!(m.rotation_failures(), 3);
+        let resumed = m.record_failure();
+        assert_eq!((resumed, m.rotation_failures()), (1, 3));
     }
 
     /// The jittered result must always land in the equal-jitter band `[cap/2, cap]`.
@@ -843,27 +834,25 @@ mod terminal_retirement_tests {
             panic!("a panic under the write guard");
         })
         .join();
-        assert!(unwound.is_err(), "the poisoning thread must have unwound");
-        assert!(
-            signer.active.is_poisoned(),
-            "the test has not staged the condition under test"
+        let staged = (unwound.is_err(), signer.active.is_poisoned());
+        assert_eq!(
+            staged,
+            (true, true),
+            "the poisoning thread must have unwound and left the lock poisoned"
         );
 
-        assert!(
-            signer.current(NOW).is_some(),
-            "the snapshot is swapped whole, so a poisoned lock still holds a valid key"
-        );
-        assert_eq!(signer.seconds_to_expiry(NOW), Some(300));
+        // The snapshot is swapped whole, so a poisoned lock still holds a valid key.
+        let held = (signer.current(NOW).is_some(), signer.seconds_to_expiry(NOW));
+        assert_eq!(held, (true, Some(300)));
 
         // And the replica can still be told to stop signing, and to start again.
         signer.retire();
-        assert!(
-            signer.current(NOW).is_none(),
-            "retire must still fail closed"
-        );
+        let retired = signer.current(NOW).is_none();
+        assert!(retired, "retire must still fail closed");
         signer.publish(key(NOW + 300)).expect("inside the ceiling");
+        let healed = signer.current(NOW).is_some();
         assert!(
-            signer.current(NOW).is_some(),
+            healed,
             "a poisoned lock must not cost the replica its ability to self-heal"
         );
     }

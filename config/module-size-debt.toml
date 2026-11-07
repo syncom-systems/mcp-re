@@ -612,7 +612,9 @@ review_ref = "EX-017 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/async_etcd_store.rs"
-baseline_prod_loc = 370
+# The gateway exchange (`wire`) and the lease pool (`lease_pool`) leave for their own modules:
+# 370 -> 225.
+baseline_prod_loc = 225
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 

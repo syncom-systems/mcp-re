@@ -388,6 +388,23 @@ fn unique_key_entries(
     Ok(entries)
 }
 
+/// The configuration a [`LbAssertionV2Binding`] is built from: who the node trusts and for
+/// what. A plain input; [`LbAssertionV2Binding::new`] refuses a combination it cannot
+/// serve.
+#[derive(Debug, Clone)]
+pub struct LbAssertionV2Trust {
+    /// The [`IdentitySource`] stamped on the yielded client identity.
+    pub source: IdentitySource,
+    /// The node's own audience; an assertion's `audience` must equal it verbatim.
+    pub expected_audience: String,
+    /// The attestor verification keys, each under its key id.
+    pub keys: Vec<(String, VerificationKey)>,
+    /// The ingress identities the node trusts.
+    pub ingress_identities: Vec<String>,
+    /// Maximum accepted distance between `validation_time` and `now_unix`, either way.
+    pub max_age: MaxClockSkew,
+}
+
 /// A node-side verifier for Mode-C (`mcp-re/lb-ingress-assertion/v2`) attested-
 /// ingress assertions (ADR-MCPS-023 §C1–C3, v0.10).
 ///
@@ -428,30 +445,25 @@ impl LbAssertionV2Binding {
     /// not end-to-end client↔node channel binding.
     pub const GUARANTEE: &'static str = "attested_ingress_delegation";
 
-    /// Build a verifier for the node's `expected_audience` whose trust set is exactly
-    /// `keys` and `ingress_identities`, with freshness window `max_age`. `source` is the
-    /// [`IdentitySource`] stamped on the yielded identity.
+    /// Build a verifier whose trust set is exactly `trust.keys` and
+    /// `trust.ingress_identities`, for the node's `trust.expected_audience`, with freshness
+    /// window `trust.max_age`. `trust.source` is the [`IdentitySource`] stamped on the
+    /// yielded identity.
     ///
     /// The trust set is fixed here and has no mutator: retiring an attestor key or an
     /// ingress identity means building a new verifier from the new configuration. A set
     /// that is empty, names one key id twice, or trusts a blank identity is refused, and
     /// so is an audience the verbatim comparison could not match.
-    pub fn new(
-        source: IdentitySource,
-        expected_audience: impl Into<String>,
-        keys: impl IntoIterator<Item = (String, VerificationKey)>,
-        ingress_identities: impl IntoIterator<Item = String>,
-        max_age: MaxClockSkew,
-    ) -> Result<Self, LbAssertionV2BindingRefusal> {
-        let expected_audience = expected_audience.into();
+    pub fn new(trust: LbAssertionV2Trust) -> Result<Self, LbAssertionV2BindingRefusal> {
+        let expected_audience = trust.expected_audience;
         if expected_audience.trim().is_empty() || expected_audience.trim() != expected_audience {
             return Err(LbAssertionV2BindingRefusal::UnusableAudience);
         }
-        let entries = unique_key_entries(keys)?;
+        let entries = unique_key_entries(trust.keys)?;
         if entries.is_empty() {
             return Err(LbAssertionV2BindingRefusal::NoAttestorKey);
         }
-        let allowed: BTreeSet<String> = ingress_identities.into_iter().collect();
+        let allowed: BTreeSet<String> = trust.ingress_identities.into_iter().collect();
         if allowed.is_empty() {
             return Err(LbAssertionV2BindingRefusal::NoIngressIdentity);
         }
@@ -460,10 +472,10 @@ impl LbAssertionV2Binding {
         }
         Ok(LbAssertionV2Binding {
             keys: entries,
-            source,
+            source: trust.source,
             expected_audience,
             allowed_ingress_identities: allowed,
-            max_age,
+            max_age: trust.max_age,
         })
     }
 
@@ -512,21 +524,46 @@ impl LbAssertionV2Binding {
     ) -> Result<AttestedIngressVerified, LbAssertionV2Rejection> {
         // 1. Parse (framing + strict field shape).
         let (assertion, signature_b64url) = super::v2_wire::parse(assertion_value)?;
-        // 2. Key lookup — unknown key id fails closed.
+        // 2–3. Key lookup, then the signature over the canonical preimage.
+        self.check_signature(&assertion, &signature_b64url)?;
+        // 4. Freshness, plus the optional hard expiry.
+        self.check_freshness(&assertion, now_unix)?;
+        // 5. Request binding.
+        check_request_binding(&assertion, in_hand_request_hash)?;
+        // 6–7. Audience/route and ingress identity.
+        self.check_route(&assertion)?;
+        // 8. Recorded-facts admission.
+        admit_recorded_facts(&assertion)?;
+        Ok(self.verified(assertion))
+    }
+
+    /// Steps 2–3: an unknown `key_id` fails closed, and the signature must verify over the
+    /// length-prefixed canonical preimage.
+    fn check_signature(
+        &self,
+        assertion: &LbAssertionV2,
+        signature_b64url: &str,
+    ) -> Result<(), LbAssertionV2Rejection> {
         let key = self
             .key_for(&assertion.key_id)
             .ok_or(LbAssertionV2Rejection::UnknownKeyId)?;
-        // 3. Signature over the length-prefixed canonical preimage.
         let preimage = assertion.signing_preimage();
         verify_ed25519_with(
             &preimage,
-            &signature_b64url,
+            signature_b64url,
             key,
             McpReError::TransportBindingFailed,
         )
-        .map_err(|_| LbAssertionV2Rejection::BadSignature)?;
-        // 4. Freshness (symmetric window; reject implausibly-future timestamps too),
-        //    plus the optional hard expiry.
+        .map_err(|_| LbAssertionV2Rejection::BadSignature)
+    }
+
+    /// Step 4: freshness (symmetric window; reject implausibly-future timestamps too), plus
+    /// the optional hard expiry.
+    fn check_freshness(
+        &self,
+        assertion: &LbAssertionV2,
+        now_unix: i64,
+    ) -> Result<(), LbAssertionV2Rejection> {
         let age = now_unix.saturating_sub(assertion.validation_time);
         // Class R: the window is symmetric, so it is stated as one comparison against the
         // magnitude: negating the window to build the lower edge would be a partial
@@ -535,43 +572,30 @@ impl LbAssertionV2Binding {
         if age.saturating_abs() > self.max_age.secs() {
             return Err(LbAssertionV2Rejection::Stale);
         }
-        if let Some(deadline) = assertion.expires_at {
-            if now_unix > deadline {
-                return Err(LbAssertionV2Rejection::Expired);
-            }
+        match assertion.expires_at {
+            Some(deadline) if now_unix > deadline => Err(LbAssertionV2Rejection::Expired),
+            _ => Ok(()),
         }
-        // 5. Request binding — compare parsed 32-byte digests so two encodings of
-        //    the same digest match and a malformed bound hash fails closed.
-        let bound = parse_hash_id(&assertion.request_hash)
-            .map_err(|_| LbAssertionV2Rejection::RequestHashMismatch)?;
-        let in_hand = parse_hash_id(in_hand_request_hash)
-            .map_err(|_| LbAssertionV2Rejection::RequestHashMismatch)?;
-        if bound != in_hand {
-            return Err(LbAssertionV2Rejection::RequestHashMismatch);
-        }
-        // 6. Audience/route.
+    }
+
+    /// Steps 6–7: the assertion's audience must be the node's own, and its ingress identity
+    /// one the node trusts.
+    fn check_route(&self, assertion: &LbAssertionV2) -> Result<(), LbAssertionV2Rejection> {
         if assertion.audience != self.expected_audience {
             return Err(LbAssertionV2Rejection::AudienceMismatch);
         }
-        // 7. Ingress identity must be trusted.
         if !self
             .allowed_ingress_identities
             .contains(&assertion.ingress_identity)
         {
             return Err(LbAssertionV2Rejection::UntrustedIngressIdentity);
         }
-        // 8. Recorded-facts admission (bind-not-interpret): admit only the attestor's
-        //    positive verdicts; the node recomputes NEITHER (§C3).
-        if assertion.cert_verification_result != AttestedCertVerification::Verified {
-            return Err(LbAssertionV2Rejection::CertificateNotVerified);
-        }
-        match assertion.revocation_result {
-            AttestedRevocation::Good => {}
-            AttestedRevocation::Revoked => return Err(LbAssertionV2Rejection::Revoked),
-            AttestedRevocation::Unknown => return Err(LbAssertionV2Rejection::RevocationUnknown),
-            AttestedRevocation::StaleCrl => return Err(LbAssertionV2Rejection::StaleRevocation),
-        }
-        Ok(AttestedIngressVerified {
+        Ok(())
+    }
+
+    /// The verified yield: the asserted client identity attributed to the verified ingress.
+    fn verified(&self, assertion: LbAssertionV2) -> AttestedIngressVerified {
+        AttestedIngressVerified {
             client_identity: TransportIdentity::attested_by_verified_ingress(
                 assertion.asserted_client_identity,
                 self.source,
@@ -580,7 +604,37 @@ impl LbAssertionV2Binding {
             cert_verification_result: assertion.cert_verification_result,
             revocation_result: assertion.revocation_result,
             crl_next_update: assertion.crl_next_update,
-        })
+        }
+    }
+}
+
+/// Step 5: compare parsed 32-byte digests so two encodings of the same digest match and a
+/// malformed bound hash fails closed.
+fn check_request_binding(
+    assertion: &LbAssertionV2,
+    in_hand_request_hash: &str,
+) -> Result<(), LbAssertionV2Rejection> {
+    let bound = parse_hash_id(&assertion.request_hash)
+        .map_err(|_| LbAssertionV2Rejection::RequestHashMismatch)?;
+    let in_hand = parse_hash_id(in_hand_request_hash)
+        .map_err(|_| LbAssertionV2Rejection::RequestHashMismatch)?;
+    if bound != in_hand {
+        return Err(LbAssertionV2Rejection::RequestHashMismatch);
+    }
+    Ok(())
+}
+
+/// Step 8: recorded-facts admission (bind-not-interpret). Admit only the attestor's
+/// positive verdicts; the node recomputes NEITHER (§C3).
+fn admit_recorded_facts(assertion: &LbAssertionV2) -> Result<(), LbAssertionV2Rejection> {
+    if assertion.cert_verification_result != AttestedCertVerification::Verified {
+        return Err(LbAssertionV2Rejection::CertificateNotVerified);
+    }
+    match assertion.revocation_result {
+        AttestedRevocation::Good => Ok(()),
+        AttestedRevocation::Revoked => Err(LbAssertionV2Rejection::Revoked),
+        AttestedRevocation::Unknown => Err(LbAssertionV2Rejection::RevocationUnknown),
+        AttestedRevocation::StaleCrl => Err(LbAssertionV2Rejection::StaleRevocation),
     }
 }
 
@@ -639,13 +693,21 @@ mod tests {
         keys: Vec<(String, VerificationKey)>,
         identities: Vec<String>,
     ) -> Result<LbAssertionV2Binding, LbAssertionV2BindingRefusal> {
-        LbAssertionV2Binding::new(
-            IdentitySource::UriSan,
-            V2_AUDIENCE,
+        v2_binding_for(V2_AUDIENCE, keys, identities)
+    }
+
+    fn v2_binding_for(
+        audience: &str,
+        keys: Vec<(String, VerificationKey)>,
+        identities: Vec<String>,
+    ) -> Result<LbAssertionV2Binding, LbAssertionV2BindingRefusal> {
+        LbAssertionV2Binding::new(LbAssertionV2Trust {
+            source: IdentitySource::UriSan,
+            expected_audience: audience.to_string(),
             keys,
-            identities,
-            crate::transport::ingress::DEFAULT_LB_ASSERTION_MAX_AGE,
-        )
+            ingress_identities: identities,
+            max_age: crate::transport::ingress::DEFAULT_LB_ASSERTION_MAX_AGE,
+        })
     }
 
     #[test]
@@ -685,12 +747,10 @@ mod tests {
         );
         for audience in ["", " did:example:server-1"] {
             assert_eq!(
-                LbAssertionV2Binding::new(
-                    IdentitySource::UriSan,
+                v2_binding_for(
                     audience,
                     vec![("attestor-1".to_string(), lb.clone())],
                     ingress.clone(),
-                    crate::transport::ingress::DEFAULT_LB_ASSERTION_MAX_AGE,
                 )
                 .err(),
                 Some(LbAssertionV2BindingRefusal::UnusableAudience),

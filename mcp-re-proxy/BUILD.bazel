@@ -504,7 +504,10 @@ _PROXY_LIB_SRCS = [
     # async serving fleet awaits.
     "src/async_etcd_store.rs",
     "src/async_etcd_store/gateway.rs",
+    "src/async_etcd_store/lease_pool.rs",
     "src/async_etcd_store/protocol.rs",
+    "src/async_etcd_store/test_gateways.rs",
+    "src/async_etcd_store/wire.rs",
     # ADR-MCPS-020: declared replay-store durability tier (deployment assertion).
     "src/replay_tier.rs",
     # MCPRE-104 (#308): proxy replay-tier adapter around the HTTP-profile dispatcher

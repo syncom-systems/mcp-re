@@ -453,6 +453,34 @@ mod tests {
 }
 
 #[cfg(test)]
+mod client_leaf {
+    //! The client leaf both certificate-chain test modules present.
+
+    use rcgen::CertificateParams;
+    use rcgen::DnType;
+    use rcgen::KeyPair;
+    use rcgen::SerialNumber;
+    use rustls_pki_types::CertificateDer;
+
+    /// A client-auth leaf signed by `issuer`, valid until `not_after`. An explicit `serial`
+    /// lets a CRL revoke exactly this certificate.
+    pub(super) fn signed_by(
+        issuer: &rcgen::Issuer<'_, &KeyPair>,
+        serial: Option<u64>,
+        not_after: (i32, u8, u8),
+    ) -> CertificateDer<'static> {
+        let key = KeyPair::generate().expect("leaf key");
+        let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
+        params.distinguished_name.push(DnType::CommonName, "peer");
+        params.serial_number = serial.map(SerialNumber::from);
+        params.not_before = rcgen::date_time_ymd(2020, 1, 1);
+        params.not_after = rcgen::date_time_ymd(not_after.0, not_after.1, not_after.2);
+        params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
+        params.signed_by(&key, issuer).expect("leaf").der().clone()
+    }
+}
+
+#[cfg(test)]
 mod chain_validity_tests {
     //! ADR-MCPRE-055: a resumed TLS 1.3 handshake restores the stored peer chain and
     //! skips chain building, so the per-request gate is the only place an INTERMEDIATE's
@@ -512,17 +540,7 @@ mod chain_validity_tests {
     }
 
     fn leaf(issuer: &Signer) -> CertificateDer<'static> {
-        let key = KeyPair::generate().expect("leaf key");
-        let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
-        params.distinguished_name.push(DnType::CommonName, "peer");
-        params.not_before = rcgen::date_time_ymd(2020, 1, 1);
-        params.not_after = rcgen::date_time_ymd(2999, 1, 1);
-        params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
-        params
-            .signed_by(&key, &issuer.issuer())
-            .expect("leaf")
-            .der()
-            .clone()
+        super::client_leaf::signed_by(&issuer.issuer(), None, (2999, 1, 1))
     }
 
     /// The evaluation runs whenever any control is configured; a ceiling wide enough to
@@ -699,18 +717,7 @@ mod per_request_revocation_tests {
     /// A client leaf with an explicit serial, so a CRL can revoke exactly this
     /// certificate.
     fn leaf(issuer: &Ca, serial: u64) -> CertificateDer<'static> {
-        let key = KeyPair::generate().expect("leaf key");
-        let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
-        params.distinguished_name.push(DnType::CommonName, "peer");
-        params.serial_number = Some(SerialNumber::from(serial));
-        params.not_before = rcgen::date_time_ymd(2020, 1, 1);
-        params.not_after = rcgen::date_time_ymd(2035, 1, 1);
-        params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
-        params
-            .signed_by(&key, &issuer.issuer())
-            .expect("leaf")
-            .der()
-            .clone()
+        super::client_leaf::signed_by(&issuer.issuer(), Some(serial), (2035, 1, 1))
     }
 
     /// A signed CRL from `ca` revoking each serial in `revoked`. An empty list is the
@@ -760,6 +767,35 @@ mod per_request_revocation_tests {
     const SERVED: Result<Option<CurrencyControls>, CredentialCurrencyRefusal> =
         Ok(Some(CurrencyControls::Revocation));
 
+    /// The outcome for `peer` presented alone under the CRLs in `revocation`.
+    fn leaf_outcome(
+        peer: &CertificateDer<'_>,
+        revocation: &Arc<ClientRevocationIndex>,
+    ) -> Result<Option<CurrencyControls>, CredentialCurrencyRefusal> {
+        outcome(&[peer.as_ref()], &options(revocation))
+    }
+
+    /// The outcome for `peer` presented with its issuing intermediate `ica`.
+    fn chain_outcome(
+        peer: &CertificateDer<'_>,
+        ica: &Ca,
+        revocation: &Arc<ClientRevocationIndex>,
+    ) -> Result<Option<CurrencyControls>, CredentialCurrencyRefusal> {
+        outcome(&[peer.as_ref(), ica.der.as_ref()], &options(revocation))
+    }
+
+    /// The refusal of a leaf whose own revocation verdict was `verdict`.
+    fn leaf_refused(
+        verdict: RevocationVerdict,
+    ) -> Result<Option<CurrencyControls>, CredentialCurrencyRefusal> {
+        Err(CredentialCurrencyRefusal::LeafRevocationRefused { verdict })
+    }
+
+    /// A CRL from `ca` listing `revoked`, in force until 2035.
+    fn crl_in_force(ca: &Ca, revoked: &[u64]) -> Vec<u8> {
+        crl(ca, revoked, (2035, 1, 1))
+    }
+
     /// A leaf whose issuer is covered by a CRL that does not list it keeps being served.
     ///
     /// This is the control every refusal below is read against, and it is also what
@@ -770,8 +806,8 @@ mod per_request_revocation_tests {
     fn a_leaf_a_current_crl_does_not_list_is_served() {
         let ca = root("revocation-ca");
         let peer = leaf(&ca, LEAF_SERIAL);
-        let revocation = shared(&[&ca], &[crl(&ca, &[], (2035, 1, 1))]);
-        assert_eq!(outcome(&[peer.as_ref()], &options(&revocation)), SERVED);
+        let revocation = shared(&[&ca], &[crl_in_force(&ca, &[])]);
+        assert_eq!(leaf_outcome(&peer, &revocation), SERVED);
     }
 
     /// A leaf listed on a CRL in force is refused on every request, with no lifetime
@@ -784,12 +820,11 @@ mod per_request_revocation_tests {
     fn a_leaf_on_a_current_crl_is_refused() {
         let ca = root("revocation-ca");
         let peer = leaf(&ca, LEAF_SERIAL);
-        let revocation = shared(&[&ca], &[crl(&ca, &[LEAF_SERIAL], (2035, 1, 1))]);
+        let revocation = shared(&[&ca], &[crl_in_force(&ca, &[LEAF_SERIAL])]);
+        let served = leaf_outcome(&peer, &revocation);
         assert_eq!(
-            outcome(&[peer.as_ref()], &options(&revocation)),
-            Err(CredentialCurrencyRefusal::LeafRevocationRefused {
-                verdict: RevocationVerdict::Revoked
-            }),
+            served,
+            leaf_refused(RevocationVerdict::Revoked),
             "a revoked leaf must stop being served"
         );
     }
@@ -807,15 +842,14 @@ mod per_request_revocation_tests {
         let ca = root("revocation-ca");
         let peer = leaf(&ca, LEAF_SERIAL);
 
-        let before = options(&shared(&[&ca], &[crl(&ca, &[], (2035, 1, 1))]));
-        assert_eq!(outcome(&[peer.as_ref()], &before), SERVED);
+        let before = shared(&[&ca], &[crl_in_force(&ca, &[])]);
+        assert_eq!(leaf_outcome(&peer, &before), SERVED);
 
-        let after = options(&shared(&[&ca], &[crl(&ca, &[LEAF_SERIAL], (2035, 1, 1))]));
+        let after = shared(&[&ca], &[crl_in_force(&ca, &[LEAF_SERIAL])]);
+        let reloaded = leaf_outcome(&peer, &after);
         assert_eq!(
-            outcome(&[peer.as_ref()], &after),
-            Err(CredentialCurrencyRefusal::LeafRevocationRefused {
-                verdict: RevocationVerdict::Revoked
-            }),
+            reloaded,
+            leaf_refused(RevocationVerdict::Revoked),
             "the reloaded CRL must reach the connection already being served"
         );
     }
@@ -827,13 +861,9 @@ mod per_request_revocation_tests {
         let ca = root("revocation-ca");
         let other = root("unrelated-ca");
         let peer = leaf(&ca, LEAF_SERIAL);
-        let revocation = shared(&[&other], &[crl(&other, &[], (2035, 1, 1))]);
-        assert_eq!(
-            outcome(&[peer.as_ref()], &options(&revocation)),
-            Err(CredentialCurrencyRefusal::LeafRevocationRefused {
-                verdict: RevocationVerdict::Unknown
-            })
-        );
+        let revocation = shared(&[&other], &[crl_in_force(&other, &[])]);
+        let uncovered = leaf_outcome(&peer, &revocation);
+        assert_eq!(uncovered, leaf_refused(RevocationVerdict::Unknown));
     }
 
     /// A CRL past its `nextUpdate` can no longer answer `Good`, so its issuer's
@@ -844,12 +874,8 @@ mod per_request_revocation_tests {
         let ca = root("revocation-ca");
         let peer = leaf(&ca, LEAF_SERIAL);
         let revocation = shared(&[&ca], &[crl(&ca, &[], (2021, 1, 1))]);
-        assert_eq!(
-            outcome(&[peer.as_ref()], &options(&revocation)),
-            Err(CredentialCurrencyRefusal::LeafRevocationRefused {
-                verdict: RevocationVerdict::Unknown
-            })
-        );
+        let lapsed = leaf_outcome(&peer, &revocation);
+        assert_eq!(lapsed, leaf_refused(RevocationVerdict::Unknown));
     }
 
     /// A chain whose intermediate is covered and unlisted is served — the control for
@@ -861,12 +887,9 @@ mod per_request_revocation_tests {
         let peer = leaf(&ica, LEAF_SERIAL);
         let revocation = shared(
             &[&ca, &ica],
-            &[crl(&ca, &[], (2035, 1, 1)), crl(&ica, &[], (2035, 1, 1))],
+            &[crl_in_force(&ca, &[]), crl_in_force(&ica, &[])],
         );
-        assert_eq!(
-            outcome(&[peer.as_ref(), ica.der.as_ref()], &options(&revocation)),
-            SERVED
-        );
+        assert_eq!(chain_outcome(&peer, &ica, &revocation), SERVED);
     }
 
     /// Revoking the ISSUING INTERMEDIATE stops the leaf being served, even though the
@@ -883,13 +906,11 @@ mod per_request_revocation_tests {
         let peer = leaf(&ica, LEAF_SERIAL);
         let revocation = shared(
             &[&ca, &ica],
-            &[
-                crl(&ca, &[ICA_SERIAL], (2035, 1, 1)),
-                crl(&ica, &[], (2035, 1, 1)),
-            ],
+            &[crl_in_force(&ca, &[ICA_SERIAL]), crl_in_force(&ica, &[])],
         );
+        let served = chain_outcome(&peer, &ica, &revocation);
         assert_eq!(
-            outcome(&[peer.as_ref(), ica.der.as_ref()], &options(&revocation)),
+            served,
             Err(CredentialCurrencyRefusal::IssuerRevoked),
             "a revoked issuing intermediate must stop the leaf being served"
         );
@@ -903,11 +924,8 @@ mod per_request_revocation_tests {
         let ca = root("revocation-root");
         let ica = intermediate(&ca, "revocation-ica", ICA_SERIAL);
         let peer = leaf(&ica, LEAF_SERIAL);
-        let revocation = shared(&[&ica], &[crl(&ica, &[], (2035, 1, 1))]);
-        assert_eq!(
-            outcome(&[peer.as_ref(), ica.der.as_ref()], &options(&revocation)),
-            SERVED
-        );
+        let revocation = shared(&[&ica], &[crl_in_force(&ica, &[])]);
+        assert_eq!(chain_outcome(&peer, &ica, &revocation), SERVED);
     }
 
     /// A self-signed certificate with no orderable window is exempt from the validity pass,

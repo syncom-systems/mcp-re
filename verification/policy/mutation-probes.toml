@@ -3701,10 +3701,10 @@ theorem = "THM-0107"
 conjunct = "the per-operation deadline is clamped at BOTH ends — zero would fail every insert closed, and an absurd value is indistinguishable from no deadline"
 path = "mcp-re-proxy/src/async_etcd_store.rs"
 anchor = """
-            op_timeout: op_timeout.clamp(Duration::from_millis(1), MAX_ETCD_OP_TIMEOUT),
+        let op_timeout = op_timeout.clamp(Duration::from_millis(1), MAX_ETCD_OP_TIMEOUT);
 """
 weakening = """
-            op_timeout,
+        let op_timeout = op_timeout;
 """
 expect_red = [
   "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::tests::the_operation_timeout_is_clamped_at_both_ends",

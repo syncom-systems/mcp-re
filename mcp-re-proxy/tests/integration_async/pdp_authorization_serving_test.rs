@@ -456,6 +456,34 @@ async fn serve(p: &HttpProfileProxy, req: HttpRequest) -> (u16, String) {
     )
 }
 
+/// What a refused call must look like: the tool it called and the reason the 403 names.
+struct Refusal {
+    tool: &'static str,
+    reason: Option<&'static str>,
+}
+
+/// A call to `Refusal::tool` presenting `decision` against the default PDP proxy must be
+/// refused: a 403 naming `Refusal::reason` (when one is expected), and the backend never
+/// reached.
+async fn presented_decision_is_refused(decision: &str, expected: Refusal) {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let call = signed_call(expected.tool, &unique_test_nonce(), Some(decision));
+    let (status, body) = serve(&proxy(Arc::clone(&calls)), call).await;
+    assert_eq!(status, 403, "{body}");
+    if let Some(reason) = expected.reason {
+        assert!(body.contains(reason), "{body}");
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+/// A refusal of `tool` that names `reason`.
+fn refused_for(tool: &'static str, reason: &'static str) -> Refusal {
+    Refusal {
+        tool,
+        reason: Some(reason),
+    }
+}
+
 #[tokio::test]
 async fn a_permit_decision_reaches_the_backend() {
     let calls = Arc::new(AtomicUsize::new(0));
@@ -471,87 +499,57 @@ async fn a_permit_decision_reaches_the_backend() {
 
 #[tokio::test]
 async fn an_explicit_deny_never_reaches_the_backend() {
-    let calls = Arc::new(AtomicUsize::new(0));
     let mut claims = decision_for(Some("read"), "tools/call");
     claims.mcp_re_decision = PdpDecisionOutcome::Deny;
     let d = issue(&claims, &pdp_key());
-    let (status, body) = serve(
-        &proxy(Arc::clone(&calls)),
-        signed_call("read", &unique_test_nonce(), Some(&d)),
-    )
-    .await;
-    assert_eq!(status, 403);
-    assert!(body.contains("mcp-re.authorization_scope_denied"), "{body}");
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let denied = refused_for("read", "mcp-re.authorization_scope_denied");
+    presented_decision_is_refused(&d, denied).await;
 }
 
 #[tokio::test]
 async fn a_decision_issued_to_another_actor_does_not_authorize_this_one() {
     // The BEARER-TOKEN control. The decision is genuine, current, signed by the real
     // authority; the only thing wrong with it is that it names somebody else.
-    let calls = Arc::new(AtomicUsize::new(0));
     let mut claims = decision_for(Some("read"), "tools/call");
     claims.mcp_re_decided_actor = DecidedActor::Principal {
         trust_domain: TRUST_DOMAIN.into(),
         subject: "did:example:someone-else".into(),
     };
     let d = issue(&claims, &pdp_key());
-    let (status, body) = serve(
-        &proxy(Arc::clone(&calls)),
-        signed_call("read", &unique_test_nonce(), Some(&d)),
-    )
-    .await;
-    assert_eq!(status, 403);
-    assert!(
-        body.contains("mcp-re.authorization_signer_mismatch"),
-        "{body}"
-    );
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let mismatch = refused_for("read", "mcp-re.authorization_signer_mismatch");
+    presented_decision_is_refused(&d, mismatch).await;
 }
 
 #[tokio::test]
 async fn a_decision_for_another_trust_domain_does_not_authorize_this_subject() {
-    let calls = Arc::new(AtomicUsize::new(0));
     let mut claims = decision_for(Some("read"), "tools/call");
     claims.mcp_re_decided_actor = DecidedActor::Principal {
         trust_domain: "other.example".into(),
         subject: SUBJECT.into(),
     };
     let d = issue(&claims, &pdp_key());
-    let (status, _) = serve(
-        &proxy(Arc::clone(&calls)),
-        signed_call("read", &unique_test_nonce(), Some(&d)),
-    )
-    .await;
-    assert_eq!(status, 403);
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let refusal = Refusal {
+        tool: "read",
+        reason: None,
+    };
+    presented_decision_is_refused(&d, refusal).await;
 }
 
 #[tokio::test]
 async fn a_decision_for_another_tool_does_not_authorize_this_call() {
-    let calls = Arc::new(AtomicUsize::new(0));
     let d = issue(&decision_for(Some("read"), "tools/call"), &pdp_key());
-    let (status, body) = serve(
-        &proxy(Arc::clone(&calls)),
-        signed_call("delete", &unique_test_nonce(), Some(&d)),
-    )
-    .await;
-    assert_eq!(status, 403);
-    assert!(body.contains("mcp-re.authorization_scope_denied"), "{body}");
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let denied = refused_for("delete", "mcp-re.authorization_scope_denied");
+    presented_decision_is_refused(&d, denied).await;
 }
 
 #[tokio::test]
 async fn a_decision_for_another_operation_does_not_authorize_this_one() {
-    let calls = Arc::new(AtomicUsize::new(0));
     let d = issue(&decision_for(None, "tools/list"), &pdp_key());
-    let (status, _) = serve(
-        &proxy(Arc::clone(&calls)),
-        signed_call("read", &unique_test_nonce(), Some(&d)),
-    )
-    .await;
-    assert_eq!(status, 403);
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let refusal = Refusal {
+        tool: "read",
+        reason: None,
+    };
+    presented_decision_is_refused(&d, refusal).await;
 }
 
 /// A call whose signed body names no tool, against a decision that names no target.
@@ -591,38 +589,18 @@ async fn a_call_naming_no_tool_is_not_authorized_by_a_targetless_decision() {
 async fn a_decision_from_an_authority_this_deployment_does_not_trust_is_refused() {
     // Signed by a real key, under a kid the deployment's AUTHORIZATION resolver does not
     // know. Request-signer trust is irrelevant here and must not rescue it.
-    let calls = Arc::new(AtomicUsize::new(0));
     let mut claims = decision_for(Some("read"), "tools/call");
     claims.issuer_kid = "some-other-pdp".into();
     let d = issue(&claims, &pdp_key());
-    let (status, body) = serve(
-        &proxy(Arc::clone(&calls)),
-        signed_call("read", &unique_test_nonce(), Some(&d)),
-    )
-    .await;
-    assert_eq!(status, 403);
-    assert!(
-        body.contains("mcp-re.authorization_signature_invalid"),
-        "{body}"
-    );
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let invalid = refused_for("read", "mcp-re.authorization_signature_invalid");
+    presented_decision_is_refused(&d, invalid).await;
 }
 
 #[tokio::test]
 async fn a_decision_signed_by_the_wrong_key_under_a_trusted_kid_is_refused() {
-    let calls = Arc::new(AtomicUsize::new(0));
     let d = issue(&decision_for(Some("read"), "tools/call"), &other_pdp_key());
-    let (status, body) = serve(
-        &proxy(Arc::clone(&calls)),
-        signed_call("read", &unique_test_nonce(), Some(&d)),
-    )
-    .await;
-    assert_eq!(status, 403);
-    assert!(
-        body.contains("mcp-re.authorization_signature_invalid"),
-        "{body}"
-    );
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let invalid = refused_for("read", "mcp-re.authorization_signature_invalid");
+    presented_decision_is_refused(&d, invalid).await;
 }
 
 #[tokio::test]
@@ -694,7 +672,6 @@ async fn a_decision_scoped_differently_from_the_deployments_profile_is_refused()
     // The signed scope is what the decision IS; configuration is what the deployment
     // ACCEPTS. Neither infers the other, so one document cannot mean a principal grant here
     // and a credential grant next door.
-    let calls = Arc::new(AtomicUsize::new(0));
     let mut claims = decision_for(Some("read"), "tools/call");
     claims.mcp_re_decided_actor = DecidedActor::Credential {
         trust_domain: TRUST_DOMAIN.into(),
@@ -704,13 +681,11 @@ async fn a_decision_scoped_differently_from_the_deployments_profile_is_refused()
     let d = issue(&claims, &pdp_key());
     // The deployment accepts PRINCIPAL-scoped decisions; this one is credential-scoped, and
     // it matches this caller on every dimension. It is still refused.
-    let (status, _) = serve(
-        &proxy(Arc::clone(&calls)),
-        signed_call("read", &unique_test_nonce(), Some(&d)),
-    )
-    .await;
-    assert_eq!(status, 403);
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let refusal = Refusal {
+        tool: "read",
+        reason: None,
+    };
+    presented_decision_is_refused(&d, refusal).await;
 }
 
 #[tokio::test]
@@ -748,39 +723,22 @@ async fn a_credential_scoped_deployment_binds_the_signing_key() {
 
 #[tokio::test]
 async fn a_stale_decision_is_refused_even_inside_its_own_validity_window() {
-    let calls = Arc::new(AtomicUsize::new(0));
     let mut claims = decision_for(Some("read"), "tools/call");
     claims.iat = NOW - 10_000;
     claims.nbf = NOW - 10_000;
     claims.exp = NOW + 10_000;
     let d = issue(&claims, &pdp_key());
-    let (status, body) = serve(
-        &proxy(Arc::clone(&calls)),
-        signed_call("read", &unique_test_nonce(), Some(&d)),
-    )
-    .await;
-    assert_eq!(status, 403);
-    assert!(body.contains("mcp-re.authorization_expired"), "{body}");
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let expired = refused_for("read", "mcp-re.authorization_expired");
+    presented_decision_is_refused(&d, expired).await;
 }
 
 #[tokio::test]
 async fn a_decision_issued_for_another_enforcement_point_is_refused() {
-    let calls = Arc::new(AtomicUsize::new(0));
     let mut claims = decision_for(Some("read"), "tools/call");
     claims.aud = Audience::One("verifier-2".into());
     let d = issue(&claims, &pdp_key());
-    let (status, body) = serve(
-        &proxy(Arc::clone(&calls)),
-        signed_call("read", &unique_test_nonce(), Some(&d)),
-    )
-    .await;
-    assert_eq!(status, 403);
-    assert!(
-        body.contains("mcp-re.authorization_audience_mismatch"),
-        "{body}"
-    );
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let mismatch = refused_for("read", "mcp-re.authorization_audience_mismatch");
+    presented_decision_is_refused(&d, mismatch).await;
 }
 
 #[tokio::test]

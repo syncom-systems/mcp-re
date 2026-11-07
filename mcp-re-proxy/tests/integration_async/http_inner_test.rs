@@ -142,6 +142,18 @@ fn dead_backend_fails_closed_as_indeterminate() {
     });
 }
 
+/// One round trip against the single backend at `addr` must come back `InvalidUpstream`:
+/// `why` names what the backend did that makes its answer unusable.
+async fn assert_invalid_upstream(addr: SocketAddr, why: &str) {
+    let pool =
+        HttpInnerPool::new(vec![uri_for(addr)], Duration::from_secs(5)).expect("pool builds");
+    let out = round_trip(&pool, br#"{"jsonrpc":"2.0","id":1}"#).await;
+    assert!(
+        matches!(out, DispatchedOutcome::InvalidUpstream(_)),
+        "{why}: {out:?}"
+    );
+}
+
 /// A non-2xx status means the backend ANSWERED — so this is an unusable answer, not an
 /// indeterminate dispatch. The distinction is what stops "the backend rejected the call"
 /// and "we never heard back" being the same fact.
@@ -149,14 +161,11 @@ fn dead_backend_fails_closed_as_indeterminate() {
 fn non_2xx_status_is_an_invalid_upstream_answer_not_an_unknown_one() {
     rt().block_on(async {
         let addr = spawn_backend(500, b"upstream boom").await;
-        let pool =
-            HttpInnerPool::new(vec![uri_for(addr)], Duration::from_secs(5)).expect("pool builds");
-
-        let out = round_trip(&pool, br#"{"jsonrpc":"2.0","id":1}"#).await;
-        assert!(
-            matches!(out, DispatchedOutcome::InvalidUpstream(_)),
-            "a non-2xx inner status must fail closed, never sign backend error bytes: {out:?}"
-        );
+        assert_invalid_upstream(
+            addr,
+            "a non-2xx inner status must fail closed, never sign backend error bytes",
+        )
+        .await;
     });
 }
 
@@ -314,14 +323,11 @@ async fn spawn_truncating_backend() -> SocketAddr {
 fn a_truncated_response_body_is_an_invalid_upstream_answer() {
     rt().block_on(async {
         let addr = spawn_truncating_backend().await;
-        let pool =
-            HttpInnerPool::new(vec![uri_for(addr)], Duration::from_secs(5)).expect("pool builds");
-
-        let out = round_trip(&pool, br#"{"jsonrpc":"2.0","id":1}"#).await;
-        assert!(
-            matches!(out, DispatchedOutcome::InvalidUpstream(_)),
-            "a backend that answered and then broke its body did act: {out:?}"
-        );
+        assert_invalid_upstream(
+            addr,
+            "a backend that answered and then broke its body did act",
+        )
+        .await;
     });
 }
 
@@ -362,95 +368,13 @@ fn round_robin_spreads_across_backends() {
 
 // --- Resilience: outlier ejection, circuit breaking, health-aware LB (MCPRE-119) -
 
-/// A backend that COUNTS every request it receives and always answers with
-/// `status` + `body`. The counter lets a test assert that an ejected backend stops
-/// receiving traffic.
-async fn spawn_counting_backend(
-    status: u16,
-    body: &'static [u8],
-) -> (SocketAddr, Arc<AtomicUsize>) {
-    let hits = Arc::new(AtomicUsize::new(0));
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind backend");
-    let addr = listener.local_addr().expect("addr");
-    let hits_srv = Arc::clone(&hits);
-    tokio::spawn(async move {
-        loop {
-            let Ok((stream, _)) = listener.accept().await else {
-                continue;
-            };
-            let hits_conn = Arc::clone(&hits_srv);
-            tokio::spawn(async move {
-                let io = TokioIo::new(stream);
-                let svc = service_fn(move |_req| {
-                    let hits_req = Arc::clone(&hits_conn);
-                    async move {
-                        hits_req.fetch_add(1, Ordering::SeqCst);
-                        Ok::<_, Infallible>(
-                            Response::builder()
-                                .status(status)
-                                .header("content-type", "application/json")
-                                .body(Full::new(Bytes::from_static(body)))
-                                .expect("response builds"),
-                        )
-                    }
-                });
-                let _ = auto::Builder::new(TokioExecutor::new())
-                    .serve_connection(io, svc)
-                    .await;
-            });
-        }
-    });
-    (addr, hits)
-}
-
-/// A backend that counts each request, then SLEEPS `delay` before answering — so a
-/// pool whose `request_timeout` is shorter sees every call as a timeout failure.
-async fn spawn_slow_counting_backend(
-    delay: Duration,
-    body: &'static [u8],
-) -> (SocketAddr, Arc<AtomicUsize>) {
-    let hits = Arc::new(AtomicUsize::new(0));
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind backend");
-    let addr = listener.local_addr().expect("addr");
-    let hits_srv = Arc::clone(&hits);
-    tokio::spawn(async move {
-        loop {
-            let Ok((stream, _)) = listener.accept().await else {
-                continue;
-            };
-            let hits_conn = Arc::clone(&hits_srv);
-            tokio::spawn(async move {
-                let io = TokioIo::new(stream);
-                let svc = service_fn(move |_req| {
-                    let hits_req = Arc::clone(&hits_conn);
-                    async move {
-                        hits_req.fetch_add(1, Ordering::SeqCst);
-                        tokio::time::sleep(delay).await;
-                        Ok::<_, Infallible>(
-                            Response::builder()
-                                .status(200)
-                                .header("content-type", "application/json")
-                                .body(Full::new(Bytes::from_static(body)))
-                                .expect("response builds"),
-                        )
-                    }
-                });
-                let _ = auto::Builder::new(TokioExecutor::new())
-                    .serve_connection(io, svc)
-                    .await;
-            });
-        }
-    });
-    (addr, hits)
-}
-
-/// A backend that answers 200+`body` while `healthy` is set, else 500 — used to
-/// prove recovery re-admission (fail → eject → recover → probe closes the breaker).
-async fn spawn_flappy_backend(healthy: Arc<AtomicBool>, body: &'static [u8]) -> SocketAddr {
+/// A backend answering every request with `body` and the status `answer` yields. `answer`
+/// runs once per request, so it may count, wait, or read shared state first.
+async fn spawn_answering_backend<F, Fut>(body: &'static [u8], answer: F) -> SocketAddr
+where
+    F: Fn() -> Fut + Clone + Send + Sync + 'static,
+    Fut: std::future::Future<Output = u16> + Send + 'static,
+{
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind backend");
@@ -460,17 +384,13 @@ async fn spawn_flappy_backend(healthy: Arc<AtomicBool>, body: &'static [u8]) -> 
             let Ok((stream, _)) = listener.accept().await else {
                 continue;
             };
-            let healthy_conn = Arc::clone(&healthy);
+            let answer_conn = answer.clone();
             tokio::spawn(async move {
                 let io = TokioIo::new(stream);
                 let svc = service_fn(move |_req| {
-                    let healthy_req = Arc::clone(&healthy_conn);
+                    let answer_req = answer_conn.clone();
                     async move {
-                        let status = if healthy_req.load(Ordering::SeqCst) {
-                            200
-                        } else {
-                            500
-                        };
+                        let status = answer_req().await;
                         Ok::<_, Infallible>(
                             Response::builder()
                                 .status(status)
@@ -487,6 +407,56 @@ async fn spawn_flappy_backend(healthy: Arc<AtomicBool>, body: &'static [u8]) -> 
         }
     });
     addr
+}
+
+/// A backend that COUNTS every request it receives and always answers with
+/// `status` + `body`. The counter lets a test assert that an ejected backend stops
+/// receiving traffic.
+async fn spawn_counting_backend(
+    status: u16,
+    body: &'static [u8],
+) -> (SocketAddr, Arc<AtomicUsize>) {
+    let hits = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&hits);
+    let addr = spawn_answering_backend(body, move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+        std::future::ready(status)
+    })
+    .await;
+    (addr, hits)
+}
+
+/// A backend that counts each request, then SLEEPS `delay` before answering — so a
+/// pool whose `request_timeout` is shorter sees every call as a timeout failure.
+async fn spawn_slow_counting_backend(
+    delay: Duration,
+    body: &'static [u8],
+) -> (SocketAddr, Arc<AtomicUsize>) {
+    let hits = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&hits);
+    let addr = spawn_answering_backend(body, move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+        async move {
+            tokio::time::sleep(delay).await;
+            200
+        }
+    })
+    .await;
+    (addr, hits)
+}
+
+/// A backend that answers 200+`body` while `healthy` is set, else 500 — used to
+/// prove recovery re-admission (fail → eject → recover → probe closes the breaker).
+async fn spawn_flappy_backend(healthy: Arc<AtomicBool>, body: &'static [u8]) -> SocketAddr {
+    spawn_answering_backend(body, move || {
+        let status = if healthy.load(Ordering::SeqCst) {
+            200
+        } else {
+            500
+        };
+        std::future::ready(status)
+    })
+    .await
 }
 
 /// The backend replied, and its reply carries a `result`.

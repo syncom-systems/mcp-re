@@ -325,7 +325,7 @@ pub(crate) fn validate_region(region: &str) -> Result<(), KeyError> {
     }
     if let Some(bad) = region
         .chars()
-        .find(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-'))
+        .find(|c| !matches!(c, 'a'..='z' | '0'..='9' | '-'))
     {
         return Err(KeyError::Malformed(format!(
             "aws-kms: --aws-kms-region {region:?} is not an AWS region label \

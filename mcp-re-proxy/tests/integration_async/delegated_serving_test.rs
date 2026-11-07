@@ -182,20 +182,7 @@ fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
 /// The serving proxy (delegated-signing — the only mode) sharing `signer` with a
 /// rotor the caller drives.
 fn delegated_proxy(signer: Arc<DelegatedServerSigner>) -> HttpProfileProxy {
-    HttpProfileProxy::new_delegated(
-        actor_resolver(),
-        audience(),
-        ReplayAdmission::new(
-            AsyncReplayTier::new(
-                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
-            ),
-            ReplayPosture::SingleProcess,
-        ),
-        canned_inner(),
-        300,
-        signer,
-    )
+    proxy_over(signer, canned_inner())
 }
 
 /// TEST-ONLY FIXTURE: produce a pre-052 direct-root response — the root key signs the
@@ -569,6 +556,32 @@ fn proxy_over(
     )
 }
 
+/// One exchange at `NOW` under a delegated key issued at `issued_at`, against a backend
+/// declaring a 60s dispatch bound. Returns the reply and the backend's dispatch counter.
+async fn serve_under_key_issued_at(
+    issued_at: i64,
+) -> (
+    mcp_re_proxy::async_serve::ServedHttpResponse,
+    Arc<std::sync::atomic::AtomicUsize>,
+) {
+    let dispatched = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
+    rotor.rotate(issued_at).expect("issue the key");
+
+    let proxy = proxy_over(
+        Arc::clone(&signer),
+        Box::new(BoundedCountingInner {
+            dispatched: Arc::clone(&dispatched),
+            bound: std::time::Duration::from_secs(60),
+        }),
+    );
+
+    let (req, _ev, _v) = signed_request(&mcp_re_test_paths::unique_test_nonce());
+    let served = proxy.handle(served_of(&req), NOW).await;
+    (served, dispatched)
+}
+
 /// **R11-481, the hostile control.** A credential whose remaining life is shorter than the
 /// dispatch it would authorize refuses BEFORE the threshold, and the backend is untouched.
 ///
@@ -582,21 +595,7 @@ fn proxy_over(
 /// the plane declares it may take 60s. Nothing crosses the execution threshold.
 #[tokio::test]
 async fn a_credential_that_cannot_outlive_the_dispatch_refuses_before_the_backend_runs() {
-    let dispatched = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let mut rotor = make_rotor();
-    let signer = rotor.signer();
-    rotor.rotate(NOW - 280).expect("issue a nearly-closed key");
-
-    let proxy = proxy_over(
-        Arc::clone(&signer),
-        Box::new(BoundedCountingInner {
-            dispatched: Arc::clone(&dispatched),
-            bound: std::time::Duration::from_secs(60),
-        }),
-    );
-
-    let (req, _ev, _v) = signed_request(&mcp_re_test_paths::unique_test_nonce());
-    let served = proxy.handle(served_of(&req), NOW).await;
+    let (served, dispatched) = serve_under_key_issued_at(NOW - 280).await;
 
     assert_eq!(
         served.status, 503,
@@ -616,21 +615,7 @@ async fn a_credential_that_cannot_outlive_the_dispatch_refuses_before_the_backen
 /// ever makes, which is a far worse defect than the one being fixed.
 #[tokio::test]
 async fn a_credential_with_room_for_the_dispatch_still_reaches_the_backend() {
-    let dispatched = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let mut rotor = make_rotor();
-    let signer = rotor.signer();
-    rotor.rotate(NOW).expect("issue a fresh key");
-
-    let proxy = proxy_over(
-        Arc::clone(&signer),
-        Box::new(BoundedCountingInner {
-            dispatched: Arc::clone(&dispatched),
-            bound: std::time::Duration::from_secs(60),
-        }),
-    );
-
-    let (req, _ev, _v) = signed_request(&mcp_re_test_paths::unique_test_nonce());
-    let served = proxy.handle(served_of(&req), NOW).await;
+    let (served, dispatched) = serve_under_key_issued_at(NOW).await;
 
     assert_eq!(served.status, 200, "a covered dispatch is served normally");
     assert_eq!(
