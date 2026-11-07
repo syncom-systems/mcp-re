@@ -1235,6 +1235,10 @@ nt_rust_test(
         # `main.rs` reaches these shared modules via `#[path = "../<dir>/mod.rs"]`.
         "tests/serving_fixtures/mod.rs",
         "tests/startup_transcript/mod.rs",
+        "tests/startup_transcript/capture.rs",
+        "tests/startup_transcript/classify.rs",
+        "tests/startup_transcript/event.rs",
+        "tests/startup_transcript/fields.rs",
     ],
     crate_root = "tests/integration/main.rs",
     data = [
@@ -1284,6 +1288,10 @@ nt_rust_test(
         # `main.rs` reaches these shared modules via `#[path = "../<dir>/mod.rs"]`.
         "tests/serving_fixtures/mod.rs",
         "tests/startup_transcript/mod.rs",
+        "tests/startup_transcript/capture.rs",
+        "tests/startup_transcript/classify.rs",
+        "tests/startup_transcript/event.rs",
+        "tests/startup_transcript/fields.rs",
     ],
     crate_root = "tests/integration/main.rs",
     crate_features = _PROXY_EXT_FEATURES,
