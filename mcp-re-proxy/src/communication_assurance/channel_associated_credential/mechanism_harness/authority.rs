@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Certificate authorities the handshake controls issue from.
+#![cfg(test)]
 
 use rcgen::BasicConstraints;
 use rcgen::CertificateParams;

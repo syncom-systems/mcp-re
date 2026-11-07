@@ -34,8 +34,10 @@
 //! after. Everything outside every region is production.
 
 mod brace_scan;
+mod test_file;
 
 use brace_scan::BraceScan;
+use test_file::is_test_file;
 
 /// Whether `code` — a line with its literals and comments already removed — opens a test
 /// region.
@@ -70,6 +72,9 @@ fn opens_test_region(code: &str) -> bool {
 /// must not report the file's tail as test code.
 #[must_use]
 pub fn production_lines(source: &str) -> Vec<(usize, &str)> {
+    if is_test_file(source) {
+        return Vec::new();
+    }
     let lines: Vec<&str> = source.lines().collect();
     let mut kept: Vec<(usize, &str)> = Vec::new();
     let mut scan = BraceScan::new();
@@ -210,6 +215,14 @@ mod tests {
             "production below the tests was dropped"
         );
         assert!(!half.contains("fn t()"));
+    }
+
+    #[test]
+    fn a_first_line_inner_cfg_test_makes_the_whole_file_test_code() {
+        let source = "//! doc\n#![cfg(test)]\nfn a() {}\nfn b() {}\n";
+        assert!(production_lines(source).is_empty());
+        let late = "fn a() {}\n#![cfg(test)]\nfn b() {}\n";
+        assert_eq!(production_lines(late).len(), 3);
     }
 
     #[test]

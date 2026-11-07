@@ -10483,7 +10483,8 @@
    "srcs": [
     "mcp-re-test-paths/src/lib.rs",
     "mcp-re-test-paths/src/rust_source.rs",
-    "mcp-re-test-paths/src/rust_source/brace_scan.rs"
+    "mcp-re-test-paths/src/rust_source/brace_scan.rs",
+    "mcp-re-test-paths/src/rust_source/test_file.rs"
    ],
    "testonly": false,
    "verus_deps": []
@@ -10500,7 +10501,8 @@
    "srcs": [
     "mcp-re-test-paths/src/lib.rs",
     "mcp-re-test-paths/src/rust_source.rs",
-    "mcp-re-test-paths/src/rust_source/brace_scan.rs"
+    "mcp-re-test-paths/src/rust_source/brace_scan.rs",
+    "mcp-re-test-paths/src/rust_source/test_file.rs"
    ],
    "testonly": true,
    "verus_deps": []

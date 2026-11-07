@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! End-entity certificates the handshake controls present.
+#![cfg(test)]
 
 use std::time::Duration;
 use std::time::SystemTime;

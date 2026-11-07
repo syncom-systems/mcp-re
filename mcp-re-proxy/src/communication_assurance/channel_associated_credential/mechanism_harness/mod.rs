@@ -9,6 +9,7 @@
 //! what a relationship associates, and the identity derivation asks which certificate of
 //! that association an identity comes from. `pub(crate)` here grants nothing in a production
 //! build — the module does not exist in one.
+#![cfg(test)]
 
 mod authority;
 mod handshake;

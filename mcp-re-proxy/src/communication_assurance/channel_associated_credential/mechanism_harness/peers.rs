@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! A mutually authenticated client and server, ready to handshake.
+#![cfg(test)]
 
 use std::sync::Arc;
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! One in-memory handshake between a client and a server configuration.
+#![cfg(test)]
 
 use std::sync::Arc;
 

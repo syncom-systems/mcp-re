@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Server and client configurations for the handshake controls.
+#![cfg(test)]
 
 use std::sync::Arc;
 
