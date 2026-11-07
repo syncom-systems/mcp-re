@@ -67,8 +67,8 @@ def test_rust_gate_records_size_and_still_tests() -> None:
     try:
         with tempfile.TemporaryDirectory() as td:
             open(os.path.join(td, "keys.rs"), "w").write("#[test]\nfn t() {}\n")
-            parts = rust_gate.gate(os.path.join(td, "keys.rs"), [], [], td, RustResolver(td),
-                                   touched=["mcp-re-proxy/src/a.rs"])
+            parts = rust_gate.gate(rust_gate.Edit(os.path.join(td, "keys.rs"), touched=["mcp-re-proxy/src/a.rs"]),
+                                   [], td, RustResolver(td))
     finally:
         (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
          rust_gate._rustfmt, rust_gate._run, rust_gate._test) = saved
@@ -97,8 +97,8 @@ def test_a_size_only_failure_still_runs_the_tests() -> None:
     try:
         with tempfile.TemporaryDirectory() as td:
             open(os.path.join(td, "keys.rs"), "w").write("#[test]\nfn t() {}\n")
-            parts = rust_gate.gate(os.path.join(td, "keys.rs"), [], [], td, RustResolver(td),
-                                   touched=["mcp-re-proxy/src/a.rs"])
+            parts = rust_gate.gate(rust_gate.Edit(os.path.join(td, "keys.rs"), touched=["mcp-re-proxy/src/a.rs"]),
+                                   [], td, RustResolver(td))
     finally:
         (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
          rust_gate._rustfmt, rust_gate._run, rust_gate._test) = saved
@@ -123,8 +123,8 @@ def test_the_size_part_exit_agrees_with_its_verdict() -> None:
                                            if cmd[-1] == rust_gate.SIZE_GATE else (0, ""))
         with tempfile.TemporaryDirectory() as td:
             open(os.path.join(td, "keys.rs"), "w").write("#[test]\nfn t() {}\n")
-            parts = rust_gate.gate(os.path.join(td, "keys.rs"), [], [], td, RustResolver(td),
-                                   touched=[touched])
+            parts = rust_gate.gate(rust_gate.Edit(os.path.join(td, "keys.rs"), touched=[touched]),
+                                   [], td, RustResolver(td))
         return {p["gate"]: p for p in parts}["module-size"]
 
     try:
@@ -171,10 +171,10 @@ def test_the_unit_tests_of_every_touched_source_file_run() -> None:
             for f in ("c/src/anchors/refresher.rs", "c/src/anchors/mod.rs", "c/src/lib.rs"):
                 open(f, "w").write("fn f() {}\n")
             try:
-                rust_gate.gate("c/src/anchors/refresher.rs", [], [], td, Modules(),  # type: ignore[arg-type]
-                               touched=["c/src/anchors/mod.rs", "c/tests/e2e.rs"])
-                rust_gate.gate("c/src/anchors/refresher.rs", [], [], td, Modules(),  # type: ignore[arg-type]
-                               touched=["c/src/lib.rs"])
+                rust_gate.gate(rust_gate.Edit("c/src/anchors/refresher.rs", touched=["c/src/anchors/mod.rs", "c/tests/e2e.rs"]),
+                               [], td, Modules())  # type: ignore[arg-type]
+                rust_gate.gate(rust_gate.Edit("c/src/anchors/refresher.rs", touched=["c/src/lib.rs"]),
+                               [], td, Modules())  # type: ignore[arg-type]
             finally:
                 os.chdir(cwd)
     finally:
