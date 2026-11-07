@@ -56,6 +56,7 @@ mod signing_window;
 mod trust_epoch;
 mod window_emission;
 pub use active_key::ActiveDelegatedKey;
+use active_key::IssuanceRequest;
 pub(crate) use delegated_signer::DelegatedSigner;
 pub use issuance_refusal::IssuanceRefusal;
 pub use key_window::{DelegatedKeyWindow, KeyWindowError};
@@ -287,8 +288,14 @@ where
         let issued = (self.issue)(&header, &claims)
             .ok_or(IssuanceRefusal::RootUnavailable)
             .and_then(|credential| {
-                let requested = (&header, &claims);
-                ActiveDelegatedKey::issued(Arc::new(key), signer, requested, credential, &self.root)
+                let request = IssuanceRequest {
+                    key: Arc::new(key),
+                    server_signer: signer,
+                    header: &header,
+                    claims: &claims,
+                    root: &self.root,
+                };
+                ActiveDelegatedKey::issued(request, credential)
             });
         self.last_refusal = issued.as_ref().err().copied();
         match issued {
