@@ -156,7 +156,7 @@ nt_rust_test(
 # overlap, fail-closed). In-process, hermetic.
 nt_rust_test(
     name = "delegation_e2e_test",
-    srcs = ["tests/delegation_e2e_test.rs"],
+    srcs = ["tests/delegation_e2e_test.rs"] + glob(["tests/delegation_e2e_test/*.rs"]),
     edition = "2021",
     deps = [
         ":mcp_re_http_profile_pre052",  # keep
