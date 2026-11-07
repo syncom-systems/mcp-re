@@ -9,6 +9,7 @@ from _measured_inputs_support import (
     components,
     measure,
 )
+from _mutation import load_probes
 
 
 # --- no component is a constant -----------------------------------------------
@@ -261,12 +262,7 @@ def test_the_probe_set_is_measured_so_the_suite_cannot_silently_shrink():
     # Again the registry rather than a magnitude: every probe registered against this unit,
     # and nothing else. Before the Phase-1 split this read `> 20`, which was a property of a
     # unit that answered for ten propositions.
-    import tomllib as _t
-    registered = {
-        pr["id"]
-        for pr in _t.load(open("verification/policy/mutation-probes.toml", "rb"))["probe"]
-        if pr["unit"] == unit_id
-    }
+    registered = {pr["id"] for pr in load_probes() if pr["unit"] == unit_id}
     assert set(probes) == registered and registered
     assert all(digest.startswith("sha256:") for digest in probes.values())
     lane = components("http_profile.request_floor_result")["mutation_lane_identity"]
