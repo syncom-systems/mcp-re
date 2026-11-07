@@ -1829,7 +1829,9 @@ nt_rust_test(
 # Without MCP_RE_TEST_REDIS_URL it skips itself, so this target keeps it compiling.
 nt_rust_test(
     name = "admission_propagation_measure_test",
-    srcs = ["tests/admission_propagation_measure_test.rs"],
+    srcs = [
+        "tests/admission_propagation_measure_test.rs",
+    ] + glob(["tests/admission_propagation_measure_test/*.rs"]),
     crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
     edition = "2021",
     env_inherit = [
