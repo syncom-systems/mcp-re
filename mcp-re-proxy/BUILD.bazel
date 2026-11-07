@@ -1760,7 +1760,10 @@ nt_rust_test(
 # why the target inherits the endpoint, key and credential variables they read.
 nt_rust_test(
     name = "integration_live_test",
-    srcs = glob(["tests/integration_live/*.rs"]) + [
+    srcs = glob([
+        "tests/integration_live/*.rs",
+        "tests/integration_live/*/*.rs",
+    ]) + [
         # `main.rs` reaches the shared helpers in tests/common/mod.rs.
         "tests/common/mod.rs",
     ],

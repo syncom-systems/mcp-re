@@ -25,6 +25,7 @@ mod aws_kms_delegated_tls_live_test;
 mod aws_kms_http_profile_live_test;
 mod aws_kms_live_test;
 mod aws_kms_root_rotation_live_test;
+mod delegated_signing_lane;
 mod gcp_kms_delegated_required_live_test;
 mod gcp_kms_delegated_signing_live_test;
 mod gcp_kms_delegated_tls_live_test;
