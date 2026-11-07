@@ -596,10 +596,12 @@ fn one_exchange(
         "Authorization".into(),
         format!("Bearer {ACCESS_TOKEN}"),
     )]);
-    let signed = mcp_re_client_core::build_signed_request(
-        &json!(1),
-        "tools/call",
-        json!({"name": "read"}).as_object().cloned().unwrap(),
+    let signed = mcp_re_client_core::build_signed_message(
+        mcp_re_client_core::McpMessage::new(
+            Some(&json!(1)),
+            "tools/call",
+            json!({"name": "read"}).as_object().cloned().unwrap(),
+        ),
         TARGET,
         &inputs,
         &client_key(),

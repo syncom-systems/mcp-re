@@ -218,13 +218,15 @@ fn handle(
 /// Sign a plain request and serve it, returning the served status and the frozen
 /// `mcp-re.*` reason the response body carries (a success carries none).
 pub(super) fn serve_one_full(proxy: &HttpProfileProxy, nonce: &str) -> (u16, Option<String>) {
-    let signed = mcp_re_client_core::build_signed_request(
-        &serde_json::json!(1),
-        "tools/call",
-        serde_json::json!({"name": "read"})
-            .as_object()
-            .cloned()
-            .unwrap_or_default(),
+    let signed = mcp_re_client_core::build_signed_message(
+        mcp_re_client_core::McpMessage::new(
+            Some(&serde_json::json!(1)),
+            "tools/call",
+            serde_json::json!({"name": "read"})
+                .as_object()
+                .cloned()
+                .unwrap_or_default(),
+        ),
         TARGET,
         &signing_inputs(nonce),
         &client_key(),
@@ -249,9 +251,8 @@ pub(super) fn serve_one(proxy: &HttpProfileProxy, nonce: &str) -> u16 {
 /// Serve one NOTIFICATION (a JSON-RPC message with no `id`), answered with a signed
 /// bodyless 202.
 pub(super) fn serve_one_notification(proxy: &HttpProfileProxy, nonce: &str) -> u16 {
-    let signed = mcp_re_client_core::build_signed_notification(
-        "notifications/cancelled",
-        serde_json::Map::new(),
+    let signed = mcp_re_client_core::build_signed_message(
+        mcp_re_client_core::McpMessage::new(None, "notifications/cancelled", serde_json::Map::new()),
         TARGET,
         &signing_inputs(nonce),
         &client_key(),

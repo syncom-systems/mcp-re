@@ -11252,7 +11252,7 @@ measurement_control = { kind = "sensitivity", argv = [
 #
 # `signer.rs` is DORMANT and is not here. `HostSigner` has no consumer anywhere — not the
 # deployable client, not the client proxy, not either SDK, not a test, not the demo surface.
-# Every real signing site calls `mcp_re_client_core::build_signed_request` directly, and the
+# Every real signing site calls `mcp_re_client_core::build_signed_message` directly, and the
 # ADR-MCPS-003 property `HostSigner` documents — a private key with no accessor — is held on
 # the live path by `mcp_re_client_proxy::McpReProxy`, whose `signing_key` field is private and
 # which `client.proxy_request_correspondence` owns. Excluded on the same precedent as

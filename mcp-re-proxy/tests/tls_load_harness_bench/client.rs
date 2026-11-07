@@ -214,10 +214,8 @@ pub(super) fn signed_request() -> SignedRequest {
     let inputs = signing_inputs();
     let mut params = Map::new();
     params.insert("text".to_string(), Value::String("hello".to_string()));
-    build_signed_request(
-        &Value::String("req-1".to_string()),
-        "echo",
-        params,
+    build_signed_message(
+        McpMessage::new(Some(&Value::String("req-1".to_string())), "echo", params),
         TARGET_URI,
         &inputs,
         &signer_a_key(),
@@ -232,10 +230,8 @@ pub(super) fn signed_request_with_decision(decision: &str) -> SignedRequest {
     let mut params = Map::new();
     params.insert("name".to_string(), Value::String(DECIDED_TOOL.to_string()));
     params.insert("arguments".to_string(), json!({ "text": "hello" }));
-    build_signed_request(
-        &Value::String("req-1".to_string()),
-        "tools/call",
-        params,
+    build_signed_message(
+        McpMessage::new(Some(&Value::String("req-1".to_string())), "tools/call", params),
         TARGET_URI,
         &inputs,
         &signer_a_key(),

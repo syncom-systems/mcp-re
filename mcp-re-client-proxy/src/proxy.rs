@@ -14,8 +14,8 @@
 //! continuation retention, and authorization-binding providers are **deferred**
 //! (rebuilt on RFC 9421 later); this is the signing/verification adapter core.
 
-use mcp_re_client_core::build_signed_notification;
-use mcp_re_client_core::build_signed_request;
+use mcp_re_client_core::build_signed_message;
+use mcp_re_client_core::McpMessage;
 use mcp_re_client_core::response::verify_delegated_accepted_202_pinned;
 use mcp_re_client_core::verify_delegated_response;
 use mcp_re_client_core::CompositeResponseTrust;
@@ -244,24 +244,12 @@ impl ClientProxy {
             params.expires,
         )
         .with_headers(route.extra_headers.clone());
-        let signed = match id {
-            Some(id) => build_signed_request(
-                id,
-                &method,
-                req_params,
-                &route.target_uri,
-                &inputs,
-                &self.signing_key,
-            )?,
-            None => build_signed_notification(
-                &method,
-                req_params,
-                &route.target_uri,
-                &inputs,
-                &self.signing_key,
-            )?,
-        };
-        Ok(signed)
+        Ok(build_signed_message(
+            McpMessage::new(id, &method, req_params),
+            &route.target_uri,
+            &inputs,
+            &self.signing_key,
+        )?)
     }
 
     /// Verify the bound signed response under the route's REQUIRED profile.
@@ -1075,10 +1063,12 @@ mod tests {
         let method = plain["method"].as_str().expect("a method");
         let params = plain["params"].as_object().cloned().unwrap_or_default();
         let key = SigningKey::from_seed_bytes(&CLIENT_SEED);
-        match plain.get("id") {
-            Some(id) => build_signed_request(id, method, params, TARGET, &inputs, &key),
-            None => build_signed_notification(method, params, TARGET, &inputs, &key),
-        }
+        build_signed_message(
+            McpMessage::new(plain.get("id"), method, params),
+            TARGET,
+            &inputs,
+            &key,
+        )
         .expect("client signs")
     }
 

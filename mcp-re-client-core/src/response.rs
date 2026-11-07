@@ -356,7 +356,8 @@ pub fn verify_delegated_accepted_202_pinned(
 #[cfg(test)]
 mod delegated_tests {
     use super::*;
-    use crate::build_signed_request;
+    use crate::build_signed_message;
+    use crate::McpMessage;
     use crate::delegated_trust::RevocationSource;
     use crate::delegated_trust::StaticRevocationList;
     use crate::delegated_trust::TrustedIssuerSet;
@@ -408,7 +409,7 @@ mod delegated_tests {
         }
     }
     /// A real, structurally valid artifact binding. `artifact_bindings` is required
-    /// and non-empty — `build_signed_request` refuses to sign an empty set, since the
+    /// and non-empty — `build_signed_message` refuses to sign an empty set, since the
     /// verifier would reject it as `malformed_evidence` — so these tests supply one
     /// rather than relying on a request no server could accept.
     fn bindings() -> Vec<crate::ArtifactBinding> {
@@ -514,7 +515,12 @@ mod delegated_tests {
             expires,
         );
         let params: Map<String, Value> = json!({ "name": tool }).as_object().cloned().unwrap();
-        build_signed_request(&id, "tools/call", params, TARGET, &inputs, &client_key())
+        build_signed_message(
+            McpMessage::new(Some(&id), "tools/call", params),
+            TARGET,
+            &inputs,
+            &client_key(),
+        )
             .expect("client signs request")
     }
     /// A request whose body differs from [`signed`]'s: what an attacker signs for itself.
@@ -1226,9 +1232,8 @@ mod delegated_tests {
             .as_object()
             .cloned()
             .unwrap();
-        let notification = crate::build_signed_notification(
-            "notifications/cancelled",
-            params,
+        let notification = crate::build_signed_message(
+            crate::McpMessage::new(None, "notifications/cancelled", params),
             TARGET,
             &inputs,
             &client_key(),
