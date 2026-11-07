@@ -382,10 +382,10 @@ def test_next_file_rounds_and_order() -> None:
         led = os.path.join(td, "l.jsonl")
         open(led, "w").write("".join(json.dumps(r) + "\n" for r in rows))
         assert next_file.select(led, None, 3)["file"] == "c.rs"                 # positive control
-        assert next_file.select(led, None, 3, {"r12"})["file"] == "b.rs"
+        assert next_file.select(led, None, 3, next_file.Scope(rounds={"r12"}))["file"] == "b.rs"
         order = os.path.join(td, "o.json")
         json.dump([{"file": "a.rs"}], open(order, "w"))
-        got = [b["file"] for b in next_file.select(led, None, 3, {"r12"}, order)["batch"]]
+        got = [b["file"] for b in next_file.select(led, None, 3, next_file.Scope({"r12"}, order))["batch"]]
         assert got == ["a.rs", "b.rs"], got
     print("  next_file: --rounds drops stale rows; --order outranks severity  OK")
 
