@@ -418,20 +418,52 @@ mod tests {
             .expect_err("a misspelled field must fail closed");
     }
 
-    /// A binding that digests a header the route does not send is a binding to nothing.
-    #[test]
-    fn a_binding_on_an_unsent_header_is_refused() {
-        let route = r#"[{
+    /// One route with the given extra-headers JSON (empty for none) and one artifact binding.
+    fn bound_route(extra_headers: &str, artifact_type: &str, source: &str) -> String {
+        let headers = if extra_headers.is_empty() {
+            String::new()
+        } else {
+            format!(r#""extra_headers": [{extra_headers}],"#)
+        };
+        format!(
+            r#"[{{
           "route_id": "r1",
           "target_uri": "https://mcp.example.com/mcp",
-          "audience": { "audience_id": "v1", "target_uri": "https://mcp.example.com/mcp", "route": "a" },
-          "artifact_bindings": [{ "artifact_type": "oauth-dpop", "source": { "kind": "header", "name": "Authorization" } }]
-        }]"#;
+          "audience": {{ "audience_id": "v1", "target_uri": "https://mcp.example.com/mcp", "route": "a" }},
+          {headers}
+          "artifact_bindings": [{{ "artifact_type": "{artifact_type}", "source": {source} }}]
+        }}]"#
+        )
+    }
+
+    fn header_source(name: &str) -> String {
+        format!(r#"{{ "kind": "header", "name": "{name}" }}"#)
+    }
+
+    fn header(name: &str, value: &str) -> String {
+        format!(r#"{{ "name": "{name}", "value": "{value}" }}"#)
+    }
+
+    fn load(route: &str) -> ValidatedClientConfig {
+        ValidatedClientConfig::from_json(
+            document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes(),
+        )
+        .expect("loads")
+    }
+
+    fn assert_refused(route: &str, fragment: &str) {
         let error = ValidatedClientConfig::from_json(
             document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes(),
         )
         .expect_err("must refuse");
-        assert!(error.0.contains("does not send"), "unexpected: {error}");
+        assert!(error.0.contains(fragment), "unexpected: {error}");
+    }
+
+    /// A binding that digests a header the route does not send is a binding to nothing.
+    #[test]
+    fn a_binding_on_an_unsent_header_is_refused() {
+        let route = bound_route("", "oauth-dpop", &header_source("Authorization"));
+        assert_refused(&route, "does not send");
     }
 
     /// The header form digests the bytes the VERIFIER recovers from the request.
@@ -443,17 +475,12 @@ mod tests {
     /// route's only permitted binding form would fail closed on every request.
     #[test]
     fn a_dpop_binding_digests_what_the_verifier_digests() {
-        let route = r#"[{
-          "route_id": "r1",
-          "target_uri": "https://mcp.example.com/mcp",
-          "audience": { "audience_id": "v1", "target_uri": "https://mcp.example.com/mcp", "route": "a" },
-          "extra_headers": [{ "name": "Authorization", "value": "Bearer tok-1" }],
-          "artifact_bindings": [{ "artifact_type": "oauth-dpop", "source": { "kind": "header", "name": "authorization" } }]
-        }]"#;
-        let config = ValidatedClientConfig::from_json(
-            document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes(),
-        )
-        .expect("loads");
+        let route = bound_route(
+            &header("Authorization", "Bearer tok-1"),
+            "oauth-dpop",
+            &header_source("authorization"),
+        );
+        let config = load(&route);
         let resolved = config.routes()[0]
             .resolve_bindings()
             .expect("bindings resolve");
@@ -476,19 +503,13 @@ mod tests {
     /// the profile re-interprets those bytes.
     #[test]
     fn a_non_dpop_header_binding_digests_the_value_verbatim() {
-        let route = r#"[{
-          "route_id": "r1",
-          "target_uri": "https://mcp.example.com/mcp",
-          "audience": { "audience_id": "v1", "target_uri": "https://mcp.example.com/mcp", "route": "a" },
-          "extra_headers": [{ "name": "X-Rar", "value": "details-blob" }],
-          "artifact_bindings": [{ "artifact_type": "oauth-rar", "source": { "kind": "header", "name": "x-rar" } }]
-        }]"#;
-        let config = ValidatedClientConfig::from_json(
-            document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes(),
-        )
-        .expect("loads");
+        let route = bound_route(
+            &header("X-Rar", "details-blob"),
+            "oauth-rar",
+            &header_source("x-rar"),
+        );
         assert_eq!(
-            config.routes()[0].resolve_bindings().expect("resolve"),
+            load(&route).routes()[0].resolve_bindings().expect("resolve"),
             vec![ArtifactBinding::opaque_digest(
                 ArtifactType::OauthRar,
                 b"details-blob"
@@ -505,23 +526,8 @@ mod tests {
             r#"{ "kind": "literal", "value": "Bearer B" }"#,
             r#"{ "kind": "file", "path": "/dev/null" }"#,
         ] {
-            let route = format!(
-                r#"[{{
-              "route_id": "r1",
-              "target_uri": "https://mcp.example.com/mcp",
-              "audience": {{ "audience_id": "v1", "target_uri": "https://mcp.example.com/mcp", "route": "a" }},
-              "extra_headers": [{{ "name": "Authorization", "value": "Bearer A" }}],
-              "artifact_bindings": [{{ "artifact_type": "oauth-dpop", "source": {source} }}]
-            }}]"#
-            );
-            let error = ValidatedClientConfig::from_json(
-                document(r#"{ "bind": "127.0.0.1:8640" }"#, &route).as_bytes(),
-            )
-            .expect_err("a restated dpop credential must not start");
-            assert!(
-                error.0.contains("binding to nothing"),
-                "unexpected: {error}"
-            );
+            let route = bound_route(&header("Authorization", "Bearer A"), "oauth-dpop", source);
+            assert_refused(&route, "binding to nothing");
         }
     }
 
@@ -530,61 +536,35 @@ mod tests {
     /// verifier will look at.
     #[test]
     fn a_dpop_binding_on_another_header_is_refused() {
-        let route = r#"[{
-          "route_id": "r1",
-          "target_uri": "https://mcp.example.com/mcp",
-          "audience": { "audience_id": "v1", "target_uri": "https://mcp.example.com/mcp", "route": "a" },
-          "extra_headers": [{ "name": "X-Token", "value": "Bearer A" }],
-          "artifact_bindings": [{ "artifact_type": "oauth-dpop", "source": { "kind": "header", "name": "X-Token" } }]
-        }]"#;
-        let error = ValidatedClientConfig::from_json(
-            document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes(),
-        )
-        .expect_err("must refuse");
-        assert!(
-            error.0.contains("and no other header"),
-            "unexpected: {error}"
+        let route = bound_route(
+            &header("X-Token", "Bearer A"),
+            "oauth-dpop",
+            &header_source("X-Token"),
         );
+        assert_refused(&route, "and no other header");
     }
 
     /// A dpop binding over a header carrying no Bearer credential digests something
     /// the verifier cannot even extract.
     #[test]
     fn a_dpop_binding_on_a_non_bearer_authorization_is_refused() {
-        let route = r#"[{
-          "route_id": "r1",
-          "target_uri": "https://mcp.example.com/mcp",
-          "audience": { "audience_id": "v1", "target_uri": "https://mcp.example.com/mcp", "route": "a" },
-          "extra_headers": [{ "name": "Authorization", "value": "Basic dXNlcjpwdw==" }],
-          "artifact_bindings": [{ "artifact_type": "oauth-dpop", "source": { "kind": "header", "name": "Authorization" } }]
-        }]"#;
-        let error = ValidatedClientConfig::from_json(
-            document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes(),
-        )
-        .expect_err("must refuse");
-        assert!(
-            error.0.contains("not a Bearer credential"),
-            "unexpected: {error}"
+        let route = bound_route(
+            &header("Authorization", "Basic dXNlcjpwdw=="),
+            "oauth-dpop",
+            &header_source("Authorization"),
         );
+        assert_refused(&route, "not a Bearer credential");
     }
 
     /// The mTLS binding commits to the DER of the certificate the TLS layer presents.
     #[test]
     fn a_literal_mtls_binding_is_refused() {
-        let route = r#"[{
-          "route_id": "r1",
-          "target_uri": "https://mcp.example.com/mcp",
-          "audience": { "audience_id": "v1", "target_uri": "https://mcp.example.com/mcp", "route": "a" },
-          "artifact_bindings": [{ "artifact_type": "oauth-mtls", "source": { "kind": "literal", "value": "my-cert" } }]
-        }]"#;
-        let error = ValidatedClientConfig::from_json(
-            document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes(),
-        )
-        .expect_err("must refuse");
-        assert!(
-            error.0.contains("config text cannot restate"),
-            "unexpected: {error}"
+        let route = bound_route(
+            "",
+            "oauth-mtls",
+            r#"{ "kind": "literal", "value": "my-cert" }"#,
         );
+        assert_refused(&route, "config text cannot restate");
     }
 
     /// A tolerance the profile cannot hold is refused at configuration and the refusal names

@@ -134,13 +134,21 @@ fn check_epoch_and_revocation(
     {
         return Err(HttpProfileError::DelegationTrustEpochStale);
     }
-    if is_revoked(&claims.delegated_kid)
-        || is_revoked(&claims.issuer_kid)
-        || is_revoked(&claims.jti)
-    {
+    let revoked = [&claims.delegated_kid, &claims.issuer_kid, &claims.jti]
+        .into_iter()
+        .any(|id| is_revoked(id));
+    if revoked {
         return Err(HttpProfileError::DelegationRevoked);
     }
     Ok(())
+}
+
+/// Whether the credential's `cnf` names an Ed25519 OKP key under the credential's own
+/// `delegated_kid`.
+fn cnf_is_self_consistent(claims: &DelegationClaims) -> bool {
+    let jwk = &claims.cnf.jwk;
+    let key_type_matches = jwk.kty == JWK_KTY_OKP && jwk.crv == JWK_CRV_ED25519;
+    key_type_matches && jwk.kid == claims.delegated_kid
 }
 
 /// The delegated key the credential attests, for the step-8 response-signature check.
@@ -150,11 +158,10 @@ fn check_epoch_and_revocation(
 pub(crate) fn delegated_key(
     claims: &DelegationClaims,
 ) -> Result<VerificationKey, HttpProfileError> {
-    let jwk = &claims.cnf.jwk;
-    if jwk.kty != JWK_KTY_OKP || jwk.crv != JWK_CRV_ED25519 || jwk.kid != claims.delegated_kid {
+    if !cnf_is_self_consistent(claims) {
         return Err(HttpProfileError::DelegationCredentialInvalid);
     }
-    VerificationKey::from_b64url(&jwk.x).map_err(|_| HttpProfileError::DelegationCredentialInvalid)
+    VerificationKey::from_b64url(&claims.cnf.jwk.x).map_err(|_| HttpProfileError::DelegationCredentialInvalid)
 }
 
 /// Verify a compact JWS delegation credential against the root and the expected scope
