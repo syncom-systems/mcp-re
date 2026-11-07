@@ -31,6 +31,7 @@ use crate::verified_response::VerifiedDelegatedMcpResponse;
 use crate::verified_response::VerifiedDelegatedUnboundResponse;
 use crate::verified_response::VerifiedMcpResponse;
 use crate::verify;
+use crate::verify::BoundExchange;
 use crate::verify::DelegationExpectations;
 use crate::ArtifactBinding;
 use crate::AudienceTuple;
@@ -110,7 +111,12 @@ impl<'a, R: Into<ResolverOutcome>> Verifier<'a, R> {
         request: &HttpRequest,
         now: i64,
     ) -> Result<CryptographicFloorVerifiedBoundResponse, HttpProfileError> {
-        verify::floor_bound_response(response, request, self.resolve_actor, self.policy, now)
+        verify::floor_bound_response(
+            BoundExchange { response, request },
+            self.resolve_actor,
+            self.policy,
+            now,
+        )
     }
 
     /// Establish the full MCP-RE profile for a response bound to `request`.
@@ -128,7 +134,12 @@ impl<'a, R: Into<ResolverOutcome>> Verifier<'a, R> {
         request: &HttpRequest,
         now: i64,
     ) -> Result<VerifiedMcpResponse, HttpProfileError> {
-        verify::full_bound_response(response, request, self.resolve_actor, self.policy, now)
+        verify::full_bound_response(
+            BoundExchange { response, request },
+            self.resolve_actor,
+            self.policy,
+            now,
+        )
     }
 
     /// Establish a response's cryptographic floor with NO request context. A `;req`

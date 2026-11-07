@@ -60,6 +60,7 @@ use crate::verify::floor::components::require_conditional_coverage;
 use crate::verify::floor::params::check_params;
 use crate::verify::floor::signature::signature_value_b64url;
 use crate::verify::floor::signature::verify_under;
+use crate::verify::floor::signature::SignatureOver;
 use crate::verify::floor::signature::SignedMessage;
 use crate::verify::floor::signature_input::parse_signature_input_for;
 
@@ -354,8 +355,7 @@ pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
     let sig = signature_value_b64url(&request.headers, "signature", REQUEST_LABEL)?;
     verify_under(
         algorithm,
-        &base,
-        &sig,
+        SignatureOver::new(&base, &sig),
         &actor.verification_key,
         SignedMessage::Request,
     )?;

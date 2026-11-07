@@ -59,26 +59,37 @@ fn the_region_scan_looks_below_a_test_module() {
     );
 }
 
+/// The `.rs` files directly under `dir`.
+fn rust_sources(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("read {dir:?}: {e}"))
+        .map(|entry| entry.expect("dir entry").path())
+        .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("rs"))
+        .collect()
+}
+
+/// One finding per banned method literal the production half of `path` contains.
+fn banned_literals_in(path: &std::path::Path) -> Vec<String> {
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+    let region = non_test_region(&text);
+    BANNED_METHOD_LITERALS
+        .iter()
+        .filter(|literal| region.contains(**literal))
+        .map(|literal| {
+            format!(
+                "{:?} contains banned method literal {literal:?}",
+                path.file_name().unwrap()
+            )
+        })
+        .collect()
+}
+
 #[test]
 fn no_banned_method_literal_in_non_test_core_src() {
-    let dir = core_src_dir();
-    let mut found: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {dir:?}: {e}")) {
-        let path = entry.expect("dir entry").path();
-        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
-            continue;
-        }
-        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
-        let region = non_test_region(&text);
-        for literal in BANNED_METHOD_LITERALS {
-            if region.contains(literal) {
-                found.push(format!(
-                    "{:?} contains banned method literal {literal:?}",
-                    path.file_name().unwrap()
-                ));
-            }
-        }
-    }
+    let found: Vec<String> = rust_sources(&core_src_dir())
+        .iter()
+        .flat_map(|path| banned_literals_in(path))
+        .collect();
     assert!(
         found.is_empty(),
         "mcp-re-core non-test source contains concrete MCP method-name literal(s) — Core must \

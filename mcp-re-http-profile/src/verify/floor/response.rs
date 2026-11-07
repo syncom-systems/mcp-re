@@ -35,18 +35,29 @@ use super::params::check_params;
 use super::sf_dictionary::member_value;
 use super::signature::signature_value_b64url;
 use super::signature::verify_under;
+use super::signature::SignatureOver;
 use super::signature::SignedMessage;
 use super::signature_input::parse_signature_input;
 use super::trust_slot::resolve_actor_for_slot;
 
+/// A response and the request it claims to answer: the pair `;req` binds.
+///
+/// One value, so a verification is given ONE exchange and has no second operand through
+/// which a caller could pair a response with another exchange's request.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BoundExchange<'a> {
+    pub(crate) response: &'a HttpResponse,
+    pub(crate) request: &'a HttpRequest,
+}
+
 /// [`verify_response`] under an explicit verifier-local [`VerifierPolicy`].
 pub(crate) fn floor_bound_response<R: Into<ResolverOutcome>>(
-    response: &HttpResponse,
-    request: &HttpRequest,
+    exchange: BoundExchange<'_>,
     resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
 ) -> Result<CryptographicFloorVerifiedBoundResponse, HttpProfileError> {
+    let BoundExchange { response, request } = exchange;
     reject_content_encoding(&response.headers)?;
     // JSON mode (§3.4): an SSE response to a covered request is a profile
     // violation, not a streaming opt-in.
@@ -80,8 +91,7 @@ pub(crate) fn floor_bound_response<R: Into<ResolverOutcome>>(
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
     verify_under(
         algorithm,
-        &base,
-        &sig,
+        SignatureOver::new(&base, &sig),
         &resolved_server_actor.verification_key,
         SignedMessage::Response,
     )?;
@@ -129,8 +139,7 @@ pub(crate) fn floor_unbound_response<R: Into<ResolverOutcome>>(
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
     verify_under(
         algorithm,
-        &base,
-        &sig,
+        SignatureOver::new(&base, &sig),
         &resolved_server_actor.verification_key,
         SignedMessage::Response,
     )?;

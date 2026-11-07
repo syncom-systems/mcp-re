@@ -56,6 +56,14 @@ fn may_sign_crls(anchor: &X509Certificate<'_>) -> bool {
     }
 }
 
+/// Whether `anchor` is the configured CA behind `crl`: it is the issuer the CRL names, it
+/// may sign CRLs, and the CRL's signature verifies under its key.
+fn stands_behind(anchor: &X509Certificate<'_>, crl: &CertificateRevocationList<'_>) -> bool {
+    anchor.tbs_certificate.subject.as_raw() == crl.issuer().as_raw()
+        && may_sign_crls(anchor)
+        && crl.verify_signature(anchor.public_key()).is_ok()
+}
+
 /// The configured CA key that signed `crl`.
 ///
 /// Refused when none did: a CRL no anchor key verifies is not a statement by any CA this
@@ -69,10 +77,7 @@ pub(super) fn signing_key(
         let Ok((_, anchor)) = X509Certificate::from_der(anchor_der.as_ref()) else {
             continue;
         };
-        if anchor.tbs_certificate.subject.as_raw() != crl.issuer().as_raw()
-            || !may_sign_crls(&anchor)
-            || crl.verify_signature(anchor.public_key()).is_err()
-        {
+        if !stands_behind(&anchor, crl) {
             continue;
         }
         return Ok(CaKey {

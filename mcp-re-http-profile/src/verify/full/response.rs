@@ -23,22 +23,21 @@ use crate::error::HttpProfileError;
 use crate::evidence::RequestRoleEvidence;
 use crate::ids::PROFILE_TAG;
 use crate::ids::RESPONSE_EVIDENCE_BLOCK_KEY;
-use crate::message::HttpRequest;
-use crate::message::HttpResponse;
 use crate::policy::VerifierPolicy;
 use crate::verified_response::VerifiedMcpResponse;
 use crate::verify::floor::floor_bound_response;
+use crate::verify::floor::BoundExchange;
 
 /// Body of [`crate::Verifier::verify_bound_response`] under a verifier-local [`VerifierPolicy`].
 pub(crate) fn full_bound_response<R: Into<ResolverOutcome>>(
-    response: &HttpResponse,
-    request: &HttpRequest,
+    exchange: BoundExchange<'_>,
     resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
 ) -> Result<VerifiedMcpResponse, HttpProfileError> {
+    let BoundExchange { response, request } = exchange;
     // 1. Cryptographic floor incl. the ;req binding to `request`.
-    let floor = floor_bound_response(response, request, resolve_actor, policy, now)?;
+    let floor = floor_bound_response(exchange, resolve_actor, policy, now)?;
 
     // 2. Parse the response evidence block (protected by content-digest).
     let block: HttpResponseEvidenceBlock = extract_meta_block(

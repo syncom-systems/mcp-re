@@ -69,7 +69,7 @@ def log(run_dir: Path | None, message: str) -> None:
 
 
 def run_logged(argv: list[str], log_path: Path, env: dict[str, str] | None = None,
-               timeout: float | None = None, cwd: Path | None = None) -> tuple[int, float]:
+               timeout: float | None = None) -> tuple[int, float]:
     """Run argv with stdout+stderr captured in full to log_path. Returns (rc, seconds).
 
     A timeout is a failure with rc 124 and is written into the log, never swallowed: a
@@ -82,7 +82,7 @@ def run_logged(argv: list[str], log_path: Path, env: dict[str, str] | None = Non
         out.flush()
         try:
             proc = subprocess.run(argv, stdout=out, stderr=subprocess.STDOUT, env=env,
-                                  timeout=timeout, cwd=cwd)
+                                  timeout=timeout)
             rc = proc.returncode
         except subprocess.TimeoutExpired:
             out.write(f"\n### TIMEOUT after {timeout}s\n".encode())

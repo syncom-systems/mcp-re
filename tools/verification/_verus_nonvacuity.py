@@ -70,41 +70,62 @@ def owning_function(source: str, line: int) -> str | None:
     return None
 
 
-def evaluate(reports: list[CrateReport], log: str, status: int | None, source: str) -> tuple[bool, str]:
-    """Did the prover refuse exactly the two negatives and verify the positive control?"""
-    mine = [r for r in reports if CRATE in r.crates]
+def _report_refusal(mine: list[CrateReport], status: int | None) -> str | None:
+    """Why the one report for the probe crate cannot be judged, or None when it can."""
     if len(mine) != 1:
-        return False, f"expected one report for {CRATE}, found {len(mine)}"
+        return f"expected one report for {CRATE}, found {len(mine)}"
     report = mine[0]
     if not report.entire_crate:
-        return False, "the probe run verified only part of the crate"
-    expected = {MODULE + name for name in POSITIVE | NEGATIVE}
-    absent = sorted(expected - report.symbols)
+        return "the probe run verified only part of the crate"
+    absent = sorted({MODULE + name for name in POSITIVE | NEGATIVE} - report.symbols)
     if absent:
-        return False, (
+        return (
             f"probe function(s) absent from the report: {', '.join(absent)} — the probe module "
             "was not compiled, so nothing was asked"
         )
     if status == 0 or report.success:
-        return False, (
+        return (
             "the probe run SUCCEEDED: a postcondition over the thumbprint relation was proved "
             "for a body that does not establish it, so the relation constrains nothing"
         )
+    return None
+
+
+def _failing_owners(log: str, source: str) -> tuple[list[str], str | None]:
+    """The probe function owning each failing location in `log`, or why one has no owner."""
     owners: list[str] = []
     for path, line in failing_locations(log):
         if path != SOURCE:
-            return False, f"an error outside the probe module ({path}:{line}): the crate itself does not verify"
+            return owners, f"an error outside the probe module ({path}:{line}): the crate itself does not verify"
         owner = owning_function(source, line)
         if owner is None:
-            return False, f"an error at {path}:{line} belongs to no probe function"
+            return owners, f"an error at {path}:{line} belongs to no probe function"
         owners.append(owner)
+    return owners, None
+
+
+def _owners_refusal(report: CrateReport, owners: list[str]) -> str | None:
+    """Why the failing owners are not exactly the negatives, or None when they are."""
     if report.errors != len(owners):
-        return False, f"the report counts {report.errors} error(s), the log locates {len(owners)}"
+        return f"the report counts {report.errors} error(s), the log locates {len(owners)}"
     if set(owners) & POSITIVE:
-        return False, "the positive control failed: the public contract does not carry the relation"
+        return "the positive control failed: the public contract does not carry the relation"
     if sorted(owners) != sorted(NEGATIVE):
-        return False, f"expected exactly {sorted(NEGATIVE)} to fail, got {sorted(owners)}"
+        return f"expected exactly {sorted(NEGATIVE)} to fail, got {sorted(owners)}"
+    return None
+
+
+def evaluate(reports: list[CrateReport], log: str, status: int | None, source: str) -> tuple[bool, str]:
+    """Did the prover refuse exactly the two negatives and verify the positive control?"""
+    mine = [r for r in reports if CRATE in r.crates]
+    refusal = _report_refusal(mine, status)
+    if refusal:
+        return False, refusal
+    owners, refusal = _failing_owners(log, source)
+    refusal = refusal or _owners_refusal(mine[0], owners)
+    if refusal:
+        return False, refusal
     return True, (
         f"{len(NEGATIVE)} negative probe(s) refused, positive control verified "
-        f"({report.verified} verified)"
+        f"({mine[0].verified} verified)"
     )

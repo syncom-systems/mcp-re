@@ -49,8 +49,8 @@ def packet_for(packets_dir: str, path: str) -> dict:
     return {}
 
 
-def collect(ledger: str, path: str, packets: str | None, include_all: bool = False) -> dict:
-    """The joined view for one file. `main` prints it; `prepare.py` embeds it."""
+def ledger_rows(ledger: str, path: str, include_all: bool) -> list[dict]:
+    """The ledger rows for `path`: the actionable ones, or every one with `include_all`."""
     rows = []
     with open(ledger, encoding="utf-8") as fh:
         for line in fh:
@@ -63,28 +63,43 @@ def collect(ledger: str, path: str, packets: str | None, include_all: bool = Fal
             if not include_all and str(r.get("status", "")).lower() not in ACTIONABLE:
                 continue
             rows.append(r)
+    return rows
 
-    pkt = packet_for(packets, path)
-    # Join on (line, title): the packet is the same round's content for this id.
+
+def packet_content(pkt: dict) -> dict:
+    """The packet's findings, keyed by (line, title) and by title alone."""
     content = {}
     for f in pkt.get("findings", []):
         content[(f.get("line"), f.get("title"))] = f
         content[f.get("title")] = f
+    return content
 
+
+def joined_finding(r: dict, c: dict) -> dict:
+    """One ledger row joined with the packet content `c` for the same finding."""
+    return {
+        "id": r["id"], "severity": r.get("severity"), "category": r.get("category"),
+        "title": r.get("title"), "status": r.get("status"),
+        "line_at_audit_pin": r.get("line"),
+        "lens": r.get("lens"), "unit": r.get("unit"),
+        "claim": c.get("claim"), "evidence_anchor": c.get("evidence"),
+        "impact": c.get("impact"), "suggested_remediation": c.get("remediation"),
+        "confidence": c.get("confidence"), "provisional": c.get("provisional"),
+        "reported_by": c.get("reported_by"),
+        "notes": r.get("notes") or None,
+    }
+
+
+def collect(ledger: str, path: str, packets: str | None, include_all: bool = False) -> dict:
+    """The joined view for one file. `main` prints it; `prepare.py` embeds it."""
+    rows = ledger_rows(ledger, path, include_all)
+    pkt = packet_for(packets, path)
+    # Join on (line, title): the packet is the same round's content for this id.
+    content = packet_content(pkt)
     out = []
     for r in sorted(rows, key=lambda r: SEV.get(str(r.get("severity", "")).lower(), 9)):
         c = content.get((r.get("line"), r.get("title"))) or content.get(r.get("title")) or {}
-        out.append({
-            "id": r["id"], "severity": r.get("severity"), "category": r.get("category"),
-            "title": r.get("title"), "status": r.get("status"),
-            "line_at_audit_pin": r.get("line"),
-            "lens": r.get("lens"), "unit": r.get("unit"),
-            "claim": c.get("claim"), "evidence_anchor": c.get("evidence"),
-            "impact": c.get("impact"), "suggested_remediation": c.get("remediation"),
-            "confidence": c.get("confidence"), "provisional": c.get("provisional"),
-            "reported_by": c.get("reported_by"),
-            "notes": r.get("notes") or None,
-        })
+        out.append(joined_finding(r, c))
     return {"file": path, "n": len(out),
             "packet_found": bool(pkt),
             "liveness": pkt.get("liveness"),

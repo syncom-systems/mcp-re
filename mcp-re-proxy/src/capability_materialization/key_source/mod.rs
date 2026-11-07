@@ -23,7 +23,7 @@ pub use channel_credential::EstablishedChannelCredential;
 pub use role_separation::MaterializedSigningRoles;
 
 use super::key_file_custody::{AdmittedKeyFiles, CheckedKeyFile};
-use crate::config_state::{CustodyMaterial, CustodyState};
+use crate::config_state::{ChannelKeyMaterial, CustodyMaterial, CustodyState};
 use crate::key_source::{KeyError, KeySource};
 
 /// The channel material every custody consumes, whatever holds the response-signing key.
@@ -42,6 +42,24 @@ pub(super) struct ChannelMaterial<'a> {
     pub(super) key: Option<&'a str>,
     /// The anchors peer credentials are verified against.
     pub(super) client_ca: &'a str,
+}
+
+/// What every arm opens a source from, besides the key the custody names: the admission
+/// the key files are taken from, the channel custody's materialization, and the channel
+/// material the TLS identity is built from.
+struct Opening<'a, 'k> {
+    admitted: &'a mut AdmittedKeyFiles<'k>,
+    /// Read by the KMS and token arms, which a build without those backends does not have.
+    #[cfg_attr(
+        not(any(
+            feature = "aws_kms_keysource",
+            feature = "gcp_kms_keysource",
+            feature = "pkcs11_keysource"
+        )),
+        allow(dead_code)
+    )]
+    channel: ChannelKeyMaterial<'a>,
+    material: ChannelMaterial<'a>,
 }
 
 /// The exported channel key as the custody check read it, or `None` where custody keeps
@@ -78,7 +96,12 @@ pub fn build_key_source(
         key: channel.exported_key_path(),
         client_ca,
     };
-    let source = open_source(custody, channel, material, &mut admitted)?;
+    let opening = Opening {
+        admitted: &mut admitted,
+        channel,
+        material,
+    };
+    let source = open_source(custody, opening)?;
     // The relation between what the two custody machines materialized. Neither can see the
     // other's key, so neither can own it; and it is asked HERE because the decisive fact —
     // which key each role actually resolved to — exists only once both are open.
@@ -92,25 +115,25 @@ pub fn build_key_source(
 /// without the relation.
 fn open_source(
     custody: &CustodyState,
-    channel: crate::config_state::ChannelKeyMaterial<'_>,
-    material: ChannelMaterial<'_>,
-    admitted: &mut AdmittedKeyFiles<'_>,
+    opening: Opening<'_, '_>,
 ) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
     match custody.material() {
-        CustodyMaterial::FileSeed { seed_path } => file::open(admitted, seed_path, material),
+        CustodyMaterial::FileSeed { seed_path } => {
+            file::open(opening.admitted, seed_path, opening.material)
+        }
         CustodyMaterial::Pkcs11 {
             module,
             pin_file,
             token_label,
             key_label,
         } => pkcs11::open(
-            module,
-            admitted,
-            pin_file,
-            token_label,
-            key_label,
-            channel,
-            material,
+            opening,
+            pkcs11::Token {
+                module,
+                pin_file,
+                token_label,
+                key_label,
+            },
         ),
         CustodyMaterial::AwsKms {
             region,
@@ -118,25 +141,25 @@ fn open_source(
             endpoint,
             credentials,
         } => aws::open(
-            admitted,
-            region,
-            key_id,
-            endpoint,
-            credentials,
-            channel,
-            material,
+            opening,
+            aws::Key {
+                region,
+                key_id,
+                endpoint,
+                credentials,
+            },
         ),
         CustodyMaterial::GcpKms {
             key_version,
             endpoint,
             use_metadata,
         } => gcp::open(
-            admitted,
-            key_version,
-            endpoint,
-            use_metadata,
-            channel,
-            material,
+            opening,
+            gcp::Key {
+                key_version,
+                endpoint,
+                use_metadata,
+            },
         ),
     }
 }
