@@ -1863,7 +1863,7 @@ nt_rust_test(
 
 nt_rust_binary(
     name = "saturation_rig",
-    srcs = ["examples/saturation_rig.rs"],
+    srcs = ["examples/saturation_rig.rs"] + glob(["examples/saturation_rig/*.rs"]),
     crate_features = ["async_serve", "redis_replay"],
     # The three processes the rig spawns are build dependencies, not paths a script
     # supplies; the rig resolves them through runfiles.

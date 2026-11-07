@@ -9925,7 +9925,15 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/examples/saturation_rig.rs",
    "srcs": [
-    "mcp-re-proxy/examples/saturation_rig.rs"
+    "mcp-re-proxy/examples/saturation_rig.rs",
+    "mcp-re-proxy/examples/saturation_rig/generators.rs",
+    "mcp-re-proxy/examples/saturation_rig/material.rs",
+    "mcp-re-proxy/examples/saturation_rig/options.rs",
+    "mcp-re-proxy/examples/saturation_rig/proc.rs",
+    "mcp-re-proxy/examples/saturation_rig/proxy.rs",
+    "mcp-re-proxy/examples/saturation_rig/rig.rs",
+    "mcp-re-proxy/examples/saturation_rig/smoke.rs",
+    "mcp-re-proxy/examples/saturation_rig/sweep.rs"
    ],
    "testonly": false,
    "verus_deps": []
