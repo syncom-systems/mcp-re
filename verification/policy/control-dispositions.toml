@@ -15676,3 +15676,77 @@ control = "src/lib.rs#outbound_fetch::public_roots::tests::ureq_alone_speaks_no_
 decision = "new-proposition"
 proposition = "NP-290"
 recorded = "2026-11-05"
+
+# --- ND-004: the TypeScript native loader's own tests, 2026-11-07 ---
+
+[[disposition]]
+id = "CD-20614"
+project = "sdk/typescript"
+control = "vitest#test/native_loader.test.ts > selectTargets > tries the universal macOS artifact before the architecture's own"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-11-07"
+
+[[disposition]]
+id = "CD-20615"
+project = "sdk/typescript"
+control = "vitest#test/native_loader.test.ts > selectTargets > chooses the Linux libc variant from the probe"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-11-07"
+
+[[disposition]]
+id = "CD-20616"
+project = "sdk/typescript"
+control = "vitest#test/native_loader.test.ts > selectTargets > chooses the Windows ABI from the Node build"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-11-07"
+
+[[disposition]]
+id = "CD-20617"
+project = "sdk/typescript"
+control = "vitest#test/native_loader.test.ts > selectTargets > names an unsupported architecture or operating system"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-11-07"
+
+[[disposition]]
+id = "CD-20618"
+project = "sdk/typescript"
+control = "vitest#test/native_loader.test.ts > stampBindingTarget > defines the target once and accepts the same value again"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-11-07"
+
+[[disposition]]
+id = "CD-20619"
+project = "sdk/typescript"
+control = "vitest#test/native_loader.test.ts > stampBindingTarget > refuses an export that claims the reserved name with another value"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-11-07"
+
+[[disposition]]
+id = "CD-20620"
+project = "sdk/typescript"
+control = "vitest#test/native_loader.test.ts > stampBindingTarget > skips a frozen binding instead of failing the load"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-11-07"
+
+[[disposition]]
+id = "CD-20621"
+project = "sdk/typescript"
+control = "vitest#test/native_loader.test.ts > loadBinding > chains every failure under one not-found error"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-11-07"
+
+[[disposition]]
+id = "CD-20622"
+project = "sdk/typescript"
+control = "vitest#test/native_loader.test.ts > loadBinding > loads the override named by NAPI_RS_NATIVE_LIBRARY_PATH and reports it as native"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-11-07"
