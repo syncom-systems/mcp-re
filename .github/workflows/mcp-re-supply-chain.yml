@@ -24,6 +24,7 @@ on:
       - "bazel/crates.lock"
       - "**/BUILD.bazel"
       - "scripts/supply_chain_gate.py"
+      - "scripts/_supply_chain/**"
       - ".github/workflows/mcp-re-supply-chain.yml"
   schedule:
     # Daily, 04:17 UTC — off the hour to avoid GitHub's scheduling stampede.

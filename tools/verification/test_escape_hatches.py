@@ -106,7 +106,7 @@ def test_an_assumption_with_no_sites_registers_nothing():
 
 
 def test_two_methods_of_one_name_in_one_file_are_two_sites():
-    """`mcp-re-http-profile/src/block.rs` declares `actor_id` in `impl ActorIdentity` and in
+    """`mcp-re-http-profile/src/block/actor.rs` declares `actor_id` in `impl ActorIdentity` and in
     `impl ResolvedActor`. An unqualified key would make them ONE site, and registering
     either would license both."""
     lines = [

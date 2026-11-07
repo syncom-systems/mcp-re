@@ -20,8 +20,8 @@
 # what is known, and NOTHING returns to `unreviewed` — that would say nobody had looked.
 #
 # Review granularity equals exception granularity. A function-level exception does not make
-# its file a reviewed exception — `mcp-re-proxy/src/cli.rs` stays `unreviewed` despite the
-# ADR-MCPRE-058 ruling on `parse_args`. `mcp-re-proxy/src/app.rs` is `reviewed-exception`
+# its file a reviewed exception — the ADR-MCPRE-058 ruling on `parse_args` never made
+# `mcp-re-proxy/src/cli.rs` one. `mcp-re-proxy/src/app.rs` is `reviewed-exception`
 # for the opposite reason and not because of `run_validated`: EX-002 is a FILE-level census
 # that concluded the root is what remains once separable authorities leave.
 #
@@ -174,23 +174,6 @@ baseline_prod_loc = 971
 baseline_sha = "d7abd3e"
 status = "reviewed-exception"
 review_ref = "EX-006 in docs/architecture/review-dispositions.md"
-
-# ADR-MCPRE-067 Phase 8 moved capability materialization to its owners (678 -> 331), and
-# Phase 9 moved the last three argv helpers to the flag families that were their sole
-# consumers (331 -> 230). The SHA moves WITH the number: this field records where a
-# measurement was ESTABLISHED, and 7ec8f92 never contained a 230-line cli.rs.
-#
-# The owner GRANTED the §14 exception on the re-censused remainder (2026-08-29): one
-# authority — one argv sequence routed through its flag families and composed into one
-# semantic `DeploymentRequest` — of which `parse_args` is 22 production lines and the rest
-# is three projections of the SAME family set. Still not a licence to grow: the ratchet
-# applies to every entry whatever its status.
-[[debt]]
-path = "mcp-re-proxy/src/cli.rs"
-baseline_prod_loc = 230
-baseline_sha = "5d35191"
-status = "reviewed-exception"
-review_ref = "EX-007 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/gcp_kms_keysource.rs"
@@ -480,12 +463,6 @@ baseline_sha = "255465e"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-http-profile/src/block.rs"
-baseline_prod_loc = 603
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
 path = "mcp-re-demo/src/demo_fixtures.rs"
 baseline_prod_loc = 608
 baseline_sha = "d1fc5fa"
@@ -620,12 +597,6 @@ status = "unreviewed"
 path = "mcp-re-http-profile/src/sign.rs"
 baseline_prod_loc = 286
 baseline_sha = "c939c2f"
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/trust_epoch.rs"
-baseline_prod_loc = 451
-baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
