@@ -14,6 +14,7 @@ use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
@@ -92,10 +93,12 @@ fn external_signer_is_byte_identical_to_local_key() {
     sign_request(
         &mut via_local,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &nonce,
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &nonce,
+        },
     )
     .expect("local sign");
 
@@ -103,10 +106,12 @@ fn external_signer_is_byte_identical_to_local_key() {
     sign_request_with_signer(
         &mut via_seam,
         raw_ed25519_signer(&client_key()),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &nonce,
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &nonce,
+        },
     )
     .expect("seam sign");
 
@@ -123,10 +128,12 @@ fn external_signer_request_verifies() {
     sign_request_with_signer(
         &mut req,
         raw_ed25519_signer(&client_key()),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("seam sign");
     Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -141,10 +148,12 @@ fn external_signer_response_verifies() {
     sign_request(
         &mut req,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("sign req");
 
@@ -173,10 +182,12 @@ fn external_signer_wrong_length_fails_closed() {
         let err = sign_request_with_signer(
             &mut req,
             |_base| Ok(vec![0u8; bad_len]),
-            "client-key-1",
-            CREATED,
-            EXPIRES,
-            &unique_test_nonce(),
+            &RequestSignature {
+                key_id: "client-key-1",
+                created: CREATED,
+                expires: EXPIRES,
+                nonce: &unique_test_nonce(),
+            },
         )
         .expect_err("a non-64-byte signature must be rejected");
         assert_eq!(err, HttpProfileError::InvalidSignature, "len {bad_len}");
@@ -190,10 +201,12 @@ fn external_signer_error_propagates() {
     let err = sign_request_with_signer(
         &mut req,
         |_base| Err(HttpProfileError::InvalidSignature),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect_err("signer failure must propagate");
     assert_eq!(err, HttpProfileError::InvalidSignature);
@@ -208,10 +221,12 @@ fn external_signer_wrong_key_does_not_verify() {
     sign_request_with_signer(
         &mut req,
         raw_ed25519_signer(&foreign),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("seam sign with foreign key");
     // Cryptographically valid signature, but not under the key the resolver trusts.

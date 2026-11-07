@@ -17,6 +17,7 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::McpTransportPolicy;
 use mcp_re_http_profile::RequestRoleEvidence;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
@@ -67,10 +68,7 @@ fn post(headers: &[(&str, &str)], body: &[u8]) -> HttpRequest {
 type Signer = fn(
     &mut HttpRequest,
     &SigningKey,
-    &str,
-    i64,
-    i64,
-    &str,
+    &RequestSignature<'_>,
 ) -> Result<RequestRoleEvidence, HttpProfileError>;
 
 /// A POST signed by `sign` as the client.
@@ -79,10 +77,12 @@ fn signed_by(sign: Signer, headers: &[(&str, &str)], body: &[u8]) -> HttpRequest
     sign(
         &mut r,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signs");
     r

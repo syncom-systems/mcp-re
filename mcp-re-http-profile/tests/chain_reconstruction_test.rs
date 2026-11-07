@@ -18,6 +18,7 @@ use mcp_re_http_profile::ChainAudit;
 use mcp_re_http_profile::ChainLabel;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::IncompleteReason;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::RetainedHop;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
@@ -459,10 +460,12 @@ fn a_hop_with_no_evidence_block_is_not_a_verified_hop() {
     let request_evidence = sign_request(
         &mut request,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("request signs");
     let response = answer_outside_the_full_signer(&request, &request_evidence, DONE);

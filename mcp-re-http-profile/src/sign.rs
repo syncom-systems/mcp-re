@@ -33,9 +33,9 @@ mod request_block;
 pub(crate) use request::conditional_request_components;
 pub use request::sign_request;
 pub use request::sign_request_as_given;
-pub use request::sign_request_full;
-pub use request::sign_request_full_with_signer;
 pub use request::sign_request_with_signer;
+pub use request::RequestSignature;
+pub use request::{sign_request_full, sign_request_full_with_signer};
 pub(crate) use request_block::validate_carried as validate_carried_request_block;
 #[cfg(test)]
 pub(crate) use request_block::with_valid_block;
@@ -389,10 +389,12 @@ mod tests {
         let handle = sign_request(
             &mut request,
             &SigningKey::from_seed_bytes(&[0x22; 32]),
-            "client-key-1",
-            1_700_000_000,
-            1_700_000_300,
-            &mcp_re_test_paths::unique_test_nonce(),
+            &RequestSignature {
+                key_id: "client-key-1",
+                created: 1_700_000_000,
+                expires: 1_700_000_300,
+                nonce: &mcp_re_test_paths::unique_test_nonce(),
+            },
         )
         .expect("request signs");
         emit_delegated_response_full(&mut response, &request, &window.signer())
@@ -439,10 +441,12 @@ mod tests {
             &mut request,
             &block,
             &SigningKey::from_seed_bytes(&[0x22; 32]),
-            "client-key-1",
-            1_700_000_000,
-            1_700_000_300,
-            &mcp_re_test_paths::unique_test_nonce(),
+            &RequestSignature {
+                key_id: "client-key-1",
+                created: 1_700_000_000,
+                expires: 1_700_000_300,
+                nonce: &mcp_re_test_paths::unique_test_nonce(),
+            },
         )
         .expect_err("refused");
         assert_eq!(
@@ -468,10 +472,12 @@ mod tests {
             let err = sign(
                 &mut r,
                 &SigningKey::from_seed_bytes(&[0x22; 32]),
-                "client-key-1",
-                1_700_000_000,
-                1_700_000_300,
-                &mcp_re_test_paths::unique_test_nonce(),
+                &RequestSignature {
+                    key_id: "client-key-1",
+                    created: 1_700_000_000,
+                    expires: 1_700_000_300,
+                    nonce: &mcp_re_test_paths::unique_test_nonce(),
+                },
             )
             .expect_err("refused");
             assert_eq!(

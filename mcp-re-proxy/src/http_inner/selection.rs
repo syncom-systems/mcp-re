@@ -53,40 +53,6 @@ impl Claim {
     }
 }
 
-/// Take the backend's single trial slot. The compare-exchange is what makes at most one
-/// probe per backend in flight: whoever flips the flag first owns the trial.
-fn take_trial_slot(b: &Backend) -> bool {
-    b.probe_inflight
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_ok()
-}
-
-/// Move an `Open` backend whose cooldown has elapsed to `HalfOpen`.
-fn reopen_for_trial(b: &Backend, now_nanos: u64) -> bool {
-    now_nanos >= b.reopen_at_nanos.load(Ordering::Acquire)
-        && b.state
-            .compare_exchange(
-                STATE_OPEN,
-                STATE_HALF_OPEN,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_ok()
-}
-
-/// Claim the recovery probe of one backend, if it has one to give.
-///
-/// The state transition does not itself own the trial; the slot CAS does, so at most one
-/// probe per backend is in flight. A scanner that took the slot through the `HalfOpen`
-/// arm first keeps it, and an `Open` backend whose slot is already taken is skipped.
-fn try_claim_probe(b: &Backend, now_nanos: u64) -> bool {
-    match b.state.load(Ordering::Acquire) {
-        STATE_OPEN => reopen_for_trial(b, now_nanos) && take_trial_slot(b),
-        STATE_HALF_OPEN => take_trial_slot(b),
-        _ => false,
-    }
-}
-
 impl HttpInnerPool {
     /// Health-aware selection. Returns the [`Claim`] and the backend of a dispatchable one,
     /// or `None` when every backend is ejected (all Open, cooldown not elapsed) —
@@ -110,7 +76,7 @@ impl HttpInnerPool {
 
         // Pass 2: no Closed backend — try to claim a single recovery probe.
         self.scan_from(start)
-            .find(|(_, b)| try_claim_probe(b, now_nanos))
+            .find(|(_, b)| claim_recovery_probe(b, now_nanos))
             .map(|(i, b)| (Claim::probe(i), b))
     }
 
@@ -142,6 +108,42 @@ impl HttpInnerPool {
             .map(move |(k, b)| (start + k, b))
             .chain(head.iter().enumerate())
     }
+}
+
+/// Claim `backend`'s single recovery probe, when it has one to give.
+///
+/// An `Open` backend past its cooldown moves to `HalfOpen` and then takes the slot; a
+/// `HalfOpen` backend takes the slot directly. The state transition does not itself own
+/// the trial: the slot CAS does, so at most one probe per backend is in flight, and a
+/// scanner that took the slot first keeps it while this backend is skipped.
+fn claim_recovery_probe(backend: &Backend, now_nanos: u64) -> bool {
+    match backend.state.load(Ordering::Acquire) {
+        STATE_OPEN => reopen_for_probe(backend, now_nanos) && take_probe_slot(backend),
+        STATE_HALF_OPEN => take_probe_slot(backend),
+        _ => false,
+    }
+}
+
+/// Move an `Open` backend whose cooldown has elapsed to `HalfOpen`.
+fn reopen_for_probe(backend: &Backend, now_nanos: u64) -> bool {
+    now_nanos >= backend.reopen_at_nanos.load(Ordering::Acquire)
+        && backend
+            .state
+            .compare_exchange(
+                STATE_OPEN,
+                STATE_HALF_OPEN,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+}
+
+/// Take the backend's one in-flight probe slot.
+fn take_probe_slot(backend: &Backend) -> bool {
+    backend
+        .probe_inflight
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
@@ -98,10 +99,12 @@ fn accepted_verdict_is_identical_across_all_methods() {
             &mut req,
             &block(),
             &key(),
-            KID,
-            CREATED,
-            EXPIRES,
-            &format!("nonce-{i}"),
+            &RequestSignature {
+                key_id: KID,
+                created: CREATED,
+                expires: EXPIRES,
+                nonce: &format!("nonce-{i}"),
+            },
         )
         .expect("sign");
         let verdict = Verifier::new(&VerifierPolicy::default(), &resolver()).verify_request(

@@ -12,6 +12,7 @@ use mcp_re_http_profile::DelegationExpectations;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
@@ -100,10 +101,12 @@ pub(super) fn signed_request() -> HttpRequest {
         &mut req,
         &block,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &mcp_re_test_paths::unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &mcp_re_test_paths::unique_test_nonce(),
+        },
     )
     .expect("sign request");
     Verifier::new(&VerifierPolicy::default(), &resolver_client_only())

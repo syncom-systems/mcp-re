@@ -327,7 +327,7 @@ mod tests {
     /// Every other control here refuses in an ADAPTER — an absent credential, an
     /// uninterpretable one, an unavailable signer, a non-Ed25519 export — and each
     /// short-circuits before the relation is called. The comparison the slice exists to
-    /// perform is covered by the DER battery next door in `tls.rs`, which is registered
+    /// perform is covered by the DER battery next door in `tls/delegated.rs`, which is registered
     /// evidence for this unit; what was missing is a control where the relation LIVES, so
     /// that the file carrying the `!=` carries the reason it is there.
     #[test]

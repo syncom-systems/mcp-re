@@ -1197,7 +1197,12 @@ paths = [
   "mcp-re-proxy/src/tls_listener_state/mod.rs",
   "mcp-re-proxy/src/tls_listener_state/assembly.rs",
   "mcp-re-proxy/src/tls_listener_state/trust_anchors.rs",
-  "mcp-re-proxy/src/tls.rs",
+  "mcp-re-proxy/src/tls/delegated.rs",
+  "mcp-re-proxy/src/tls/fault_accept_any.rs",
+  "mcp-re-proxy/src/tls/mod.rs",
+  "mcp-re-proxy/src/tls/options.rs",
+  "mcp-re-proxy/src/tls/peer.rs",
+  "mcp-re-proxy/src/tls/request_guard.rs",
   "mcp-re-proxy/src/delegated_tls.rs",
   "mcp-re-proxy/src/tls_plane/mod.rs",
 ]
@@ -1291,7 +1296,12 @@ paths = [
   "mcp-re-proxy/src/tls_listener_state/client_verifier.rs",
   "mcp-re-proxy/src/tls_plane/client_revocation_posture.rs",
   "mcp-re-proxy/src/tls_plane/crl_reload_worker/mod.rs",
-  "mcp-re-proxy/src/tls.rs",
+  "mcp-re-proxy/src/tls/delegated.rs",
+  "mcp-re-proxy/src/tls/fault_accept_any.rs",
+  "mcp-re-proxy/src/tls/mod.rs",
+  "mcp-re-proxy/src/tls/options.rs",
+  "mcp-re-proxy/src/tls/peer.rs",
+  "mcp-re-proxy/src/tls/request_guard.rs",
   # The verifier the posture selects is chosen here.
   "mcp-re-proxy/src/tls_listener_state/assembly.rs",
 ]
@@ -2578,7 +2588,12 @@ paths = [
   "mcp-re-proxy/src/communication_assurance/credential_key_correspondence.rs",
   "mcp-re-proxy/src/communication_assurance/credential_public_key_evidence.rs",
   "mcp-re-proxy/src/communication_assurance/signing_key_evidence.rs",
-  "mcp-re-proxy/src/tls.rs",
+  "mcp-re-proxy/src/tls/delegated.rs",
+  "mcp-re-proxy/src/tls/fault_accept_any.rs",
+  "mcp-re-proxy/src/tls/mod.rs",
+  "mcp-re-proxy/src/tls/options.rs",
+  "mcp-re-proxy/src/tls/peer.rs",
+  "mcp-re-proxy/src/tls/request_guard.rs",
   # The production call the consequence rests on.
   "mcp-re-proxy/src/delegated_tls/resolver.rs",
 ]
@@ -2614,18 +2629,18 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_key_correspondence::tests::two_sides_presenting_the_same_key_correspond_and_the_facts_carry_that_key",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_key_correspondence::tests::two_legal_but_different_keys_are_a_mismatch_and_not_a_side_failure",
   # --- the same law over real certificates and a real signer seam ---
-  "//mcp-re-proxy:proxy_unit_test#tls::delegated_credential_key_correspondence_tests::matching_credential_and_signing_key_is_accepted",
-  "//mcp-re-proxy:proxy_unit_test#tls::delegated_credential_key_correspondence_tests::a_signing_key_that_is_not_the_credential_key_is_refused",
-  "//mcp-re-proxy:proxy_unit_test#tls::delegated_credential_key_correspondence_tests::an_empty_credential_chain_is_refused",
-  "//mcp-re-proxy:proxy_unit_test#tls::delegated_credential_key_correspondence_tests::an_unparseable_credential_is_refused",
-  "//mcp-re-proxy:proxy_unit_test#tls::delegated_credential_key_correspondence_tests::a_credential_whose_key_is_a_supported_shape_of_another_algorithm_is_refused",
-  "//mcp-re-proxy:proxy_unit_test#tls::delegated_credential_key_correspondence_tests::a_signer_that_exports_no_public_key_is_refused",
-  "//mcp-re-proxy:proxy_unit_test#tls::delegated_credential_key_correspondence_tests::a_signing_key_of_another_algorithm_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#tls::delegated::delegated_credential_key_correspondence_tests::matching_credential_and_signing_key_is_accepted",
+  "//mcp-re-proxy:proxy_unit_test#tls::delegated::delegated_credential_key_correspondence_tests::a_signing_key_that_is_not_the_credential_key_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#tls::delegated::delegated_credential_key_correspondence_tests::an_empty_credential_chain_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#tls::delegated::delegated_credential_key_correspondence_tests::an_unparseable_credential_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#tls::delegated::delegated_credential_key_correspondence_tests::a_credential_whose_key_is_a_supported_shape_of_another_algorithm_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#tls::delegated::delegated_credential_key_correspondence_tests::a_signer_that_exports_no_public_key_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#tls::delegated::delegated_credential_key_correspondence_tests::a_signing_key_of_another_algorithm_is_refused",
   # The control that reaches the profile conjunct rather than a coincidence. Deleting the
   # profile rule and comparing trailing bytes leaves every other negative here green.
-  "//mcp-re-proxy:proxy_unit_test#tls::delegated_credential_key_correspondence_tests::a_signing_key_of_another_algorithm_carrying_the_credential_point_is_refused",
-  "//mcp-re-proxy:proxy_unit_test#tls::delegated_credential_key_correspondence_tests::every_characterized_failure_is_a_distinct_typed_refusal",
-  "//mcp-re-proxy:proxy_unit_test#tls::delegated_credential_key_correspondence_tests::the_accepting_case_yields_the_one_key_both_sides_presented",
+  "//mcp-re-proxy:proxy_unit_test#tls::delegated::delegated_credential_key_correspondence_tests::a_signing_key_of_another_algorithm_carrying_the_credential_point_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#tls::delegated::delegated_credential_key_correspondence_tests::every_characterized_failure_is_a_distinct_typed_refusal",
+  "//mcp-re-proxy:proxy_unit_test#tls::delegated::delegated_credential_key_correspondence_tests::the_accepting_case_yields_the_one_key_both_sides_presented",
 ]
 pilot = "verus-candidate"
 
@@ -2701,7 +2716,12 @@ description = "WHAT `materialize` REFUSES: it establishes correspondence over `c
 paths = [
   "mcp-re-proxy/src/delegated_tls/resolver.rs",
   "mcp-re-proxy/src/delegated_tls.rs",
-  "mcp-re-proxy/src/tls.rs",
+  "mcp-re-proxy/src/tls/delegated.rs",
+  "mcp-re-proxy/src/tls/fault_accept_any.rs",
+  "mcp-re-proxy/src/tls/mod.rs",
+  "mcp-re-proxy/src/tls/options.rs",
+  "mcp-re-proxy/src/tls/peer.rs",
+  "mcp-re-proxy/src/tls/request_guard.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -3287,7 +3307,12 @@ pilot = "verus-candidate"
 id = "proxy.trust_revocation_classification"
 class = "V0"
 description = "Which revocation posture a deployment requests and which witnesses each state form requires: every legal state form is classified and accepted, a bounded cache needs no cadence, each state holds its cadence to the window it claims, and a zero cadence — a spinning reloader — is refused in every state and from a programmatic config as well as a document."
-paths = ["mcp-re-proxy/src/config_state/trust_revocation.rs"]
+paths = [
+  "mcp-re-proxy/src/config_state/trust_revocation/classify.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/epoch_source.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/mod.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/validate.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -3330,7 +3355,10 @@ class = "V0"
 description = "Which locators name a trust document at all, and on what terms: a networked epoch source is handed over as a paired locator and key or not at all, a URL-shaped posture requires its URL to be one, a locator that names nothing resolves no source, and the stored path is the operator's string verbatim rather than a normalization of it."
 paths = [
   "mcp-re-proxy/src/config_state/trust_document.rs",
-  "mcp-re-proxy/src/config_state/trust_revocation.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/classify.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/epoch_source.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/mod.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/validate.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -3352,7 +3380,10 @@ id = "proxy.trust_configuration_state_sole_producer"
 class = "V0"
 description = "Neither trust-configuration value can be assembled outside its owning module: `TrustRevocationState`'s `kind` is bare-private and its enum type is private too, so only the classifier produces a posture and the witnesses it declares are the ones that classifier decided; `TrustDocumentSource`'s `path` is bare-private and `new` is its only, fallible, constructor, so every locator is one that was accepted. States nothing about WHICH posture or WHICH locator is right, which is `proxy.trust_configuration_state`'s."
 paths = [
-  "mcp-re-proxy/src/config_state/trust_revocation.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/classify.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/epoch_source.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/mod.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/validate.rs",
   "mcp-re-proxy/src/config_state/trust_document.rs",
 ]
 exported_contracts = []
@@ -4435,8 +4466,8 @@ tested_symbols = [
   "//mcp-re-proxy:integration_test#exchange_transition_ownership_test::every_exchange_event_reaches_the_machine_by_exactly_one_route",
   "//mcp-re-proxy:integration_test#exchange_transition_ownership_test::the_refusal_terminal_is_entered_only_by_refuse_from_the_disposition",
   "//mcp-re-proxy:integration_test#exchange_transition_ownership_test::the_refusal_rule_would_catch_an_unauthorized_entry",
-  "//mcp-re-proxy:integration_async_test#mrt_continuation_serving_test::a_notification_the_inner_plane_never_delivered_is_not_acknowledged",
-  "//mcp-re-proxy:integration_async_test#mrt_continuation_serving_test::a_delivered_notification_is_still_acknowledged_with_a_202",
+  "//mcp-re-proxy:integration_async_test#mrt_continuation_serving_test::notification_cases::a_notification_the_inner_plane_never_delivered_is_not_acknowledged",
+  "//mcp-re-proxy:integration_async_test#mrt_continuation_serving_test::notification_cases::a_delivered_notification_is_still_acknowledged_with_a_202",
 ]
 
 [[unit]]
@@ -6521,7 +6552,12 @@ tested_symbols = [
 id = "sdk_typescript.bounded_read"
 class = "V0"
 description = "The response read is bounded by the aggregate wall clock rather than by socket inactivity alone and by a byte ceiling, and the verifying channel it runs over is constructed against the configured CA with the hostname proved and no transport-owned or splitting header admitted; exceeding either bound, or a channel that cannot be constructed, fails the exchange."
-paths = ["sdk/typescript/src/mtls.ts"]
+paths = [
+  "sdk/typescript/src/mtls.ts",
+  "sdk/typescript/src/mtls_errors.ts",
+  "sdk/typescript/src/mtls_exchange.ts",
+  "sdk/typescript/src/mtls_settings.ts",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
@@ -6960,7 +6996,12 @@ description = "The route each direct-TLS serving path takes to a peer identity: 
 paths = [
   "mcp-re-proxy/src/async_serve/**/*.rs",
   "mcp-re-proxy/src/blocking_mtls_harness/**/*.rs",
-  "mcp-re-proxy/src/tls.rs",
+  "mcp-re-proxy/src/tls/delegated.rs",
+  "mcp-re-proxy/src/tls/fault_accept_any.rs",
+  "mcp-re-proxy/src/tls/mod.rs",
+  "mcp-re-proxy/src/tls/options.rs",
+  "mcp-re-proxy/src/tls/peer.rs",
+  "mcp-re-proxy/src/tls/request_guard.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -13488,7 +13529,14 @@ tested_symbols = [
 id = "proxy.currency_policy_classification"
 class = "V0"
 description = "THE CLASSIFICATION STEP THAT PRODUCES A CREDENTIAL-CURRENCY POLICY, AND THE INSTANT IT READS THE REVOCATION INDEX AT: `currency_policy` is a total selector over `ServerOptions` that yields one of two `CredentialCurrencyPolicy` variants (`Ceiling`, or `CeilingAndRevocation` when a client revocation index is configured) and no `Option`, so every deployment is exactly one policy and `evaluating with nothing configured` cannot be written; and the revocation index the policy carries is the snapshot loaded on THIS call, so a reload that lands between two requests is in force for the second and a policy captured once per connection is not what the serving path holds. It says NOTHING about what the policy then concludes about a credential — the five facts, their strength asymmetry and the three-state outcome are `proxy.credential_currency`'s — and nothing about the ceiling's legality, which is `proxy.client_credential_window`'s."
-paths = ["mcp-re-proxy/src/tls.rs"]
+paths = [
+  "mcp-re-proxy/src/tls/delegated.rs",
+  "mcp-re-proxy/src/tls/fault_accept_any.rs",
+  "mcp-re-proxy/src/tls/mod.rs",
+  "mcp-re-proxy/src/tls/options.rs",
+  "mcp-re-proxy/src/tls/peer.rs",
+  "mcp-re-proxy/src/tls/request_guard.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
@@ -13497,8 +13545,8 @@ evidence = [
   "mutation://proxy/tls/currency_policy_classification",
 ]
 tested_symbols = [
-  "//mcp-re-proxy:proxy_unit_test#tls::currency_policy_tests::currency_policy_reads_the_index_in_force_at_the_time_of_the_call",
-  "//mcp-re-proxy:proxy_unit_test#tls::currency_policy_tests::every_deployment_classifies_to_exactly_one_policy",
+  "//mcp-re-proxy:proxy_unit_test#tls::peer::currency_policy_tests::currency_policy_reads_the_index_in_force_at_the_time_of_the_call",
+  "//mcp-re-proxy:proxy_unit_test#tls::peer::currency_policy_tests::every_deployment_classifies_to_exactly_one_policy",
 ]
 
 [[unit]]
@@ -14111,7 +14159,14 @@ tested_symbols = [
 id = "proxy.channel_peer_resolution"
 class = "V0"
 description = "WHAT THE SERVING RESOLVER ANSWERS ABOUT THE RELATIONSHIP IN HAND: the identity it yields is the one interpreted from the leaf of the credential THIS relationship authenticated with, under the field the deployment configured — so an issuer that also answers the policy from further up the accepted chain never becomes the peer, two live relationships resolve their own peers rather than one another's, a resumed relationship resolves the same identity as a full handshake while its establishment path stays distinct, and a leaf carrying no value in the configured field resolves NO identity rather than a weaker field's. It restates nothing the authority decides: the interpretation's own refusal algebra is `proxy.certificate_identity`'s, the composition that makes the pairing unconstructible is `proxy.authenticated_relationship_peer`'s, and the ROUTE each serving path takes to this resolver is `proxy.serving_identity_provenance`'s."
-paths = ["mcp-re-proxy/src/tls.rs"]
+paths = [
+  "mcp-re-proxy/src/tls/delegated.rs",
+  "mcp-re-proxy/src/tls/fault_accept_any.rs",
+  "mcp-re-proxy/src/tls/mod.rs",
+  "mcp-re-proxy/src/tls/options.rs",
+  "mcp-re-proxy/src/tls/peer.rs",
+  "mcp-re-proxy/src/tls/request_guard.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -14120,11 +14175,11 @@ evidence = [
   "mutation://proxy/tls/channel_peer_resolution",
 ]
 tested_symbols = [
-  "//mcp-re-proxy:proxy_unit_test#tls::channel_peer_resolution_tests::direct_tls_resolves_the_identity_the_relationship_authenticated_as",
-  "//mcp-re-proxy:proxy_unit_test#tls::channel_peer_resolution_tests::an_issuer_in_the_accepted_chain_never_becomes_the_transport_identity",
-  "//mcp-re-proxy:proxy_unit_test#tls::channel_peer_resolution_tests::each_relationship_resolves_its_own_peers_identity",
-  "//mcp-re-proxy:proxy_unit_test#tls::channel_peer_resolution_tests::a_resumed_relationship_resolves_the_same_identity_as_a_full_handshake",
-  "//mcp-re-proxy:proxy_unit_test#tls::channel_peer_resolution_tests::a_leaf_without_the_configured_field_resolves_no_identity",
+  "//mcp-re-proxy:proxy_unit_test#tls::peer::channel_peer_resolution_tests::direct_tls_resolves_the_identity_the_relationship_authenticated_as",
+  "//mcp-re-proxy:proxy_unit_test#tls::peer::channel_peer_resolution_tests::an_issuer_in_the_accepted_chain_never_becomes_the_transport_identity",
+  "//mcp-re-proxy:proxy_unit_test#tls::peer::channel_peer_resolution_tests::each_relationship_resolves_its_own_peers_identity",
+  "//mcp-re-proxy:proxy_unit_test#tls::peer::channel_peer_resolution_tests::a_resumed_relationship_resolves_the_same_identity_as_a_full_handshake",
+  "//mcp-re-proxy:proxy_unit_test#tls::peer::channel_peer_resolution_tests::a_leaf_without_the_configured_field_resolves_no_identity",
 ]
 
 # ---------------------------------------------------------------------------

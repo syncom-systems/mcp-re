@@ -37,22 +37,33 @@ def _first(f: dict, keys: tuple[str, ...]):
     return None
 
 
+def _findings_of(path: str) -> list[dict]:
+    with open(path, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    return doc if isinstance(doc, list) else doc.get("findings", [])
+
+
+def _file_of(finding: dict) -> str:
+    return (finding.get("file") or finding.get("location") or "").split(":")[0].strip()
+
+
+def _row_of(finding: dict) -> dict:
+    row = {"title": finding.get("title"), "line": finding.get("line"),
+           "severity": finding.get("severity"),
+           "provisional": bool(finding.get("needs_outside_packet"))}
+    for dst, src in FIELD_MAP.items():
+        value = _first(finding, src)
+        if value is not None:
+            row[dst] = value
+    return row
+
+
 def packet_rows(paths: list[str]) -> dict[str, list[dict]]:
     by_file: dict[str, list[dict]] = defaultdict(list)
-    for p in paths:
-        with open(p, encoding="utf-8") as fh:
-            doc = json.load(fh)
-        for f in doc if isinstance(doc, list) else doc.get("findings", []):
-            path = (f.get("file") or f.get("location") or "").split(":")[0].strip()
-            if not path:
-                continue
-            row = {"title": f.get("title"), "line": f.get("line"), "severity": f.get("severity"),
-                   "provisional": bool(f.get("needs_outside_packet"))}
-            for dst, src in FIELD_MAP.items():
-                v = _first(f, src)
-                if v is not None:
-                    row[dst] = v
-            by_file[path].append(row)
+    for finding in (f for p in paths for f in _findings_of(p)):
+        path = _file_of(finding)
+        if path:
+            by_file[path].append(_row_of(finding))
     return by_file
 
 

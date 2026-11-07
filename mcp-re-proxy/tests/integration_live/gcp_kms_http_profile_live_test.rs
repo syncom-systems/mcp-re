@@ -76,6 +76,7 @@ fn live_signer() -> KmsResponseSigner {
 }
 
 use crate::local_seed_backend::offline_signer;
+use mcp_re_http_profile::RequestSignature;
 
 /// The external-signer closure the profile seam expects: RFC 9421 base bytes in,
 /// raw 64-byte Ed25519 signature out. Wraps the KMS signer (which returns
@@ -139,10 +140,12 @@ fn run_request_lane(signer: &KmsResponseSigner) {
     sign_request_with_signer(
         &mut req,
         |base| kms_sign_base(signer, base),
-        REQ_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &mcp_re_test_paths::unique_test_nonce(),
+        &RequestSignature {
+            key_id: REQ_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &mcp_re_test_paths::unique_test_nonce(),
+        },
     )
     .expect("Cloud KMS must sign an RFC 9421 request through the profile seam");
 
@@ -183,10 +186,12 @@ fn run_response_lane(signer: &KmsResponseSigner) {
     sign_request(
         &mut req,
         &req_key,
-        REQ_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &mcp_re_test_paths::unique_test_nonce(),
+        &RequestSignature {
+            key_id: REQ_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &mcp_re_test_paths::unique_test_nonce(),
+        },
     )
     .expect("sign bound request");
     let req_resolver = {

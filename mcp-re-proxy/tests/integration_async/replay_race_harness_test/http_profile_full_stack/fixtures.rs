@@ -16,6 +16,7 @@ use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationHeader;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
@@ -176,10 +177,12 @@ pub(super) fn signed_request(nonce: &str, now: i64) -> HttpRequest {
         &mut req,
         &block,
         &client_key(),
-        CLIENT_KEY_ID,
-        now - 60,
-        now + 240,
-        nonce,
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: now - 60,
+            expires: now + 240,
+            nonce,
+        },
     )
     .expect("client signs the RFC 9421 request");
     req

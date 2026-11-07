@@ -114,6 +114,7 @@ impl Serialize for RequestRoleEvidence {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sign::RequestSignature;
 
     #[test]
     fn handle_is_split_form_and_deterministic() {
@@ -158,10 +159,12 @@ mod tests {
         let evidence = crate::sign::sign_request(
             &mut request,
             &mcp_re_core::SigningKey::from_seed_bytes(&[11u8; 32]),
-            "client-key-1",
-            1_700_000_000,
-            1_700_000_300,
-            &mcp_re_test_paths::unique_test_nonce(),
+            &RequestSignature {
+                key_id: "client-key-1",
+                created: 1_700_000_000,
+                expires: 1_700_000_300,
+                nonce: &mcp_re_test_paths::unique_test_nonce(),
+            },
         )
         .expect("the fixture request signs");
         (request, evidence)

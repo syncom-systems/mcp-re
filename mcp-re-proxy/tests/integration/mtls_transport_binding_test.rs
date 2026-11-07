@@ -47,6 +47,7 @@ use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
@@ -251,10 +252,12 @@ fn signed_request_bound_to_cert(bound_cert_der: &[u8]) -> HttpRequest {
         &mut request,
         &block,
         &signer_key(),
-        CLIENT_KEY_ID,
-        1_000,
-        1_000 + 300,
-        &mcp_re_test_paths::unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: 1_000,
+            expires: 1_000 + 300,
+            nonce: &mcp_re_test_paths::unique_test_nonce(),
+        },
     )
     .expect("sign request");
     request

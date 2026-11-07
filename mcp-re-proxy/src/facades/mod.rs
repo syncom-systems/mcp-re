@@ -10,7 +10,7 @@
 //!
 //! | module | historical vocabulary | authority behind it | creditors |
 //! |---|---|---|---|
-//! | [`asserted_identity`] | `From<IdentityPolicy> for CertificateIdentityPolicy`, `From<CertificateIdentitySource> for IdentitySource` | the certificate identity authority (Slice 1) | `transport/identity.rs`'s `extract_identity`; `tls.rs`'s `authenticate_relationship_peer` call |
+//! | [`asserted_identity`] | `From<IdentityPolicy> for CertificateIdentityPolicy`, `From<CertificateIdentitySource> for IdentitySource` | the certificate identity authority (Slice 1) | `transport/identity.rs`'s `extract_identity`; `tls/peer.rs`'s `authenticate_relationship_peer` call |
 //!
 //! **The surface is now one module holding two conversions.** That is the whole of the
 //! remaining debt, and it is named rather than promised away: the module goes when its two
