@@ -18,6 +18,7 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
@@ -127,10 +128,12 @@ fn signed_full_request_with(
         &mut req,
         block,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        nonce,
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce,
+        },
     )
     .expect("full sign");
     (req, ev)
@@ -266,10 +269,12 @@ fn missing_request_block_fails_in_full_profile() {
     mcp_re_http_profile::sign_request(
         &mut req,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("minimal sign");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -291,10 +296,12 @@ fn wrong_profile_in_block_fails() {
             &mut base_request(),
             &block,
             &client_key(),
-            "client-key-1",
-            CREATED,
-            EXPIRES,
-            &unique_test_nonce(),
+            &RequestSignature {
+                key_id: "client-key-1",
+                created: CREATED,
+                expires: EXPIRES,
+                nonce: &unique_test_nonce()
+            }
         )
         .unwrap_err(),
         HttpProfileError::UnknownProfileTag,
@@ -518,10 +525,12 @@ fn response_request_evidence_mismatch_emits_request_binding_mismatch() {
         &mut req_b,
         &block,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("sign b");
     assert_ne!(ev_b.digest_value(), verified_a.evidence().digest_value());
@@ -577,10 +586,12 @@ fn a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request() {
         &mut req_b,
         &block,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("sign b");
 
@@ -624,10 +635,12 @@ fn two_requests_differing_only_in_a_signed_parameter_have_different_handles() {
         &mut req_a,
         &block,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("sign a");
     let mut req_b = base_request();
@@ -635,10 +648,12 @@ fn two_requests_differing_only_in_a_signed_parameter_have_different_handles() {
         &mut req_b,
         &block,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("sign b");
     assert_ne!(ev_a.digest_value(), ev_b.digest_value());
@@ -661,10 +676,12 @@ fn cryptographic_req_splice_still_fails_at_the_floor() {
         &mut req_b,
         &block,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("sign b");
 
@@ -717,10 +734,12 @@ fn a_target_uri_disagreeing_with_the_audience_tuple_fails() {
         &mut req,
         &block,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("full sign at a different target");
 

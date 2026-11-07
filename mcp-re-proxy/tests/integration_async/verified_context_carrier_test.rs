@@ -44,6 +44,7 @@ use mcp_re_http_profile::CustodyConfig;
 use mcp_re_http_profile::DelegatedSigningCustody;
 use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationHeader;
+use mcp_re_http_profile::RequestSignature;
 
 const NOW: i64 = 1_700_000_100;
 const CREATED: i64 = 1_700_000_000;
@@ -208,10 +209,12 @@ fn signed_request(nonce: &str, seed_reserved: Option<serde_json::Value>) -> Http
         &mut req,
         &block,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        nonce,
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce,
+        },
     )
     .expect("signing succeeds");
     req
@@ -422,10 +425,12 @@ fn signed_request_seeding_params_meta(nonce: &str, forged: serde_json::Value) ->
         &mut req,
         &block,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        nonce,
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce,
+        },
     )
     .expect("signing succeeds");
     req
@@ -542,10 +547,12 @@ fn resign_as_given(mut req: HttpRequest, nonce: &str) -> HttpRequest {
     mcp_re_http_profile::sign::sign_request_as_given(
         &mut req,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        nonce,
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce,
+        },
     )
     .expect("re-sign as given");
     req

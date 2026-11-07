@@ -59,6 +59,7 @@ use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RequestEvidenceDigest;
 use mcp_re_http_profile::RequestRoleEvidence;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_http_profile::SignerSlot;
@@ -174,10 +175,12 @@ fn signed_request(
         &mut req,
         block,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        nonce,
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce,
+        },
     )
     .expect("full sign");
     (req, ev)
@@ -334,10 +337,12 @@ fn response_splice_fails_in_integrated_path() {
         &mut req_b,
         &block,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("sign b");
     let mut rsp_b = HttpResponse {

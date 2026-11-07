@@ -23,6 +23,7 @@ use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RequestEvidenceDigest;
 use mcp_re_http_profile::RequestRoleEvidence;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
@@ -307,10 +308,12 @@ pub(super) fn signed_request_as(
         &mut req,
         &block,
         &actor.key,
-        actor.key_id,
-        CREATED,
-        EXPIRES,
-        nonce,
+        &RequestSignature {
+            key_id: actor.key_id,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce,
+        },
     )
     .expect("client signs RFC 9421 request");
     (req, evidence)

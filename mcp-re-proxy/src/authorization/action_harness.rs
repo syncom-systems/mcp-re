@@ -23,6 +23,7 @@ use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::HttpContinuation;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
@@ -104,10 +105,12 @@ pub(crate) fn sign_and_verify(spec: RequestSpec<'_>) -> Signed {
         &mut request,
         &block,
         &key,
-        spec.keyid,
-        CREATED,
-        EXPIRES,
-        &mcp_re_test_paths::unique_test_nonce(),
+        &RequestSignature {
+            key_id: spec.keyid,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &mcp_re_test_paths::unique_test_nonce(),
+        },
     )
     .expect("the harness request signs");
     let (subject, keyid, public) = (

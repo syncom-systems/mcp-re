@@ -39,6 +39,7 @@ use mcp_re_http_profile::CustodyConfig;
 use mcp_re_http_profile::DelegatedSigningCustody;
 use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationHeader;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
@@ -206,10 +207,12 @@ fn signed_request_with_members(nonce: &str, members: &str) -> HttpRequest {
         &mut req,
         &evidence_block(),
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        nonce,
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce,
+        },
     )
     .expect("signing succeeds");
 
@@ -226,10 +229,12 @@ fn signed_request_with_members(nonce: &str, members: &str) -> HttpRequest {
     sign_request(
         &mut req,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &format!("{nonce}-spliced"),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &format!("{nonce}-spliced"),
+        },
     )
     .expect("re-sign over the spliced bytes");
     req
