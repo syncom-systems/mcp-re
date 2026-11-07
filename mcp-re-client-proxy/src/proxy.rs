@@ -20,7 +20,6 @@ use mcp_re_client_core::verify_delegated_response;
 use mcp_re_client_core::CompositeResponseTrust;
 use mcp_re_client_core::ExecutionContract;
 use mcp_re_client_core::HttpProfileError;
-use mcp_re_client_core::HttpResponse;
 use mcp_re_client_core::McpMessage;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResponseExpectation;
@@ -28,6 +27,11 @@ use mcp_re_core::SigningKey;
 use serde_json::json;
 use serde_json::Map;
 use serde_json::Value;
+
+mod arrival;
+
+use arrival::request_id;
+use arrival::Arrival;
 
 use crate::verified_outcome::read_notification_rejection;
 use crate::verified_outcome::read_outcome;
@@ -139,21 +143,6 @@ pub enum ResponseKind {
         bound: bool,
         execution: ExecutionContract,
     },
-}
-
-/// A transport reply together with the instant it arrived, which is the clock the reply
-/// is judged at.
-#[derive(Clone, Copy)]
-struct Arrival<'a> {
-    response: &'a HttpResponse,
-    now_unix: i64,
-}
-
-/// The JSON-RPC `id` of a plain message, absent for a NOTIFICATION. Both the signer and
-/// the verification path classify on exactly this key's absence, so this is the one place
-/// that reads it.
-fn request_id(plain_request: &Value) -> Option<&Value> {
-    plain_request.get("id")
 }
 
 /// The local client-side MCP-RE proxy. Holds the static route registry, the client
@@ -548,6 +537,7 @@ mod tests {
     use super::*;
     use mcp_re_client_core::classify_result;
     use mcp_re_client_core::continuation_state_of;
+    use mcp_re_client_core::HttpResponse;
     use mcp_re_client_core::ResultClass;
 
     /// A JSON-RPC error rides in the same HTTP 200 body an ordinary result does, so

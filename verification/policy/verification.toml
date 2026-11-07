@@ -5005,7 +5005,7 @@ description = "The joint the shipped client proxy owns and the low-level verifie
 # `client.response_binding_disposition` establishes what the verifier does with a pairing and takes
 # the pairing as given; widening it to cover the pairing merely because it consumes the
 # result would put the relation in the unit that cannot see it.
-paths = ["mcp-re-client-proxy/src/proxy.rs"]
+paths = ["mcp-re-client-proxy/src/proxy.rs", "mcp-re-client-proxy/src/proxy/arrival.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -5271,7 +5271,7 @@ evidence = [
 id = "client.proxy_reply_disposition"
 class = "V0"
 description = "WHAT THE SHIPPED PROXY TELLS A LOCAL AGENT A VERIFIED REPLY MEANS, IN BOTH DIRECTIONS AT ONCE: on the rejection path only the members the receipt ACTUALLY CARRIED are emitted — an absent `execution_status` stays absent rather than becoming `not_executed`, an absent `retention_status` is not invented, and a receipt carrying neither a wire code nor a contract emits no `data` member at all rather than an empty object that reads as a statement — while a receipt that DID state its contract carries the frozen wire code and the whole ADR-MCPRE-058 §10 execution/retry contract into the ordinary `error.data` in one object, because the party deciding whether to retry is the local agent. On the success path the rebuild that strips the proxy-owned evidence block leaves the reply's own discriminator INTACT, so an `input_required` reply still classifies non-terminal and a `resultType` this client does not recognize still classifies unrecognized after the rebuild exactly as before it. Neither inventing a disposition nor losing one. States NOTHING about the SHAPE of the rebuilt envelope — which bodies are refused as not being JSON-RPC responses, what is stripped, which id is written — and nothing about whether the receipt's statement is TRUE, which is the serving path's."
-paths = ["mcp-re-client-proxy/src/proxy.rs"]
+paths = ["mcp-re-client-proxy/src/proxy.rs", "mcp-re-client-proxy/src/proxy/arrival.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
