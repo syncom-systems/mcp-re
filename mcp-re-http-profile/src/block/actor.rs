@@ -7,7 +7,10 @@ use mcp_re_core::VerificationKey;
 use serde::Deserialize;
 use serde::Serialize;
 #[cfg(feature = "verify")]
-use verus_builtin_macros::verus_verify;
+use verus_builtin_macros::{verus_spec, verus_verify};
+#[cfg(feature = "verify")]
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 /// The resolved signing-actor identity. Built by the verifier from what the
 /// TrustResolver returned for the presented keyid — role and trusted key
