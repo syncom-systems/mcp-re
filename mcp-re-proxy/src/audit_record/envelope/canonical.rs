@@ -440,61 +440,82 @@ mod tests {
 
     #[test]
     fn the_v3_golden_vectors_are_byte_exact() {
-        assert_eq!(
-            encoded(&accepted(), 7, &EventScope::Origin),
-            golden_accepted()
-        );
-        assert_eq!(
-            encoded(&digest_rejected(), 7, &EventScope::PreAcceptance),
-            golden_digest_rejected()
-        );
-        assert_eq!(
-            encoded(
-                &policy_refused_at_admission(),
-                7,
-                &EventScope::PreAcceptance
+        let cases: [(&str, Vec<u8>, Vec<u8>); 8] = [
+            (
+                "accepted",
+                encoded(&accepted(), 7, &EventScope::Origin),
+                golden_accepted(),
             ),
-            golden_policy_refused_at_admission()
-        );
-        assert_eq!(encoded(&signed(), 7, &exchange()), golden_signed());
-        assert_eq!(
-            encoded(&response_rejected_elsewhere(), 7, &exchange()),
-            golden_response_rejected_elsewhere()
-        );
-        assert_eq!(
-            encode(&id(7), &EventScope::Origin, &authorized_fields()).expect("encodes"),
-            golden_authorized_fields()
-        );
-        assert_eq!(
-            encode(&id(7), &exchange(), &intent_fields()).expect("encodes"),
-            golden_intent()
-        );
-        assert_eq!(
-            encode(&id(7), &EventScope::Run, &accounting_fields()).expect("encodes"),
-            golden_accounting()
-        );
+            (
+                "digest rejected",
+                encoded(&digest_rejected(), 7, &EventScope::PreAcceptance),
+                golden_digest_rejected(),
+            ),
+            (
+                "policy refused at admission",
+                encoded(
+                    &policy_refused_at_admission(),
+                    7,
+                    &EventScope::PreAcceptance,
+                ),
+                golden_policy_refused_at_admission(),
+            ),
+            (
+                "signed",
+                encoded(&signed(), 7, &exchange()),
+                golden_signed(),
+            ),
+            (
+                "response rejected elsewhere",
+                encoded(&response_rejected_elsewhere(), 7, &exchange()),
+                golden_response_rejected_elsewhere(),
+            ),
+            (
+                "authorized fields",
+                encode(&id(7), &EventScope::Origin, &authorized_fields()).expect("encodes"),
+                golden_authorized_fields(),
+            ),
+            (
+                "intent",
+                encode(&id(7), &exchange(), &intent_fields()).expect("encodes"),
+                golden_intent(),
+            ),
+            (
+                "accounting",
+                encode(&id(7), &EventScope::Run, &accounting_fields()).expect("encodes"),
+                golden_accounting(),
+            ),
+        ];
+        for (name, actual, golden) in cases {
+            assert_eq!(actual, golden, "the {name} vector is not byte exact");
+        }
     }
 
     /// The content identity of four vectors, computed independently of this crate:
     /// `xxd -r -p | (printf 'mcp-re-audit-v1/envelope\0'; cat) | shasum -a 256`.
     #[test]
     fn the_v3_golden_digests_are_pinned() {
-        assert_eq!(
-            ContentDigest::of(&golden_accepted()).to_string(),
-            "2d2e2aa7e9fa95e3e693cdd69c19aa39b13d53ea79d8180605fef2e4d0a2a575"
-        );
-        assert_eq!(
-            ContentDigest::of(&golden_signed()).to_string(),
-            "8a8f501df97d6066289c056abd16b816b305837c231a3375e00a3c5d79c36f95"
-        );
-        assert_eq!(
-            ContentDigest::of(&golden_intent()).to_string(),
-            "ff18fec070cca6e1d666935cf4971b51a3d6efac517bf5df958c0186e96de395"
-        );
-        assert_eq!(
-            ContentDigest::of(&golden_accounting()).to_string(),
-            "638fb531a35ec94f05b619c67b216d7a67d520b89bc2d3a2fb6c42565980e7dc"
-        );
+        let pinned = [
+            (
+                golden_accepted(),
+                "2d2e2aa7e9fa95e3e693cdd69c19aa39b13d53ea79d8180605fef2e4d0a2a575",
+            ),
+            (
+                golden_signed(),
+                "8a8f501df97d6066289c056abd16b816b305837c231a3375e00a3c5d79c36f95",
+            ),
+            (
+                golden_intent(),
+                "ff18fec070cca6e1d666935cf4971b51a3d6efac517bf5df958c0186e96de395",
+            ),
+            (
+                golden_accounting(),
+                "638fb531a35ec94f05b619c67b216d7a67d520b89bc2d3a2fb6c42565980e7dc",
+            ),
+        ];
+        for (vector, digest) in pinned {
+            assert_eq!(ContentDigest::of(&vector).to_string(), digest);
+        }
     }
 
     #[test]
@@ -653,30 +674,11 @@ mod tests {
         if !(0..i64::MAX).contains(&seq) {
             return Err(format!("seq {seq} outside 0..i64::MAX"));
         }
-        let scope = match c.byte()? {
-            0x01 => Scope::Origin,
-            0x02 => {
-                let (r, s) = (c.run()?, c.i64()?);
-                if r != run || !(0..seq).contains(&s) {
-                    return Err("the coordinate is not an earlier event of this run".into());
-                }
-                Scope::Exchange(r, s)
-            }
-            0x03 => Scope::PreAcceptance,
-            0x04 => Scope::Run,
-            tag => return Err(format!("scope tag {tag}")),
-        };
+        let scope = read_scope(&mut c, run, seq)?;
         let count = u16::from_be_bytes(c.take(2)?.try_into().expect("2 bytes"));
-        let mut values = Vec::new();
-        for _ in 0..count {
-            values.push(match c.byte()? {
-                0x00 => Value::Absent,
-                0x01 => Value::Token(c.utf8()?),
-                0x02 => Value::Number(c.i64()?),
-                0x03 => Value::Text(c.utf8()?),
-                class => return Err(format!("class {class}")),
-            });
-        }
+        let values = (0..count)
+            .map(|_| read_value(&mut c))
+            .collect::<Result<Vec<_>, _>>()?;
         if !c.0.is_empty() {
             return Err(format!("{} trailing byte(s)", c.0.len()));
         }
@@ -687,6 +689,32 @@ mod tests {
             scope,
             values,
         })
+    }
+
+    fn read_scope(c: &mut Cursor<'_>, run: [u8; 16], seq: i64) -> Result<Scope, String> {
+        match c.byte()? {
+            0x01 => Ok(Scope::Origin),
+            0x02 => {
+                let (r, s) = (c.run()?, c.i64()?);
+                if r != run || !(0..seq).contains(&s) {
+                    return Err("the coordinate is not an earlier event of this run".into());
+                }
+                Ok(Scope::Exchange(r, s))
+            }
+            0x03 => Ok(Scope::PreAcceptance),
+            0x04 => Ok(Scope::Run),
+            tag => Err(format!("scope tag {tag}")),
+        }
+    }
+
+    fn read_value(c: &mut Cursor<'_>) -> Result<Value, String> {
+        match c.byte()? {
+            0x00 => Ok(Value::Absent),
+            0x01 => Ok(Value::Token(c.utf8()?)),
+            0x02 => Ok(Value::Number(c.i64()?)),
+            0x03 => Ok(Value::Text(c.utf8()?)),
+            class => Err(format!("class {class}")),
+        }
     }
 
     fn token(values: &[Value], at: usize) -> Result<&str, String> {
@@ -700,25 +728,34 @@ mod tests {
     /// or the six exchange-wide fields and, for a request, the authorization group and the
     /// admission group.
     fn check_schema(scope: &Scope, values: &[Value]) -> Result<(), String> {
-        if token(values, 0)? == "mcp-re.audit.accounting" {
-            let counts = values.get(1..13).unwrap_or_default();
-            let numbers =
-                counts.len() == 12 && counts.iter().all(|v| matches!(v, Value::Number(_)));
-            return match (scope, numbers, values.get(13), values.len()) {
-                (Scope::Run, true, Some(Value::Token(_)), 14) => Ok(()),
-                (Scope::Run, ..) => Err("the accounting record's fields are malformed".into()),
-                _ => Err("an accounting record belongs to the run".into()),
-            };
+        match token(values, 0)? {
+            "mcp-re.audit.accounting" => check_accounting(scope, values),
+            "mcp-re.execution.intent" => check_intent(scope, values),
+            _ => check_decision(scope, values),
         }
-        if token(values, 0)? == "mcp-re.execution.intent" {
-            return match (scope, values) {
-                (Scope::Exchange(..), [Value::Token(_), Value::Text(_), Value::Number(_)]) => {
-                    Ok(())
-                }
-                (Scope::Exchange(..), _) => Err("the intent's fields are malformed".into()),
-                _ => Err("an intent belongs to an exchange".into()),
-            };
+    }
+
+    fn check_accounting(scope: &Scope, values: &[Value]) -> Result<(), String> {
+        let counts = values.get(1..13).unwrap_or_default();
+        let numbers = counts.len() == 12 && counts.iter().all(|v| matches!(v, Value::Number(_)));
+        match (scope, numbers, values.get(13), values.len()) {
+            (Scope::Run, true, Some(Value::Token(_)), 14) => Ok(()),
+            (Scope::Run, ..) => Err("the accounting record's fields are malformed".into()),
+            _ => Err("an accounting record belongs to the run".into()),
         }
+    }
+
+    fn check_intent(scope: &Scope, values: &[Value]) -> Result<(), String> {
+        match (scope, values) {
+            (Scope::Exchange(..), [Value::Token(_), Value::Text(_), Value::Number(_)]) => Ok(()),
+            (Scope::Exchange(..), _) => Err("the intent's fields are malformed".into()),
+            _ => Err("an intent belongs to an exchange".into()),
+        }
+    }
+
+    /// A request or response decision: the exchange-wide fields, then, for a request only,
+    /// the authorization and admission groups.
+    fn check_decision(scope: &Scope, values: &[Value]) -> Result<(), String> {
         let (event, decision) = (token(values, 0)?, token(values, 1)?);
         let request = match (event, decision, scope) {
             ("mcp-re.request.accepted", "Accepted", Scope::Origin)
@@ -735,34 +772,41 @@ mod tests {
             return Err("the exchange-wide fields are malformed".into());
         }
         let rest = values.get(6..).unwrap_or_default();
-        if !request {
-            return rest
-                .is_empty()
+        if request {
+            check_request_facets(rest)
+        } else {
+            rest.is_empty()
                 .then_some(())
-                .ok_or_else(|| "a response carries a facet".to_owned());
+                .ok_or_else(|| "a response carries a facet".to_owned())
         }
-        let authz = match token(rest, 0)? {
-            "not-configured" | "refused-before-policy" => 1,
-            "refused-by-policy" => {
-                token(rest, 1)?;
-                2
-            }
-            "authorized" => {
-                let texts = (1..=5)
-                    .chain([7])
-                    .all(|i| matches!(rest.get(i), Some(Value::Text(_))));
-                if !texts || !matches!(rest.get(6), Some(Value::Token(_) | Value::Text(_))) {
-                    return Err("the authorized group is malformed".into());
-                }
-                8
-            }
-            other => return Err(format!("authz {other}")),
-        };
+    }
+
+    fn check_request_facets(rest: &[Value]) -> Result<(), String> {
+        let authz = authz_group_len(rest)?;
         let admission = token(rest, authz)?;
         match rest.len() - authz {
             1 => Ok(()),
             2 if admission == "refused" => token(rest, authz + 1).map(|_| ()),
             n => Err(format!("{n} admission field(s) after {admission}")),
+        }
+    }
+
+    /// The length of the authorization group `rest` opens with.
+    fn authz_group_len(rest: &[Value]) -> Result<usize, String> {
+        match token(rest, 0)? {
+            "not-configured" | "refused-before-policy" => Ok(1),
+            "refused-by-policy" => token(rest, 1).map(|_| 2),
+            "authorized" => {
+                let texts = (1..=5)
+                    .chain([7])
+                    .all(|i| matches!(rest.get(i), Some(Value::Text(_))));
+                if texts && matches!(rest.get(6), Some(Value::Token(_) | Value::Text(_))) {
+                    Ok(8)
+                } else {
+                    Err("the authorized group is malformed".into())
+                }
+            }
+            other => Err(format!("authz {other}")),
         }
     }
 
@@ -808,88 +852,88 @@ mod tests {
         [&bytes[..17], &seq.to_be_bytes(), &bytes[25..]].concat()
     }
 
+    fn assert_refused(bytes: &[u8], why: &str) {
+        assert!(read(bytes).is_err(), "{why} was read");
+    }
+
     #[test]
     fn the_reference_reader_refuses_non_canonical_forms() {
         for vector in vectors() {
             for cut in 0..vector.len() {
-                assert!(
-                    read(&vector[..cut]).is_err(),
-                    "a truncation at {cut} was read"
-                );
+                assert_refused(&vector[..cut], &format!("a truncation at {cut}"));
             }
-            assert!(
-                read(&[&vector[..], &[0x00]].concat()).is_err(),
-                "a trailing byte"
-            );
-            assert!(read(&with(vector.clone(), 0, 0x02)).is_err(), "version 2");
-            assert!(read(&with(vector.clone(), 0, 0x04)).is_err(), "version 4");
-            assert!(
-                read(&with_seq(vector.clone(), -1)).is_err(),
-                "a negative seq"
-            );
-            assert!(
-                read(&with_seq(vector.clone(), i64::MAX)).is_err(),
-                "seq == i64::MAX"
-            );
+            let mangled = [
+                ("a trailing byte", [&vector[..], &[0x00]].concat()),
+                ("version 2", with(vector.clone(), 0, 0x02)),
+                ("version 4", with(vector.clone(), 0, 0x04)),
+                ("a negative seq", with_seq(vector.clone(), -1)),
+                ("seq == i64::MAX", with_seq(vector.clone(), i64::MAX)),
+            ];
+            for (why, bytes) in mangled {
+                assert_refused(&bytes, why);
+            }
         }
+    }
+
+    #[test]
+    fn the_reference_reader_refuses_a_malformed_field_stream() {
         let golden = golden_accepted();
-        // The first field's class byte, after header, scope and count.
-        assert!(read(&with(golden.clone(), 28, 0x04)).is_err(), "class 4");
         let actor = golden
             .windows(7)
             .position(|w| w == b"actor-a")
             .expect("the actor is in the vector");
-        assert!(
-            read(&with(golden.clone(), actor, 0xff)).is_err(),
-            "invalid UTF-8"
-        );
         let count = 26;
-        assert!(
-            read(&with(golden.clone(), count + 1, 0x09)).is_err(),
-            "count + 1"
-        );
-        assert!(
-            read(&with(golden.clone(), count + 1, 0x07)).is_err(),
-            "count - 1"
-        );
-        assert!(
-            read(&encoded(&accepted(), 7, &exchange())).is_err(),
-            "Exchange on accepted"
-        );
-        assert!(
-            read(&encoded(&signed(), 7, &EventScope::Origin)).is_err(),
-            "Origin on signed"
-        );
-        assert!(
-            read(&encoded(&signed(), 3, &exchange())).is_err(),
-            "a coordinate that is not earlier than its event"
-        );
+        let mangled = [
+            // The first field's class byte, after header, scope and count.
+            ("class 4", with(golden.clone(), 28, 0x04)),
+            ("invalid UTF-8", with(golden.clone(), actor, 0xff)),
+            ("count + 1", with(golden.clone(), count + 1, 0x09)),
+            ("count - 1", with(golden.clone(), count + 1, 0x07)),
+        ];
+        for (why, bytes) in mangled {
+            assert_refused(&bytes, why);
+        }
+    }
+
+    #[test]
+    fn the_reference_reader_refuses_a_scope_that_disagrees_with_the_event() {
+        let decided = encoded(&signed(), 7, &exchange());
+        let mut relabelled = golden_intent();
+        relabelled.truncate(52);
+        let mut refused: Vec<(String, Vec<u8>)> = [
+            ("Exchange on accepted", encoded(&accepted(), 7, &exchange())),
+            (
+                "Origin on signed",
+                encoded(&signed(), 7, &EventScope::Origin),
+            ),
+            (
+                "a coordinate that is not earlier than its event",
+                encoded(&signed(), 3, &exchange()),
+            ),
+            ("Run on signed", encoded(&signed(), 7, &EventScope::Run)),
+            (
+                "an intent's event token over a decision's fields",
+                [&relabelled[..], &decided[52..]].concat(),
+            ),
+        ]
+        .into_iter()
+        .map(|(why, bytes)| (why.to_owned(), bytes))
+        .collect();
         for scope in [
             EventScope::Origin,
             EventScope::PreAcceptance,
             EventScope::Run,
         ] {
             let intent = encode(&id(7), &scope, &intent_fields()).expect("encodes");
-            assert!(read(&intent).is_err(), "an intent under {scope:?}");
+            refused.push((format!("an intent under {scope:?}"), intent));
         }
         for scope in [EventScope::Origin, EventScope::PreAcceptance, exchange()] {
             let accounting = encode(&id(7), &scope, &accounting_fields()).expect("encodes");
-            assert!(
-                read(&accounting).is_err(),
-                "an accounting record under {scope:?}"
-            );
+            refused.push((format!("an accounting record under {scope:?}"), accounting));
         }
-        assert!(
-            read(&encoded(&signed(), 7, &EventScope::Run)).is_err(),
-            "Run on signed"
-        );
-        let decided = encoded(&signed(), 7, &exchange());
-        let mut relabelled = golden_intent();
-        relabelled.truncate(52);
-        assert!(
-            read(&[&relabelled[..], &decided[52..]].concat()).is_err(),
-            "an intent's event token over a decision's fields"
-        );
+        for (why, bytes) in refused {
+            assert_refused(&bytes, &why);
+        }
     }
 
     // ---- the v3 schema table --------------------------------------------------------------
@@ -1011,17 +1055,20 @@ mod tests {
             .expect("the evaluator grants")
     }
 
-    /// Every record this proxy can produce has exactly the v3 field sequence. A change to any
-    /// arm — a field added, dropped, moved or reclassified — is a new canonical version.
-    #[test]
-    fn every_enumerable_record_matches_the_v3_schema_table() {
-        let admissions = [
+    fn admissions() -> [AdmissionFacet; 5] {
+        [
             AdmissionFacet::NotReached,
             AdmissionFacet::NotConfigured,
             AdmissionFacet::LiveConfirmed,
             AdmissionFacet::Degraded,
             AdmissionFacet::Refused,
-        ];
+        ]
+    }
+
+    /// The request subjects for one admission facet: every authorization posture accepted,
+    /// every authorization facet rejected, with and without a Core reason, and refused at
+    /// admission.
+    fn request_subjects(admission: AdmissionFacet) -> Vec<AuditSubject> {
         let authorizations = [
             AuthorizationFacet::NotConfigured,
             AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
@@ -1029,39 +1076,84 @@ mod tests {
                 PolicyError::AuthorizationScopeDenied,
             )),
         ];
-        let postures = [
+        let mut subjects: Vec<AuditSubject> = [
             AuthorizationPosture::NoPolicyConfigured,
             authorized_posture(),
-        ];
+        ]
+        .iter()
+        .map(|posture| AuditSubject::request_accepted(posture, admission))
+        .collect();
+        for authorization in &authorizations {
+            subjects.push(AuditSubject::request_rejected(
+                Some(&McpReError::DigestMismatch),
+                authorization.clone(),
+                admission,
+            ));
+            subjects.push(AuditSubject::request_rejected(
+                None,
+                authorization.clone(),
+                admission,
+            ));
+            subjects.push(AuditSubject::request_refused_at_admission(
+                None,
+                authorization.clone(),
+                AdmissionRefusalClass::NoRecord,
+            ));
+        }
+        subjects
+    }
+
+    fn enumerable_subjects() -> Vec<AuditSubject> {
         let mut subjects = vec![
             AuditSubject::response_signed(),
             AuditSubject::response_rejected(Some(&McpReError::DigestMismatch)),
             AuditSubject::response_rejected(None),
         ];
-        for admission in admissions {
-            for posture in &postures {
-                subjects.push(AuditSubject::request_accepted(posture, admission));
-            }
-            for authorization in &authorizations {
-                subjects.push(AuditSubject::request_rejected(
-                    Some(&McpReError::DigestMismatch),
-                    authorization.clone(),
-                    admission,
-                ));
-                subjects.push(AuditSubject::request_rejected(
-                    None,
-                    authorization.clone(),
-                    admission,
-                ));
-                subjects.push(AuditSubject::request_refused_at_admission(
-                    None,
-                    authorization.clone(),
-                    AdmissionRefusalClass::NoRecord,
-                ));
-            }
+        for admission in admissions() {
+            subjects.extend(request_subjects(admission));
         }
+        subjects
+    }
+
+    /// The `(name, class)` sequence of `fields`.
+    fn shape(fields: &[AuditField<'_>]) -> Vec<(&'static str, u8)> {
+        fields.iter().map(|f| (f.name, class(&f.value))).collect()
+    }
+
+    /// The `(name, class)` sequence of a single-class arm of the table.
+    fn arm_shape(arm: &[Slot]) -> Vec<(&'static str, u8)> {
+        arm.iter().map(|(n, c)| (*n, c[0])).collect()
+    }
+
+    /// Asserts `record` has the v3 field sequence and returns its authorization arm, when it
+    /// is a request.
+    fn assert_matches_schema(record: &AuditRecord) -> Option<String> {
+        let fields = record.audit_fields();
+        let actual = shape(&fields);
+        let schema = schema_of(record);
+        let matches = actual.len() == schema.len()
+            && actual
+                .iter()
+                .zip(&schema)
+                .all(|((name, c), (want, classes))| name == want && classes.contains(c));
+        assert!(
+            matches,
+            "the field sequence of {record:?} is not the v3 schema — a change to it \
+             is a new canonical version: bump CANONICAL_VERSION and keep the v3 \
+             vectors.\nactual: {actual:?}\nv3:     {schema:?}"
+        );
+        match fields.get(6).map(|f| f.value.clone()) {
+            Some(AuditValue::Token(authz)) => Some(authz.to_string()),
+            _ => None,
+        }
+    }
+
+    /// Every record this proxy can produce has exactly the v3 field sequence. A change to any
+    /// arm — a field added, dropped, moved or reclassified — is a new canonical version.
+    #[test]
+    fn every_enumerable_record_matches_the_v3_schema_table() {
         let mut arms_seen = std::collections::BTreeSet::new();
-        for subject in subjects {
+        for subject in enumerable_subjects() {
             for actor_id in [None, Some("actor-a".to_owned())] {
                 let record = AuditRecord {
                     subject: subject.clone(),
@@ -1069,50 +1161,18 @@ mod tests {
                     status: 200,
                     at_unix: 1,
                 };
-                let actual: Vec<(&str, u8)> = record
-                    .audit_fields()
-                    .iter()
-                    .map(|f| (f.name, class(&f.value)))
-                    .collect();
-                let schema = schema_of(&record);
-                let matches = actual.len() == schema.len()
-                    && actual
-                        .iter()
-                        .zip(&schema)
-                        .all(|((name, c), (want, classes))| name == want && classes.contains(c));
-                assert!(
-                    matches,
-                    "the field sequence of {record:?} is not the v3 schema — a change to it \
-                     is a new canonical version: bump CANONICAL_VERSION and keep the v3 \
-                     vectors.\nactual: {actual:?}\nv3:     {schema:?}"
-                );
-                if let Some(AuditValue::Token(authz)) =
-                    record.audit_fields().get(6).map(|f| f.value.clone())
-                {
-                    arms_seen.insert(authz);
-                }
+                arms_seen.extend(assert_matches_schema(&record));
             }
         }
-        let intent: Vec<(&str, u8)> = intent_fields()
-            .iter()
-            .map(|f| (f.name, class(&f.value)))
-            .collect();
         assert_eq!(
-            intent,
-            INTENT.iter().map(|(n, c)| (*n, c[0])).collect::<Vec<_>>(),
+            shape(&intent_fields()),
+            arm_shape(INTENT),
             "the intent's field sequence is not the v3 intent arm — a change to it is a new \
              canonical version"
         );
-        let accounting: Vec<(&str, u8)> = accounting_fields()
-            .iter()
-            .map(|f| (f.name, class(&f.value)))
-            .collect();
         assert_eq!(
-            accounting,
-            ACCOUNTING
-                .iter()
-                .map(|(n, c)| (*n, c[0]))
-                .collect::<Vec<_>>(),
+            shape(&accounting_fields()),
+            arm_shape(ACCOUNTING),
             "the accounting record's field sequence is not the v3 accounting arm — a change to \
              it is a new canonical version"
         );

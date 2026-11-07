@@ -15406,6 +15406,22 @@ proposition = "NP-282"
 recorded = "2026-10-20"
 
 [[disposition]]
+id = "CD-20612"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::canonical::tests::the_reference_reader_refuses_a_malformed_field_stream"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
+id = "CD-20613"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::envelope::canonical::tests::the_reference_reader_refuses_a_scope_that_disagrees_with_the_event"
+decision = "new-proposition"
+proposition = "NP-282"
+recorded = "2026-10-20"
+
+[[disposition]]
 id = "CD-20514"
 project = "mcp-re-proxy"
 control = "src/lib.rs#audit_record::envelope::canonical::tests::every_enumerable_record_matches_the_v3_schema_table"
