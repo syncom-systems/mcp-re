@@ -4353,7 +4353,7 @@ weakening = """
         rejection
 """
 expect_red = [
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::a_post_dispatch_refusal_leaves_no_dangling_crossing",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::retention::a_post_dispatch_refusal_leaves_no_dangling_crossing",
 ]
 
 [[probe]]
@@ -8231,7 +8231,7 @@ weakening = """
     );
 """
 expect_red = [
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::a_served_call_becomes_an_offline_verifiable_receipt",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::attestation::a_served_call_becomes_an_offline_verifiable_receipt",
 ]
 note = """
 THE STATEMENT AND THE RECONSTRUCTION MUST BE ABOUT ONE CALL, and the weakening issues the
@@ -10631,7 +10631,7 @@ weakening = """
         }
 """
 expect_red = [
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::a_retention_store_that_cannot_accept_the_call_refuses_before_the_backend_runs",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::retention::a_retention_store_that_cannot_accept_the_call_refuses_before_the_backend_runs",
 ]
 
 [[probe]]
