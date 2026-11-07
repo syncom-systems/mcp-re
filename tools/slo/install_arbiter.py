@@ -53,7 +53,8 @@ SOURCES = ("host_gate.py", "host_gate_config.py", "host_gate_state.py", "host_ga
            "arbiter_error.py", "runner_arbiter.py", "runner_arbiter_common.py",
            "runner_arbiter_admission.py", "runner_arbiter_assertion.py", "runner_arbiter_lease.py",
            "runner_arbiter_operator.py", "environment_preflight.py",
-           "run_supervisor.py")
+           "run_supervisor.py", "run_supervisor_record.py", "run_supervisor_resources.py",
+           "run_supervisor_reconcile.py", "run_supervisor_teardown.py")
 
 STARTED_VAR = "ACTIONS_RUNNER_HOOK_JOB_STARTED"
 COMPLETED_VAR = "ACTIONS_RUNNER_HOOK_JOB_COMPLETED"
