@@ -333,7 +333,7 @@ dead_tokens = 2
 status = "unreviewed"
 
 [[debt]]
-path = "tools/slo/host_gate.py"
+path = "tools/slo/host_gate_config.py"
 dead_tokens = 1
 status = "reviewed-exception"
 review_ref = "DP-001 in docs/architecture/review-dispositions.md"

@@ -13,7 +13,6 @@ use std::time::Duration;
 
 use crate::async_serve::ServedHttpRequest;
 use crate::clock::now_unix;
-use crate::config_snapshot;
 use crate::config_state::validation::ValidatedDeployment;
 use crate::config_state::ChannelBindingEffects;
 use crate::deployment_request::DeploymentRequest;
@@ -515,10 +514,12 @@ fn run_validated(
     let runtime = building.finish()?;
 
     runtime.serve(
-        Arc::clone(&config_snapshot),
-        Arc::new(serve_options),
+        crate::materialized_runtime::FleetServing {
+            config_snapshot: Arc::clone(&config_snapshot),
+            serve_options: Arc::new(serve_options),
+            shutdown,
+        },
         fleet_cfg,
-        shutdown,
     )
 }
 
@@ -577,16 +578,14 @@ fn fleet_config(
 /// that is all a caller should have to know to sequence anything after it.
 pub(crate) fn serve_fleet(
     proxy: Arc<HttpProfileProxy>,
-    config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
-    serve_options: Arc<crate::ServerOptions>,
+    serving: crate::materialized_runtime::FleetServing,
     authorized: crate::materialized_runtime::fleet_serve_authorized::FleetServeAuthorized,
-    shutdown: Arc<AtomicBool>,
 ) -> Result<(), String> {
     // MCPRE-116: hand the fleet the SNAPSHOT, not a one-shot `load()`. The accept
     // loop re-reads it per connection, so the CRL hot-reload task's atomic swap is
     // observed by the next handshake instead of being written to a config nothing
     // reads again.
-    let server_config = Arc::clone(&config_snapshot);
+    let server_config = Arc::clone(&serving.config_snapshot);
     // The caller owns the shutdown flag (the binary wires it to SIGTERM/SIGINT; a
     // test flips it directly). We hand a clone to the fleet and poll the same flag.
 
@@ -607,9 +606,9 @@ pub(crate) fn serve_fleet(
     let fleet = crate::async_fleet::serve_fleet(
         authorized.into_fleet_config(),
         server_config,
-        serve_options,
+        serving.serve_options,
         make_handler,
-        Arc::clone(&shutdown),
+        Arc::clone(&serving.shutdown),
     )
     .map_err(|e| format!("start async fleet: {e}"))?;
     eprintln!(
@@ -619,7 +618,7 @@ pub(crate) fn serve_fleet(
     );
 
     // Block until the caller flips `shutdown`, then drain the fleet (bounded).
-    while !shutdown.load(Ordering::SeqCst) {
+    while !serving.shutdown.load(Ordering::SeqCst) {
         std::thread::sleep(Duration::from_millis(50));
     }
     eprintln!("mcp-re-proxy: shutdown signal received; draining async fleet");
@@ -634,6 +633,113 @@ pub(crate) fn serve_fleet(
 #[cfg(test)]
 mod tests {
     use crate::config_state::test_support::config_with;
+
+    const BATCH: u64 = 2000;
+    const CHILD_MARKER: &str = "MCP_RE_AUDIT_FLUSH_TEARDOWN_CHILD";
+    const TEST_NAME: &str = "app::tests::\
+                             a_record_enqueued_immediately_before_teardown_still_reaches_stderr";
+
+    /// The child's scenario: enqueue a batch of attributed records, run `app::run` on a
+    /// config the validation boundary refuses, and exit the instant it returns.
+    fn enqueue_batch_then_exit() -> ! {
+        // A config the validation boundary refuses, so `run` returns without opening a
+        // socket. The route out does not matter — the drain is on all of them.
+        let mut config = config_with("file", "/seed", "/tls.key");
+        config.target_uri = String::new();
+
+        // Attributed records, so the unattributed ceiling cannot drop any of them and
+        // an absent seq means "lost at exit" rather than "refused by the queue".
+        let sink = crate::audit_sink::StderrAuditSink::open()
+            .expect("the OS CSPRNG yields an incarnation");
+        let audit: crate::audit_sink::MaybeAuditSink = Some(std::sync::Arc::new(sink));
+        for i in 0..BATCH {
+            crate::audit_record::record_to(
+                &audit,
+                None,
+                crate::audit_record::AuditSubject::request_accepted(
+                    &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
+                    crate::admission_enforcer::AdmissionFacet::NotConfigured,
+                ),
+                Some("teardown-actor".to_string()),
+                200,
+                i as i64,
+            );
+        }
+        let _ = super::run_request(
+            config,
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        );
+        // No unwinding, no flush of anything else: whatever the writer has not written
+        // by now is lost, which is the condition under test.
+        std::process::exit(0);
+    }
+
+    /// Re-invoke this test binary on the one scenario, marked as the child.
+    fn run_scenario_in_child() -> std::process::Output {
+        std::process::Command::new(
+            std::env::current_exe().expect("the test binary re-invokes itself"),
+        )
+        .args(["--exact", TEST_NAME, "--nocapture"])
+        .env(CHILD_MARKER, "1")
+        .output()
+        .expect("the child scenario runs")
+    }
+
+    /// `--exact` with a name nothing matches selects ZERO tests and exits 0, so the
+    /// scenario would silently not run and the drain assertion would fail with a
+    /// message about flushing. `TEST_NAME` is a literal that no compiler check keeps in
+    /// step with this module's path, so confirm the child actually ran the scenario.
+    /// The child `exit`s before libtest prints its summary — that is the point of the
+    /// scenario — so the evidence it ran is the line libtest prints on the way IN.
+    fn assert_child_ran_the_scenario(child: &std::process::Output) {
+        let ran = String::from_utf8_lossy(&child.stdout);
+        assert!(
+            ran.contains("running 1 test"),
+            "the child ran no test: {TEST_NAME:?} matches nothing in this binary. Fix the \
+             name before reading anything into the drain assertion.\n{ran}"
+        );
+    }
+
+    fn assert_batch_drained(stderr: &str) {
+        let last = format!("audit seq={} ", BATCH - 1);
+        assert!(
+            stderr.contains(&last),
+            "the record enqueued last before teardown never reached stderr: no {last:?} in \
+             the child's output. The audit writer is detached, so an unflushed queue dies \
+             with the process and the decisions taken last are neither recorded nor \
+             reported missing."
+        );
+        // The first record is the control: it proves the child really did emit the batch,
+        // so a missing tail above is a lost drain rather than a scenario that never ran.
+        assert!(
+            stderr.contains("audit seq=0 "),
+            "the child emitted no audit records at all, so the assertion above proved \
+             nothing: {stderr}"
+        );
+        assert!(
+            stderr.contains("audit stream drained at shutdown"),
+            "shutdown must STATE which of the two audit outcomes happened, and this run \
+             drained: {stderr}"
+        );
+    }
+
+    /// The run's stream opens with a start line naming the run, and the records and the
+    /// shutdown line carry that same run: a collector partitions on it, and a run with a
+    /// start line and no shutdown line ended with an unknown tail.
+    fn assert_stream_names_one_run(stderr: &str) {
+        let run = stderr
+            .lines()
+            .find_map(|line| line.strip_prefix("mcp-re-proxy: audit stream started run="))
+            .unwrap_or_else(|| panic!("the stream never stated its start: {stderr}"));
+        assert!(
+            stderr.contains(&format!("audit seq=0 run={run} ")),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains(&format!("audit stream drained at shutdown run={run}:")),
+            "{stderr}"
+        );
+    }
 
     /// R8-C123 (G10's finding, this group's call site): a record handed to the audit
     /// writer immediately before teardown must still reach stderr.
@@ -662,100 +768,15 @@ mod tests {
     /// checks by looking for the LAST sequence number rather than any of them.
     #[test]
     fn a_record_enqueued_immediately_before_teardown_still_reaches_stderr() {
-        const BATCH: u64 = 2000;
-        const CHILD_MARKER: &str = "MCP_RE_AUDIT_FLUSH_TEARDOWN_CHILD";
-        const TEST_NAME: &str = "app::tests::\
-                                 a_record_enqueued_immediately_before_teardown_still_reaches_stderr";
-
         if std::env::var_os(CHILD_MARKER).is_some() {
-            // A config the validation boundary refuses, so `run` returns without opening a
-            // socket. The route out does not matter — the drain is on all of them.
-            let mut config = config_with("file", "/seed", "/tls.key");
-            config.target_uri = String::new();
-
-            // Attributed records, so the unattributed ceiling cannot drop any of them and
-            // an absent seq means "lost at exit" rather than "refused by the queue".
-            let sink = crate::audit_sink::StderrAuditSink::open()
-                .expect("the OS CSPRNG yields an incarnation");
-            let audit: crate::audit_sink::MaybeAuditSink = Some(std::sync::Arc::new(sink));
-            for i in 0..BATCH {
-                crate::audit_record::record_to(
-                    &audit,
-                    None,
-                    crate::audit_record::AuditSubject::request_accepted(
-                        &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
-                        crate::admission_enforcer::AdmissionFacet::NotConfigured,
-                    ),
-                    Some("teardown-actor".to_string()),
-                    200,
-                    i as i64,
-                );
-            }
-            let _ = super::run_request(
-                config,
-                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
-            );
-            // No unwinding, no flush of anything else: whatever the writer has not written
-            // by now is lost, which is the condition under test.
-            std::process::exit(0);
+            enqueue_batch_then_exit();
         }
 
-        let child = std::process::Command::new(
-            std::env::current_exe().expect("the test binary re-invokes itself"),
-        )
-        .args(["--exact", TEST_NAME, "--nocapture"])
-        .env(CHILD_MARKER, "1")
-        .output()
-        .expect("the child scenario runs");
+        let child = run_scenario_in_child();
+        assert_child_ran_the_scenario(&child);
         let stderr = String::from_utf8_lossy(&child.stderr);
-        // `--exact` with a name nothing matches selects ZERO tests and exits 0, so the
-        // scenario would silently not run and the drain assertion below would fail with a
-        // message about flushing. `TEST_NAME` is a literal that no compiler check keeps in
-        // step with this module's path, so confirm the child actually ran the scenario.
-        // The child `exit`s before libtest prints its summary — that is the point of the
-        // scenario — so the evidence it ran is the line libtest prints on the way IN.
-        let ran = String::from_utf8_lossy(&child.stdout);
-        assert!(
-            ran.contains("running 1 test"),
-            "the child ran no test: {TEST_NAME:?} matches nothing in this binary. Fix the \
-             name before reading anything into the drain assertion.\n{ran}"
-        );
-
-        let last = format!("audit seq={} ", BATCH - 1);
-        assert!(
-            stderr.contains(&last),
-            "the record enqueued last before teardown never reached stderr: no {last:?} in \
-             the child's output. The audit writer is detached, so an unflushed queue dies \
-             with the process and the decisions taken last are neither recorded nor \
-             reported missing."
-        );
-        // The first record is the control: it proves the child really did emit the batch,
-        // so a missing tail above is a lost drain rather than a scenario that never ran.
-        assert!(
-            stderr.contains("audit seq=0 "),
-            "the child emitted no audit records at all, so the assertion above proved \
-             nothing: {stderr}"
-        );
-        assert!(
-            stderr.contains("audit stream drained at shutdown"),
-            "shutdown must STATE which of the two audit outcomes happened, and this run \
-             drained: {stderr}"
-        );
-        // The run's stream opens with a start line naming the run, and the records and the
-        // shutdown line carry that same run: a collector partitions on it, and a run with a
-        // start line and no shutdown line ended with an unknown tail.
-        let run = stderr
-            .lines()
-            .find_map(|line| line.strip_prefix("mcp-re-proxy: audit stream started run="))
-            .unwrap_or_else(|| panic!("the stream never stated its start: {stderr}"));
-        assert!(
-            stderr.contains(&format!("audit seq=0 run={run} ")),
-            "{stderr}"
-        );
-        assert!(
-            stderr.contains(&format!("audit stream drained at shutdown run={run}:")),
-            "{stderr}"
-        );
+        assert_batch_drained(&stderr);
+        assert_stream_names_one_run(&stderr);
     }
 
     /// R10-F1. The serving path's channel-binding effects are a function of the state the
