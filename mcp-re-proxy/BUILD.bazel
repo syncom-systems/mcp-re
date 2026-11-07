@@ -353,6 +353,7 @@ _PROXY_LIB_SRCS = [
     # behind `scitt_registration`, and a `#[cfg]`-ed module still needs its source listed.
     "src/transparency/auditor/registration/mod.rs",
     "src/transparency/auditor/registration/capability.rs",
+    "src/transparency/auditor/registration/trust.rs",
     "src/transparency/auditor/registration/exchange.rs",
     "src/transparency/auditor/registration/policy.rs",
     "src/transparency/auditor/registration/protocol.rs",
@@ -613,6 +614,7 @@ _PROXY_LIB_SRCS = [
     # snapshot and rotation worker; retires the snapshot before it stops rotating.
     "src/signing_plane/mod.rs",
     "src/signing_plane/rotation.rs",
+    "src/signing_plane/rotation/wait.rs",
     "src/signing_plane/trust_epoch_advance.rs",
     "src/signing_plane/epoch_watch.rs",
     "src/signing_plane/epoch_watch/refusal.rs",

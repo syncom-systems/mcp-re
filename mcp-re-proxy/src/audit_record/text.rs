@@ -117,29 +117,25 @@ impl<'a> AuditField<'a> {
         }
     }
 
+    /// A field whose owner resolved nothing.
+    fn absent(name: &'static str) -> Self {
+        AuditField {
+            name,
+            value: AuditValue::Absent,
+        }
+    }
+
     /// A field whose owner resolved nothing, or that text when it did.
     pub(crate) fn text_or_absent(
         name: &'static str,
         value: Option<impl Into<std::borrow::Cow<'a, str>>>,
     ) -> Self {
-        match value {
-            Some(v) => AuditField::text(name, v),
-            None => AuditField {
-                name,
-                value: AuditValue::Absent,
-            },
-        }
+        value.map_or_else(|| Self::absent(name), |v| Self::text(name, v))
     }
 
     /// A field whose owner resolved nothing, or that token when it did.
     pub(crate) fn token_or_absent(name: &'static str, value: Option<&'static str>) -> Self {
-        match value {
-            Some(v) => AuditField::token(name, v),
-            None => AuditField {
-                name,
-                value: AuditValue::Absent,
-            },
-        }
+        value.map_or_else(|| Self::absent(name), |v| Self::token(name, v))
     }
 }
 
@@ -220,6 +216,17 @@ mod tests {
             .collect()
     }
 
+    /// `line` is one physical record of two fields whose second value is `forged`, recovered.
+    fn assert_forged_value_stays_one_field(line: &str, forged: &str) {
+        assert!(!line.contains('\n') && !line.contains('\r'), "{line}");
+        assert_eq!(tokens(line).len(), 2, "{line}");
+        assert_eq!(
+            unescape_scalar(&parse(line)[1].1).as_deref(),
+            Some(forged),
+            "the forged value survives as the VALUE it was"
+        );
+    }
+
     /// A value that ends the physical record still renders as one line.
     #[test]
     fn a_scalar_carrying_a_newline_still_renders_one_physical_record() {
@@ -229,14 +236,7 @@ mod tests {
             AuditField::number("seq", 1),
             AuditField::text("authz_target", forged),
         ]);
-        assert!(!line.contains('\n'), "{line}");
-        assert!(!line.contains('\r'), "{line}");
-        assert_eq!(tokens(&line).len(), 2, "{line}");
-        assert_eq!(
-            unescape_scalar(&parse(&line)[1].1).as_deref(),
-            Some(forged),
-            "the forged text survives as the VALUE it was"
-        );
+        assert_forged_value_stays_one_field(&line, forged);
     }
 
     /// A value carrying the field separator cannot add a field.
@@ -357,13 +357,7 @@ mod tests {
             AuditField::number("seq", 1),
             AuditField::token("event", forged),
         ]);
-        assert!(!line.contains('\n') && !line.contains('\r'), "{line}");
-        assert_eq!(tokens(&line).len(), 2, "{line}");
-        assert_eq!(
-            unescape_scalar(&parse(&line)[1].1).as_deref(),
-            Some(forged),
-            "the forged token survives as the VALUE it was"
-        );
+        assert_forged_value_stays_one_field(&line, forged);
     }
 
     /// A field NAME carrying a separator cannot add a field either.
@@ -418,6 +412,39 @@ mod tests {
     /// `authorization::verified_action`, so no inhabitant is reachable from here. That arm's
     /// coordinate is rendered by `authorization::capability::tests::the_audit_record_answers_which_decision_and_which_evidence_separately`.
     fn real_records() -> Vec<AuditRecord> {
+        // Every provenance `actor_id` has: absent, ordinary, and one carrying each hazard
+        // the signature-parameter charset admits.
+        let actors = [
+            None,
+            Some("did:example:agent-1".to_owned()),
+            Some("k status=200 actor".to_owned()),
+            Some("k\nmcp-re-proxy: audit seq=9".to_owned()),
+            Some("-".to_owned()),
+        ];
+        let mut records = Vec::new();
+        for actor_id in &actors {
+            for subject in request_subjects() {
+                records.push(AuditRecord {
+                    subject,
+                    actor_id: actor_id.clone(),
+                    status: 403,
+                    at_unix: -1,
+                });
+            }
+            for subject in response_subjects() {
+                records.push(AuditRecord {
+                    subject,
+                    actor_id: actor_id.clone(),
+                    status: 200,
+                    at_unix: 1_758_000_000,
+                });
+            }
+        }
+        records
+    }
+
+    /// Request subjects over every admission arm and every constructible authorization arm.
+    fn request_subjects() -> Vec<AuditSubject> {
         let admissions = [
             AdmissionFacet::NotReached,
             AdmissionFacet::NotConfigured,
@@ -432,61 +459,44 @@ mod tests {
                 PolicyError::AuthorizationScopeDenied,
             )),
         ];
-        // Every provenance `actor_id` has: absent, ordinary, and one carrying each hazard
-        // the signature-parameter charset admits.
-        let actors = [
-            None,
-            Some("did:example:agent-1".to_owned()),
-            Some("k status=200 actor".to_owned()),
-            Some("k\nmcp-re-proxy: audit seq=9".to_owned()),
-            Some("-".to_owned()),
-        ];
-        let mut records = Vec::new();
-        for actor_id in &actors {
-            for admission in admissions {
-                for authorization in &authorizations {
-                    for subject in [
-                        AuditSubject::request_accepted(
-                            &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
-                            admission,
-                        ),
-                        AuditSubject::request_rejected(
-                            Some(&mcp_re_core::McpReError::DigestMismatch),
-                            authorization.clone(),
-                            admission,
-                        ),
-                        AuditSubject::request_rejected(None, authorization.clone(), admission),
-                        AuditSubject::request_refused_at_admission(
-                            None,
-                            authorization.clone(),
-                            AdmissionRefusalClass::RecordRefused(
-                                AdmissionRecordRefusal::SignatureInvalid,
-                            ),
-                        ),
-                    ] {
-                        records.push(AuditRecord {
-                            subject,
-                            actor_id: actor_id.clone(),
-                            status: 403,
-                            at_unix: -1,
-                        });
-                    }
-                }
-            }
-            for subject in [
-                AuditSubject::response_signed(),
-                AuditSubject::response_rejected(Some(&mcp_re_core::McpReError::DigestMismatch)),
-                AuditSubject::response_rejected(None),
-            ] {
-                records.push(AuditRecord {
-                    subject,
-                    actor_id: actor_id.clone(),
-                    status: 200,
-                    at_unix: 1_758_000_000,
-                });
+        let mut subjects = Vec::new();
+        for admission in admissions {
+            for authorization in &authorizations {
+                subjects.extend(request_subjects_for(admission, authorization));
             }
         }
-        records
+        subjects
+    }
+
+    fn request_subjects_for(
+        admission: AdmissionFacet,
+        authorization: &AuthorizationFacet,
+    ) -> [AuditSubject; 4] {
+        [
+            AuditSubject::request_accepted(
+                &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
+                admission,
+            ),
+            AuditSubject::request_rejected(
+                Some(&mcp_re_core::McpReError::DigestMismatch),
+                authorization.clone(),
+                admission,
+            ),
+            AuditSubject::request_rejected(None, authorization.clone(), admission),
+            AuditSubject::request_refused_at_admission(
+                None,
+                authorization.clone(),
+                AdmissionRefusalClass::RecordRefused(AdmissionRecordRefusal::SignatureInvalid),
+            ),
+        ]
+    }
+
+    fn response_subjects() -> [AuditSubject; 3] {
+        [
+            AuditSubject::response_signed(),
+            AuditSubject::response_rejected(Some(&mcp_re_core::McpReError::DigestMismatch)),
+            AuditSubject::response_rejected(None),
+        ]
     }
 
     /// The NAMES production renders, not a list written in this file.

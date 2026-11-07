@@ -188,7 +188,6 @@ mod tests {
     use super::super::exchange::HttpResponse;
     use super::wire::SCRAPI_REVISION;
     use super::*;
-    use crate::transparency::auditor::registration::capability::register_and_verify;
     use crate::transparency::auditor::registration::fixtures::*;
     use std::time::Duration;
 
@@ -358,15 +357,8 @@ mod tests {
             BASE,
             policy(),
         );
-        let registered = register_and_verify(
-            &client,
-            &statement,
-            &issuer().public_key(),
-            &pin(),
-            &ts_lifecycle,
-            &|| NOW,
-        )
-        .expect("the receipt the service returned verifies against the statement and the pin");
+        let registered = register_standard(&client, &statement)
+            .expect("the receipt the service returned verifies against the statement and the pin");
         assert!(!registered.receipt_bytes().is_empty());
     }
 
@@ -381,15 +373,8 @@ mod tests {
         let statement = a_statement();
         let service = HermeticService::new(Mode::Asynchronous { pending: 2 });
         let client = Scrapi11RegistrationClient::new(service, BASE, policy());
-        let registered = register_and_verify(
-            &client,
-            &statement,
-            &issuer().public_key(),
-            &pin(),
-            &ts_lifecycle,
-            &|| NOW,
-        )
-        .expect("the polled receipt verifies");
+        let registered =
+            register_standard(&client, &statement).expect("the polled receipt verifies");
         assert!(!registered.receipt_bytes().is_empty());
 
         let requests = client.exchange.requests.borrow();
@@ -438,15 +423,8 @@ mod tests {
         let statement = a_statement();
         let service = HermeticService::new(Mode::Asynchronous { pending: 0 }).with_poll_failures(2);
         let client = Scrapi11RegistrationClient::new(service, BASE, policy());
-        register_and_verify(
-            &client,
-            &statement,
-            &issuer().public_key(),
-            &pin(),
-            &ts_lifecycle,
-            &|| NOW,
-        )
-        .expect("two failed polls inside the budget are not a lost receipt");
+        register_standard(&client, &statement)
+            .expect("two failed polls inside the budget are not a lost receipt");
     }
 
     // ---- the refusals, and their certainty --------------------------------------

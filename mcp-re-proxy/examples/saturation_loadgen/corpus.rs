@@ -4,10 +4,11 @@
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-use mcp_re_client_core::build_signed_request;
+use mcp_re_client_core::build_signed_message;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::ArtifactType;
 use mcp_re_client_core::AudienceTuple;
+use mcp_re_client_core::McpMessage;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::SignedRequest;
 use mcp_re_core::SigningKey;
@@ -92,10 +93,8 @@ fn sign(nonce: &str, key: &SigningKey) -> SignedRequest {
     )]);
     let mut params = Map::new();
     params.insert("text".to_string(), Value::String("hello".to_string()));
-    build_signed_request(
-        &Value::String("req-1".to_string()),
-        "echo",
-        params,
+    build_signed_message(
+        McpMessage::new(Some(&Value::String("req-1".to_string())), "echo", params),
         TARGET_URI,
         &inputs,
         key,

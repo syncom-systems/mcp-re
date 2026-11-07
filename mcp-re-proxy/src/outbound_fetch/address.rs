@@ -136,31 +136,24 @@ fn parse_inet_aton_ipv4(host: &str) -> Option<Ipv4Addr> {
         .iter()
         .map(|p| parse_inet_aton_part(p))
         .collect::<Option<Vec<u64>>>()?;
-    // A slice pattern rather than a length plus indexing: the ARITY and the field widths
-    // are one fact, not two related by an `n` that has to stay in step. Each arm states
-    // both — every part except the last is a single byte, and the last is a "rest" field
-    // whose width is what the earlier parts did not cover — and no arm can index past its
-    // own binding.
-    let addr: u32 = match *vals.as_slice() {
-        [rest] => u32::try_from(rest).ok()?,
-        [a, rest] if a <= 0xff => {
-            (u32::try_from(a).ok()? << 24)
-                | u32::try_from(rest).ok().filter(|r| *r <= 0x00ff_ffff)?
-        }
-        [a, b, rest] if a <= 0xff && b <= 0xff => {
-            (u32::try_from(a).ok()? << 24)
-                | (u32::try_from(b).ok()? << 16)
-                | u32::try_from(rest).ok().filter(|r| *r <= 0x0000_ffff)?
-        }
-        [a, b, c, rest] if a <= 0xff && b <= 0xff && c <= 0xff => {
-            (u32::try_from(a).ok()? << 24)
-                | (u32::try_from(b).ok()? << 16)
-                | (u32::try_from(c).ok()? << 8)
-                | u32::try_from(rest).ok().filter(|r| *r <= 0x0000_00ff)?
-        }
-        _ => return None,
-    };
-    Some(Ipv4Addr::from(addr))
+    assemble_inet_aton(&vals).map(Ipv4Addr::from)
+}
+
+/// Lay the parsed parts out as one address: every part except the last is a single byte,
+/// and the last is a "rest" field whose width is what the earlier parts did not cover
+/// (32 bits for `a`, 24 for `a.b`, 16 for `a.b.c`, 8 for `a.b.c.d`). The arity and the
+/// widths are one fact, derived from the number of leading parts.
+fn assemble_inet_aton(vals: &[u64]) -> Option<u32> {
+    let (rest, lead) = vals.split_last()?;
+    let lead_bits = u32::try_from(lead.len()).ok()?.checked_mul(8)?;
+    let rest_width = 32u32.checked_sub(lead_bits)?;
+    if rest.checked_shr(rest_width)? != 0 {
+        return None;
+    }
+    let high = lead.iter().try_fold(0u64, |acc, &byte| {
+        u8::try_from(byte).ok().map(|b| (acc << 8) | u64::from(b))
+    })?;
+    u32::try_from(high.checked_shl(rest_width)? | rest).ok()
 }
 
 /// Parse one `inet_aton(3)` numeric part: hex (`0x..`), octal (leading `0`), or

@@ -26,6 +26,7 @@ use mcp_re_http_profile::custody::TrustEpoch;
 use mcp_re_http_profile::CustodyError;
 
 use super::epoch_watch::EpochRefusal;
+use super::rotation::RotationScope;
 use super::rotation_jitter;
 use super::DelegatedEpochWatch;
 
@@ -74,12 +75,11 @@ pub(super) fn epoch_moved(
 /// minting, no rebase.
 pub(super) fn observe_trust_epoch(
     rotor: &mut crate::delegated_wiring::ProdDelegatedRotor,
-    signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
-    epoch_watch: Option<&DelegatedEpochWatch>,
+    scope: &RotationScope<'_>,
     last: &mut TrustEpoch,
-    halt: &crate::managed_worker::Halt,
 ) -> EpochStep {
-    let Some(watch) = epoch_watch.as_ref() else {
+    let (signer, halt) = (scope.signer, scope.halt);
+    let Some(watch) = scope.epoch_watch else {
         return EpochStep::Proceed;
     };
     let counter = match watch.counter() {
@@ -89,7 +89,7 @@ pub(super) fn observe_trust_epoch(
     if Some(counter) == last.counter() {
         return EpochStep::Proceed;
     }
-    apply_epoch_advance(rotor, signer, counter, last, halt)
+    apply_epoch_advance(rotor, scope, counter, last)
 }
 
 /// FAIL CLOSED FOR MINTING when the shared epoch is unreadable or regressed.
@@ -128,12 +128,12 @@ fn refuse_to_mint_without_a_comparable_epoch(
 /// here would report a revocation that never happened and never look at it again.
 fn apply_epoch_advance(
     rotor: &mut crate::delegated_wiring::ProdDelegatedRotor,
-    signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
+    scope: &RotationScope<'_>,
     counter: i64,
     last: &mut TrustEpoch,
-    halt: &crate::managed_worker::Halt,
 ) -> EpochStep {
     use crate::delegated_server_signer::rotation_backoff;
+    let (signer, halt) = (scope.signer, scope.halt);
     let label = last.at(counter);
     let outcome = rotor.advance_trust_epoch(counter, now_unix());
     super::mint_successor::announce_lifecycle(rotor);

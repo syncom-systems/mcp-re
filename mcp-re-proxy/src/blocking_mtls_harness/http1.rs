@@ -126,26 +126,33 @@ pub(super) fn write_http_response<S: Write>(stream: &mut S, body: &[u8]) -> io::
 /// body); only present-but-malformed / conflicting lengths are rejected.
 fn parse_content_length(headers: &str) -> io::Result<Option<usize>> {
     let mut seen: Option<usize> = None;
-    for line in headers.lines() {
-        if let Some((name, value)) = line.split_once(':') {
-            if name.trim().eq_ignore_ascii_case("content-length") {
-                if seen.is_some() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "malformed HTTP header framing: duplicate Content-Length",
-                    ));
-                }
-                let parsed = value.trim().parse::<usize>().map_err(|_| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "malformed HTTP header framing: unparseable Content-Length",
-                    )
-                })?;
-                seen = Some(parsed);
-            }
+    for value in content_length_values(headers) {
+        if seen.is_some() {
+            return Err(framing_error("duplicate Content-Length"));
         }
+        let parsed = value
+            .trim()
+            .parse::<usize>()
+            .map_err(|_| framing_error("unparseable Content-Length"))?;
+        seen = Some(parsed);
     }
     Ok(seen)
+}
+
+/// The raw value of every `Content-Length` header line, in order.
+fn content_length_values(headers: &str) -> impl Iterator<Item = &str> {
+    headers
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .filter(|(name, _)| name.trim().eq_ignore_ascii_case("content-length"))
+        .map(|(_, value)| value)
+}
+
+fn framing_error(what: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("malformed HTTP header framing: {what}"),
+    )
 }
 
 /// Index of the first occurrence of `needle` in `haystack`.

@@ -745,7 +745,13 @@ mod rotation_owner_tests {
         let workers = WorkerSet::new(Arc::clone(&deployment));
         let halt = workers.halt();
         let running = std::thread::spawn(move || {
-            super::rotation::rotation_loop(&mut rotor, &signer, OVERLAP, watch.as_ref(), &halt);
+            let scope = super::rotation::RotationScope {
+                signer: &signer,
+                overlap: OVERLAP,
+                epoch_watch: watch.as_ref(),
+                halt: &halt,
+            };
+            super::rotation::rotation_loop(&mut rotor, &scope);
             rotor
         });
         std::thread::sleep(RUN_WINDOW);

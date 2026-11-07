@@ -14,6 +14,7 @@ use mcp_re_core::ReplayCache;
 use mcp_re_core::ReplayCacheError;
 use mcp_re_core::ReplayDecision;
 use mcp_re_core::ReplayDurabilityClass;
+use mcp_re_core::ReplayTriple;
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::dispatch_request;
 use mcp_re_http_profile::sign_request_full;
@@ -221,13 +222,10 @@ struct DurableTestCache(InMemoryReplayCache);
 impl ReplayCache for DurableTestCache {
     fn check_and_insert(
         &self,
-        signer: &str,
-        audience: &str,
-        nonce: &str,
+        triple: ReplayTriple<'_>,
         expires_at_unix: i64,
     ) -> Result<ReplayDecision, ReplayCacheError> {
-        self.0
-            .check_and_insert(signer, audience, nonce, expires_at_unix)
+        self.0.check_and_insert(triple, expires_at_unix)
     }
     fn durability_class(&self) -> ReplayDurabilityClass {
         ReplayDurabilityClass::Durable

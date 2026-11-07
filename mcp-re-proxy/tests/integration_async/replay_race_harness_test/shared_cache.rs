@@ -2,6 +2,7 @@
 
 use mcp_re_core::ReplayCache;
 use mcp_re_core::ReplayDecision;
+use mcp_re_core::ReplayTriple;
 use mcp_re_proxy::config_state::FreshnessWindow;
 use mcp_re_proxy::InMemoryAtomicReplayStore;
 use mcp_re_proxy::SharedReplayCache;
@@ -22,9 +23,7 @@ fn replica_over(backend: &InMemoryAtomicReplayStore) -> SharedReplayCache {
 fn submit(cache: &SharedReplayCache, nonce: &str) -> ReplayDecision {
     cache
         .check_and_insert(
-            "did:example:agent",
-            "did:example:server",
-            nonce,
+            ReplayTriple::new("did:example:agent", "did:example:server", nonce),
             FAR_FUTURE_RETAIN_UNTIL,
         )
         .expect("the in-memory tier is available")

@@ -65,6 +65,7 @@ mod handshakes {
     use rustls::server::WebPkiClientVerifier;
     use rustls::ClientConfig;
     use rustls::ClientConnection;
+    use rustls::Connection;
     use rustls::HandshakeKind;
     use rustls::RootCertStore;
     use rustls::ServerConfig;
@@ -174,38 +175,50 @@ mod handshakes {
         Arc::new(config)
     }
 
+    /// Move whatever `from` wants to write into `to`, if it wants to write anything.
+    fn deliver(from: &mut Connection, to: &mut Connection) {
+        if !from.wants_write() {
+            return;
+        }
+        let mut buf = Vec::new();
+        from.write_tls(&mut buf).expect("write");
+        if buf.is_empty() {
+            return;
+        }
+        to.read_tls(&mut buf.as_slice()).expect("read");
+        to.process_new_packets().expect("process");
+    }
+
+    /// Whether both sides have finished handshaking and have nothing left to write.
+    fn settled(c: &Connection, s: &Connection) -> bool {
+        let done = |side: &Connection| !side.wants_write() && !side.is_handshaking();
+        done(c) && done(s)
+    }
+
     /// Drive a full client/server handshake in memory and report how the SERVER classified
     /// it. No sockets: the property under test is the handshake kind, and a loopback would
     /// only add flakiness.
     fn handshake(client: &Arc<ClientConfig>, server: &Arc<ServerConfig>) -> Option<HandshakeKind> {
         let name = ServerName::try_from("localhost").expect("server name");
-        let mut c = ClientConnection::new(Arc::clone(client), name).expect("client conn");
-        let mut s = ServerConnection::new(Arc::clone(server)).expect("server conn");
+        let mut c = Connection::Client(
+            ClientConnection::new(Arc::clone(client), name).expect("client conn"),
+        );
+        let mut s =
+            Connection::Server(ServerConnection::new(Arc::clone(server)).expect("server conn"));
 
         // Pump until both sides stop wanting to write. TLS 1.3 completes in a bounded
         // number of flights; the cap stops a protocol bug becoming a hung test.
         for _ in 0..16 {
-            let mut buf = Vec::new();
-            if c.wants_write() {
-                c.write_tls(&mut buf).expect("client write");
-                if !buf.is_empty() {
-                    s.read_tls(&mut buf.as_slice()).expect("server read");
-                    s.process_new_packets().expect("server process");
-                }
-            }
-            let mut buf = Vec::new();
-            if s.wants_write() {
-                s.write_tls(&mut buf).expect("server write");
-                if !buf.is_empty() {
-                    c.read_tls(&mut buf.as_slice()).expect("client read");
-                    c.process_new_packets().expect("client process");
-                }
-            }
-            if !c.wants_write() && !s.wants_write() && !c.is_handshaking() && !s.is_handshaking() {
+            deliver(&mut c, &mut s);
+            deliver(&mut s, &mut c);
+            if settled(&c, &s) {
                 break;
             }
         }
-        s.handshake_kind()
+        match s {
+            Connection::Server(server) => server.handshake_kind(),
+            Connection::Client(_) => None,
+        }
     }
 
     #[test]

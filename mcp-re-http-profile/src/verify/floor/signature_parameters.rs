@@ -26,25 +26,31 @@ use super::sf_dictionary::split_parameters;
 /// values, so both spellings verify under one signature and the raw header stops matching
 /// the signed bytes. The inner list is held to the same rule in `covered_components`.
 fn check_tail_spelling(param_tail: &str) -> Result<(), HttpProfileError> {
-    let spacing = || HttpProfileError::MalformedEvidence("signature parameter spacing");
-    if param_tail.is_empty() {
-        return Ok(());
+    let misspelled = !param_tail.is_empty()
+        && (!param_tail.starts_with(';')
+            || has_empty_segment(param_tail)
+            || has_space_outside_quotes(param_tail));
+    if misspelled {
+        return Err(HttpProfileError::MalformedEvidence(
+            "signature parameter spacing",
+        ));
     }
-    if !param_tail.starts_with(';') {
-        return Err(spacing());
-    }
-    // Only the segment before the FIRST `;` may be empty (there is nothing before it);
-    // every other empty segment is a stray or trailing `;`.
-    if split_parameters(param_tail)
+    Ok(())
+}
+
+/// Only the segment before the FIRST `;` may be empty (there is nothing before it);
+/// every other empty segment is a stray or trailing `;`.
+fn has_empty_segment(param_tail: &str) -> bool {
+    split_parameters(param_tail)
         .iter()
         .skip(1)
         .any(|seg| seg.is_empty())
-    {
-        return Err(spacing());
-    }
-    // No space or tab OUTSIDE a quoted value. Inside one it is a legitimate byte of a
-    // keyid or nonce (`validate_sf_string` admits printable ASCII); outside, it is a
-    // spelling this profile never emits and would normalise away.
+}
+
+/// A space or tab OUTSIDE a quoted value. Inside one it is a legitimate byte of a
+/// keyid or nonce (`validate_sf_string` admits printable ASCII); outside, it is a
+/// spelling this profile never emits and would normalise away.
+fn has_space_outside_quotes(param_tail: &str) -> bool {
     let mut in_quotes = false;
     let mut escaped = false;
     for b in param_tail.bytes() {
@@ -52,11 +58,11 @@ fn check_tail_spelling(param_tail: &str) -> Result<(), HttpProfileError> {
             _ if escaped => escaped = false,
             b'\\' if in_quotes => escaped = true,
             b'"' => in_quotes = !in_quotes,
-            b' ' | b'\t' if !in_quotes => return Err(spacing()),
+            b' ' | b'\t' if !in_quotes => return true,
             _ => {}
         }
     }
-    Ok(())
+    false
 }
 
 /// The closed, ordered parameter set; declaration order is the canonical order, so the
@@ -207,27 +213,25 @@ mod tests {
         assert_eq!(parse_i64("-17").expect("negatives parse"), -17);
     }
 
+    fn assert_refused(tail: &str, expected: &HttpProfileError) {
+        let refusal = parse_signature_parameters(tail).expect_err(tail);
+        assert_eq!(&refusal, expected, "{tail}");
+    }
+
     #[test]
     fn reordered_and_duplicated_parameters_are_refused() {
         let order = HttpProfileError::MalformedEvidence("signature parameter order");
-        assert_eq!(
-            parse_signature_parameters(";expires=2;created=1").expect_err("reordered"),
-            order
-        );
-        assert_eq!(
-            parse_signature_parameters(";created=1;created=2").expect_err("duplicated"),
-            order
-        );
+        assert_refused(";expires=2;created=1", &order);
+        assert_refused(";created=1;created=2", &order);
         let ok = parse_signature_parameters(";created=1;expires=2").expect("ordered");
-        assert_eq!(ok.created, Some(1));
-        assert_eq!(ok.expires, Some(2));
+        assert_eq!((ok.created, ok.expires), (Some(1), Some(2)));
     }
 
     #[test]
     fn an_unknown_signature_parameter_is_refused() {
-        assert_eq!(
-            parse_signature_parameters(";created=1;foo=1").expect_err("unknown"),
-            HttpProfileError::MalformedEvidence("unknown signature parameter")
+        assert_refused(
+            ";created=1;foo=1",
+            &HttpProfileError::MalformedEvidence("unknown signature parameter"),
         );
     }
 
@@ -237,18 +241,15 @@ mod tests {
         for s in ["+1700000000", "0017", "-01"] {
             assert_eq!(parse_i64(s).expect_err(s), bad);
         }
-        assert_eq!(
-            parse_signature_parameters(";created=0017").expect_err("leading zero"),
-            bad
-        );
+        assert_refused(";created=0017", &bad);
         assert_eq!(parse_i64("1700000000").expect("plain"), 1_700_000_000);
     }
 
     #[test]
     fn escaped_quoted_parameter_values_are_refused() {
-        assert_eq!(
-            parse_signature_parameters(r#";keyid="a\"b""#).expect_err("escaped"),
-            HttpProfileError::MalformedEvidence("quoted signature parameter")
+        assert_refused(
+            r#";keyid="a\"b""#,
+            &HttpProfileError::MalformedEvidence("quoted signature parameter"),
         );
         let ok = parse_signature_parameters(r#";keyid="a b""#).expect("plain");
         assert_eq!(ok.keyid, Some("a b".to_owned()));
@@ -256,9 +257,9 @@ mod tests {
 
     #[test]
     fn a_tab_outside_quotes_is_refused() {
-        assert_eq!(
-            parse_signature_parameters(";created=1;\tkeyid=\"k\"").expect_err("tab"),
-            HttpProfileError::MalformedEvidence("signature parameter spacing")
+        assert_refused(
+            ";created=1;\tkeyid=\"k\"",
+            &HttpProfileError::MalformedEvidence("signature parameter spacing"),
         );
     }
 }

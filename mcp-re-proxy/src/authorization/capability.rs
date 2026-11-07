@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use crate::config_state::{AuthorizationState, TrustDocumentSource};
+use crate::config_state::{AuthorizationState, DeploymentConfigState, TrustDocumentSource};
 use crate::serving_capabilities::Established;
 
 use super::evaluator::AuthorizationEvaluator;
@@ -29,6 +29,36 @@ const AUTHORIZATION_OFF: &str = "authorization = OFF: no authorization authority
      CHANNEL IT ARRIVED ON, never MAY-ACT; authorization must be enforced upstream. Install \
      one with --authz pdp-decision.";
 
+/// Whom the installed authority's decisions are for: the response key the deployment
+/// signs under, the audience a decision must name, and the one clock-skew tolerance the
+/// deployment runs with.
+#[derive(Clone, Copy)]
+pub(crate) struct DecisionAudience<'a> {
+    pub(crate) response_kid: &'a str,
+    pub(crate) audience_id: &'a str,
+    pub(crate) max_clock_skew: mcp_re_core::MaxClockSkew,
+}
+
+/// [`evaluator`] over a validated deployment: the authority profile, the trust document and
+/// the one clock-skew tolerance all come from `deployment`, so a caller cannot pair one
+/// deployment's authority set with another's skew.
+pub(crate) fn evaluator_for(
+    deployment: &DeploymentConfigState,
+    response_kid: &str,
+    audience_id: &str,
+) -> Result<Established<Arc<dyn AuthorizationEvaluator>>, String> {
+    let audience = DecisionAudience {
+        response_kid,
+        audience_id,
+        max_clock_skew: deployment.freshness().max_clock_skew(),
+    };
+    evaluator(
+        deployment.authorization(),
+        deployment.trust_document(),
+        &audience,
+    )
+}
+
 /// Build the evaluator this deployment installs, if it installs one.
 ///
 /// `Err` refuses startup. The one refusal is a configured profile with no authority to
@@ -38,10 +68,13 @@ const AUTHORIZATION_OFF: &str = "authorization = OFF: no authorization authority
 pub(crate) fn evaluator(
     state: &AuthorizationState,
     trust: &TrustDocumentSource,
-    response_kid: &str,
-    audience_id: &str,
-    max_clock_skew: mcp_re_core::MaxClockSkew,
+    audience: &DecisionAudience<'_>,
 ) -> Result<Established<Arc<dyn AuthorizationEvaluator>>, String> {
+    let DecisionAudience {
+        response_kid,
+        audience_id,
+        max_clock_skew,
+    } = *audience;
     let Some(enforced) = state.enforced() else {
         return Ok(Established::off(AUTHORIZATION_OFF));
     };
@@ -122,8 +155,13 @@ mod tests {
     use mcp_re_core::SigningKey;
     use mcp_re_http_profile::pdp_decision::DecisionScope;
 
-    fn skew() -> mcp_re_core::MaxClockSkew {
-        mcp_re_core::MaxClockSkew::new(30).expect("a test skew inside the bound")
+    fn audience() -> super::DecisionAudience<'static> {
+        super::DecisionAudience {
+            response_kid: "response-kid",
+            audience_id: "verifier-1",
+            max_clock_skew: mcp_re_core::MaxClockSkew::new(30)
+                .expect("a test skew inside the bound"),
+        }
     }
 
     /// A trust file written for one test, removed when it ends.
@@ -185,9 +223,7 @@ mod tests {
         let established = evaluator(
             &state(&crate::config_state::test_support::legal_config()),
             &file.source(),
-            "response-kid",
-            "verifier-1",
-            skew(),
+            &audience(),
         )
         .expect("off never refuses");
         let (artifact, posture) = established.into_parts();
@@ -204,15 +240,9 @@ mod tests {
     #[test]
     fn a_configured_profile_installs_an_evaluator_over_the_enrolled_authorities() {
         let file = TrustFile::holding(&authority_entry(), "on");
-        let (artifact, posture) = evaluator(
-            &state(&pdp_config()),
-            &file.source(),
-            "response-kid",
-            "verifier-1",
-            skew(),
-        )
-        .expect("a complete profile installs")
-        .into_parts();
+        let (artifact, posture) = evaluator(&state(&pdp_config()), &file.source(), &audience())
+            .expect("a complete profile installs")
+            .into_parts();
         assert!(
             artifact.is_some(),
             "a configured profile installs an evaluator"
@@ -238,13 +268,7 @@ mod tests {
     fn a_configured_profile_with_no_enrolled_authority_refuses_startup() {
         // Serving would refuse every call while the transcript announced enforcement.
         let file = TrustFile::holding("[]", "empty");
-        let Err(err) = evaluator(
-            &state(&pdp_config()),
-            &file.source(),
-            "response-kid",
-            "verifier-1",
-            skew(),
-        ) else {
+        let Err(err) = evaluator(&state(&pdp_config()), &file.source(), &audience()) else {
             panic!("an authority-less profile must fail closed at boot")
         };
         assert!(err.contains("authorization-issuer"), "{err}");
@@ -262,14 +286,7 @@ mod tests {
             "signers-only",
         );
         assert!(
-            evaluator(
-                &state(&pdp_config()),
-                &file.source(),
-                "response-kid",
-                "verifier-1",
-                skew(),
-            )
-            .is_err(),
+            evaluator(&state(&pdp_config()), &file.source(), &audience(),).is_err(),
             "a request-slot key must not answer as an authorization authority"
         );
     }
@@ -296,7 +313,21 @@ mod tests {
 
     /// A decision about the harness actor, at the deployment's accepted scope.
     fn decision(outcome: PdpDecisionOutcome, target: &str) -> String {
-        decision_identified(outcome, target, "decision-1", "2026-08-01")
+        decision_identified(
+            outcome,
+            target,
+            &Provenance {
+                jti: "decision-1".into(),
+                policy_version: "2026-08-01".into(),
+            },
+        )
+    }
+
+    /// The authority's own decision id and policy version, the two facts a decision carries
+    /// about where it came from.
+    struct Provenance {
+        jti: String,
+        policy_version: String,
     }
 
     /// The same, with the authority's own decision id and policy version chosen by the
@@ -304,8 +335,7 @@ mod tests {
     fn decision_identified(
         outcome: PdpDecisionOutcome,
         target: &str,
-        jti: &str,
-        policy_version: &str,
+        provenance: &Provenance,
     ) -> String {
         let claims = PdpDecisionClaims {
             iss: "did:example:pdp".into(),
@@ -313,7 +343,7 @@ mod tests {
             iat: crate::clock::now_unix(),
             nbf: crate::clock::now_unix() - 5,
             exp: crate::clock::now_unix() + 300,
-            jti: jti.into(),
+            jti: provenance.jti.clone(),
             aud: Audience::One("verifier-1".into()),
             mcp_re_profile: mcp_re_http_profile::PROFILE_TAG.into(),
             mcp_re_decided_actor: DecidedActor::Principal {
@@ -323,7 +353,7 @@ mod tests {
             mcp_re_decided_operation: "tools/call".into(),
             mcp_re_decided_target: Some(target.into()),
             mcp_re_decision: outcome,
-            mcp_re_policy_version: policy_version.into(),
+            mcp_re_policy_version: provenance.policy_version.clone(),
         };
         let key = pdp_key();
         issue_authorization_decision(&claims, |input| {
@@ -373,15 +403,9 @@ mod tests {
             ),
             "enforcing",
         );
-        let (artifact, _) = evaluator(
-            &state(&pdp_config()),
-            &file.source(),
-            "response-kid",
-            "verifier-1",
-            skew(),
-        )
-        .expect("a complete profile installs")
-        .into_parts();
+        let (artifact, _) = evaluator(&state(&pdp_config()), &file.source(), &audience())
+            .expect("a complete profile installs")
+            .into_parts();
         artifact.expect("a configured profile installs an evaluator")
     }
 
@@ -427,8 +451,22 @@ mod tests {
     /// would be an illusion.
     #[test]
     fn changing_the_document_changes_the_evidence_identity_even_under_one_decision_id() {
-        let read = decision_identified(PdpDecisionOutcome::Permit, "read", "same-jti", "v1");
-        let other = decision_identified(PdpDecisionOutcome::Permit, "read", "same-jti", "v2");
+        let read = decision_identified(
+            PdpDecisionOutcome::Permit,
+            "read",
+            &Provenance {
+                jti: "same-jti".into(),
+                policy_version: "v1".into(),
+            },
+        );
+        let other = decision_identified(
+            PdpDecisionOutcome::Permit,
+            "read",
+            &Provenance {
+                jti: "same-jti".into(),
+                policy_version: "v2".into(),
+            },
+        );
         assert_ne!(read, other, "the fixture must produce different bytes");
 
         let evaluator = installed();

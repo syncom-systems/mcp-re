@@ -14,14 +14,13 @@
 
 use std::time::Duration;
 
-use mcp_re_http_profile::scitt::ScittServiceTrustPin;
 use mcp_re_http_profile::scitt::SignedStatement;
-use mcp_re_http_profile::scitt::TransparencyKeyLifecycle;
 
 use super::policy::RegistrationPolicy;
 use super::RegisteredStatement;
 use super::RegistrationError;
 use super::RegistrationProtocol;
+use super::RegistrationTrust;
 
 /// WHAT the operator's registration flags say.
 mod flags;
@@ -147,10 +146,7 @@ impl RegistrationTarget {
     pub fn register(
         &self,
         statement: &SignedStatement,
-        issuer_key: &mcp_re_core::VerificationKey,
-        pin: &ScittServiceTrustPin,
-        ts_key: &dyn Fn(&str) -> Option<TransparencyKeyLifecycle>,
-        clock: &dyn Fn() -> i64,
+        trust: &RegistrationTrust<'_>,
     ) -> Result<RegisteredStatement, RegistrationError> {
         let exchange = super::ureq_exchange::UreqExchange::operator_configured(&self.base_url)
             .ok_or_else(|| {
@@ -173,10 +169,7 @@ impl RegistrationTarget {
                     self.policy,
                 ),
                 statement,
-                issuer_key,
-                pin,
-                ts_key,
-                clock,
+                trust,
             ),
             RegistrationProtocol::CapsuleAnchor => super::capability::register_and_verify(
                 &super::capsule_anchor::CapsuleAnchorRegistrationClient::new(
@@ -185,10 +178,7 @@ impl RegistrationTarget {
                     self.policy,
                 ),
                 statement,
-                issuer_key,
-                pin,
-                ts_key,
-                clock,
+                trust,
             ),
         }
     }
@@ -205,10 +195,7 @@ impl RegistrationTarget {
     pub fn register(
         &self,
         _statement: &SignedStatement,
-        _issuer_key: &mcp_re_core::VerificationKey,
-        _pin: &ScittServiceTrustPin,
-        _ts_key: &dyn Fn(&str) -> Option<TransparencyKeyLifecycle>,
-        _clock: &dyn Fn() -> i64,
+        _trust: &RegistrationTrust<'_>,
     ) -> Result<RegisteredStatement, RegistrationError> {
         Err(RegistrationError::Refused(
             "this build has no registration transport (feature `scitt_registration` is \

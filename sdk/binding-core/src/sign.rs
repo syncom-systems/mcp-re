@@ -6,11 +6,10 @@
 //! Ed25519 signature, so the private key never enters the SDK. The evidence is
 //! byte-identical either way; only where the key lives differs.
 
-use mcp_re_client_core::build_signed_notification;
-use mcp_re_client_core::build_signed_notification_with_signer;
-use mcp_re_client_core::build_signed_request;
-use mcp_re_client_core::build_signed_request_with_signer;
+use mcp_re_client_core::build_signed_message;
+use mcp_re_client_core::build_signed_message_with_signer;
 use mcp_re_client_core::HttpProfileError;
+use mcp_re_client_core::McpMessage;
 use mcp_re_client_core::SignedRequest;
 use mcp_re_core::SigningKey;
 
@@ -50,10 +49,8 @@ impl From<SignedRequest> for SignedParts {
 pub fn sign(args: SignArgs, seed: &[u8]) -> Result<SignedParts, BindingError> {
     let key = seed_to_key(seed)?;
     let m = args.read()?;
-    let signed = match &m.id {
-        Some(id) => build_signed_request(id, &m.method, m.params, &m.target_uri, &m.inputs, &key),
-        None => build_signed_notification(&m.method, m.params, &m.target_uri, &m.inputs, &key),
-    }?;
+    let message = McpMessage::new(m.id.as_ref(), &m.method, m.params);
+    let signed = build_signed_message(message, &m.target_uri, &m.inputs, &key)?;
     Ok(SignedParts::from(signed))
 }
 
@@ -86,23 +83,8 @@ pub fn sign_with_device<E>(
             Err(HttpProfileError::InvalidSignature)
         }
     };
-    let signed = match &m.id {
-        Some(id) => build_signed_request_with_signer(
-            id,
-            &m.method,
-            m.params,
-            &m.target_uri,
-            &m.inputs,
-            sign_base,
-        ),
-        None => build_signed_notification_with_signer(
-            &m.method,
-            m.params,
-            &m.target_uri,
-            &m.inputs,
-            sign_base,
-        ),
-    };
+    let message = McpMessage::new(m.id.as_ref(), &m.method, m.params);
+    let signed = build_signed_message_with_signer(message, &m.target_uri, &m.inputs, sign_base);
     match (signed, failed, answered) {
         (Ok(signed), _, _) => Ok(SignedParts::from(signed)),
         (Err(_), Some(e), _) => Err(SignError::Device(DeviceFailure::Failed(e))),

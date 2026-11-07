@@ -574,7 +574,7 @@ retransmission of an identical one),
 proxy end-to-end), and frozen vectors `h47`–`h49`.
 
 **Carried by both SDKs (C055).** A notification is signed through
-`mcp_re_client_core::build_signed_notification` — the ordinary request rules, with the
+`mcp_re_client_core::build_signed_message` — the ordinary request rules, with the
 JSON-RPC `id` key OMITTED rather than sent as `null`, because the serving path classifies
 on its absence — and the 202 is verified through `verify_delegated_accepted_202`, exposed
 as `sign_notification`/`verify_accepted_202` (Python) and

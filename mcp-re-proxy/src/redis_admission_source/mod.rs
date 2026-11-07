@@ -407,16 +407,10 @@ mod tests {
             .expect("noeviction is the supported configuration")
     }
 
-    /// THM-0129's adversary can write the store and holds no signing key. Giving a revoked
-    /// workload's key another Redis type makes the server answer `WRONGTYPE`; that is the
-    /// store's answer about the key and must be a refused record, because an outage would
-    /// reach the replica-wide degraded window that other workloads' reads keep open.
-    #[tokio::test]
-    async fn a_key_of_another_type_is_a_refused_record_and_not_an_outage() {
-        let source = source_answering_get(
-            "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
-        )
-        .await;
+    /// The scripted server's answer to `GET` is the store's answer about the record, and must
+    /// read as a refused record rather than an outage.
+    async fn assert_refused_as_malformed(reply: &str) {
+        let source = source_answering_get(reply).await;
         let answer = source.current_state("wl", 1_030).await;
         assert!(
             matches!(
@@ -429,20 +423,22 @@ mod tests {
         );
     }
 
+    /// THM-0129's adversary can write the store and holds no signing key. Giving a revoked
+    /// workload's key another Redis type makes the server answer `WRONGTYPE`; that is the
+    /// store's answer about the key and must be a refused record, because an outage would
+    /// reach the replica-wide degraded window that other workloads' reads keep open.
+    #[tokio::test]
+    async fn a_key_of_another_type_is_a_refused_record_and_not_an_outage() {
+        assert_refused_as_malformed(
+            "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+        )
+        .await;
+    }
+
     /// A reply of another shape than a string is the same class of answer.
     #[tokio::test]
     async fn a_reply_that_is_not_a_string_is_a_refused_record_and_not_an_outage() {
-        let source = source_answering_get(":5\r\n").await;
-        let answer = source.current_state("wl", 1_030).await;
-        assert!(
-            matches!(
-                answer,
-                Ok(crate::admission_source::AnsweredAs::Refused(
-                    AdmissionRecordRefusal::Malformed
-                ))
-            ),
-            "{answer:?}"
-        );
+        assert_refused_as_malformed(":5\r\n").await;
     }
 
     /// The key an operator reads in `redis-cli` is still the workload's own name.
