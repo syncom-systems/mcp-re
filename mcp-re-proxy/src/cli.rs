@@ -3,9 +3,10 @@
 //! One authority lives here — reading an argument list — and it is three collaborating
 //! parts, in pipeline order:
 //!
-//! - [`Flags`], the accumulator, and its routing table: each flag is dispatched to the one
-//!   family that owns its meaning. The families are the `cli::*_flags` children.
-//! - [`argv`], the reader: which token is a value, and the answer for a flag no family
+//! - [`Flags`], the accumulator: one slot per family, which composes the families' products
+//!   into the request. The families are the `cli::*_flags` children.
+//! - [`argv`], the reader: which token is a value, the routing table that dispatches each
+//!   flag to the one family that owns its meaning, and the answer for a flag no family
 //!   owns.
 //! - [`parse_args`], which composes the families' products into a request and returns the
 //!   layer-A boundary's validated deployment.
@@ -64,103 +65,7 @@ struct Flags {
     delegated_signing: delegated_signing_flags::DelegatedSigningFlags,
 }
 
-/// One family's claim on a value-taking flag, and how to hand the flag to it.
-struct Route {
-    owns: fn(&str) -> bool,
-    take: fn(&mut Flags, &str, &str) -> Result<(), String>,
-}
-
 impl Flags {
-    /// The families in routing order, each beside the predicate that claims its flags.
-    const ROUTES: [Route; 14] = [
-        Route {
-            owns: identity_flags::IdentityFlags::owns,
-            take: |flags, flag, value| {
-                flags.identity.take(flag, value);
-                Ok(())
-            },
-        },
-        Route {
-            owns: serving_flags::ServingFlags::owns,
-            take: |flags, flag, value| {
-                flags.serving.take(flag, value);
-                Ok(())
-            },
-        },
-        Route {
-            owns: protocol_flags::ProtocolFlags::owns,
-            take: |flags, flag, value| flags.protocol.take(flag, value),
-        },
-        Route {
-            owns: runtime_flags::RuntimeFlags::owns,
-            take: |flags, flag, value| flags.runtime.take(flag, value),
-        },
-        Route {
-            owns: channel_flags::ChannelFlags::owns,
-            take: |flags, flag, value| flags.channel.take(flag, value),
-        },
-        Route {
-            owns: signing_source_flags::SigningSourceFlags::owns,
-            take: |flags, flag, value| flags.signing_source.take(flag, value),
-        },
-        Route {
-            owns: peer_identity_flags::PeerIdentityFlags::owns,
-            take: |flags, flag, value| flags.peer_identity.take(flag, value),
-        },
-        Route {
-            owns: revocation_flags::RevocationFlags::owns,
-            take: |flags, flag, value| flags.revocation.take(flag, value),
-        },
-        Route {
-            owns: storage_flags::StorageFlags::owns,
-            take: |flags, flag, value| flags.storage.take(flag, value),
-        },
-        Route {
-            owns: currency_flags::CurrencyFlags::owns,
-            take: |flags, flag, value| flags.currency.take(flag, value),
-        },
-        Route {
-            owns: admission_flags::AdmissionFlags::owns,
-            take: |flags, flag, value| flags.admission.take(flag, value),
-        },
-        Route {
-            owns: authorization_flags::AuthorizationFlags::owns,
-            take: |flags, flag, value| flags.authorization.take(flag, value),
-        },
-        Route {
-            owns: audit_flags::AuditFlags::owns,
-            take: |flags, flag, value| flags.audit.take(flag, value),
-        },
-        Route {
-            owns: delegated_signing_flags::DelegatedSigningFlags::owns,
-            take: |flags, flag, value| flags.delegated_signing.take(flag, value),
-        },
-    ];
-
-    /// Route one valueless flag to the family that owns it, reporting whether one did.
-    fn take_switch(&mut self, flag: &str) -> bool {
-        self.signing_source.take_switch(flag)
-            || self.identity.take_switch(flag)
-            || self.serving.take_switch(flag)
-            || self.peer_identity.take_switch(flag)
-    }
-
-    /// Whether this value-taking flag belongs to some family: the routing set of `take`.
-    fn owns(flag: &str) -> bool {
-        Self::ROUTES.iter().any(|route| (route.owns)(flag))
-    }
-
-    /// Route one value-taking flag to the family that owns it.
-    ///
-    /// One entry per family in [`Self::ROUTES`], and the families are disjoint: a flag
-    /// belongs to exactly one, so this is a routing table and not a decision.
-    fn take(&mut self, flag: &str, value: &str) -> Result<(), String> {
-        match Self::ROUTES.iter().find(|route| (route.owns)(flag)) {
-            Some(route) => (route.take)(self, flag, value),
-            None => Err(argv::refused_or_unknown(flag)),
-        }
-    }
-
     /// The request this command line describes.
     ///
     /// One line per semantic field. Each family answered its own question already, so this
@@ -253,8 +158,9 @@ mod tests {
     use crate::deployment_request::AuditSinkKind;
     use crate::deployment_request::AuthzKind;
     use crate::deployment_request::{
-        AwsKmsSigningSourceRequest, GcpKmsSigningSourceRequest, Pkcs11SigningSourceRequest,
-        SigningSourceRequest,
+        AwsKmsChannelKeyRequest, AwsKmsSigningSourceRequest, DelegatedChannelKeyRequest,
+        GcpKmsChannelKeyRequest, GcpKmsSigningSourceRequest, Pkcs11ChannelKeyRequest,
+        Pkcs11SigningSourceRequest, SigningSourceRequest,
     };
     use crate::transport::IdentityPolicy;
 
@@ -334,19 +240,87 @@ mod tests {
         }
     }
 
-    /// The delegated channel key object a parse produced, if any.
-    fn channel_key(
+    /// The delegated channel key a parse produced, or a panic naming what it produced instead.
+    fn delegated_channel_key(
         config: &DeploymentRequest,
-    ) -> Option<&crate::deployment_request::DelegatedChannelKeyRequest> {
+    ) -> &crate::deployment_request::DelegatedChannelKeyRequest {
         match &config.channel_credential.key {
-            crate::deployment_request::ChannelKeyRequest::Delegated(delegated) => Some(delegated),
-            crate::deployment_request::ChannelKeyRequest::ExportedFile(_) => None,
+            crate::deployment_request::ChannelKeyRequest::Delegated(delegated) => delegated,
+            crate::deployment_request::ChannelKeyRequest::ExportedFile(_) => {
+                panic!("a delegated channel key was named and must be recorded as one")
+            }
+        }
+    }
+
+    /// The PKCS#11 channel key a parse produced.
+    fn pkcs11_channel_key(config: &DeploymentRequest) -> &Pkcs11ChannelKeyRequest {
+        match delegated_channel_key(config) {
+            DelegatedChannelKeyRequest::Pkcs11(channel) => channel,
+            other => panic!("expected a PKCS#11 channel key, got {other:?}"),
+        }
+    }
+
+    /// The AWS KMS channel key a parse produced.
+    fn aws_channel_key(config: &DeploymentRequest) -> &AwsKmsChannelKeyRequest {
+        match delegated_channel_key(config) {
+            DelegatedChannelKeyRequest::AwsKms(channel) => channel,
+            other => panic!("expected an AWS KMS channel key, got {other:?}"),
+        }
+    }
+
+    /// The GCP Cloud KMS channel key a parse produced.
+    fn gcp_channel_key(config: &DeploymentRequest) -> &GcpKmsChannelKeyRequest {
+        match delegated_channel_key(config) {
+            DelegatedChannelKeyRequest::GcpKms(channel) => channel,
+            other => panic!("expected a GCP Cloud KMS channel key, got {other:?}"),
         }
     }
 
     /// The admission-limit request holds `NonZeroUsize`, because both flags refuse 0.
     fn nz(v: usize) -> std::num::NonZeroUsize {
         std::num::NonZeroUsize::new(v).expect("the fixture states a non-zero limit")
+    }
+
+    /// `base` with `flags` spliced ahead of it.
+    fn with_flags(mut base: Vec<String>, flags: &[&str]) -> Vec<String> {
+        base.splice(0..0, args(flags));
+        base
+    }
+
+    /// The refusal `flags` draw when spliced ahead of `base`.
+    fn refusal_of(base: Vec<String>, flags: &[&str]) -> String {
+        parse_request(&with_flags(base, flags)).unwrap_err()
+    }
+
+    /// A shared Redis replay store declared at `tier`.
+    fn redis_replay_at(tier: &str) -> [&str; 4] {
+        [
+            "--replay-redis-url",
+            "redis://127.0.0.1:6379",
+            "--replay-durability-tier",
+            tier,
+        ]
+    }
+
+    /// Parse `flags` ahead of `base` and require that no strict-production violation names
+    /// `fragment`.
+    fn assert_strict_accepts(base: Vec<String>, flags: &[&str], fragment: &str, accepted: &str) {
+        let config = parse_request(&with_flags(base, flags)).expect(accepted);
+        assert!(
+            unsafe_config_violations(&config)
+                .iter()
+                .all(|violation| !violation.contains(fragment)),
+            "{accepted}: a strict violation names {fragment}"
+        );
+    }
+
+    /// The client CRL paths `flags` select ahead of the durable minimal command line.
+    fn client_crl_paths(flags: &[&str]) -> Vec<String> {
+        parse_request(&with_flags(minimal_durable(), flags))
+            .expect("parse")
+            .peer_revocation
+            .lists
+            .paths
     }
 
     // ---- KMS endpoint override validation (C054) --------------------------
@@ -516,7 +490,17 @@ mod tests {
     /// so a test can supply `--inner-http-url` itself (or assert the missing-inner
     /// error).
     fn minimal_without_inner_command() -> Vec<String> {
-        args(&[
+        lead_flags(
+            args(&["--signing-key-seed", "/seed"]),
+            &["--tls-key", "/key"],
+        )
+    }
+
+    /// The identity, channel and protocol flags every delegated-signing command line states,
+    /// around `signing` (the response-signing custody flags) and `tls_key` (the exported
+    /// channel key, or nothing when the channel key is delegated). It names no inner plane.
+    fn lead_flags(signing: Vec<String>, tls_key: &[&str]) -> Vec<String> {
+        let identity = [
             "--bind",
             "127.0.0.1:8443",
             "--audience",
@@ -525,12 +509,8 @@ mod tests {
             "did:web:server-1.mcp.example.com",
             "--server-key-id",
             "server-key-1",
-            "--signing-key-seed",
-            "/seed",
-            "--tls-cert",
-            "/cert",
-            "--tls-key",
-            "/key",
+        ];
+        let channel_and_protocol = [
             "--client-ca",
             "/ca",
             "--trust",
@@ -543,7 +523,13 @@ mod tests {
             "epoch-min",
             "--trust-domain",
             "mcp.example.com",
-        ])
+        ];
+        let mut lead = args(&identity);
+        lead.extend(signing);
+        lead.extend(args(&["--tls-cert", "/cert"]));
+        lead.extend(args(tls_key));
+        lead.extend(args(&channel_and_protocol));
+        lead
     }
 
     /// A durable single-node replay selection (`--replay-cache file --replay-path
@@ -1147,15 +1133,18 @@ mod tests {
     fn delegated_signing_parses_with_defaults() {
         // `minimal()` already supplies the required --delegated-trust-epoch.
         let config = parse_request(&minimal_durable()).expect("parse delegated-signing");
-        assert_eq!(
-            config.delegated_signing.trust_epoch.as_deref(),
-            Some("epoch-min")
-        );
+        let delegated = &config.delegated_signing;
         // Defaults: T=300, O=60; issuer kid / audience hash default at build time.
-        assert_eq!(config.delegated_signing.ttl_secs, 300);
-        assert_eq!(config.delegated_signing.overlap_secs, 60);
-        assert_eq!(config.delegated_signing.issuer_kid, None);
-        assert_eq!(config.delegated_signing.audience_hash, None);
+        assert_eq!(
+            (
+                delegated.trust_epoch.as_deref(),
+                delegated.ttl_secs,
+                delegated.overlap_secs,
+                delegated.issuer_kid.as_deref(),
+                delegated.audience_hash.as_deref(),
+            ),
+            (Some("epoch-min"), 300, 60, None, None)
+        );
     }
 
     #[test]
@@ -1186,35 +1175,29 @@ mod tests {
         // and the proxy always runs strict, so a minimal PARSEABLE config declares a
         // durable replay backend; every other value here is a plain default.
         let config = parse_request(&minimal_durable()).expect("parse");
-        assert_eq!(config.bind, "127.0.0.1:8443");
-        assert_eq!(config.audience, "did:web:server-1.mcp.example.com");
-        // The default skew is the profile's own, so the freshness gate the verifier
-        // runs and the retention the replay tier applies cannot drift apart.
         assert_eq!(
-            config.max_clock_skew,
-            mcp_re_http_profile::VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW
+            (config.bind.as_str(), config.audience.as_str()),
+            ("127.0.0.1:8443", "did:web:server-1.mcp.example.com")
         );
-        assert_eq!(config.mcp_protocol_versions, vec!["2026-07-28"]);
-        assert!(matches!(
-            config.response_signing.source,
-            SigningSourceRequest::File(_)
-        ));
-        assert_eq!(config.peer_identity.flag_value(), "exact");
-        // Safe defaults: no identity field named (the channel-binding owner holds it to the
-        // URI SAN), bounded resources.
+        assert_default_posture(&config);
+        // Safe defaults: bounded resources.
+        let limits = &config.limits;
         assert_eq!(
-            config.peer_identity.credential_identity().map(|c| c.field),
-            Some(None)
-        );
-        assert_eq!(config.authorization.kind, AuthzKind::Off);
-        assert_eq!(config.limits.max_header_bytes, 64 * 1024);
-        assert_eq!(config.limits.max_body_bytes, 16 * 1024 * 1024);
-        assert_eq!(config.limits.max_concurrent_connections, 256);
-        assert!(config.limits.read_timeout.is_some());
-        // Aggregate read-phase wall-clock deadline (slow-loris defense) defaults on.
-        assert_eq!(
-            config.limits.request_deadline,
-            Some(std::time::Duration::from_secs(30))
+            (
+                limits.max_header_bytes,
+                limits.max_body_bytes,
+                limits.max_concurrent_connections,
+                limits.read_timeout.is_some(),
+                // Aggregate read-phase wall-clock deadline (slow-loris defense) defaults on.
+                limits.request_deadline,
+            ),
+            (
+                64 * 1024,
+                16 * 1024 * 1024,
+                256,
+                true,
+                Some(std::time::Duration::from_secs(30))
+            )
         );
         // v1 revocation posture: enforced 1-hour client-cert lifetime by default.
         assert_eq!(
@@ -1224,6 +1207,36 @@ mod tests {
         assert_eq!(
             config.inner_http_urls.expose(),
             ["http://127.0.0.1:8080/mcp".to_string()]
+        );
+    }
+
+    /// The defaults that are postures rather than numbers: the protocol skew and version,
+    /// the file custody, exact peer identity and no authorization.
+    fn assert_default_posture(config: &DeploymentRequest) {
+        // The default skew is the profile's own, so the freshness gate the verifier
+        // runs and the retention the replay tier applies cannot drift apart.
+        assert_eq!(
+            config.max_clock_skew,
+            mcp_re_http_profile::VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW
+        );
+        assert!(matches!(
+            config.response_signing.source,
+            SigningSourceRequest::File(_)
+        ));
+        // No identity field named (the channel-binding owner holds it to the URI SAN).
+        assert_eq!(
+            (
+                config.mcp_protocol_versions.clone(),
+                config.peer_identity.flag_value(),
+                config.peer_identity.credential_identity().map(|c| c.field),
+                config.authorization.kind,
+            ),
+            (
+                vec!["2026-07-28".to_string()],
+                "exact",
+                Some(None),
+                AuthzKind::Off
+            )
         );
     }
 
@@ -1629,17 +1642,21 @@ mod tests {
         a.splice(0..0, pkcs11_flags());
         let config = parse_request(&a).expect("parse");
         let token = token_payload(&config);
+        // The payload carries the PIN's PATH; the PIN itself is not a request field.
         assert_eq!(
-            token.module.as_deref(),
-            Some("/opt/pkcs11/libmock_pkcs11.so")
+            (
+                token.module.as_deref(),
+                token.pin_file.as_deref(),
+                token.token_label.as_deref(),
+                token.key_label.as_deref(),
+            ),
+            (
+                Some("/opt/pkcs11/libmock_pkcs11.so"),
+                Some("/etc/mcp-re/pkcs11-pin"),
+                Some("mcp-re-test"),
+                Some("mcp-re-response-signing"),
+            )
         );
-        assert_eq!(
-            token.pin_file.as_deref(),
-            Some("/etc/mcp-re/pkcs11-pin"),
-            "the payload carries the PIN's PATH; the PIN itself is not a request field"
-        );
-        assert_eq!(token.token_label.as_deref(), Some("mcp-re-test"));
-        assert_eq!(token.key_label.as_deref(), Some("mcp-re-response-signing"));
     }
 
     #[test]
@@ -1680,18 +1697,17 @@ mod tests {
         a.splice(0..0, pkcs11_flags());
         a.extend(args(&["--pkcs11-pin", "1234"]));
         let err = parse_request(&a).unwrap_err();
-        assert!(err.contains("--pkcs11-pin is refused"), "got: {err}");
-        assert!(
-            err.contains("--pkcs11-pin-file"),
-            "the replacement must be named: {err}"
-        );
-        assert!(
-            err.contains("compromised"),
-            "the operator must be told the PIN already leaked: {err}"
-        );
-        assert!(
-            !err.contains("1234"),
-            "the refusal must not echo the secret it is refusing: {err}"
+        // The refusal, the replacement it names, the warning that the PIN already leaked, and
+        // no echo of the secret it is refusing.
+        assert_eq!(
+            (
+                err.contains("--pkcs11-pin is refused"),
+                err.contains("--pkcs11-pin-file"),
+                err.contains("compromised"),
+                err.contains("1234"),
+            ),
+            (true, true, true, false),
+            "got: {err}"
         );
     }
 
@@ -1712,20 +1728,34 @@ mod tests {
     #[cfg(not(feature = "pkcs11_keysource"))]
     #[test]
     fn default_build_rejects_pkcs11_key_source() {
+        assert_default_build_refuses(pkcs11_flags(), "pkcs11_keysource", |source| {
+            matches!(source, SigningSourceRequest::Pkcs11(_))
+        });
+    }
+
+    /// Custody `flags` parse into the selection `selects` recognises, and the default build —
+    /// which compiles no backend for it — refuses to build a key source from it, naming
+    /// `feature` as the thing to rebuild with.
+    #[cfg(any(
+        not(feature = "pkcs11_keysource"),
+        not(feature = "aws_kms_keysource"),
+        not(feature = "gcp_kms_keysource")
+    ))]
+    fn assert_default_build_refuses(
+        flags: Vec<String>,
+        feature: &str,
+        selects: fn(&SigningSourceRequest) -> bool,
+    ) {
         let mut a = minimal_durable_without("--signing-key-seed");
-        a.splice(0..0, pkcs11_flags());
+        a.splice(0..0, flags);
         let config = parse_request(&a).expect("parse");
-        assert!(matches!(
-            config.response_signing.source,
-            SigningSourceRequest::Pkcs11(_)
-        ));
-        let err = key_source_from(&config)
+        assert!(selects(&config.response_signing.source));
+        let rendered = key_source_from(&config)
             .err()
-            .expect("default build must refuse a pkcs11 key source");
-        let rendered = err.to_string();
+            .expect("the default build must refuse this key source")
+            .to_string();
         assert!(
-            rendered.contains("pkcs11_keysource")
-                && rendered.contains("not available in this build"),
+            rendered.contains(feature) && rendered.contains("not available in this build"),
             "expected a clear feature-rebuild message; got: {rendered}"
         );
     }
@@ -1853,60 +1883,32 @@ mod tests {
     /// #60: `--aws-kms-tls-key-id` parses and is captured as the SECOND, distinct
     /// TLS KMS key id. On this delegated path `--tls-key` is forbidden and not
     /// required, so `minimal()`'s exported TLS key must be dropped first.
-    /// AWS KMS leading flags WITHOUT `--tls-key` (delegated TLS path), `--inner-command`
-    /// appended last so proxy flags land before the inner tail.
-    fn aws_kms_lead_no_tls_key() -> Vec<String> {
-        args(&[
-            "--bind",
-            "127.0.0.1:8443",
-            "--audience",
-            "did:web:server-1.mcp.example.com",
-            "--server-signer",
-            "did:web:server-1.mcp.example.com",
-            "--server-key-id",
-            "server-key-1",
-            "--key-source",
-            "aws-kms",
-            "--aws-kms-region",
-            "us-east-1",
-            "--aws-kms-key-id",
-            "alias/mcp-re-response-signing",
-            "--tls-cert",
-            "/cert",
-            "--client-ca",
-            "/ca",
-            "--trust",
-            "/trust.json",
-            "--target-uri",
-            "https://mcp.example.com/mcp",
-            "--mcp-protocol-version",
-            "2026-07-28",
-            "--delegated-trust-epoch",
-            "epoch-min",
-            "--trust-domain",
-            "mcp.example.com",
-        ])
+    /// The config a delegated-TLS command line parses to: the custody `signing` flags with no
+    /// `--tls-key`, the delegated channel key `tls_key` flag and its value, an inner plane and
+    /// a durable replay store.
+    fn parse_delegated_tls(signing: Vec<String>, tls_key: [&str; 2]) -> DeploymentRequest {
+        let mut a = lead_flags(signing, &tls_key);
+        a.extend(with_inner_http_url(Vec::new()));
+        a.extend(durable_replay());
+        parse_request(&a).expect("delegated TLS path parses without --tls-key")
+    }
+
+    /// The command line of `signing` custody with no `--tls-key` and no inner plane.
+    fn without_tls_key(signing: Vec<String>) -> Vec<String> {
+        lead_flags(signing, &[])
     }
 
     #[test]
     fn parses_aws_kms_tls_key_id_flag() {
-        let mut a = aws_kms_lead_no_tls_key();
-        a.push("--aws-kms-tls-key-id".to_string());
-        a.push("alias/mcp-re-tls-signing".to_string());
-        a.push("--inner-http-url".to_string());
-        a.push("http://127.0.0.1:8080/mcp".to_string());
-        a.extend(durable_replay());
-        let config = parse_request(&a).expect("delegated TLS path parses without --tls-key");
-        let response_key_id = aws_payload(&config).key_id.clone();
-        let Some(crate::deployment_request::DelegatedChannelKeyRequest::AwsKms(channel)) =
-            channel_key(&config)
-        else {
-            panic!("an AWS channel key was named and must be recorded as one");
-        };
+        let config = parse_delegated_tls(
+            aws_kms_flags(),
+            ["--aws-kms-tls-key-id", "alias/mcp-re-tls-signing"],
+        );
+        let channel = aws_channel_key(&config);
         assert_eq!(channel.key_id, "alias/mcp-re-tls-signing");
         // Distinct credential: the channel key id differs from the response-signing one,
         // and they are now two values of two types rather than two sibling options.
-        assert_ne!(Some(channel.key_id.clone()), response_key_id);
+        assert_ne!(Some(channel.key_id.clone()), aws_payload(&config).key_id);
     }
 
     /// IRSA is OFF unless asked for. A deployment that did not name it must not get
@@ -1961,19 +1963,37 @@ mod tests {
         assert!(err.contains("--aws-sts-endpoint"), "got: {err}");
     }
 
+    /// `minimal()` keeps its exported `--tls-key`; the custody flags and a delegated TLS key
+    /// flag alongside it must be refused as contradictory.
+    fn assert_refused_as_exclusive(delegated_tls_key: &[&str], custody: Vec<String>) {
+        let mut a = minimal_without_seed();
+        a.splice(0..0, custody);
+        let err = refusal_of(a, delegated_tls_key);
+        assert!(
+            err.contains("delegated") || err.contains("--tls-key"),
+            "expected an exclusivity error, got: {err}"
+        );
+    }
+
     /// #60 / #58: `--aws-kms-tls-key-id` (delegated) PLUS an exported `--tls-key` is
     /// contradictory and must fail closed (the exclusivity guard).
     #[test]
     fn aws_kms_tls_key_id_plus_exported_tls_key_fails_closed() {
         // minimal() carries an exported `--tls-key`; adding a delegated TLS key id
         // alongside it must be rejected.
-        let mut a = minimal_without_seed();
-        a.splice(0..0, aws_kms_flags());
-        a.splice(0..0, args(&["--aws-kms-tls-key-id", "alias/mcp-re-tls"]));
-        let err = parse_request(&a).unwrap_err();
+        assert_refused_as_exclusive(
+            &["--aws-kms-tls-key-id", "alias/mcp-re-tls"],
+            aws_kms_flags(),
+        );
+    }
+
+    /// A delegated TLS key flag on a command line whose custody is not the source it belongs
+    /// to is refused as having no effect, naming the `source` it needs.
+    fn assert_dangling_tls_key_refused(tls_key: [&str; 2], source: &str) {
+        let err = refusal_of(minimal_delegating_the_channel_key(), &tls_key);
         assert!(
-            err.contains("delegated") || err.contains("--tls-key"),
-            "expected an exclusivity error, got: {err}"
+            err.contains(&format!("{} has no effect without {source}", tls_key[0])),
+            "got: {err}"
         );
     }
 
@@ -1981,12 +2001,9 @@ mod tests {
     /// nothing (a false belief the TLS key is KMS-resident), so it must fail closed.
     #[test]
     fn aws_kms_tls_key_id_without_aws_kms_fails_closed() {
-        let mut a = minimal_delegating_the_channel_key();
-        a.splice(0..0, args(&["--aws-kms-tls-key-id", "alias/mcp-re-tls"]));
-        let err = parse_request(&a).unwrap_err();
-        assert!(
-            err.contains("--aws-kms-tls-key-id has no effect without --key-source aws-kms"),
-            "got: {err}"
+        assert_dangling_tls_key_refused(
+            ["--aws-kms-tls-key-id", "alias/mcp-re-tls"],
+            "--key-source aws-kms",
         );
     }
 
@@ -2021,67 +2038,28 @@ mod tests {
         assert!(err.contains("--gcp-kms-use-metadata"), "got: {err}");
     }
 
-    /// #61: GCP Cloud KMS leading flags WITHOUT `--tls-key` (delegated TLS path),
-    /// `--inner-command` appended last so proxy flags land before the inner tail.
-    fn gcp_kms_lead_no_tls_key() -> Vec<String> {
-        args(&[
-            "--bind",
-            "127.0.0.1:8443",
-            "--audience",
-            "did:web:server-1.mcp.example.com",
-            "--server-signer",
-            "did:web:server-1.mcp.example.com",
-            "--server-key-id",
-            "server-key-1",
-            "--key-source",
-            "gcp-kms",
-            "--gcp-kms-key-version",
-            "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
-            "--tls-cert",
-            "/cert",
-            "--client-ca",
-            "/ca",
-            "--trust",
-            "/trust.json",
-            "--target-uri",
-            "https://mcp.example.com/mcp",
-            "--mcp-protocol-version",
-            "2026-07-28",
-            "--delegated-trust-epoch",
-            "epoch-min",
-            "--trust-domain",
-            "mcp.example.com",
-        ])
-    }
-
     /// #61: `--gcp-kms-tls-key-version` parses and is captured as the SECOND,
     /// distinct TLS KMS key version. On this delegated path `--tls-key` is forbidden
     /// and not required, so the lead omits the exported TLS key.
     #[test]
     fn parses_gcp_kms_tls_key_version_flag() {
-        let mut a = gcp_kms_lead_no_tls_key();
-        a.push("--gcp-kms-tls-key-version".to_string());
-        a.push(
-            "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/2".to_string(),
+        let config = parse_delegated_tls(
+            gcp_kms_flags(),
+            ["--gcp-kms-tls-key-version", GCP_TLS_KEY_VERSION],
         );
-        a.push("--inner-http-url".to_string());
-        a.push("http://127.0.0.1:8080/mcp".to_string());
-        a.extend(durable_replay());
-        let config = parse_request(&a).expect("delegated TLS path parses without --tls-key");
-        let response_key_version = gcp_payload(&config).key_version.clone();
-        let Some(crate::deployment_request::DelegatedChannelKeyRequest::GcpKms(channel)) =
-            channel_key(&config)
-        else {
-            panic!("a GCP channel key was named and must be recorded as one");
-        };
-        assert_eq!(
-            channel.key_version,
-            "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/2"
-        );
+        let channel = gcp_channel_key(&config);
+        assert_eq!(channel.key_version, GCP_TLS_KEY_VERSION);
         // Distinct credential: the channel key version differs from the response-signing
         // one, and they are now two values of two types rather than two sibling options.
-        assert_ne!(Some(channel.key_version.clone()), response_key_version);
+        assert_ne!(
+            Some(channel.key_version.clone()),
+            gcp_payload(&config).key_version
+        );
     }
+
+    /// The second, distinct GCP key version a delegated TLS channel names.
+    const GCP_TLS_KEY_VERSION: &str =
+        "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/2";
 
     /// #61 / #58: `--gcp-kms-tls-key-version` (delegated) PLUS an exported
     /// `--tls-key` is contradictory and must fail closed (the exclusivity guard).
@@ -2089,19 +2067,9 @@ mod tests {
     fn gcp_kms_tls_key_version_plus_exported_tls_key_fails_closed() {
         // minimal() carries an exported `--tls-key`; adding a delegated TLS key
         // version alongside it must be rejected.
-        let mut a = minimal_without_seed();
-        a.splice(0..0, gcp_kms_flags());
-        a.splice(
-            0..0,
-            args(&[
-                "--gcp-kms-tls-key-version",
-                "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/2",
-            ]),
-        );
-        let err = parse_request(&a).unwrap_err();
-        assert!(
-            err.contains("delegated") || err.contains("--tls-key"),
-            "expected an exclusivity error, got: {err}"
+        assert_refused_as_exclusive(
+            &["--gcp-kms-tls-key-version", GCP_TLS_KEY_VERSION],
+            gcp_kms_flags(),
         );
     }
 
@@ -2110,18 +2078,9 @@ mod tests {
     /// closed.
     #[test]
     fn gcp_kms_tls_key_version_without_gcp_kms_fails_closed() {
-        let mut a = minimal_delegating_the_channel_key();
-        a.splice(
-            0..0,
-            args(&[
-                "--gcp-kms-tls-key-version",
-                "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/2",
-            ]),
-        );
-        let err = parse_request(&a).unwrap_err();
-        assert!(
-            err.contains("--gcp-kms-tls-key-version has no effect without --key-source gcp-kms"),
-            "got: {err}"
+        assert_dangling_tls_key_refused(
+            ["--gcp-kms-tls-key-version", GCP_TLS_KEY_VERSION],
+            "--key-source gcp-kms",
         );
     }
 
@@ -2141,41 +2100,17 @@ mod tests {
     #[cfg(not(feature = "aws_kms_keysource"))]
     #[test]
     fn default_build_rejects_aws_kms_key_source() {
-        let mut a = minimal_durable_without("--signing-key-seed");
-        a.splice(0..0, aws_kms_flags());
-        let config = parse_request(&a).expect("parse");
-        assert!(matches!(
-            config.response_signing.source,
-            SigningSourceRequest::AwsKms(_)
-        ));
-        let err = key_source_from(&config)
-            .err()
-            .expect("default build must refuse an aws-kms key source");
-        assert!(
-            err.to_string().contains("aws_kms_keysource")
-                && err.to_string().contains("not available in this build"),
-            "got: {err}"
-        );
+        assert_default_build_refuses(aws_kms_flags(), "aws_kms_keysource", |source| {
+            matches!(source, SigningSourceRequest::AwsKms(_))
+        });
     }
 
     #[cfg(not(feature = "gcp_kms_keysource"))]
     #[test]
     fn default_build_rejects_gcp_kms_key_source() {
-        let mut a = minimal_durable_without("--signing-key-seed");
-        a.splice(0..0, gcp_kms_flags());
-        let config = parse_request(&a).expect("parse");
-        assert!(matches!(
-            config.response_signing.source,
-            SigningSourceRequest::GcpKms(_)
-        ));
-        let err = key_source_from(&config)
-            .err()
-            .expect("default build must refuse a gcp-kms key source");
-        assert!(
-            err.to_string().contains("gcp_kms_keysource")
-                && err.to_string().contains("not available in this build"),
-            "got: {err}"
-        );
+        assert_default_build_refuses(gcp_kms_flags(), "gcp_kms_keysource", |source| {
+            matches!(source, SigningSourceRequest::GcpKms(_))
+        });
     }
 
     #[test]
@@ -2194,18 +2129,22 @@ mod tests {
                 "12",
             ]),
         );
-        let config = parse_request(&a).expect("parse");
-        assert_eq!(config.limits.max_body_bytes, 1024);
-        assert_eq!(config.limits.max_concurrent_connections, 8);
+        let limits = parse_request(&a).expect("parse").limits;
+        // `--read-timeout-secs` sets the per-socket read timeout and
+        // `--request-deadline-secs` the aggregate read-phase deadline.
         assert_eq!(
-            config.limits.read_timeout,
-            Some(std::time::Duration::from_secs(45)),
-            "--read-timeout-secs sets the per-socket read timeout"
-        );
-        assert_eq!(
-            config.limits.request_deadline,
-            Some(std::time::Duration::from_secs(12)),
-            "--request-deadline-secs sets the aggregate read-phase deadline"
+            (
+                limits.max_body_bytes,
+                limits.max_concurrent_connections,
+                limits.read_timeout,
+                limits.request_deadline,
+            ),
+            (
+                1024,
+                8,
+                Some(std::time::Duration::from_secs(45)),
+                Some(std::time::Duration::from_secs(12)),
+            )
         );
     }
 
@@ -2224,13 +2163,12 @@ mod tests {
             let mut a = minimal_durable();
             a.splice(0..0, args(&[flag, "0"]));
             let err = parse_request(&a).expect_err("a disabled timeout must be refused");
+            // The refusal names the flag and says which control the zero would disable.
             assert!(
-                err.contains("refuses unsafe configuration") && err.contains(flag),
-                "{flag} 0 must be named in the refusal; got: {err}"
-            );
-            assert!(
-                err.contains("slow-loris"),
-                "the refusal must say what control is being disabled; got: {err}"
+                err.contains("refuses unsafe configuration")
+                    && err.contains(flag)
+                    && err.contains("slow-loris"),
+                "{flag} 0 must be refused naming the slow-loris control; got: {err}"
             );
         }
     }
@@ -2536,17 +2474,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_durability_tier() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--replay-redis-url",
-                "redis://127.0.0.1:6379",
-                "--replay-durability-tier",
-                "cluster",
-            ]),
-        );
-        let err = parse_request(&a).unwrap_err();
+        let err = refusal_of(minimal(), &redis_replay_at("cluster"));
         assert!(err.contains("unknown replay durability tier"), "got: {err}");
     }
 
@@ -2709,11 +2637,8 @@ mod tests {
 
     #[test]
     fn parses_a_single_client_crl_path() {
-        let mut a = minimal_durable();
-        a.splice(0..0, args(&["--client-crl", "/etc/mcp-re/clients.crl"]));
-        let config = parse_request(&a).expect("parse");
         assert_eq!(
-            config.peer_revocation.lists.paths,
+            client_crl_paths(&["--client-crl", "/etc/mcp-re/clients.crl"]),
             vec!["/etc/mcp-re/clients.crl".to_string()]
         );
     }
@@ -2885,14 +2810,8 @@ mod tests {
 
     #[test]
     fn repeated_client_crl_flags_accumulate() {
-        let mut a = minimal_durable();
-        a.splice(
-            0..0,
-            args(&["--client-crl", "/a.crl", "--client-crl", "/b.crl"]),
-        );
-        let config = parse_request(&a).expect("parse");
         assert_eq!(
-            config.peer_revocation.lists.paths,
+            client_crl_paths(&["--client-crl", "/a.crl", "--client-crl", "/b.crl"]),
             vec!["/a.crl".to_string(), "/b.crl".to_string()]
         );
     }
@@ -3043,39 +2962,20 @@ mod tests {
     // weaker than REDIS_WAIT_QUORUM.
     #[test]
     fn strict_rejects_weak_replay_durability_tier() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--replay-redis-url",
-                "redis://127.0.0.1:6379",
-                "--replay-durability-tier",
-                "redis-async",
-            ]),
+        let err = refusal_of(minimal(), &redis_replay_at("redis-async"));
+        assert!(
+            err.contains("--replay-durability-tier") && err.contains("strict-production minimum"),
+            "got: {err}"
         );
-        let err = parse_request(&a).unwrap_err();
-        assert!(err.contains("--replay-durability-tier"), "got: {err}");
-        assert!(err.contains("strict-production minimum"), "got: {err}");
     }
 
     #[test]
     fn strict_accepts_wait_quorum_replay_durability_tier() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--replay-redis-url",
-                "redis://127.0.0.1:6379",
-                "--replay-durability-tier",
-                "redis-wait-quorum:2:500",
-            ]),
-        );
-        let config = parse_request(&a).expect("wait-quorum tier must be strict-acceptable");
-        assert!(
-            unsafe_config_violations(&config)
-                .iter()
-                .all(|v| !v.contains("replay-durability-tier")),
-            "wait-quorum must not be a replay-tier strict violation"
+        assert_strict_accepts(
+            minimal(),
+            &redis_replay_at("redis-wait-quorum:2:500"),
+            "replay-durability-tier",
+            "wait-quorum tier must be strict-acceptable",
         );
     }
 
@@ -3197,22 +3097,11 @@ mod tests {
     // `strict_rejects_weak_replay_durability_tier`).
     #[test]
     fn strict_accepts_shared_replay_at_adequate_tier() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--replay-redis-url",
-                "redis://127.0.0.1:6379",
-                "--replay-durability-tier",
-                "redis-wait-quorum:2:500",
-            ]),
-        );
-        let config = parse_request(&a).expect("durable shared replay must parse");
-        assert!(
-            unsafe_config_violations(&config)
-                .iter()
-                .all(|v| !v.contains("--replay-durability-tier")),
-            "a durable shared replay must not trip the missing-tier violation"
+        assert_strict_accepts(
+            minimal(),
+            &redis_replay_at("redis-wait-quorum:2:500"),
+            "--replay-durability-tier",
+            "durable shared replay must parse",
         );
     }
 
@@ -3251,28 +3140,22 @@ mod tests {
     // ceiling (the default) is acceptable, so a default config is not self-rejecting.
     #[test]
     fn strict_accepts_cert_lifetime_at_ceiling() {
-        let mut a = minimal_durable();
-        a.splice(0..0, args(&["--max-client-cert-lifetime", "3600"]));
-        let config = parse_request(&a).expect("a 1h lifetime must be strict-acceptable");
-        assert!(
-            unsafe_config_violations(&config)
-                .iter()
-                .all(|v| !v.contains("max-client-cert-lifetime")),
-            "a lifetime at the ceiling must not be a strict violation"
+        assert_strict_accepts(
+            minimal_durable(),
+            &["--max-client-cert-lifetime", "3600"],
+            "max-client-cert-lifetime",
+            "a 1h lifetime must be strict-acceptable",
         );
     }
 
     // ADR-MCPS-023 §A1: a lifetime just BELOW the ceiling is also acceptable.
     #[test]
     fn strict_accepts_cert_lifetime_below_ceiling() {
-        let mut a = minimal_durable();
-        a.splice(0..0, args(&["--max-client-cert-lifetime", "30m"]));
-        let config = parse_request(&a).expect("a 30m lifetime must be strict-acceptable");
-        assert!(
-            unsafe_config_violations(&config)
-                .iter()
-                .all(|v| !v.contains("max-client-cert-lifetime")),
-            "a lifetime below the ceiling must not be a strict violation"
+        assert_strict_accepts(
+            minimal_durable(),
+            &["--max-client-cert-lifetime", "30m"],
+            "max-client-cert-lifetime",
+            "a 30m lifetime must be strict-acceptable",
         );
     }
 
@@ -3331,45 +3214,6 @@ mod tests {
         assert!(err.contains("none"), "got: {err}");
     }
 
-    /// The leading PKCS#11-source flags (no `--tls-key`, no TLS label, no inner
-    /// plane). Tests append the #59 toggles and then an `--inner-http-url` inner.
-    fn pkcs11_lead_no_tls_key() -> Vec<String> {
-        args(&[
-            "--bind",
-            "127.0.0.1:8443",
-            "--audience",
-            "did:web:server-1.mcp.example.com",
-            "--server-signer",
-            "did:web:server-1.mcp.example.com",
-            "--server-key-id",
-            "server-key-1",
-            "--key-source",
-            "pkcs11",
-            "--pkcs11-module",
-            "/opt/pkcs11/libmock_pkcs11.so",
-            "--pkcs11-pin-file",
-            "/etc/mcp-re/pkcs11-pin",
-            "--pkcs11-token-label",
-            "mcp-re-test",
-            "--pkcs11-key-label",
-            "mcp-re-response-signing",
-            "--tls-cert",
-            "/cert",
-            "--client-ca",
-            "/ca",
-            "--trust",
-            "/trust.json",
-            "--target-uri",
-            "https://mcp.example.com/mcp",
-            "--mcp-protocol-version",
-            "2026-07-28",
-            "--delegated-trust-epoch",
-            "epoch-min",
-            "--trust-domain",
-            "mcp.example.com",
-        ])
-    }
-
     fn with_inner_http_url(mut a: Vec<String>) -> Vec<String> {
         a.push("--inner-http-url".to_string());
         a.push("http://127.0.0.1:8080/mcp".to_string());
@@ -3381,18 +3225,8 @@ mod tests {
     /// config parses and carries the TLS label.
     #[test]
     fn pkcs11_tls_label_makes_tls_key_optional() {
-        let mut a = pkcs11_lead_no_tls_key();
-        a.push("--pkcs11-tls-key-label".to_string());
-        a.push("mcp-re-tls".to_string());
-        a.extend(durable_replay());
-        let config = parse_request(&with_inner_http_url(a))
-            .expect("delegated TLS path parses without --tls-key");
-        let Some(crate::deployment_request::DelegatedChannelKeyRequest::Pkcs11(channel)) =
-            channel_key(&config)
-        else {
-            panic!("a PKCS#11 channel key was named and must be recorded as one");
-        };
-        assert_eq!(channel.key_label, "mcp-re-tls");
+        let config = parse_delegated_tls(pkcs11_flags(), ["--pkcs11-tls-key-label", "mcp-re-tls"]);
+        assert_eq!(pkcs11_channel_key(&config).key_label, "mcp-re-tls");
         assert!(matches!(
             config.response_signing.source,
             SigningSourceRequest::Pkcs11(_)
@@ -3403,11 +3237,15 @@ mod tests {
     /// is contradictory and fails closed via the XOR exclusivity guard.
     #[test]
     fn pkcs11_tls_label_with_exported_tls_key_is_rejected() {
-        let mut a = pkcs11_lead_no_tls_key();
-        a.push("--pkcs11-tls-key-label".to_string());
-        a.push("mcp-re-tls".to_string());
-        a.push("--tls-key".to_string());
-        a.push("/exported-key".to_string());
+        let a = lead_flags(
+            pkcs11_flags(),
+            &[
+                "--pkcs11-tls-key-label",
+                "mcp-re-tls",
+                "--tls-key",
+                "/exported-key",
+            ],
+        );
         let err = parse_request(&with_inner_http_url(a))
             .expect_err("delegated + exported TLS key must be rejected");
         assert!(
@@ -3437,7 +3275,7 @@ mod tests {
     /// path that was not requested).
     #[test]
     fn pkcs11_without_tls_label_still_requires_tls_key() {
-        let err = parse_request(&with_inner_http_url(pkcs11_lead_no_tls_key()))
+        let err = parse_request(&with_inner_http_url(without_tls_key(pkcs11_flags())))
             .expect_err("non-delegated pkcs11 must still require --tls-key");
         assert!(err.contains("--tls-key"), "got: {err}");
     }
@@ -3509,64 +3347,75 @@ mod tests {
             "https://user:pass@evil.example.com",
             "https://@evil.example.com",
         ];
-        for flag in [
-            "--aws-kms-endpoint",
-            "--aws-sts-endpoint",
-            "--gcp-kms-endpoint",
-        ] {
-            for endpoint in hostile {
-                let err = crate::config_state::kms_endpoint::validated_kms_endpoint(flag, endpoint)
-                    .expect_err("an authority carrying userinfo must be refused");
-                assert!(
-                    err.contains(flag) && err.contains("userinfo"),
-                    "{flag} {endpoint}: the refusal must name the flag and the reason, got \
-                     {err:?}"
-                );
-            }
-        }
-        // And through the two boundaries a config actually crosses: the argv match arms,
-        // and `kms_endpoint_refusals` for a `DeploymentRequest` built in code — the payload
-        // fields are public, and an embedder reaches key-source construction without a
-        // parser.
-        //
-        // Three endpoint fields, examined across the two selections that can carry them:
-        // one request can no longer hold all three, because AWS and GCP are alternatives
-        // rather than siblings.
         for endpoint in hostile {
-            for flag in ["--aws-kms-endpoint", "--gcp-kms-endpoint"] {
-                let err = with_kms_endpoint(flag, endpoint).expect_err("refused at parse");
-                assert!(
-                    err.contains(flag) && err.contains("userinfo"),
-                    "got {err:?}"
-                );
-            }
-            assert_eq!(
-                hostile_endpoint_refusals(SigningSourceRequest::AwsKms(
-                    AwsKmsSigningSourceRequest {
-                        region: Some("eu-north-1".to_string()),
-                        key_id: Some("alias/k".to_string()),
-                        endpoint: Some(endpoint.to_string()),
-                        use_web_identity: true,
-                        sts_endpoint: Some(endpoint.to_string()),
-                    }
-                ))
-                .len(),
-                2,
-                "{endpoint}: both AWS endpoint fields must be held to the rule"
-            );
-            assert_eq!(
-                hostile_endpoint_refusals(SigningSourceRequest::GcpKms(
-                    GcpKmsSigningSourceRequest {
-                        key_version: Some("projects/p/..".to_string()),
-                        endpoint: Some(endpoint.to_string()),
-                        use_metadata: false,
-                    }
-                ))
-                .len(),
-                1,
-                "{endpoint}: the GCP endpoint field must be held to the rule"
+            assert_userinfo_refused_at_every_boundary(endpoint);
+        }
+    }
+
+    /// `endpoint` is refused by the validator on each flag, and then through the two
+    /// boundaries a config actually crosses: the argv match arms, and `kms_endpoint_refusals`
+    /// for a `DeploymentRequest` built in code — the payload fields are public, and an
+    /// embedder reaches key-source construction without a parser.
+    ///
+    /// Three endpoint fields, examined across the two selections that can carry them: one
+    /// request can no longer hold all three, because AWS and GCP are alternatives rather
+    /// than siblings.
+    fn assert_userinfo_refused_at_every_boundary(endpoint: &str) {
+        for flag in KMS_ENDPOINT_FLAGS {
+            let err = crate::config_state::kms_endpoint::validated_kms_endpoint(flag, endpoint)
+                .expect_err("an authority carrying userinfo must be refused");
+            assert!(
+                err.contains(flag) && err.contains("userinfo"),
+                "{flag} {endpoint}: the refusal must name the flag and the reason, got {err:?}"
             );
         }
+        for flag in ARGV_KMS_ENDPOINT_FLAGS {
+            let err = with_kms_endpoint(flag, endpoint).expect_err("refused at parse");
+            assert!(
+                err.contains(flag) && err.contains("userinfo"),
+                "got {err:?}"
+            );
+        }
+        // Both AWS endpoint fields, and the one GCP field, are held to the rule.
+        assert_eq!(
+            (
+                hostile_endpoint_refusals(aws_endpoints_request(endpoint)).len(),
+                hostile_endpoint_refusals(gcp_endpoint_request(endpoint)).len(),
+            ),
+            (2, 1),
+            "{endpoint}: every endpoint field must be held to the rule"
+        );
+    }
+
+    /// The three flags that carry a KMS or STS endpoint.
+    const KMS_ENDPOINT_FLAGS: [&str; 3] = [
+        "--aws-kms-endpoint",
+        "--aws-sts-endpoint",
+        "--gcp-kms-endpoint",
+    ];
+
+    /// The endpoint flags a command line can carry alone: `--aws-sts-endpoint` is parsed only
+    /// alongside `--aws-kms-use-web-identity`, an unrelated coherence rule.
+    const ARGV_KMS_ENDPOINT_FLAGS: [&str; 2] = ["--aws-kms-endpoint", "--gcp-kms-endpoint"];
+
+    /// An AWS selection whose two endpoint fields both carry `endpoint`.
+    fn aws_endpoints_request(endpoint: &str) -> SigningSourceRequest {
+        SigningSourceRequest::AwsKms(AwsKmsSigningSourceRequest {
+            region: Some("eu-north-1".to_string()),
+            key_id: Some("alias/k".to_string()),
+            endpoint: Some(endpoint.to_string()),
+            use_web_identity: true,
+            sts_endpoint: Some(endpoint.to_string()),
+        })
+    }
+
+    /// A GCP selection whose endpoint field carries `endpoint`.
+    fn gcp_endpoint_request(endpoint: &str) -> SigningSourceRequest {
+        SigningSourceRequest::GcpKms(GcpKmsSigningSourceRequest {
+            key_version: Some("projects/p/..".to_string()),
+            endpoint: Some(endpoint.to_string()),
+            use_metadata: false,
+        })
     }
 
     /// The endpoint refusals a programmatically built request produces for `source`.
@@ -3601,56 +3450,39 @@ mod tests {
             "http://127.0.0.1",
             "http://[::1]",
         ];
-        for flag in [
-            "--aws-kms-endpoint",
-            "--aws-sts-endpoint",
-            "--gcp-kms-endpoint",
-        ] {
-            for endpoint in legitimate {
-                let admitted =
-                    crate::config_state::kms_endpoint::validated_kms_endpoint(flag, endpoint);
-                assert!(
-                    admitted.is_ok(),
-                    "{flag} {endpoint} is an endpoint an operator sets and must be accepted, \
-                     got {:?}",
-                    admitted.err()
-                );
-            }
-        }
-        // End to end through both boundaries. `--aws-sts-endpoint` is parsed only alongside
-        // `--aws-kms-use-web-identity` (an unrelated coherence rule), so its accept case is
-        // proved at the `DeploymentRequest` boundary, which is what `app::run` consults.
         for endpoint in legitimate {
-            for flag in ["--aws-kms-endpoint", "--gcp-kms-endpoint"] {
-                assert!(
-                    with_kms_endpoint(flag, endpoint).is_ok(),
-                    "{flag} {endpoint} must parse"
-                );
-            }
-            assert_eq!(
-                hostile_endpoint_refusals(SigningSourceRequest::AwsKms(
-                    AwsKmsSigningSourceRequest {
-                        region: Some("eu-north-1".to_string()),
-                        key_id: Some("alias/k".to_string()),
-                        endpoint: Some(endpoint.to_string()),
-                        use_web_identity: true,
-                        sts_endpoint: Some(endpoint.to_string()),
-                    }
-                )),
-                Vec::<String>::new(),
-                "{endpoint} must be admissible on both AWS endpoint fields"
-            );
-            assert_eq!(
-                hostile_endpoint_refusals(SigningSourceRequest::GcpKms(
-                    GcpKmsSigningSourceRequest {
-                        key_version: Some("projects/p/..".to_string()),
-                        endpoint: Some(endpoint.to_string()),
-                        use_metadata: false,
-                    }
-                )),
-                Vec::<String>::new(),
-                "{endpoint} must be admissible on the GCP endpoint field"
+            assert_endpoint_admitted_at_every_boundary(endpoint);
+        }
+    }
+
+    /// `endpoint` is accepted by the validator on each flag and end to end through both
+    /// boundaries. `--aws-sts-endpoint` is parsed only alongside `--aws-kms-use-web-identity`
+    /// (an unrelated coherence rule), so its accept case is proved at the `DeploymentRequest`
+    /// boundary, which is what `app::run` consults.
+    fn assert_endpoint_admitted_at_every_boundary(endpoint: &str) {
+        for flag in KMS_ENDPOINT_FLAGS {
+            let admitted =
+                crate::config_state::kms_endpoint::validated_kms_endpoint(flag, endpoint);
+            assert!(
+                admitted.is_ok(),
+                "{flag} {endpoint} is an endpoint an operator sets and must be accepted, got {:?}",
+                admitted.err()
             );
         }
+        for flag in ARGV_KMS_ENDPOINT_FLAGS {
+            assert!(
+                with_kms_endpoint(flag, endpoint).is_ok(),
+                "{flag} {endpoint} must parse"
+            );
+        }
+        // Admissible on both AWS endpoint fields and on the GCP endpoint field.
+        assert_eq!(
+            (
+                hostile_endpoint_refusals(aws_endpoints_request(endpoint)),
+                hostile_endpoint_refusals(gcp_endpoint_request(endpoint)),
+            ),
+            (Vec::<String>::new(), Vec::<String>::new()),
+            "{endpoint} must be admissible on every endpoint field"
+        );
     }
 }
