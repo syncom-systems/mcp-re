@@ -5406,7 +5406,10 @@ tested_symbols = [
 id = "sdk_python.verdict_delivery"
 class = "V0"
 description = "A verdict whose outcome is not `success` reaches the application as a correlated JSON-RPC error and never as a result; a wire code the receipt did not carry is substituted rather than passed through as an error the application cannot act on; and the receipt's request-binding fact travels beside the frozen wire token rather than inside it."
-paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
+paths = [
+  "sdk/python/python/mcp_re_sdk/transport.py",
+  "sdk/python/python/mcp_re_sdk/transport_envelope.py",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -5438,7 +5441,7 @@ tested_symbols = [
 id = "sdk_python.execution_report"
 class = "V0"
 description = "The application is told exactly the execution and retry members the verified receipt carried, and a member the receipt did not carry is not invented for it."
-paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
+paths = ["sdk/python/python/mcp_re_sdk/transport_envelope.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -5492,7 +5495,7 @@ tested_symbols = [
 id = "sdk_python.reply_envelope"
 class = "V0"
 description = "What reaches the MCP session is rebuilt from the one member the verified reply carried plus the session's own id; a verified reply that is not a JSON-RPC response — one carrying a `method`, one with neither `result` nor `error` — is refused rather than dispatched."
-paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
+paths = ["sdk/python/python/mcp_re_sdk/transport_envelope.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -5514,6 +5517,7 @@ class = "V0"
 description = "Only a terminal verified reply resolves the call: a non-terminal one pauses it and its answer leg signs over the verified handles of the leg before it, and an elicitation with no handler, a declined one, a non-object answer, or one past the continuation budget fails the call closed rather than resolving it."
 paths = [
   "sdk/python/python/mcp_re_sdk/transport.py",
+  "sdk/python/python/mcp_re_sdk/transport_continuation.py",
   "sdk/python/python/mcp_re_sdk/correlation.py",
 ]
 exported_contracts = []
@@ -5648,7 +5652,7 @@ tested_symbols = [
 id = "sdk_python.nonce_floor"
 class = "V0"
 description = "No request and no notification is signed under a nonce below the 128-bit floor — a sub-floor or non-string factory result fails closed at sign time, under the SDK's own prefix rather than an invented wire token — and the freshness triple is generated per leg rather than taken from the caller."
-paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
+paths = ["sdk/python/python/mcp_re_sdk/transport_freshness.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
@@ -5709,7 +5713,7 @@ tested_symbols = [
 id = "sdk_python.trust_anchor_completeness"
 class = "V0"
 description = "The trust picture the whole acceptance chain is evaluated against is complete or the transport is refused at construction — an incomplete anchor is not defaulted — and the revocation denylist's SHAPE is checked, so a bare string cannot spread into a per-character list."
-paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
+paths = ["sdk/python/python/mcp_re_sdk/transport_config.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -5855,7 +5859,7 @@ class = "V0"
 description = "The authorization binding specs a request carries are the ones the configured policy permits, serialized canonically and byte-identically to the TypeScript twin, and the digest retained per outstanding request identifies which artefacts the request was bound to without ever being re-interpreted."
 paths = [
   "sdk/python/python/mcp_re_sdk/authorization.py",
-  "sdk/python/python/mcp_re_sdk/transport.py",
+  "sdk/python/python/mcp_re_sdk/transport_binding.py",
 ]
 exported_contracts = []
 evidence_class = "tested"
