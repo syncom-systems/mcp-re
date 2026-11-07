@@ -59,9 +59,9 @@ def _answer_budget_s(plan: str, bounds: dict) -> int:
     return waits + 60
 
 
-def _await_holder(proc, r: int, budget_s: int, **hooks) -> str:
+def _await_holder(proc, r: int, budget_s: int, hooks: host_locks.AnswerHooks) -> str:
     try:
-        return host_locks.await_answer(proc, r, budget_s, **hooks)
+        return host_locks.await_answer(proc, r, budget_s, hooks)
     except BaseException:
         proc.terminate()
         raise
@@ -79,10 +79,12 @@ def admit_job(p: dict[str, Path], ident: JobIdentity, watch: Watch,
     repair_stale_gate(p)
     plan = host_locks.plan_for(ident.is_slo, ident.runner, cfg.HEAVY_RUNNERS)
     b = {**lock_bounds(), **(bounds or {})}
-    proc, r = host_locks.spawn_holder(p["root"], p["mirror"], ident.key, plan, watch.pid, b,
-                                      {"identity": asdict(ident), "worker": watch.worker})
+    spec = host_locks.HolderSpec(p["root"], p["mirror"], ident.key, plan, watch.pid, b,
+                                 {"identity": asdict(ident), "worker": watch.worker})
+    proc, r = host_locks.spawn_holder(spec)
     on_gate = (lambda: grant_reservation(p, ident)) if ident.is_slo else None
-    answer = _await_holder(proc, r, _answer_budget_s(plan, b), on_gate=on_gate)
+    answer = _await_holder(proc, r, _answer_budget_s(plan, b),
+                           host_locks.AnswerHooks(on_gate=on_gate))
     if answer != "ADMITTED":
         if ident.is_slo:
             release_owner(p, ident.key, "the owner was refused admission")
@@ -103,10 +105,11 @@ def admit_local(p: dict[str, Path], lease: Lease, bounds: dict | None = None, on
     """
     repair_stale_gate(p)
     b = {**lock_bounds(), **(bounds or {})}
-    proc, r = host_locks.spawn_holder(p["root"], p["mirror"], lease.key, "heavy",
-                                      lease.watch_pid, b, lease.record)
-    answer = _await_holder(proc, r, _answer_budget_s("heavy", b), on_idle=on_wait,
-                           poll_s=cfg.LEASE_POLL_S)
+    spec = host_locks.HolderSpec(p["root"], p["mirror"], lease.key, "heavy",
+                                 lease.watch_pid, b, lease.record)
+    proc, r = host_locks.spawn_holder(spec)
+    hooks = host_locks.AnswerHooks(on_idle=on_wait, poll_s=cfg.LEASE_POLL_S)
+    answer = _await_holder(proc, r, _answer_budget_s("heavy", b), hooks)
     if answer != "ADMITTED":
         log(p, "lease.refused", key=lease.key, answer=answer)
         raise ArbiterError(answer)

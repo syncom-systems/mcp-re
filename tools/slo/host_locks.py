@@ -63,6 +63,7 @@ import select
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
@@ -116,9 +117,31 @@ def holder_env() -> dict:
     return env
 
 
-def spawn_holder(root: Path, mirror: Path, key: str, plan: str, watch_pid: int,
-                 bounds: dict, record: dict, python: str = sys.executable
-                 ) -> Tuple[subprocess.Popen, int]:
+@dataclass(frozen=True)
+class HolderSpec:
+    """What one holder is started with: where the locks and the mirror live, the job's key
+    and lock plan, the pid whose exit ends the holder, and the bounds and record it keeps."""
+
+    root: Path
+    mirror: Path
+    key: str
+    plan: str
+    watch_pid: int
+    bounds: dict
+    record: dict
+
+
+@dataclass(frozen=True)
+class AnswerHooks:
+    """What a waiter does while the holder is still answering: `on_gate` once the holder
+    reports the gate held, `on_idle` every `poll_s` seconds of silence."""
+
+    on_gate: Optional[Callable[[], None]] = None
+    on_idle: Optional[Callable[[], None]] = None
+    poll_s: float = 60
+
+
+def spawn_holder(spec: HolderSpec, python: str = sys.executable) -> Tuple[subprocess.Popen, int]:
     """Start a holder for this job; returns (process, read end of its handshake pipe).
 
     The holder gets NONE of the hook's stdio. The runner reads the hook's stdout and stderr
@@ -127,10 +150,10 @@ def spawn_holder(root: Path, mirror: Path, key: str, plan: str, watch_pid: int,
     back is a dedicated pipe, which it closes as soon as it has answered.
     """
     r, w = os.pipe()
-    args = [python, str(HOLDER), "--root", str(root), "--mirror", str(mirror),
-            "--key", key, "--plan", plan,
-            "--watch", str(watch_pid), "--hook", str(os.getpid()), "--ready-fd", str(w),
-            "--bounds", json.dumps(bounds), "--record", json.dumps(record)]
+    args = [python, str(HOLDER), "--root", str(spec.root), "--mirror", str(spec.mirror),
+            "--key", spec.key, "--plan", spec.plan,
+            "--watch", str(spec.watch_pid), "--hook", str(os.getpid()), "--ready-fd", str(w),
+            "--bounds", json.dumps(spec.bounds), "--record", json.dumps(spec.record)]
     proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL, pass_fds=(w,), close_fds=True,
                             start_new_session=True, env=holder_env())
@@ -138,37 +161,47 @@ def spawn_holder(root: Path, mirror: Path, key: str, plan: str, watch_pid: int,
     return proc, r
 
 
+def _first_answer(buf: bytes, hooks: AnswerHooks) -> Tuple[Optional[str], bytes]:
+    """The first complete line that is an answer, running `on_gate` for each "GATE" before it."""
+    while b"\n" in buf:
+        raw, buf = buf.split(b"\n", 1)
+        line = raw.decode(errors="replace").strip()
+        if line != "GATE":
+            return line, buf
+        if hooks.on_gate is not None:
+            hooks.on_gate()
+    return None, buf
+
+
+def _readable(r: int, wait_s: float, hooks: AnswerHooks) -> bool:
+    """Whether the pipe has data within `wait_s`; silence runs `hooks.on_idle`."""
+    ready, _, _ = select.select([r], [], [], wait_s)
+    if not ready and hooks.on_idle is not None:
+        hooks.on_idle()
+    return bool(ready)
+
+
 def await_answer(proc: subprocess.Popen, r: int, timeout_s: float,
-                 on_gate: Optional[Callable[[], None]] = None,
-                 on_idle: Optional[Callable[[], None]] = None,
-                 poll_s: float = 60) -> str:
+                 hooks: AnswerHooks = AnswerHooks()) -> str:
     """The holder's final answer: "ADMITTED" or "REFUSED: <why>".
 
     An SLO holder first reports "GATE" -- it holds the gate exclusively and is draining --
-    and `on_gate` runs then. A holder that exits without a final answer has refused: its
-    locks are already gone with it. `on_idle` runs every `poll_s` seconds the holder stays
-    silent, so an interactive waiter can say what it is still waiting for.
+    and `hooks.on_gate` runs then. A holder that exits without a final answer has refused:
+    its locks are already gone with it. `hooks.on_idle` runs every `hooks.poll_s` seconds
+    the holder stays silent, so an interactive waiter can say what it is still waiting for.
     """
     buf = b""
     deadline = time.monotonic() + timeout_s
     try:
         while True:
-            while b"\n" in buf:
-                raw, buf = buf.split(b"\n", 1)
-                line = raw.decode(errors="replace").strip()
-                if line == "GATE":
-                    if on_gate is not None:
-                        on_gate()
-                    continue
-                return line
+            answer, buf = _first_answer(buf, hooks)
+            if answer is not None:
+                return answer
             left = deadline - time.monotonic()
             if left <= 0:
                 proc.kill()
                 return f"REFUSED: the lock holder did not answer within {int(timeout_s)}s"
-            ready, _, _ = select.select([r], [], [], min(left, poll_s))
-            if not ready:
-                if on_idle is not None:
-                    on_idle()
+            if not _readable(r, min(left, hooks.poll_s), hooks):
                 continue
             chunk = os.read(r, 4096)
             if not chunk:
