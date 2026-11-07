@@ -24,6 +24,7 @@ description = "PKCS#11 hardware token, reached through the raw cryptoki-sys FFI.
 kind = "ffi"
 paths = [
   "mcp-re-proxy/src/pkcs11_native.rs",
+  "mcp-re-proxy/src/pkcs11_native/**/*.rs",
   # MCPRE-175 split the keysource into owner modules. A GLOB rather than today's members:
   # this boundary bounds the class of any unit whose closure reaches the token, and a
   # member added later that starts calling `cryptoki_sys` would otherwise sit outside the

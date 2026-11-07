@@ -453,6 +453,15 @@ _PROXY_LIB_SRCS = [
     # transitive unmaintained `paste`). Same `pkcs11_keysource` feature gate.
     "src/pkcs11_native.rs",
     "src/pkcs11_native/custody.rs",
+    "src/pkcs11_native/closer.rs",
+    "src/pkcs11_native/ec_point.rs",
+    "src/pkcs11_native/find_objects.rs",
+    "src/pkcs11_native/sign.rs",
+    "src/pkcs11_native/error.rs",
+    "src/pkcs11_native/identity.rs",
+    "src/pkcs11_native/session.rs",
+    "src/pkcs11_native/session_ref.rs",
+    "src/pkcs11_native/template.rs",
     # Issue #4030: online OCSP client-cert revocation (behind #[cfg(feature =
     # "online_ocsp")]; cfg'd out of the default build).
     "src/ocsp.rs",
