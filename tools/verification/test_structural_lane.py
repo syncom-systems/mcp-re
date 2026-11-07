@@ -83,6 +83,29 @@ def _probe(**overrides) -> dict:
     return probe
 
 
+def _toml_lines(header: str, entries: dict) -> list[str]:
+    """A table header and its entries as hand-written TOML, every value a string."""
+    lines = [f"{header}\n"]
+    for key, value in entries.items():
+        lines.append(f'{key} = """{value}"""\n')
+    return lines
+
+
+def _probe_lines(probe: dict) -> list[str]:
+    lines = ["[[probe]]\n"]
+    for key, value in probe.items():
+        if key in ("producer_paths", "relaxation"):
+            continue
+        if isinstance(value, list):
+            lines.append(f"{key} = {value!r}\n".replace("'", '"'))
+        else:
+            lines.append(f'{key} = """{value}"""\n')
+    lines += _toml_lines("[probe.producer_paths]", probe["producer_paths"])
+    for edit in probe.get("relaxation", []):
+        lines += _toml_lines("[[probe.relaxation]]", edit)
+    return lines
+
+
 def _write_registry(directory: Path, probes: list[dict]) -> Path:
     """A fixture registry on disk, written as TOML by hand.
 
@@ -90,21 +113,7 @@ def _write_registry(directory: Path, probes: list[dict]) -> Path:
     """
     lines = ["schema_version = 1\n"]
     for probe in probes:
-        lines.append("[[probe]]\n")
-        for key, value in probe.items():
-            if key in ("producer_paths", "relaxation"):
-                continue
-            if isinstance(value, list):
-                lines.append(f"{key} = {value!r}\n".replace("'", '"'))
-            else:
-                lines.append(f'{key} = """{value}"""\n')
-        lines.append("[probe.producer_paths]\n")
-        for route, answer in probe["producer_paths"].items():
-            lines.append(f'{route} = """{answer}"""\n')
-        for edit in probe.get("relaxation", []):
-            lines.append("[[probe.relaxation]]\n")
-            for key, value in edit.items():
-                lines.append(f'{key} = """{value}"""\n')
+        lines += _probe_lines(probe)
     path = directory / "fixture-probes.toml"
     path.write_text("".join(lines), encoding="utf-8")
     return path
