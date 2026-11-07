@@ -74,7 +74,9 @@ pub(super) fn parse_response(raw: &[u8]) -> Result<HttpResponseParts, TransportE
         .ok_or_else(|| TransportError::MalformedResponse("empty response".to_string()))?;
     let status = parse_status_line(status_line)?;
 
-    let headers = parse_header_block(lines)?;
+    let headers = lines
+        .map(parse_header_line)
+        .collect::<Result<Vec<_>, _>>()?;
     check_framing(status, &headers, body.len())?;
     Ok(HttpResponseParts {
         status,
@@ -83,18 +85,8 @@ pub(super) fn parse_response(raw: &[u8]) -> Result<HttpResponseParts, TransportE
     })
 }
 
-/// The header block, held to one reading.
-///
-/// `split("\r\n")` leaves any BARE CR or LF inside a line, and either one is a second
-/// framing interpretation the peer's parser may take — as is an obs-fold continuation, and
-/// a line with no colon. Names are lowercased; the profile matches them case-insensitively.
-fn parse_header_block<'a>(
-    lines: impl Iterator<Item = &'a str>,
-) -> Result<Vec<(String, String)>, TransportError> {
-    lines.map(parse_header_line).collect()
-}
-
-/// One header line, as a lowercased name and a trimmed value.
+/// One header line, held to one reading: a token name, a colon and a clean value, returned
+/// with the name lowercased (the profile matches names case-insensitively).
 fn parse_header_line(line: &str) -> Result<(String, String), TransportError> {
     reject_ambiguous_framing(line)?;
     let (name, value) = line.split_once(':').ok_or_else(|| {
@@ -117,7 +109,7 @@ fn parse_header_line(line: &str) -> Result<(String, String), TransportError> {
 /// An obs-fold continuation, or a bare CR or LF that `split("\r\n")` left inside the line:
 /// each is a second framing interpretation the peer's parser may take.
 fn reject_ambiguous_framing(line: &str) -> Result<(), TransportError> {
-    if line.starts_with(' ') || line.starts_with('\t') {
+    if line.starts_with([' ', '\t']) {
         return Err(TransportError::MalformedResponse(
             "obs-fold header continuation".to_string(),
         ));
@@ -130,7 +122,7 @@ fn reject_ambiguous_framing(line: &str) -> Result<(), TransportError> {
     Ok(())
 }
 
-/// A control character other than HTAB, which a header value may carry.
+/// A control byte other than HTAB.
 fn is_control_byte(b: u8) -> bool {
     (b < 0x20 && b != b'\t') || b == 0x7F
 }

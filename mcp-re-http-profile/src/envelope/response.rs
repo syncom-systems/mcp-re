@@ -105,9 +105,7 @@ pub fn validate_response_envelope<'a>(
     parsed: &'a Value,
     outstanding: &OutstandingId,
 ) -> Result<ValidatedEnvelope<'a>, HttpProfileError> {
-    let object = parsed
-        .as_object()
-        .ok_or(HttpProfileError::UpstreamResponseInvalid("not a JSON object"))?;
+    let object = parsed.as_object().ok_or(invalid("not a JSON object"))?;
     require_jsonrpc_version(object)?;
     let outcome = response_outcome(object)?;
     let result = object.get("result");
@@ -150,9 +148,7 @@ fn response_outcome(object: &Map<String, Value>) -> Result<ResponseOutcome, Http
 
 /// An `error` member is an object with an integer `code` and a string `message`.
 fn require_error_shape(error: &Value) -> Result<(), HttpProfileError> {
-    let error = error
-        .as_object()
-        .ok_or(invalid("error is not an object"))?;
+    let error = error.as_object().ok_or(invalid("error is not an object"))?;
     if !error.get("code").is_some_and(Value::is_i64) {
         return Err(invalid("error.code is not an integer"));
     }
