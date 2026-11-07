@@ -2481,8 +2481,8 @@ half.
 | a read-only (`0555`) archive opens for reading and serves its objects | `retained_evidence::archive::tests` (cargo lib) |
 | the SERVING constructor still refuses a directory it cannot write | `retained_evidence::store::tests`, `transparency::retained_archive::tests` (cargo lib) |
 | re-addressing refuses swapped bytes THROUGH THE READ VIEW | `retained_evidence::archive::tests` (cargo lib) |
-| the SHIPPED `mcp-re-auditor` binary audits a `0555` archive end to end | `transparency_e2e_test::the_auditor_binary_audits_an_archive_it_cannot_write_to` (**Bazel** `//mcp-re-proxy:integration_async_test`) |
-| the serving constructor still proves writability, in the same lane | `transparency_e2e_test::the_serving_constructor_still_proves_the_archive_writable` (**Bazel**) |
+| the SHIPPED `mcp-re-auditor` binary audits a `0555` archive end to end | `transparency_e2e_test::auditor::the_auditor_binary_audits_an_archive_it_cannot_write_to` (**Bazel** `//mcp-re-proxy:integration_async_test`) |
+| the serving constructor still proves writability, in the same lane | `transparency_e2e_test::auditor::the_serving_constructor_still_proves_the_archive_writable` (**Bazel**) |
 
 The two shipped-binary lanes are Bazel-only: `MCP_RE_AUDITOR_CLI` is a runfile, so a cargo
 run compiles them to nothing. Stated here because a green cargo lane says nothing about

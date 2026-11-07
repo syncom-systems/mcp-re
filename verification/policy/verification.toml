@@ -8242,8 +8242,8 @@ tested_symbols = [
   # who can produce a post-dispatch refusal on demand must not accumulate dangling ones. The
   # mirror is not optional: the first control alone passes against a proxy that refuses to
   # serve anything it cannot retain, which would lose the cause the client needs.
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::a_post_dispatch_refusal_leaves_no_dangling_crossing",
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::a_post_dispatch_refusal_is_served_the_same_where_nothing_is_retained",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::retention::a_post_dispatch_refusal_leaves_no_dangling_crossing",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::retention::a_post_dispatch_refusal_is_served_the_same_where_nothing_is_retained",
   # r11 R11-632. The hop that discharges a crossing describes the exchange the crossing was
   # taken for. The main half of that is NOT a control and cannot be one: `complete` takes no
   # request, so a hop for a different exchange is not expressible and the consumer closure
@@ -8297,13 +8297,13 @@ tested_symbols = [
   # reached a backend" — asserted on the live path. Nothing else in this battery observes
   # the backend at all; the lib# twin beside it in `http_profile_serve::retention` asserts
   # the refusal's CAUSE, never that the backend did not run.
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::a_retention_store_that_cannot_accept_the_call_refuses_before_the_backend_runs",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::retention::a_retention_store_that_cannot_accept_the_call_refuses_before_the_backend_runs",
   # "`reserve` publishes `<digest>.reserved` … only `commit_to_dispatch` advances it to
   # `<digest>.pending`, and it advances by RENAMING": both names observed ON DISK, in
   # order, through the real writer thread, with the second in place before the side effects
   # run. The completion is then broken and fails, which the scope already admits — "It does
   # not establish that the completion write succeeds" — and no hop is retained for it.
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::a_retention_failure_after_execution_is_indeterminate_and_leaves_its_reservation",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::retention::a_retention_failure_after_execution_is_indeterminate_and_leaves_its_reservation",
   # THREE MORE ROWS OF NP-154 ARE DELIBERATELY ABSENT, and each is refused by a different
   # sentence this theorem already wrote down.
   #
@@ -11317,7 +11317,7 @@ tested_symbols = [
   # The end-to-end witness that the record a served call actually produces is the one an
   # auditor reconstructs from. Without it the controls above are about a type rather than
   # about what the serving path writes.
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::a_served_notification_is_retained_like_any_other_accepted_exchange",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::retention::a_served_notification_is_retained_like_any_other_accepted_exchange",
   # ADR-MCPRE-069 batch 9 measured a reattribution that CANNOT be made here, for the same
   # reason as NP-045 one unit over. Four controls in `transparency/durability.rs` and
   # `transparency/retained_archive.rs` are this statement's own clauses at the STORAGE
@@ -11352,9 +11352,9 @@ evidence = [
 # call-specific there too — so the check was absent on precisely the records an audit is
 # about.
 tested_symbols = [
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::a_served_call_becomes_an_offline_verifiable_receipt",
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::the_statement_is_verifiable_against_the_bytes_the_store_kept",
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::a_chain_with_no_verified_hop_is_still_attested",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::attestation::a_served_call_becomes_an_offline_verifiable_receipt",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::attestation::the_statement_is_verifiable_against_the_bytes_the_store_kept",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::attestation::a_chain_with_no_verified_hop_is_still_attested",
 ]
 
 # v0.17 assurance-closure mandate, priority 4. `remote_signer_call/` is compiled under
