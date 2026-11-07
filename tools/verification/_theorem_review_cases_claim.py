@@ -10,6 +10,7 @@ from _assumptions import (
     load_assumptions,
 )
 from _fingerprint import (
+    Registries,
     fingerprint_unit,
 )
 from _manifest import (
@@ -130,12 +131,12 @@ def test_the_prover_stays_green_while_the_specification_goes_dirty():
     global invalidation."""
     doc = load_verification()
     unit = next(row for row in doc["unit"] if row["id"] == UNIT)
-    toolchains, assumptions = load_toolchains(), load_assumptions()
+    registries = Registries(doc, load_toolchains(), load_assumptions())
 
-    before = fingerprint_unit(unit, doc, toolchains, assumptions)
+    before = fingerprint_unit(unit, registries)
     # Restate the theorem — the registry is a different file entirely.
     _ = fingerprints(registry(theorem(statement="something else entirely")))
-    after = fingerprint_unit(unit, doc, toolchains, assumptions)
+    after = fingerprint_unit(unit, registries)
 
     assert before["fingerprint"] == after["fingerprint"]
     assert "theorem_claim" not in after["components"]

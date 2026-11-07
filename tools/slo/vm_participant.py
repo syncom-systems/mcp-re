@@ -107,27 +107,36 @@ def _terminate_group(group: int | None, proc: "subprocess.Popen[str]") -> None:
     called to remove.
     """
     if group is None:
-        try:
-            proc.kill()
-        except OSError:
-            pass
+        _kill_ungrouped(proc)
         return
+    _signal_group(group, signal.SIGTERM)
+    if _wait_for_exit(group, 10.0):
+        return
+    _signal_group(group, signal.SIGKILL)
 
+
+def _kill_ungrouped(proc: "subprocess.Popen[str]") -> None:
     try:
-        os.killpg(group, signal.SIGTERM)
+        proc.kill()
     except OSError:
         pass
 
-    deadline = time.monotonic() + 10.0
+
+def _signal_group(group: int, sig: int) -> None:
+    try:
+        os.killpg(group, sig)
+    except OSError:
+        pass
+
+
+def _wait_for_exit(group: int, seconds: float) -> bool:
+    """Whether the group empties within `seconds`."""
+    deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         if not _group_alive(group):
-            return
+            return True
         time.sleep(0.2)
-
-    try:
-        os.killpg(group, signal.SIGKILL)
-    except OSError:
-        pass
+    return False
 
 
 def _group_alive(group: int) -> bool:
@@ -212,15 +221,23 @@ def is_executable(path: str) -> bool:
     return (ssh("sh", "-c", f"test -x '{path}' && echo yes || echo no", timeout=60).stdout or "").strip() == "yes"
 
 
-def inhibit_fallback() -> dict:
-    """Stop the VM listener. FALLBACK ONLY -- for a participant that cannot gate itself."""
+def _require_idle_vm() -> None:
     if not available():
         raise ArbiterError("cannot reach the VM to apply the inhibition fallback")
     if (n := worker_count()) > 0:
         raise ArbiterError(f"VM has {n} worker(s); refusing to stop its unit mid-job")
+
+
+def _stop_unit() -> None:
     r = ssh("sudo", "systemctl", "stop", UNIT, timeout=360)
     if r.returncode != 0:
         raise ArbiterError(f"could not stop {UNIT}: {(r.stderr or '').strip()}")
+
+
+def inhibit_fallback() -> dict:
+    """Stop the VM listener. FALLBACK ONLY -- for a participant that cannot gate itself."""
+    _require_idle_vm()
+    _stop_unit()
     # Verify, do not assume: the exclusivity claim rests on this being true, not requested.
     if unit_active() or worker_count() > 0:
         raise ArbiterError(f"{UNIT} did not verifiably stop")

@@ -28,15 +28,18 @@ LANE = load_tool("verify-verus")
 PIN = "7d829946231d6413a398f6e4160cdfe951261dad"
 
 
-def report(
-    symbols: list[str],
-    verified: int,
-    errors: int = 0,
-    entire: bool = True,
-    commit: str = PIN,
-    success: bool | None = None,
-) -> str:
-    """One prover report, in the shape `verus --output-json` emits."""
+_REPORT_DEFAULTS = {"entire": True, "commit": PIN, "success": None}
+
+
+def report(symbols: list[str], verified: int, errors: int = 0, **overrides) -> str:
+    """One prover report, in the shape `verus --output-json` emits.
+
+    `overrides` may set `entire` (is-verifying-entire-crate), `commit` (the prover's
+    commit) and `success` (otherwise derived from `errors`).
+    """
+    options = _REPORT_DEFAULTS | overrides
+    assert options.keys() == _REPORT_DEFAULTS.keys(), sorted(overrides)
+    entire, commit, success = options["entire"], options["commit"], options["success"]
     import json
 
     return json.dumps(

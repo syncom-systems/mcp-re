@@ -206,7 +206,12 @@ sdk/python/
     test_correlation.py  # in-flight correlation, fail-closed on unbound/late/duplicate
     test_authorization.py # binding providers, digests checked vs an independent oracle
     test_parity.py       # the frozen cross-language oracle (../fixtures/parity_vectors.json)
-    test_transport.py    # the adapter, offline, with an injected poster
+    test_transport.py    # the adapter's lifecycle and notifications, offline, with an injected poster
+    test_transport_failures.py  # failure delivery, the frozen wire code, the undeliverable sink
+    test_transport_shutdown.py  # shutdown and bounded concurrency
+    test_transport_signing.py   # signing inputs, the trust anchor, the revocation denylist
+    test_transport_receipts.py  # the core's verdict and the rejection receipt's binding fact
+    transport_fixtures.py       # the shared config, poster and pump
     test_transport_replay.py  # a RECORDED delegated session (../fixtures/delegated_response_replay.json)
     test_transport_e2e.py     # the LIVE proxy + a real MCP SDK backend; self-skips without them
 ```
@@ -240,7 +245,7 @@ the downloader lane, so it is a development-time proof rather than a standing ga
 
 | Test | Counterparty | Runs in CI |
 | --- | --- | --- |
-| `test_transport.py` | injected `poster`, no network | always |
+| `test_transport.py`, `test_transport_failures.py`, `test_transport_shutdown.py`, `test_transport_signing.py`, `test_transport_receipts.py` | injected `poster`, no network | always |
 | `test_transport_replay.py` | a **recorded** delegated session, a full elicitation chain (open leg + answer leg), and a rejection receipt (`sdk/fixtures/delegated_response_replay.json`) | always |
 | `test_mtls.py` | a real TLS server holding real certificates, client-auth required | always (material minted by `tools/gen_mtls_test_material.py`) |
 | `test_transport_e2e.py` | the **live** `http_profile_proxy` + a real MCP SDK backend | **no** — self-skips without the harness (incl. in CI) |

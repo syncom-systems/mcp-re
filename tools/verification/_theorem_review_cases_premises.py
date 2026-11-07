@@ -9,6 +9,7 @@ from __future__ import annotations
 from _review import (
     PREMISE_UNREVIEWED,
     REVIEWED,
+    Basis,
     theorem_assurance,
 )
 from _theorem_review_support import (
@@ -54,6 +55,6 @@ def test_an_unknown_premise_closure_is_not_reviewed():
     fps = fingerprints(doc)
     reviews = {("specification", "THM-0001"): review_for(fps["THM-0001"])}
     state = theorem_assurance(
-        doc, fps, reviews, {UNIT: ("FRESH", "fixture")}, {}, BACKED, semantics(doc, {})
+        doc, Basis(fps, reviews, {UNIT: ("FRESH", "fixture")}, {}, BACKED, semantics(doc, {}))
     )["THM-0001"]
     assert state["review"][0] != REVIEWED, state["review"]

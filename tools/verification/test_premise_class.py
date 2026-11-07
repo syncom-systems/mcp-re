@@ -161,13 +161,7 @@ def test_the_live_registrations_are_interpreted_by_the_ruled_premises():
 
 def test_a_registration_reaches_no_root():
     """Ruling 39 §4: a registration must not inflate a load-bearing count."""
-    from _theorems import load_theorems
-
-    theorems = load_theorems(
-        {unit["id"] for unit in VERIFICATION.get("unit", [])},
-        [e for e in VERIFICATION.get("edge", []) if e.get("kind") == "PROOF_DEPENDENCY"],
-    )
-    reach = roots_reaching_premises(theorems, VERIFICATION, REGISTRY)
+    reach = roots_reaching_premises(_proof_theorems(), VERIFICATION, REGISTRY)
     reached = {asm for rows in reach.values() for ids in rows.values() for asm in ids}
     assert not (reached & {"ASM-0074", "ASM-0075"}), sorted(reached)
 
@@ -360,18 +354,19 @@ def test_open_obligations_are_reportable_and_each_names_its_event():
             assert event["predicate"] in PREDICATES[event["kind"]]
 
 
+def _proof_theorems():
+    from _theorems import load_theorems
+
+    proof_edges = [e for e in VERIFICATION.get("edge", []) if e.get("kind") == "PROOF_DEPENDENCY"]
+    return load_theorems({unit["id"] for unit in VERIFICATION.get("unit", [])}, proof_edges)
+
+
 def test_the_root_to_premise_composition_is_not_empty():
     """§7's missing half, and the case that catches it being missing again. Both ends of the
     join carry `unit://` URIs; comparing one against the other verbatim produced an empty
     intersection for all twelve roots and printed "no root rests on any premise", which
     reads exactly like a clean result."""
-    from _theorems import load_theorems
-
-    theorems = load_theorems(
-        {unit["id"] for unit in VERIFICATION.get("unit", [])},
-        [e for e in VERIFICATION.get("edge", []) if e.get("kind") == "PROOF_DEPENDENCY"],
-    )
-    reach = roots_reaching_premises(theorems, VERIFICATION, REGISTRY)
+    reach = roots_reaching_premises(_proof_theorems(), VERIFICATION, REGISTRY)
     assert reach, "twelve roots are declared; a view with no rows is measuring nothing"
     total = sum(len(ids) for rows in reach.values() for ids in rows.values())
     assert total > 0, "no root reaching any premise is a JOIN THAT FAILED, not a clean tree"
@@ -382,13 +377,7 @@ def test_the_root_to_premise_composition_is_not_empty():
 def test_a_withdrawn_premise_reaches_no_root():
     """It trusts nothing, so it is nobody's premise. A retired record appearing under a root
     would be the live/withdrawn confusion arriving by the back door."""
-    from _theorems import load_theorems
-
-    theorems = load_theorems(
-        {unit["id"] for unit in VERIFICATION.get("unit", [])},
-        [e for e in VERIFICATION.get("edge", []) if e.get("kind") == "PROOF_DEPENDENCY"],
-    )
-    reach = roots_reaching_premises(theorems, VERIFICATION, REGISTRY)
+    reach = roots_reaching_premises(_proof_theorems(), VERIFICATION, REGISTRY)
     reached = {asm for rows in reach.values() for ids in rows.values() for asm in ids}
     withdrawn = {entry["id"] for entry in REGISTRY["assumption"] if not is_live(entry)}
     assert not (reached & withdrawn), sorted(reached & withdrawn)

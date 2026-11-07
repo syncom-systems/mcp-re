@@ -333,15 +333,19 @@ def test_golden_journal_reduces_to_zero_problems() -> None:
         print("  golden: 6 events, 2 closures, ledger checked, zero problems  OK")
 
 
-def _mutation(name, expected, mutate_events=None, mutate_ledger=None, **kw):
-    """One mutation of the golden journal must produce EXACTLY `expected`."""
+def _mutation(name, expected, mutate_events=None, **options):
+    """One mutation of the golden journal must produce EXACTLY `expected`.
+
+    `options` may carry `mutate_ledger`; the rest goes to the reducer.
+    """
+    mutate_ledger = options.pop("mutate_ledger", None)
     events, ledger_rows = _golden_events(), _golden_ledger()
     if mutate_events:
         events = mutate_events(events)
     if mutate_ledger:
         ledger_rows = mutate_ledger(ledger_rows)
     with tempfile.TemporaryDirectory() as td:
-        state, _ = _reduce(td, events, ledger_rows, **kw)
+        state, _ = _reduce(td, events, ledger_rows, **options)
         got = _codes(state)
         assert got == sorted(expected), "%s: expected %s, got %s — %s" % (
             name, sorted(expected), got, state["problems"])
@@ -378,13 +382,13 @@ def test_mutations_each_produce_exactly_one_code() -> None:
     _mutation("close-after-terminal", ["ATT-002"],
               _append_event(event="close", finding_id="f003", id="f003",
                             status="escalated", severity="critical"),
-              lambda rows: rows)
+              mutate_ledger=lambda rows: rows)
     _mutation("dangling-duplicate-of", ["FND-002"], _set(3, duplicate_of="f999"))
     _mutation("altered-snapshot-count", ["CNT-001"],
               _set(1, counts={"closed": 5, "escalated": 1, "work": 1}))
-    _mutation("flipped-ledger-status", ["LED-002"], None,
+    _mutation("flipped-ledger-status", ["LED-002"], mutate_ledger=
               lambda rows: [dict(r, status="open") if r["id"] == "f001" else r for r in rows])
-    _mutation("deleted-ledger-row", ["LED-001"], None,
+    _mutation("deleted-ledger-row", ["LED-001"], mutate_ledger=
               lambda rows: [r for r in rows if r["id"] != "f002"])
     _mutation("unknown-event-type", ["SCH-001"], _set(4, event="patch"))
     _mutation("stage-missing-required-role", ["SCH-001"], _set(4, role=""))
@@ -407,7 +411,7 @@ def test_duplicate_of_cycle_is_exactly_fnd_003() -> None:
         ev = _set(2, status="duplicate", duplicate_of="f002")(ev)
         return _set(3, cluster_id="")(ev)
     state = _mutation("duplicate-of-cycle", ["FND-003"], cycle,
-                      lambda rows: [dict(r, status="duplicate") if r["id"] == "f001" else r
+                      mutate_ledger=lambda rows: [dict(r, status="duplicate") if r["id"] == "f001" else r
                                     for r in rows])
     p = [p for p in state["problems"] if p["code"] == "FND-003"]
     assert len(p) == 1 and p[0]["detail"] == ["f001", "f002"], p
@@ -497,7 +501,7 @@ def test_unstable_live_snapshot_withholds_ledger_checks() -> None:
     finally:
         _reduce_input._file_stat = real
     # CONTROL: the same flipped ledger, stable reads -> the disagreement IS an error.
-    _mutation("flipped-ledger-stable-live(control)", ["LED-002"], None,
+    _mutation("flipped-ledger-stable-live(control)", ["LED-002"], mutate_ledger=
               lambda rows: [dict(r, status="open") if r["id"] == "f001" else r for r in rows],
               live=True)
 

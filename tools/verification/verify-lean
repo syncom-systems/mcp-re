@@ -42,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
 from _extraction_identity import definition_drift  # noqa: E402
+from _fingerprint import Registries  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _lanes import BY_NAME  # noqa: E402
 from _lean_axioms import (  # noqa: E402
@@ -295,7 +296,7 @@ def main() -> int:
         return 1
 
     fingerprints = {
-        unit["id"]: fingerprint_unit(unit, doc, toolchains, assumptions)["fingerprint"]
+        unit["id"]: fingerprint_unit(unit, Registries(doc, toolchains, assumptions))["fingerprint"]
         for unit in units
     }
 

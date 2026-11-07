@@ -4990,9 +4990,9 @@ weakening = """
     if False:
 """
 expect_red = [
-  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[issuer_key_id]",
-  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[verifier_audiences]",
-  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[accepted_epochs]",
+  "pytest#tests/test_transport_signing.py::test_an_incomplete_trust_anchor_fails_at_construction[issuer_key_id]",
+  "pytest#tests/test_transport_signing.py::test_an_incomplete_trust_anchor_fails_at_construction[verifier_audiences]",
+  "pytest#tests/test_transport_signing.py::test_an_incomplete_trust_anchor_fails_at_construction[accepted_epochs]",
 ]
 note = """
 THE SITE IS SOLE: `missing` is assembled once, over the five string members and the two
@@ -5015,7 +5015,7 @@ weakening = """
     if False:
 """
 expect_red = [
-  "pytest#tests/test_transport.py::test_a_bare_string_denylist_is_refused_rather_than_expanded_per_character",
+  "pytest#tests/test_transport_signing.py::test_a_bare_string_denylist_is_refused_rather_than_expanded_per_character",
 ]
 note = """
 THIS CONJUNCT FAILS OPEN, which is why it is probed separately from the completeness one.
@@ -5039,9 +5039,9 @@ weakening = """
     if False:
 """
 expect_red = [
-  "pytest#tests/test_transport.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad0]",
-  "pytest#tests/test_transport.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad1]",
-  "pytest#tests/test_transport.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad2]",
+  "pytest#tests/test_transport_signing.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad0]",
+  "pytest#tests/test_transport_signing.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad1]",
+  "pytest#tests/test_transport_signing.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad2]",
 ]
 note = """
 The other half of the composition M181 describes: the bare-string check admits a list, and
@@ -5203,8 +5203,8 @@ weakening = """
         verified.wire_code,
 """
 expect_red = [
-  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[None]",
-  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[]",
+  "pytest#tests/test_transport_receipts.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[None]",
+  "pytest#tests/test_transport_receipts.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[]",
 ]
 note = """
 The Python twin of M188, and it exposed a SECOND gap: the TypeScript unit declared the
@@ -5251,8 +5251,8 @@ weakening = """
     response = json.loads(body)
 """
 expect_red = [
-  "pytest#tests/test_transport.py::test_a_verified_reply_carrying_a_method_is_refused_not_dispatched",
-  "pytest#tests/test_transport.py::test_a_verified_reply_with_neither_result_nor_error_is_refused",
+  "pytest#tests/test_transport_receipts.py::test_a_verified_reply_carrying_a_method_is_refused_not_dispatched",
+  "pytest#tests/test_transport_receipts.py::test_a_verified_reply_with_neither_result_nor_error_is_refused",
 ]
 note = """
 THE REBUILD IS THE CARRIER, which is why the weakening is an in-place edit rather than a
@@ -5394,7 +5394,7 @@ weakening = """
         if True:
 """
 expect_red = [
-  "pytest#tests/test_transport.py::test_a_post_dispatch_rejection_reports_its_execution_and_retry_contract",
+  "pytest#tests/test_transport_receipts.py::test_a_post_dispatch_rejection_reports_its_execution_and_retry_contract",
 ]
 note = """
 AN EXPLICIT NULL IS AN INVENTED MEMBER. Under the weakening every key is emitted whatever
@@ -5444,8 +5444,8 @@ weakening = """
     return _error_message(request_id, str(error))
 """
 expect_red = [
-  "pytest#tests/test_transport.py::test_a_value_error_that_is_not_a_token_is_labelled_a_local_condition",
-  "pytest#tests/test_transport.py::test_a_value_error_that_merely_says_a_token_is_a_local_condition",
+  "pytest#tests/test_transport_failures.py::test_a_value_error_that_is_not_a_token_is_labelled_a_local_condition",
+  "pytest#tests/test_transport_failures.py::test_a_value_error_that_merely_says_a_token_is_a_local_condition",
 ]
 note = """
 THE PREFIX IS THE CARRIER. A core refusal arrives as the binding's `WireRefusal`, whose
@@ -5684,7 +5684,7 @@ weakening = """
         )
 """
 expect_red = [
-  "pytest#tests/test_transport.py::test_the_verifier_is_shown_the_bytes_that_were_transmitted",
+  "pytest#tests/test_transport_signing.py::test_the_verifier_is_shown_the_bytes_that_were_transmitted",
 ]
 note = """
 THIS PROBE FAILED FIRST, and the reason is instructive: the declared control read the posted
@@ -5777,7 +5777,7 @@ weakening = """
         ensure_ascii=True,
 """
 expect_red = [
-  "pytest#tests/test_transport.py::test_the_canonical_bindings_json_emits_raw_utf8_like_json_stringify",
+  "pytest#tests/test_transport_signing.py::test_the_canonical_bindings_json_emits_raw_utf8_like_json_stringify",
 ]
 note = """
 THE DEFAULT IS THE DEFECT. `json.dumps` escapes every non-ASCII character as `\\uXXXX` and
@@ -13152,8 +13152,8 @@ weakening = """
         verified.wire_code or "mcp-re.response_sig_invalid",
 """
 expect_red = [
-  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[None]",
-  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[]",
+  "pytest#tests/test_transport_receipts.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[None]",
+  "pytest#tests/test_transport_receipts.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[]",
 ]
 note = """
 The receipt verified; a peer token naming a signature failure would turn a provable server refusal into a local fault an application retries.

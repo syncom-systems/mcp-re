@@ -602,7 +602,7 @@ describe("McpReHttpTransport failure delivery", () => {
 });
 
 describe("McpReHttpTransport concurrency", () => {
-  // Mirrors `concurrency` in sdk/python/tests/test_transport.py: the two SDKs must agree
+  // Mirrors `concurrency` in sdk/python/tests/test_transport_shutdown.py: the two SDKs must agree
   // on how many exchanges may be in flight, not just on the bytes they emit.
 
   /** Count how many posts are in flight at once. */

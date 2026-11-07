@@ -399,7 +399,7 @@ RUNTIME_PROBES = {
 }
 
 
-def _rust_argv(target: str, selectors: list[str], libtest_log: Path | None) -> list[str]:
+def rust_argv(target: str, selectors: list[str], libtest_log: Path | None = None) -> list[str]:
     """A Rust target is a Bazel test label, run from the workspace root. `--nocache_test_results`
     because a cached result is a statement about an earlier run; `--test_output=streamed`
     because the lane reads libtest's own result lines, which Bazel then passes through as
@@ -489,21 +489,16 @@ def _typescript_argv(target: str, selectors: list[str], runtime: str | None) -> 
 
 
 def test_argv(
-    eco: Ecosystem,
-    project: str | None,
-    target: str,
-    selectors: list[str],
-    runtime: str | None = None,
-    libtest_log: Path | None = None,
+    eco: Ecosystem, target: str, selectors: list[str], runtime: str | None = None
 ) -> list[str]:
-    """The command that runs exactly `selectors` of `target` in `project`.
+    """The command that runs exactly `selectors` of `target`.
 
     Exact selection is the property, not a convenience: a runner that matched by substring
     would let a battery grow silently, and one that ran the whole suite would report a pass
     for symbols nobody declared.
     """
     if eco is RUST:
-        return _rust_argv(target, selectors, libtest_log)
+        return rust_argv(target, selectors)
     if eco is PYTHON:
         return _python_argv(selectors, runtime)
     if eco is TYPESCRIPT:

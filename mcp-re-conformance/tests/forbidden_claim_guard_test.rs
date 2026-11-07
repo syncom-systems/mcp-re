@@ -42,8 +42,6 @@
 //!
 //! std only (no new crates).
 
-use std::path::PathBuf;
-
 /// Forbidden over-claim phrases (case-insensitive substring match). Co-located
 /// with §A's **Forbidden claim** column in `docs/spec/v0.5-claim-matrix.md`
 /// (ADR-MCPS-036 §Decision item 4) — keep the two in sync.
@@ -95,91 +93,113 @@ const SCANNED_DOCS: &[(&str, &str)] = &[
     ("docs/spec/proposal-scope.md", "MCP_RE_DOC_PROPOSAL_SCOPE"),
 ];
 
-fn locate(env_key: &str) -> PathBuf {
-    mcp_re_test_paths::resolve_runfile(env_key)
-}
-
 fn read(env_key: &str) -> String {
-    let path = locate(env_key);
+    let path = mcp_re_test_paths::resolve_runfile(env_key);
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"))
 }
 
-/// `true` iff this `|`-delimited markdown table row carries the forbidden phrase
-/// inside a column whose header is "Forbidden claim". `header` is the table's
-/// header row (the most recent `| … |` line that names "Forbidden claim").
-fn phrase_is_in_forbidden_column(row: &str, header: &str, phrase_lc: &str) -> bool {
-    if !row.trim_start().starts_with('|') {
-        return false;
-    }
-    let header_lc = header.to_lowercase();
-    // Index of the "forbidden claim" cell in the header (split on '|').
-    let forbidden_col = header_lc
-        .split('|')
-        .position(|cell| cell.trim() == "forbidden claim");
-    let Some(col) = forbidden_col else {
-        return false;
-    };
-    let row_lc = row.to_lowercase();
-    row_lc
-        .split('|')
-        .nth(col)
-        .map(|cell| cell.contains(phrase_lc))
-        .unwrap_or(false)
+/// One line of a scanned doc, with its lower-cased form computed once.
+struct Line<'a> {
+    text: &'a str,
+    lower: String,
 }
 
-/// `true` iff a negation/non-existence marker appears on this (lower-cased) line.
-fn line_has_negation(line_lc: &str) -> bool {
-    for &m in NEGATION_MARKERS {
-        if m == "never" {
-            // Avoid substring false-positives like "whenever" matching "never".
-            if line_lc
-                .split(|c: char| !c.is_ascii_alphabetic())
-                .any(|w| w == "never")
-            {
-                return true;
-            }
-            continue;
-        }
-        if line_lc.contains(m) {
-            return true;
+impl<'a> Line<'a> {
+    fn new(text: &'a str) -> Self {
+        Self {
+            text,
+            lower: text.to_lowercase(),
         }
     }
-    false
+
+    /// Whether the line is a row of a markdown table.
+    fn is_table_row(&self) -> bool {
+        self.text.trim_start().starts_with('|')
+    }
+
+    /// Whether a negation/non-existence marker appears on the line.
+    fn has_negation(&self) -> bool {
+        NEGATION_MARKERS.iter().any(|&marker| {
+            if marker == "never" {
+                // Avoid substring false-positives like "whenever" matching "never".
+                self.lower
+                    .split(|c: char| !c.is_ascii_alphabetic())
+                    .any(|w| w == "never")
+            } else {
+                self.lower.contains(marker)
+            }
+        })
+    }
+
+    /// The `|`-delimited cell at `column` of the lower-cased line.
+    fn lower_cell(&self, column: usize) -> Option<&str> {
+        self.lower.split('|').nth(column)
+    }
+}
+
+/// The markdown table, if any, whose header names a "Forbidden claim" column and that the
+/// scan is currently inside.
+#[derive(Default)]
+struct ForbiddenTable {
+    /// Index (split on `|`) of the "forbidden claim" cell of the header row.
+    column: Option<usize>,
+}
+
+impl ForbiddenTable {
+    /// Move past `line`: leaving the table clears the context, and a header row that
+    /// names "Forbidden claim" opens a new one.
+    fn observe(&mut self, line: &Line) {
+        if !line.is_table_row() {
+            self.column = None;
+        } else if line.lower.contains("forbidden claim") {
+            self.column = line
+                .lower
+                .split('|')
+                .position(|cell| cell.trim() == "forbidden claim");
+        }
+    }
+
+    /// Whether `phrase_lc` sits in the Forbidden-claim column of `row` — the one place a
+    /// forbidden phrase is legitimately NAMED.
+    fn holds(&self, row: &Line, phrase_lc: &str) -> bool {
+        row.is_table_row()
+            && self
+                .column
+                .and_then(|column| row.lower_cell(column))
+                .is_some_and(|cell| cell.contains(phrase_lc))
+    }
+}
+
+/// The forbidden phrases `line` asserts: present, outside the forbidden-claim column, and
+/// not negated.
+fn asserted_phrases(line: &Line, table: &ForbiddenTable) -> Vec<&'static str> {
+    if line.has_negation() {
+        return Vec::new();
+    }
+    FORBIDDEN_PHRASES
+        .iter()
+        .copied()
+        .filter(|phrase| {
+            let phrase_lc = phrase.to_lowercase();
+            line.lower.contains(&phrase_lc) && !table.holds(line, &phrase_lc)
+        })
+        .collect()
 }
 
 /// Scan one doc; return every (1-based line number, phrase) pair that is a LIVE
 /// (asserted) occurrence of a forbidden phrase — i.e. not inside a forbidden
 /// table column and not negated.
 fn live_claim_hits(text: &str) -> Vec<(usize, &'static str)> {
+    let mut table = ForbiddenTable::default();
     let mut hits = Vec::new();
-    // Track the most recent markdown table header that contains "forbidden claim".
-    let mut current_forbidden_header: Option<String> = None;
-    for (idx, line) in text.lines().enumerate() {
-        // The forbidden-claim table context only applies while we're inside that table.
-        if current_forbidden_header.is_some() && !line.trim_start().starts_with('|') {
-            current_forbidden_header = None;
-        }
-        let line_lc = line.to_lowercase();
-        if line_lc.contains("forbidden claim") && line.trim_start().starts_with('|') {
-            current_forbidden_header = Some(line.to_string());
-        }
-        for &phrase in FORBIDDEN_PHRASES {
-            let phrase_lc = phrase.to_lowercase();
-            if !line_lc.contains(&phrase_lc) {
-                continue;
-            }
-            // Legitimate: inside the "Forbidden claim" column of the current table.
-            if let Some(header) = &current_forbidden_header {
-                if phrase_is_in_forbidden_column(line, header, &phrase_lc) {
-                    continue;
-                }
-            }
-            // Legitimate: an explicitly negated / non-existence sentence.
-            if line_has_negation(&line_lc) {
-                continue;
-            }
-            hits.push((idx + 1, phrase));
-        }
+    for (idx, raw) in text.lines().enumerate() {
+        let line = Line::new(raw);
+        table.observe(&line);
+        hits.extend(
+            asserted_phrases(&line, &table)
+                .into_iter()
+                .map(|phrase| (idx + 1, phrase)),
+        );
     }
     hits
 }

@@ -153,14 +153,63 @@ def read_gate() -> dict:
         raise RuntimeError(f"the committed gate is unreadable ({exc}); refusing admission")
 
 
+def _refuse(message: str) -> int:
+    print(f"[vm-admission] REFUSED: {message}", file=sys.stderr)
+    return EXIT_REFUSED
+
+
+def _publish_active_record(key: str) -> None:
+    VM_ACTIVE.mkdir(parents=True, exist_ok=True)
+    record = {
+        "key": key,
+        "identity": {
+            "runner": os.environ.get("RUNNER_NAME", "dev1-linux"),
+            "repository": os.environ.get("GITHUB_REPOSITORY", ""),
+            "job": os.environ.get("GITHUB_JOB", "job"),
+            "run_id": os.environ.get("GITHUB_RUN_ID", "0"),
+        },
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "pid": os.getpid(),
+    }
+    target = VM_ACTIVE / f"{key}.json"
+    tmp = target.with_name(target.name + f".tmp.{os.getpid()}")
+    tmp.write_text(json.dumps(record, indent=2))
+    os.replace(tmp, target)
+
+
+def _admit(key: str, state: str) -> int:
+    try:
+        _publish_active_record(key)
+    except OSError as exc:
+        # We cannot announce ourselves, so the macOS side would drain without
+        # knowing we exist. Refuse rather than run unannounced.
+        return _refuse(f"cannot publish the active record: {exc}")
+    print(f"[vm-admission] admitted {key} (host gate {state})", file=sys.stderr)
+    return EXIT_OK
+
+
+def _refuse_after_wait(gate: dict) -> int:
+    owner = gate.get("owner", {})
+    return _refuse(
+        f"host reservation {gate.get('reservation_id')} held by {owner.get('runner')} run "
+        f"{owner.get('run_id')} did not release within {WAIT_S}s. "
+        "Fail-closed: this job executed no workload."
+    )
+
+
+def _announce_wait(gate: dict) -> None:
+    owner = gate.get("owner", {})
+    print(f"[vm-admission] waiting: host reserved by {owner.get('runner')} "
+          f"run {owner.get('run_id')} ({gate.get('reservation_id')})", file=sys.stderr)
+
+
 def hook_job_started() -> int:
     # Capacity first, before the gate wait and before any active record is written: a job
     # refused for space must not first queue for up to 45 minutes, nor leave a report behind
     # claiming it is running.
     refusal = capacity_refusal()
     if refusal is not None:
-        print(f"[vm-admission] REFUSED: {refusal}", file=sys.stderr)
-        return EXIT_REFUSED
+        return _refuse(refusal)
 
     key = job_key()
     deadline = time.monotonic() + WAIT_S
@@ -171,47 +220,15 @@ def hook_job_started() -> int:
         except RuntimeError as exc:
             # Fail closed: an unreadable gate means this runner cannot know whether a
             # reservation stands, and admitting here could invalidate a live measurement.
-            print(f"[vm-admission] REFUSED: {exc}", file=sys.stderr)
-            return EXIT_REFUSED
+            return _refuse(str(exc))
 
         state = gate.get("state", OPEN)
         if state in (OPEN, RELEASED):
-            try:
-                VM_ACTIVE.mkdir(parents=True, exist_ok=True)
-                record = {
-                    "key": key,
-                    "identity": {
-                        "runner": os.environ.get("RUNNER_NAME", "dev1-linux"),
-                        "repository": os.environ.get("GITHUB_REPOSITORY", ""),
-                        "job": os.environ.get("GITHUB_JOB", "job"),
-                        "run_id": os.environ.get("GITHUB_RUN_ID", "0"),
-                    },
-                    "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    "pid": os.getpid(),
-                }
-                target = VM_ACTIVE / f"{key}.json"
-                tmp = target.with_name(target.name + f".tmp.{os.getpid()}")
-                tmp.write_text(json.dumps(record, indent=2))
-                os.replace(tmp, target)
-            except OSError as exc:
-                # We cannot announce ourselves, so the macOS side would drain without
-                # knowing we exist. Refuse rather than run unannounced.
-                print(f"[vm-admission] REFUSED: cannot publish the active record: {exc}",
-                      file=sys.stderr)
-                return EXIT_REFUSED
-            print(f"[vm-admission] admitted {key} (host gate {state})", file=sys.stderr)
-            return EXIT_OK
-
-        owner = gate.get("owner", {})
+            return _admit(key, state)
         if time.monotonic() >= deadline:
-            print(f"[vm-admission] REFUSED: host reservation "
-                  f"{gate.get('reservation_id')} held by {owner.get('runner')} run "
-                  f"{owner.get('run_id')} did not release within {WAIT_S}s. "
-                  "Fail-closed: this job executed no workload.", file=sys.stderr)
-            return EXIT_REFUSED
+            return _refuse_after_wait(gate)
         if not announced:
-            print(f"[vm-admission] waiting: host reserved by {owner.get('runner')} "
-                  f"run {owner.get('run_id')} ({gate.get('reservation_id')})", file=sys.stderr)
+            _announce_wait(gate)
             announced = True
         time.sleep(POLL_S)
 

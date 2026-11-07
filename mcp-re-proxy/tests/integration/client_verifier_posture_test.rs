@@ -108,48 +108,34 @@ fn code_only(text: &str) -> String {
         .join("\n")
 }
 
-/// The body of `fn <name>`, by brace depth from its opening brace.
-fn body_of(text: &str, name: &str) -> Option<String> {
+/// The text of `fn <name>` from its first `open` delimiter to the matching `close`.
+fn delimited_after(text: &str, name: &str, open: char, close: char) -> Option<String> {
     let needle = format!("fn {name}");
     let at = text.find(&needle)?;
-    let open = at + text[at..].find('{')?;
-    let chars: Vec<char> = text[open..].chars().collect();
-    let mut depth = 0i64;
-    for (offset, c) in chars.iter().enumerate() {
-        match c {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(chars[..=offset].iter().collect());
-                }
+    let start = at + text[at..].find(open)?;
+    let chars: Vec<char> = text[start..].chars().collect();
+    let end = chars
+        .iter()
+        .scan(0i64, |depth, c| {
+            if *c == open {
+                *depth += 1;
+            } else if *c == close {
+                *depth -= 1;
             }
-            _ => {}
-        }
-    }
-    None
+            Some(*depth)
+        })
+        .position(|depth| depth == 0)?;
+    Some(chars[..=end].iter().collect())
+}
+
+/// The body of `fn <name>`, by brace depth from its opening brace.
+fn body_of(text: &str, name: &str) -> Option<String> {
+    delimited_after(text, name, '{', '}')
 }
 
 /// The parenthesised parameter list of `fn <name>`.
 fn signature_of(text: &str, name: &str) -> Option<String> {
-    let needle = format!("fn {name}");
-    let at = text.find(&needle)?;
-    let open = at + text[at..].find('(')?;
-    let chars: Vec<char> = text[open..].chars().collect();
-    let mut depth = 0i64;
-    for (offset, c) in chars.iter().enumerate() {
-        match c {
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(chars[..=offset].iter().collect());
-                }
-            }
-            _ => {}
-        }
-    }
-    None
+    delimited_after(text, name, '(', ')')
 }
 
 /// Exactly one production file builds a client-certificate verifier.

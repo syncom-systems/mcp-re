@@ -185,7 +185,9 @@ nt_rust_test(
 # server-auth case. Renames/removals are caught by re-reading reality.
 nt_rust_test(
     name = "security_traceability_guard_test",
-    srcs = ["tests/security_traceability_guard_test.rs"],
+    srcs = [
+        "tests/security_traceability_guard_test.rs",
+    ] + glob(["tests/security_traceability_guard_test/*.rs"]),
     data = [
         "security_traceability_manifest.json",
         "BUILD.bazel",

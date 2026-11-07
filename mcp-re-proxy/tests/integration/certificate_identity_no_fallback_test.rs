@@ -90,51 +90,60 @@ fn dns(value: &str) -> SanType {
     SanType::DnsName(value.try_into().expect("ia5 dns"))
 }
 
+/// The refusal `interpret_identity` gives a leaf minted from `sans` and `common_name`.
+fn refusal_for(
+    sans: Vec<SanType>,
+    common_name: Option<&str>,
+    policy: CertificateIdentityPolicy,
+) -> CertificateIdentityRefusal {
+    let cert = leaf(&make_ca(), sans, common_name);
+    CertificateChainEvidence::from_leaf_der(cert.as_ref())
+        .interpret_identity(policy)
+        .expect_err("the selected field cannot be read, so interpretation refuses")
+}
+
+fn field_absent(selected: CertificateIdentityPolicy) -> CertificateIdentityRefusal {
+    CertificateIdentityRefusal::Leaf(LeafIdentityRefusal::SelectedFieldAbsent { selected })
+}
+
 // ---------------------------------------------------------------------------
 // Control 1 — cross-field. The selected field is absent; a weaker field is present.
 // ---------------------------------------------------------------------------
 
+/// A leaf minted from `sans` and `common_name` refuses `selected` as an absent field, so
+/// no weaker field present on the certificate was consulted in its place.
+fn assert_absent_without_fallback(
+    sans: Vec<SanType>,
+    common_name: &str,
+    selected: CertificateIdentityPolicy,
+    why: &str,
+) {
+    assert_eq!(
+        refusal_for(sans, Some(common_name), selected),
+        field_absent(selected),
+        "{why}"
+    );
+}
+
 #[test]
 fn uri_selected_and_absent_does_not_fall_back_to_a_present_dns_san() {
-    let ca = make_ca();
-    let cert = leaf(
-        &ca,
+    assert_absent_without_fallback(
         vec![dns("agent.example.org")],
-        Some("agent.example.org"),
-    );
-
-    assert_eq!(
-        CertificateChainEvidence::from_leaf_der(cert.as_ref())
-            .interpret_identity(CertificateIdentityPolicy::UriSan),
-        Err(CertificateIdentityRefusal::Leaf(
-            LeafIdentityRefusal::SelectedFieldAbsent {
-                selected: CertificateIdentityPolicy::UriSan
-            }
-        )),
+        "agent.example.org",
+        CertificateIdentityPolicy::UriSan,
         "URI SAN is the configured field and this certificate has none; a DNS SAN and a \
-         CN are present as decoys, and reading either is the fallback the policy disclaims"
+         CN are present as decoys, and reading either is the fallback the policy disclaims",
     );
 }
 
 #[test]
 fn dns_selected_and_absent_does_not_fall_back_to_a_present_common_name() {
-    let ca = make_ca();
-    let cert = leaf(
-        &ca,
+    assert_absent_without_fallback(
         vec![uri("spiffe://example.org/agent-1")],
-        Some("agent.example.org"),
-    );
-
-    assert_eq!(
-        CertificateChainEvidence::from_leaf_der(cert.as_ref())
-            .interpret_identity(CertificateIdentityPolicy::DnsSan),
-        Err(CertificateIdentityRefusal::Leaf(
-            LeafIdentityRefusal::SelectedFieldAbsent {
-                selected: CertificateIdentityPolicy::DnsSan
-            }
-        )),
+        "agent.example.org",
+        CertificateIdentityPolicy::DnsSan,
         "DNS SAN is the configured field and this certificate has none; the CN carries a \
-         DNS-shaped value that a falling-back selector would happily return"
+         DNS-shaped value that a falling-back selector would happily return",
     );
 }
 

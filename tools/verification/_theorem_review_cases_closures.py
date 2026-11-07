@@ -10,6 +10,7 @@ from _assumptions import (
     load_assumptions,
 )
 from _fingerprint import (
+    Registries,
     fingerprint_unit,
     theorem_premises,
 )
@@ -81,7 +82,7 @@ def live_closures(wanted: dict) -> dict:
     }
     toolchains = load_toolchains()
     fps = {
-        unit["id"]: fingerprint_unit(unit, verification, toolchains, assumptions)
+        unit["id"]: fingerprint_unit(unit, Registries(verification, toolchains, assumptions))
         for unit in verification["unit"]
         if unit["id"] in units
     }

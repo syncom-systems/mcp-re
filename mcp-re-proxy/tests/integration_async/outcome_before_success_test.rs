@@ -60,98 +60,23 @@ fn best_effort_success_and_notification_are_unchanged() {
 }
 
 #[cfg(feature = "audit_commitment_reference")]
+mod required_lane;
+
+#[cfg(feature = "audit_commitment_reference")]
 mod required {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
 
+    use super::required_lane::{
+        assert_possibly_executed, dropped_serving_through_a_full_observer, pending_reservations,
+        possibly_executed, required, retained_statuses, serve, slow_first_backend, Posture,
+        CLIENT_SKEW, SIG_TTL, UNAVAILABLE,
+    };
     use super::*;
     use crate::delegated_client_server_e2e_test::params;
-    use crate::intent_before_dispatch_test::required::{files_under, scratch};
-    use crate::intent_before_dispatch_test::{deploy_with, Deployment, REPLY};
-    use mcp_re_client_core::ExecutionStatus;
+    use crate::intent_before_dispatch_test::required::scratch;
     use mcp_re_proxy::transparency::EvidenceRetention;
-    use mcp_re_proxy::transparency::RetainedArchive;
-    use mcp_re_proxy::{HttpProfileProxy, ReferenceCommitment, ScriptedAnswer};
-
-    const UNAVAILABLE: &str = "mcp-re.audit_commitment_unavailable";
-    const BOUND: Duration = Duration::from_millis(50);
-
-    /// The wire code a refusal carries, when — and only when — it says the backend may have run.
-    fn possibly_executed(kind: &ResponseKind) -> Option<String> {
-        let (wire_code, execution) = match kind {
-            ResponseKind::VerifiedRejection {
-                wire_code,
-                execution,
-                ..
-            }
-            | ResponseKind::RejectedNotification {
-                wire_code,
-                execution,
-                ..
-            } => (wire_code, execution),
-            _ => return None,
-        };
-        (execution.execution() == ExecutionStatus::PossiblyExecuted)
-            .then(|| wire_code.clone().unwrap_or_default())
-    }
-
-    struct Required {
-        d: Deployment,
-        sink: Arc<CollectingAuditSink>,
-        reference: ReferenceCommitment,
-    }
-
-    fn serve(
-        server: HttpProfileProxy,
-        calls: Arc<AtomicUsize>,
-        script: Vec<ScriptedAnswer>,
-        deadline: Option<Duration>,
-        discard: bool,
-    ) -> Required {
-        let reference = ReferenceCommitment::surviving_process_loss(script);
-        let sink = Arc::new(CollectingAuditSink::new());
-        let server = server
-            .with_audit_sink(sink.clone())
-            .with_required_audit_commitment(&reference, BOUND)
-            .expect("an eligible reference and a legal bound");
-        Required {
-            d: deploy_with(server, calls, deadline, discard),
-            sink,
-            reference,
-        }
-    }
-
-    fn required(
-        script: Vec<ScriptedAnswer>,
-        retention: Option<Arc<EvidenceRetention>>,
-    ) -> Required {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let (mut server, _) = build_server_over(counting_inner(Arc::clone(&calls)), 300);
-        if let Some(retention) = retention {
-            server = server.with_evidence_retention(retention);
-        }
-        serve(server, calls, script, None, false)
-    }
-
-    impl Required {
-        fn events(&self) -> Vec<(&'static str, Option<&'static str>)> {
-            self.sink
-                .records()
-                .iter()
-                .map(|r| (r.event().event_type(), r.event().reason()))
-                .collect()
-        }
-    }
-
-    /// The statuses of every retained response, read from the store's records.
-    fn retained_statuses(store: &std::path::Path) -> Vec<u64> {
-        files_under(store, "")
-            .into_iter()
-            .filter_map(|path| std::fs::read(path).ok())
-            .filter_map(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-            .filter_map(|record| record["response"]["status"].as_u64())
-            .collect()
-    }
+    use mcp_re_proxy::{ReferenceCommitment, ScriptedAnswer};
 
     /// S2: the success is served after its outcome is committed, and the committed event IS
     /// the observed `response.signed` line — distinct from the intent, one coordinate for both.
@@ -159,9 +84,9 @@ mod required {
     fn required_success_is_visible_only_after_the_outcome_is_committed() {
         let r = required(vec![], None);
         assert_eq!(r.d.call(&plain_request()).kind, ResponseKind::Success);
-        assert_eq!((r.d.calls(), r.d.last_status()), (1, Some(200)));
+        r.assert_exchange(1, 200);
+        r.assert_journaled(2, "the intent, then the outcome");
         let journaled = r.reference.journaled();
-        assert_eq!(journaled.len(), 2, "the intent, then the outcome");
         let envelopes = r.sink.envelopes();
         let (accepted, signed) = (&envelopes[0], &envelopes[1]);
         let coordinate = accepted.exchange_coordinate();
@@ -189,12 +114,8 @@ mod required {
         ] {
             let r = required(vec![ScriptedAnswer::Commit, answer], None);
             let kind = r.d.call(&plain_request()).kind;
-            assert_eq!(
-                possibly_executed(&kind).as_deref(),
-                Some(UNAVAILABLE),
-                "{kind:?}"
-            );
-            assert_eq!((r.d.calls(), r.d.last_status()), (1, Some(500)));
+            assert_possibly_executed(&kind, UNAVAILABLE);
+            r.assert_exchange(1, 500);
             assert_eq!(
                 r.reference.requests(),
                 2,
@@ -222,14 +143,8 @@ mod required {
             Some(Arc::clone(&retention)),
         );
         let kind = r.d.call(&plain_request()).kind;
-        assert_eq!(possibly_executed(&kind).as_deref(), Some(UNAVAILABLE));
-        assert_eq!(
-            RetainedArchive::open_read_only(&store)
-                .expect("open the archive")
-                .pending_reservations()
-                .expect("list"),
-            Vec::<String>::new()
-        );
+        assert_possibly_executed(&kind, UNAVAILABLE);
+        assert_eq!(pending_reservations(&store), Vec::<String>::new());
         assert_eq!(
             retained_statuses(&store),
             [500],
@@ -259,17 +174,9 @@ mod required {
             Some(retention),
         );
         let kind = r.d.call(&plain_request()).kind;
-        assert_eq!(
-            possibly_executed(&kind).as_deref(),
-            Some("mcp-re.evidence_retention_indeterminate"),
-            "{kind:?}"
-        );
-        assert_eq!((r.d.calls(), r.d.last_status()), (1, Some(500)));
-        assert_eq!(
-            r.reference.journaled().len(),
-            2,
-            "intent and outcome committed"
-        );
+        assert_possibly_executed(&kind, "mcp-re.evidence_retention_indeterminate");
+        r.assert_exchange(1, 500);
+        r.assert_journaled(2, "intent and outcome committed");
         assert!(
             r.events()
                 .iter()
@@ -295,8 +202,8 @@ mod required {
                 matches!(kind, ResponseKind::RejectedNotification { .. }),
                 "{kind:?}"
             );
-            assert_eq!(possibly_executed(&kind).as_deref(), Some(UNAVAILABLE));
-            assert_eq!((r.d.calls(), r.d.last_status()), (1, Some(500)));
+            assert_possibly_executed(&kind, UNAVAILABLE);
+            r.assert_exchange(1, 500);
         }
 
         let r = required(vec![], None);
@@ -329,16 +236,12 @@ mod required {
             mcp_re_proxy::async_inner::DispatchCompletionBound::Within(Duration::ZERO),
         ));
         let (server, _) = build_server_over(illegal, 300);
-        let r = serve(server, calls, vec![], None, false);
+        let r = serve(server, calls, vec![], Posture::default());
         let kind = r.d.call(&plain_request()).kind;
         let code = possibly_executed(&kind).expect("refused as possibly executed");
         assert_ne!(code, UNAVAILABLE, "the refusal keeps its own cause");
         assert_eq!(r.d.calls(), 1);
-        assert_eq!(
-            r.reference.journaled().len(),
-            1,
-            "the intent alone: no outcome"
-        );
+        r.assert_journaled(1, "the intent alone: no outcome");
     }
 
     /// W4: dropped while the backend runs. Nothing is invented — the authority holds the
@@ -359,9 +262,11 @@ mod required {
             server.with_evidence_retention(Arc::clone(&retention)),
             Arc::new(AtomicUsize::new(0)),
             vec![],
-            // Generous: the follow-up exchange must finish inside it on a loaded runner.
-            Some(Duration::from_secs(2)),
-            false,
+            Posture {
+                // Generous: the follow-up exchange must finish inside it on a loaded runner.
+                deadline: Some(Duration::from_secs(2)),
+                ..Posture::default()
+            },
         );
         let dropped = r.d.client.handle(
             "r1",
@@ -377,26 +282,14 @@ mod required {
             1,
             "the backend was reached"
         );
+        r.assert_journaled(1, "the intent, and no outcome");
         assert_eq!(
-            r.reference.journaled().len(),
-            1,
-            "the intent, and no outcome"
-        );
-        assert_eq!(
-            RetainedArchive::open_read_only(&store)
-                .expect("open the archive")
-                .pending_reservations()
-                .expect("list")
-                .len(),
+            pending_reservations(&store).len(),
             1,
             "the crossing stays marked: possibly executed, for a reconciler"
         );
         assert_eq!(r.d.call(&plain_request()).kind, ResponseKind::Success);
-        assert_eq!(
-            r.reference.journaled().len(),
-            3,
-            "the next exchange ran in full"
-        );
+        r.assert_journaled(3, "the next exchange ran in full");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -406,28 +299,24 @@ mod required {
     fn w6_outcome_committed_then_lost_before_the_write() {
         let calls = Arc::new(AtomicUsize::new(0));
         let (server, _) = build_server_over(counting_inner(Arc::clone(&calls)), 300);
-        let r = serve(server, calls, vec![], None, true);
+        let r = serve(
+            server,
+            calls,
+            vec![],
+            Posture {
+                discard: true,
+                ..Posture::default()
+            },
+        );
         let lost = r.d.client.handle(
             "r1",
             &plain_request(),
             &params(&mcp_re_test_paths::unique_test_nonce()),
         );
         assert!(lost.is_err(), "the client received nothing");
-        assert_eq!((r.d.calls(), r.d.last_status()), (1, Some(200)));
-        assert_eq!(
-            r.reference.journaled().len(),
-            2,
-            "intent and outcome committed"
-        );
+        r.assert_exchange(1, 200);
+        r.assert_journaled(2, "intent and outcome committed");
     }
-
-    /// A response signature window shorter than the delegated credential's remaining life, so
-    /// the window lapses first and is the only thing that has.
-    const SIG_TTL: i64 = 120;
-
-    /// The clock skew the client's route tolerates (`client_proxy_over`): a verifier admits a
-    /// response until `expires + CLIENT_SKEW`, so that is the first instant it has lapsed.
-    const CLIENT_SKEW: i64 = 60;
 
     /// O5 (ADR-MCPRE-070 §14): the response is signed before G2, so an outcome that commits
     /// only after the signature window closed is served under that closed window. The client
@@ -458,8 +347,7 @@ mod required {
                 server,
                 calls,
                 vec![ScriptedAnswer::Commit, late],
-                None,
-                false,
+                Posture::default(),
             );
             let read = || clock.load(Ordering::SeqCst);
             let call = mcp_re_client_proxy::CallParams {
@@ -468,11 +356,7 @@ mod required {
             };
             let verdict = r.d.client.handle("r1", body, &call);
             assert_eq!(r.d.calls(), 1, "the backend ran");
-            assert_eq!(
-                r.reference.journaled().len(),
-                2,
-                "intent and outcome committed"
-            );
+            r.assert_journaled(2, "intent and outcome committed");
             (verdict, r.d.last_status())
         };
 
@@ -501,109 +385,28 @@ mod required {
         }
     }
 
-    /// An observer whose queue is full: every record it is offered is dropped and counted,
-    /// as the stderr sink does past its ceiling.
-    #[derive(Default)]
-    struct FullObserver {
-        dropped: AtomicUsize,
-    }
-
-    impl mcp_re_proxy::AuditSink for FullObserver {
-        fn record(&self, _envelope: &mcp_re_proxy::audit_record::AuditEnvelope) {
-            self.dropped.fetch_add(1, Ordering::SeqCst);
-        }
-
-        fn unnumbered(&self, _failure: &mcp_re_proxy::audit_record::EventIdentityFailure) {
-            self.dropped.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-
     /// A full observer queue changes neither dispatch nor success, in either posture: the
     /// records are dropped and counted, and under the required posture the intent and the
     /// outcome are still committed before the success is served (ADR-MCPRE-070 §7.4, §11
     /// "observer queue full").
     #[test]
     fn a_full_observer_queue_changes_neither_dispatch_nor_success() {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let full = Arc::new(FullObserver::default());
-        let (server, _) = build_server_over(counting_inner(Arc::clone(&calls)), 300);
-        let d = deploy(server.with_audit_sink(full.clone()), calls, None);
-        assert_eq!(d.call(&plain_request()).kind, ResponseKind::Success);
-        assert_eq!((d.calls(), d.last_status()), (1, Some(200)));
         assert_eq!(
-            full.dropped.load(Ordering::SeqCst),
+            dropped_serving_through_a_full_observer(None),
             2,
             "best-effort: both dropped"
         );
 
-        let calls = Arc::new(AtomicUsize::new(0));
-        let full = Arc::new(FullObserver::default());
         let reference = ReferenceCommitment::surviving_process_loss([]);
-        let (server, _) = build_server_over(counting_inner(Arc::clone(&calls)), 300);
-        let server = server
-            .with_audit_sink(full.clone())
-            .with_required_audit_commitment(&reference, BOUND)
-            .expect("an eligible reference and a legal bound");
-        let d = deploy(server, calls, None);
-        assert_eq!(d.call(&plain_request()).kind, ResponseKind::Success);
-        assert_eq!((d.calls(), d.last_status()), (1, Some(200)));
+        assert_eq!(
+            dropped_serving_through_a_full_observer(Some(&reference)),
+            2,
+            "required: both dropped"
+        );
         assert_eq!(
             reference.journaled().len(),
             2,
             "intent and outcome committed"
         );
-        assert_eq!(
-            full.dropped.load(Ordering::SeqCst),
-            2,
-            "required: both dropped"
-        );
-    }
-
-    /// A loopback HTTP backend that answers its first request only after `delay`, and every
-    /// later one at once.
-    fn slow_first_backend(delay: Duration) -> (std::net::SocketAddr, Arc<AtomicUsize>) {
-        use http_body_util::Full;
-        use hyper_util::rt::{TokioExecutor, TokioIo};
-
-        let received = Arc::new(AtomicUsize::new(0));
-        let counter = Arc::clone(&received);
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .enable_all()
-                .build()
-                .expect("backend runtime");
-            rt.block_on(async move {
-                let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-                    .await
-                    .expect("bind");
-                tx.send(listener.local_addr().expect("addr")).expect("send");
-                while let Ok((stream, _)) = listener.accept().await {
-                    let counter = Arc::clone(&counter);
-                    tokio::spawn(async move {
-                        let svc = hyper::service::service_fn(move |_req| {
-                            let first = counter.fetch_add(1, Ordering::SeqCst) == 0;
-                            async move {
-                                if first {
-                                    tokio::time::sleep(delay).await;
-                                }
-                                Ok::<_, std::convert::Infallible>(
-                                    hyper::Response::builder()
-                                        .status(200)
-                                        .header("content-type", "application/json")
-                                        .body(Full::new(bytes::Bytes::from_static(REPLY)))
-                                        .expect("response"),
-                                )
-                            }
-                        });
-                        let _ = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
-                            .serve_connection(TokioIo::new(stream), svc)
-                            .await;
-                    });
-                }
-            });
-        });
-        (rx.recv().expect("the backend is listening"), received)
     }
 }

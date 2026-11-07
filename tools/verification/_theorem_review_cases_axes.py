@@ -12,6 +12,7 @@ from _assumptions import (
 from _fingerprint import (
     EVIDENCE_UNIT_COMPONENTS,
     SEMANTIC_UNIT_COMPONENTS,
+    Registries,
     assumption_digest,
     fingerprint_unit,
 )
@@ -22,6 +23,7 @@ from _review import (
     NO_SEMANTIC_DIGEST,
     REVIEWED,
     STALE_SEMANTICS,
+    Basis,
     _valid,
     theorem_assurance,
 )
@@ -145,8 +147,11 @@ def test_a_review_without_a_semantic_digest_is_never_current():
     fps = fingerprints(doc)
     reviews = {("specification", "THM-0001"): review_for(fps["THM-0001"])}
     state = theorem_assurance(
-        doc, fps, reviews, {UNIT: ("FRESH", "fixture")}, no_premises(doc), BACKED,
-        semantics(doc, no_premises(doc)),
+        doc,
+        Basis(
+            fps, reviews, {UNIT: ("FRESH", "fixture")}, no_premises(doc), BACKED,
+            semantics(doc, no_premises(doc)),
+        ),
     )["THM-0001"]
     assert state["specification_review"][0] == REVIEWED
     assert state["review"][0] == NO_SEMANTIC_DIGEST
@@ -184,10 +189,10 @@ def test_every_unit_component_is_placed_on_exactly_one_axis():
     known = set(COMPONENT_STATE) | set(STRUCTURAL_COMPONENT) | set(UNRESOLVED_COMPONENT)
     assert known <= placed, sorted(known - placed)
     doc = load_verification()
-    toolchains, assumptions = load_toolchains(), load_assumptions()
+    registries = Registries(doc, load_toolchains(), load_assumptions())
     produced = set()
     for unit in doc["unit"]:
-        produced |= set(fingerprint_unit(unit, doc, toolchains, assumptions)["components"])
+        produced |= set(fingerprint_unit(unit, registries)["components"])
     assert produced <= placed, sorted(produced - placed)
     assert placed <= produced | known, sorted(placed - produced - known)
 

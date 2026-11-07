@@ -99,15 +99,7 @@ def _propagate_dependencies(result: dict[str, dict], entries: dict[str, dict]) -
                 changed = True
 
 
-def theorem_assurance(
-    theorems: dict,
-    theorem_fingerprints: dict[str, dict],
-    reviews: dict[tuple[str, str], dict],
-    unit_states: dict[str, tuple[str, str]],
-    premises: dict[str, dict[str, str] | None],
-    backing: dict[str, tuple[bool, str]],
-    review_digests: dict[str, dict | None],
-) -> dict[str, dict]:
+def theorem_assurance(theorems: dict, basis: Basis) -> dict[str, dict]:
     """Two axes and their conjunction — Ruling 35 §3.
 
         review_current        the owner's specification review covers the CURRENT claim
@@ -124,12 +116,11 @@ def theorem_assurance(
     prover run over code nobody re-read is not current, and a current review over evidence
     nobody re-ran is not established. Only `currently_verified` may be read as "holds".
 
-    `premises` maps each theorem to its premise closure (`_fingerprint.theorem_premises`);
-    `review_digests` to its semantic evidence digest (`_fingerprint.theorem_review_digests`).
-    A theorem missing from either is unknown there, and not current. `backing` maps subjects
-    to `_approvals.ledger_state`.
+    `basis.premises` maps each theorem to its premise closure
+    (`_fingerprint.theorem_premises`); `basis.review_digests` to its semantic evidence digest
+    (`_fingerprint.theorem_review_digests`). A theorem missing from either is unknown there,
+    and not current. `basis.backing` maps subjects to `_approvals.ledger_state`.
     """
-    basis = Basis(theorem_fingerprints, reviews, unit_states, premises, backing, review_digests)
     entries = {row["id"]: row for row in theorems.get("theorem", [])}
     result = {tid: _theorem_state(basis, tid, entry) for tid, entry in entries.items()}
     _propagate_dependencies(result, entries)

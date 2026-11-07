@@ -79,6 +79,14 @@ def dependency_edges(theorems: dict, units: dict) -> dict[str, set[str]]:
     return edges
 
 
+def _declared_severities(rows: list[dict], kind: str) -> dict[str, str]:
+    return {
+        key(kind, row["id"]): row["direct_consequence_severity"]
+        for row in rows
+        if row.get("direct_consequence_severity") in SEVERITY_ORDER
+    }
+
+
 def direct_severities(theorems: dict, units: dict) -> dict[str, str]:
     """Every proposition's DECLARED severity, by graph key.
 
@@ -86,14 +94,10 @@ def direct_severities(theorems: dict, units: dict) -> dict[str, str]:
     forbids reading missing as `none`, and `_evidence_class.severity_problem` is what reports
     it. Defaulting here would hide the very record that rule exists to surface.
     """
-    out: dict[str, str] = {}
-    for theorem in theorems.get("theorem", []):
-        if theorem.get("direct_consequence_severity") in SEVERITY_ORDER:
-            out[key(THEOREM, theorem["id"])] = theorem["direct_consequence_severity"]
-    for unit in units.get("unit", []):
-        if unit.get("direct_consequence_severity") in SEVERITY_ORDER:
-            out[key(UNIT, unit["id"])] = unit["direct_consequence_severity"]
-    return out
+    return {
+        **_declared_severities(theorems.get("theorem", []), THEOREM),
+        **_declared_severities(units.get("unit", []), UNIT),
+    }
 
 
 class CycleError(Exception):

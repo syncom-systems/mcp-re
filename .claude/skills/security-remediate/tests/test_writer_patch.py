@@ -172,13 +172,21 @@ def test_finalize_commits_in_the_order_the_writers_ran() -> None:
     print("  finalize: writers commit in the order they ran, each with its own hunk  OK")
 
 
+def _step(file: str, paths: list[str]) -> "finalize.Step":
+    return finalize.Step({"file": file}, {}, "revert", paths)
+
+
+def _run() -> "finalize.Run":
+    return finalize.Run("w/gates", "w", "w/ledger.jsonl", [], False)
+
+
 def test_a_writer_that_touched_nothing_reverts_nothing() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = _repo(td)
         with _in(root):
             os.makedirs("w", exist_ok=True)
             _append(SHARED, "[other writer, uncommitted]\n")
-            finalize._revert([], "w", "nothing", "w/gates", "untouched.rs")
+            finalize._revert(_step("untouched.rs", []), _run())
             assert "[other writer, uncommitted]" in open(SHARED).read(), open(SHARED).read()
     print("  finalize: a rejected writer with no edits leaves everyone else's work alone  OK")
 
@@ -189,7 +197,7 @@ def test_a_revert_without_snapshot_still_saves_new_files() -> None:
         with _in(root):
             os.makedirs("w", exist_ok=True)
             open("new.rs", "w").write("fn n() {}\n")
-            patch = finalize._revert(["new.rs"], "w", "new-rs")
+            patch = finalize._revert(_step("new.rs", ["new.rs"]), _run())
             assert not os.path.exists("new.rs")
             assert "fn n()" in open(patch).read()
     print("  finalize: the HEAD fallback keeps a new file in the patch before removing it  OK")

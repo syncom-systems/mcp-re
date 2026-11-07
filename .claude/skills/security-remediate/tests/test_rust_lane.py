@@ -39,6 +39,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+from dataclasses import dataclass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.join(os.path.dirname(HERE), "scripts")
@@ -137,8 +138,19 @@ UNIT = "//alpha:alpha_test"
 ALPHA_BUILD = 'nt_rust_library(\n    name = "alpha",\n    crate_name = "alpha",\n)\n'
 
 
-def _gate(td: str, src: str, lint_out: str, lint_rc: int, log: str, test_rc: int,
-          fmt: tuple[str, int] = ("", 0)) -> list[dict]:
+@dataclass
+class FakeBazel:
+    """What the stand-in bazel answers: lint output and status, the test log and status,
+    and the rustfmt output and status."""
+
+    lint_out: str = ""
+    lint_rc: int = 0
+    log: str = ""
+    test_rc: int = 0
+    fmt: tuple[str, int] = ("", 0)
+
+
+def _gate(td: str, src: str, bazel: FakeBazel) -> list[dict]:
     root = os.path.join(td, "ws")
     _write(root, "alpha/BUILD.bazel", ALPHA_BUILD)
     _write(root, "alpha/src/lib.rs", "pub mod keys;\n")
@@ -157,9 +169,9 @@ def _gate(td: str, src: str, lint_out: str, lint_rc: int, log: str, test_rc: int
     with open(config, "w") as fh:
         json.dump({"query": [["rdeps(", ["//alpha:alpha"]], ["attr(crate", [UNIT]],
                              ['kind("^rust_test rule$", set(', []], ["attr(tags", []]],
-                   "build": {"out": lint_out, "rc": lint_rc},
-                   "rustfmt": {"out": fmt[0], "rc": fmt[1]},
-                   "test": {"out": "", "rc": test_rc, "logs": {UNIT: log}}}, fh)
+                   "build": {"out": bazel.lint_out, "rc": bazel.lint_rc},
+                   "rustfmt": {"out": bazel.fmt[0], "rc": bazel.fmt[1]},
+                   "test": {"out": "", "rc": bazel.test_rc, "logs": {UNIT: bazel.log}}}, fh)
     orig, cwd, env = rust_gate.bazel, os.getcwd(), os.environ.get("FAKE_BAZEL_CONFIG")
     rust_gate.bazel = lambda: [sys.executable, fake]  # type: ignore[assignment]
     os.environ["FAKE_BAZEL_CONFIG"] = config
@@ -184,22 +196,22 @@ def test_rust_gate_verdicts() -> None:
     passed = "running 3 tests\ntest result: ok. 3 passed; 0 failed; 0 ignored"
     has_tests = "pub struct S;\n#[cfg(test)]\nmod tests { #[test] fn t() {} }\n"
     with tempfile.TemporaryDirectory() as td:
-        ok = _gate(td, has_tests, "", 0, passed, 0)
+        ok = _gate(td, has_tests, FakeBazel(log=passed))
         assert _verdicts(ok) == {"clippy": "ok", "rustfmt": "ok", "module-size": "ok",
                                  "test": "ok"}, ok
-        lint = _gate(td, "pub struct S;\n", "error: unused variable", 1, passed, 0)
+        lint = _gate(td, "pub struct S;\n", FakeBazel("error: unused variable", 1, passed))
         assert _verdicts(lint)["clippy"] == "new-failures" and "test" not in _verdicts(lint), lint
-        red = _gate(td, has_tests, "", 0,
-                    "running 1 test\n---- keys::tests::t stdout ----\n"
-                    "test result: FAILED. 0 passed; 1 failed;", 3)
+        red = _gate(td, has_tests, FakeBazel(
+            log="running 1 test\n---- keys::tests::t stdout ----\n"
+                "test result: FAILED. 0 passed; 1 failed;", test_rc=3))
         t = [p for p in red if p["gate"] == "test"][0]
         assert t["verdict"] == "new-failures" and t["failed"] == ["keys::tests::t"], t
-        infra = _gate(td, "pub struct S;\n", "ERROR: no such package '@@x//'", 1, passed, 0)
+        infra = _gate(td, "pub struct S;\n", FakeBazel("ERROR: no such package '@@x//'", 1, passed))
         assert _verdicts(infra)["clippy"] == "infra", infra
         none = "running 0 tests\ntest result: ok. 0 passed; 0 failed; 0 ignored; 7 filtered out"
-        empty_has = _gate(td, has_tests, "", 0, none, 0)
+        empty_has = _gate(td, has_tests, FakeBazel(log=none))
         assert _verdicts(empty_has)["test"] == "infra", empty_has
-        empty_none = _gate(td, "pub struct S;\n", "", 0, none, 0)
+        empty_none = _gate(td, "pub struct S;\n", FakeBazel(log=none))
         assert _verdicts(empty_none)["test"] == "ok", empty_none
     print("  rust gate: lint/test failures blamed, a silent build = infra, 0 tests judged by the file  OK")
 
@@ -209,19 +221,19 @@ def test_rust_gate_rustfmt_blames_only_touched_files() -> None:
     has_tests = "pub struct S;\n#[cfg(test)]\nmod tests { #[test] fn t() {} }\n"
     with tempfile.TemporaryDirectory() as td:
         root = os.path.realpath(os.path.join(td, "ws"))
-        mine = _gate(td, has_tests, "", 0, passed, 0,
-                     ("Diff in %s/alpha/src/keys.rs:3:\n-fn  x(){}\n+fn x() {}" % root, 1))
+        mine = _gate(td, has_tests, FakeBazel(
+            log=passed, fmt=("Diff in %s/alpha/src/keys.rs:3:\n-fn  x(){}\n+fn x() {}" % root, 1)))
         f = [p for p in mine if p["gate"] == "rustfmt"][0]
         assert f["verdict"] == "new-failures" and f["unformatted"] == ["alpha/src/keys.rs"], f
         assert "test" not in _verdicts(mine), mine
-        other = _gate(td, has_tests, "", 0, passed, 0,
-                      ("Diff in %s/alpha/src/lib.rs:1:\n" % root, 1))
+        other = _gate(td, has_tests, FakeBazel(
+            log=passed, fmt=("Diff in %s/alpha/src/lib.rs:1:\n" % root, 1)))
         assert _verdicts(other)["rustfmt"] == "infra", other
-        broken = _gate(td, has_tests, "", 0, passed, 0,
-                       ("error: unexpected closing delimiter: `}`\n   --> %s/alpha/src/keys.rs:9:1"
-                        % root, 1))
+        broken = _gate(td, has_tests, FakeBazel(
+            log=passed, fmt=("error: unexpected closing delimiter: `}`\n"
+                             "   --> %s/alpha/src/keys.rs:9:1" % root, 1)))
         assert _verdicts(broken)["rustfmt"] == "new-failures", broken
-        silent = _gate(td, has_tests, "", 0, passed, 0, ("ERROR: analysis failed", 1))
+        silent = _gate(td, has_tests, FakeBazel(log=passed, fmt=("ERROR: analysis failed", 1)))
         assert _verdicts(silent)["rustfmt"] == "infra", silent
     print("  rust gate: a rustfmt diff in the touched file is blamed; elsewhere or silent = infra  OK")
 

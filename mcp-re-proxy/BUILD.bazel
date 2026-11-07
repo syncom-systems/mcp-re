@@ -1735,7 +1735,10 @@ nt_rust_test(
 # Self-skips unless MCP_RE_TEST_OCSP_RESPONDER_URL (+ DER paths) is set.
 nt_rust_test(
     name = "integration_ext_test",
-    srcs = glob(["tests/integration_ext/*.rs"]),
+    srcs = glob([
+        "tests/integration_ext/*.rs",
+        "tests/integration_ext/*/*.rs",
+    ]),
     crate_root = "tests/integration_ext/main.rs",
     # Each suite is `#![cfg(feature = ...)]`; without these the binary links and runs
     # ZERO tests while reporting PASSED.
@@ -1846,7 +1849,9 @@ nt_rust_test(
 # Without MCP_RE_TEST_REDIS_URL it skips itself, so this target keeps it compiling.
 nt_rust_test(
     name = "admission_propagation_measure_test",
-    srcs = ["tests/admission_propagation_measure_test.rs"],
+    srcs = [
+        "tests/admission_propagation_measure_test.rs",
+    ] + glob(["tests/admission_propagation_measure_test/*.rs"]),
     crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
     edition = "2021",
     env_inherit = [
@@ -2015,7 +2020,7 @@ nt_rust_binary(
     srcs = [
         "examples/hpp_common/mod.rs",
         "examples/http_profile_client.rs",
-    ],
+    ] + glob(["examples/http_profile_client/*.rs"]),
     crate_root = "examples/http_profile_client.rs",
     edition = "2021",
     deps = [
