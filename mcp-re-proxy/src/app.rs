@@ -149,11 +149,8 @@ fn run_validated(
     // Composed BEFORE the runtime exists: `--bind` resolution can fail, and a failure after
     // `finish` would drop a materialized runtime instead of tearing it down in the order it
     // owns — the one thing that type is for.
-    let fleet_cfg = fleet_config(
-        config.config(),
-        start.sizing.topology,
-        start.sizing.in_flight_limit,
-    )?;
+    let values = config.config();
+    let fleet_cfg = fleet_config(values, start.sizing.topology, start.sizing.in_flight_limit)?;
     start.building.install_proxy(proxy)?;
     // `MaterializationSucceeded` is applied INSIDE `finish`, after every required resource has
     // been taken, so a `Materialized` lifecycle cannot exist over an incomplete graph.
