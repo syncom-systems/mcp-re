@@ -157,32 +157,54 @@ def signature_re(name: str) -> re.Pattern:
 SIGNATURE = signature_re(RESOLVER)
 
 
-def resolver_body(text: str, name: str = RESOLVER) -> str | None:
-    """The body of `name`, or None if it is not defined here."""
-    match = signature_re(name).search(text)
-    if match is None:
-        return None
+def brace_block(text: str, start: int) -> str | None:
+    """The `{ ... }` block opening at `text[start]` with its braces balanced, or None when it
+    never closes."""
     depth = 0
-    start = match.end() - 1
-    for offset in range(start, len(text)):
-        if text[offset] == "{":
-            depth += 1
-        elif text[offset] == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : offset + 1]
+    for offset, char in enumerate(text[start:], start):
+        depth += (char == "{") - (char == "}")
+        if char == "}" and depth == 0:
+            return text[start : offset + 1]
     return None
 
 
+def resolver_body(text: str, name: str = RESOLVER) -> str | None:
+    """The body of `name`, or None if it is not defined here."""
+    match = signature_re(name).search(text)
+    return None if match is None else brace_block(text, match.end() - 1)
+
+
+def named_raw_routes(text: str) -> list[str]:
+    """The steps of the raw-certificate routes that `text` names, in declaration order."""
+    return [name for name in RAW_IDENTITY_ROUTE + RAW_CURRENCY_ROUTE if name in text]
+
+
+def _ocsp_residue_problems(path: str, text: str) -> list[str]:
+    """(6) — the raw chain projection survives only behind the online-OCSP gate."""
+    if OCSP_RESIDUE not in text:
+        return []
+    if path == ASYNC_PATH:
+        return [
+            f"{path}: names `{OCSP_RESIDUE}`. The async path has no raw-chain consumer "
+            f"left — online OCSP is not wired on it — so a chain projection here is a "
+            f"currency or identity route being rebuilt."
+        ]
+    if OCSP_GATE not in text:
+        return [
+            f"{path}: names `{OCSP_RESIDUE}` without the `{OCSP_GATE}` gate. The one "
+            f"legitimate raw-chain consumer left in the serving path is the "
+            f"unmigrated online-OCSP guard; an ungated projection is a new one."
+        ]
+    return []
+
+
 def check_serving_path(path: str, text: str) -> list[str]:
-    problems = []
-    for name in RAW_IDENTITY_ROUTE + RAW_CURRENCY_ROUTE:
-        if name in text:
-            problems.append(
-                f"{path}: names `{name}` in production. A direct-TLS serving path derives "
-                f"identity and currency from semantic products, not by reconstructing them "
-                f"from certificate representation (ADR-MCPRE-064 #619/#621)."
-            )
+    problems = [
+        f"{path}: names `{name}` in production. A direct-TLS serving path derives "
+        f"identity and currency from semantic products, not by reconstructing them "
+        f"from certificate representation (ADR-MCPRE-064 #619/#621)."
+        for name in named_raw_routes(text)
+    ]
     calls = len(re.findall(r"\b" + RESOLVER + r"\s*\(", text))
     if calls != 1:
         problems.append(
@@ -190,20 +212,7 @@ def check_serving_path(path: str, text: str) -> list[str]:
             f"sites in one path, or none, is how the async and blocking paths stop being "
             f"one derivation and become two that happen to agree."
         )
-    if OCSP_RESIDUE in text:
-        if path == ASYNC_PATH:
-            problems.append(
-                f"{path}: names `{OCSP_RESIDUE}`. The async path has no raw-chain consumer "
-                f"left — online OCSP is not wired on it — so a chain projection here is a "
-                f"currency or identity route being rebuilt."
-            )
-        elif OCSP_GATE not in text:
-            problems.append(
-                f"{path}: names `{OCSP_RESIDUE}` without the `{OCSP_GATE}` gate. The one "
-                f"legitimate raw-chain consumer left in the serving path is the "
-                f"unmigrated online-OCSP guard; an ungated projection is a new one."
-            )
-    return problems
+    return problems + _ocsp_residue_problems(path, text)
 
 
 def serving_path_text(path: Path) -> str:
@@ -221,44 +230,55 @@ def serving_path_text(path: Path) -> str:
     return "\n".join(production_view(m).text() for m in members)
 
 
-def check_dispatch(text: str) -> list[str]:
+def _definition_problems(name: str, text: str) -> list[str]:
+    """`name` is defined in the dispatch module and takes only its predecessor and options.
+
+    Checked ONCE per function: a function that must reach two authorities appears twice in
+    RESOLVERS, and reporting its parameter list twice would count one defect as two.
+    """
+    signature = signature_re(name).search(text)
+    if signature is None or resolver_body(text, name) is None:
+        return [
+            f"{DISPATCH_MODULE}: `{name}` is not defined here. It is a link in the one "
+            f"route both serving paths take; moving it needs this gate moved with it."
+        ]
+    forbidden = sorted(set(FORBIDDEN_PARAM.findall(signature.group("params"))))
+    if not forbidden:
+        return []
+    return [
+        f"{DISPATCH_MODULE}: `{name}` takes parameter(s) named {forbidden}. Each "
+        f"link takes its predecessor product and the deployment's own policies and "
+        f"NOTHING else — the absence of a second-credential parameter is what makes "
+        f"pairing relationship A's facts with relationship B's certificates "
+        f"unconstructible (THM-0031, THM-0032, THM-0034). A parameter is how that "
+        f"returns."
+    ]
+
+
+def _link_problems(name: str, authority: str, body: str) -> list[str]:
+    """One link reaches its authority and carries no raw-certificate route."""
     problems = []
-    # Signatures are checked ONCE per function. A function that must reach two authorities
-    # appears twice in RESOLVERS, and reporting its parameter list twice would count one
-    # defect as two.
+    if authority not in body:
+        problems.append(
+            f"{DISPATCH_MODULE}: `{name}` does not reach `{authority}`. The fact must "
+            f"come from the ADR-MCPRE-064 authority that owns it."
+        )
+    problems += [
+        f"{DISPATCH_MODULE}: `{name}` names `{raw}`. A link in this route may "
+        f"not carry a raw-certificate route of its own."
+        for raw in named_raw_routes(body)
+    ]
+    return problems
+
+
+def check_dispatch(text: str) -> list[str]:
+    problems: list[str] = []
     for name in dict.fromkeys(fn for fn, _ in RESOLVERS):
-        signature = signature_re(name).search(text)
-        if signature is None or resolver_body(text, name) is None:
-            problems.append(
-                f"{DISPATCH_MODULE}: `{name}` is not defined here. It is a link in the one "
-                f"route both serving paths take; moving it needs this gate moved with it."
-            )
-            continue
-        forbidden = sorted(set(FORBIDDEN_PARAM.findall(signature.group("params"))))
-        if forbidden:
-            problems.append(
-                f"{DISPATCH_MODULE}: `{name}` takes parameter(s) named {forbidden}. Each "
-                f"link takes its predecessor product and the deployment's own policies and "
-                f"NOTHING else — the absence of a second-credential parameter is what makes "
-                f"pairing relationship A's facts with relationship B's certificates "
-                f"unconstructible (THM-0031, THM-0032, THM-0034). A parameter is how that "
-                f"returns."
-            )
+        problems += _definition_problems(name, text)
     for name, authority in RESOLVERS:
         body = resolver_body(text, name)
-        if body is None:
-            continue
-        if authority not in body:
-            problems.append(
-                f"{DISPATCH_MODULE}: `{name}` does not reach `{authority}`. The fact must "
-                f"come from the ADR-MCPRE-064 authority that owns it."
-            )
-        for raw in RAW_IDENTITY_ROUTE + RAW_CURRENCY_ROUTE:
-            if raw in body:
-                problems.append(
-                    f"{DISPATCH_MODULE}: `{name}` names `{raw}`. A link in this route may "
-                    f"not carry a raw-certificate route of its own."
-                )
+        if body is not None:
+            problems += _link_problems(name, authority, body)
     return problems
 
 
@@ -272,28 +292,25 @@ def check_constructor(text: str) -> list[str]:
     stronger only while BOTH halves hold: a constructor that stopped reaching the authority
     would answer the currency question itself, with the dispatch module's edge still green.
     """
-    problems = []
     body = resolver_body(text, CONSTRUCTOR)
     if body is None:
-        problems.append(
+        return [
             f"{PEER_OWNER_MODULE}: `{CONSTRUCTOR}` is not defined here. It is the far half "
             f"of the route the dispatch module takes to the ADR-MCPRE-064 currency "
             f"authority; moving it needs this gate moved with it."
-        )
-        return problems
-    for authority in CONSTRUCTOR_REACHES:
-        if authority not in body:
-            problems.append(
-                f"{PEER_OWNER_MODULE}: `{CONSTRUCTOR}` does not reach `{authority}`. The "
-                f"product's only producer must obtain the currency verdict from the "
-                f"authority that owns it, not decide it here."
-            )
-    for raw in RAW_IDENTITY_ROUTE + RAW_CURRENCY_ROUTE:
-        if raw in body:
-            problems.append(
-                f"{PEER_OWNER_MODULE}: `{CONSTRUCTOR}` names `{raw}`. The one producer of "
-                f"the channel-peer product may not carry a raw-certificate route of its own."
-            )
+        ]
+    problems = [
+        f"{PEER_OWNER_MODULE}: `{CONSTRUCTOR}` does not reach `{authority}`. The "
+        f"product's only producer must obtain the currency verdict from the "
+        f"authority that owns it, not decide it here."
+        for authority in CONSTRUCTOR_REACHES
+        if authority not in body
+    ]
+    problems += [
+        f"{PEER_OWNER_MODULE}: `{CONSTRUCTOR}` names `{raw}`. The one producer of "
+        f"the channel-peer product may not carry a raw-certificate route of its own."
+        for raw in named_raw_routes(body)
+    ]
     return problems
 
 
@@ -343,34 +360,45 @@ def check(root: Path) -> tuple[list[str], int]:
     return problems, examined
 
 
-def selftest() -> int:
-    """Each case is a way the migration could be undone. A gate that passed them all would
-    be reporting on a file set rather than on a property."""
-    cases = [
-        ("clean", "let peer = served_channel_peer(c, o, b, n);", "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); AuthenticatedChannelPeer::resolve(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }", 0),
+#: The dispatch module as it should be: the serving entry delegates to the resolver, which
+#: reaches both authorities, over a predecessor that takes only the accepted relationship and
+#: the options. Each case below undoes one claim of it.
+DISPATCH = (
+    "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\n"
+    "pub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); AuthenticatedChannelPeer::resolve(p, &q, now) }\n"
+    "fn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }"
+)
+
+
+def _cases() -> list[tuple[str, str, str, int]]:
+    """Each is a way the migration could be undone: (name, serving text, dispatch text,
+    expected problem count). A gate that passed them all would be reporting on a file set
+    rather than on a property."""
+    return [
+        ("clean", "let peer = served_channel_peer(c, o, b, n);", DISPATCH, 0),
         (
             "serving path reconstructs identity from the leaf",
             "let identity = extract_identity(leaf, policy);\nlet peer = served_channel_peer(c, o, b, n);",
-            "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); AuthenticatedChannelPeer::resolve(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }",
+            DISPATCH,
             1,
         ),
         (
             "serving path rebuilds the currency decision from a chain",
             "let r = cert_lifetime_rejection_for_chain(&chain, o, b, n);\nlet peer = served_channel_peer(c, o, b, n);",
-            "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); AuthenticatedChannelPeer::resolve(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }",
+            DISPATCH,
             1,
         ),
-        ("serving path stopped asking at all", "let peer = None;", "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); AuthenticatedChannelPeer::resolve(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }", 1),
+        ("serving path stopped asking at all", "let peer = None;", DISPATCH, 1),
         (
             "serving path asks twice",
             "let peer = served_channel_peer(c, o, b, n);\nlet again = served_channel_peer(c, o, b, n);",
-            "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); AuthenticatedChannelPeer::resolve(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }",
+            DISPATCH,
             1,
         ),
         (
             "resolver widened to accept a leaf",
             "let peer = served_channel_peer(c, o, b, n);",
-            "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); AuthenticatedChannelPeer::resolve(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }".replace(
+            DISPATCH.replace(
                 "fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64)",
                 "fn resolve_channel_peer(accepted: Option<&Mvc>, leaf: Option<&[u8]>, options: &ServerOptions, now: i64)",
             ),
@@ -379,22 +407,25 @@ def selftest() -> int:
         (
             "resolver stopped reaching the currency evaluation",
             "let peer = served_channel_peer(c, o, b, n);",
-            "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); AuthenticatedChannelPeer::resolve(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }".replace("evaluate_credential_currency(accepted, &q, now); ", ""),
+            DISPATCH.replace("evaluate_credential_currency(accepted, &q, now); ", ""),
             1,
         ),
         (
             "resolver stopped reaching the authentication authority",
             "let peer = served_channel_peer(c, o, b, n);",
-            "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); AuthenticatedChannelPeer::resolve(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }".replace("authenticate_relationship_peer(accepted?.clone(), p).ok()", "None"),
+            DISPATCH.replace("authenticate_relationship_peer(accepted?.clone(), p).ok()", "None"),
             1,
         ),
         (
             "the route is named only inside a test region",
             "#[cfg(test)]\nmod tests {\n    fn t() { extract_identity(leaf, p); }\n}\nlet peer = served_channel_peer(c, o, b, n);",
-            "pub(crate) fn served_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, request: &[u8], now: i64) -> Result<Option<Peer>, Vec<u8>> { resolve_channel_peer(accepted, options, now) }\npub(crate) fn resolve_channel_peer(accepted: Option<&Mvc>, options: &ServerOptions, now: i64) -> Result<Option<Peer>, R> { let p = authenticated_peer(accepted, options); evaluate_credential_currency(accepted, &q, now); AuthenticatedChannelPeer::resolve(p, &q, now) }\nfn authenticated_peer(accepted: Option<&Mvc>, options: &ServerOptions) -> Option<Facts> { authenticate_relationship_peer(accepted?.clone(), p).ok() }",
+            DISPATCH,
             0,
         ),
     ]
+
+
+def _constructor_cases() -> list[tuple[str, str, int]]:
     #: The far half of the hop. `resolve` is the product's only producer, so these are the
     #: ways the constructor could stop being a route to the authority and start being a
     #: second opinion — each invisible to every case above, because the dispatch module's
@@ -404,7 +435,7 @@ def selftest() -> int:
         "Result<Self, CredentialCurrencyRefusal> { match current_authenticated_peer(peer, "
         "policy, now) { Ok(c) => Ok(Self(A::Current(c))), Err(e) => Err(e) } }"
     )
-    constructor_cases = [
+    return [
         ("constructor clean", constructor, 0),
         (
             "constructor stopped reaching the currency authority",
@@ -427,25 +458,30 @@ def selftest() -> int:
         ),
     ]
 
-    failures = 0
-    for name, text, expected in constructor_cases:
-        found = check_constructor(production_view(text).text())
-        status = "ok " if len(found) == expected else "FAIL"
-        if len(found) != expected:
-            failures += 1
-        print(f"  {status} {name}: {len(found)} problem(s), expected {expected}")
-        for problem in found:
-            print(f"        {problem}")
 
-    for name, serving, dispatch, expected in cases:
-        found = check_serving_path("probe.rs", production_view(serving).text())
-        found += check_dispatch(production_view(dispatch).text())
-        status = "ok " if len(found) == expected else "FAIL"
-        if len(found) != expected:
-            failures += 1
-        print(f"  {status} {name}: {len(found)} problem(s), expected {expected}")
-        for problem in found:
-            print(f"        {problem}")
+
+def _report(name: str, found: list[str], expected: int) -> int:
+    """Print one case; 1 when the number of problems is not the expected one."""
+    ok = len(found) == expected
+    print(f"  {'ok ' if ok else 'FAIL'} {name}: {len(found)} problem(s), expected {expected}")
+    for problem in found:
+        print(f"        {problem}")
+    return 0 if ok else 1
+
+
+def _serving_case_failure(name: str, serving: str, dispatch: str, expected: int) -> int:
+    found = check_serving_path("probe.rs", production_view(serving).text())
+    found += check_dispatch(production_view(dispatch).text())
+    return _report(name, found, expected)
+
+
+def selftest() -> int:
+    cases, constructor_cases = _cases(), _constructor_cases()
+    failures = sum(
+        _report(name, check_constructor(production_view(text).text()), expected)
+        for name, text, expected in constructor_cases
+    )
+    failures += sum(_serving_case_failure(*case) for case in cases)
     print(
         f"\nserving-identity-provenance selftest: "
         f"{'PASS' if failures == 0 else 'FAIL'} — "
