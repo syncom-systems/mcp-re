@@ -91,7 +91,7 @@ pub(super) async fn handle_request<H: AsyncRequestHandler>(
         peer_credential.as_ref().as_ref(),
         &options,
         &body_bytes,
-        crate::tls::wall_clock_unix(),
+        crate::clock::now_unix(),
     );
     let assertion = assertion_header(&options, &headers);
 

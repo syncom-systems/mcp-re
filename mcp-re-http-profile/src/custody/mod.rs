@@ -502,6 +502,33 @@ mod tests {
         }
     }
 
+    /// The custody published nothing: no active key and no lifecycle event, because an
+    /// issuance that published nothing is not an issuance event.
+    fn assert_nothing_published<I, F>(c: &DelegatedSigningCustody<I, F>)
+    where
+        I: FnMut(&DelegationHeader, &DelegationClaims) -> Option<String>,
+        F: FnMut() -> SigningKey,
+    {
+        assert!(c.active_snapshot().is_none(), "nothing may be published");
+        assert!(
+            c.step_events().is_empty(),
+            "an issuance that published nothing is not an issuance event"
+        );
+    }
+
+    /// The first issuance fails closed and leaves nothing published.
+    fn assert_first_issuance_fails_closed<I, F>(c: &mut DelegatedSigningCustody<I, F>)
+    where
+        I: FnMut(&DelegationHeader, &DelegationClaims) -> Option<String>,
+        F: FnMut() -> SigningKey,
+    {
+        assert_eq!(
+            c.ensure_active(1_000),
+            Err(CustodyError::FailClosedIssuance)
+        );
+        assert_nothing_published(c);
+    }
+
     /// Zero root ops on the hot path: many signs within one key's life ⇒ the root
     /// issuer is invoked exactly once (the initial issuance).
     #[test]
@@ -555,16 +582,8 @@ mod tests {
             },
             factory(),
         );
-        assert_eq!(
-            c.ensure_active(1_000),
-            Err(CustodyError::FailClosedIssuance)
-        );
-        assert!(c.active_snapshot().is_none(), "nothing may be published");
+        assert_first_issuance_fails_closed(&mut c);
         assert_eq!(c.last_refusal(), Some(IssuanceRefusal::NotAsRequested));
-        assert!(
-            c.step_events().is_empty(),
-            "an issuance that published nothing is not an issuance event"
-        );
     }
 
     /// The window the audit records is the one the root ISSUED. An operator reading the
@@ -691,10 +710,15 @@ mod tests {
             .find(|e| e.event_type() == event_type::DELEGATED_KEY_RETIRED)
             .expect("the predecessor is retired");
         assert!(!retired.jti().is_empty());
-        assert_eq!(retired.jti(), issued.jti());
-        assert_eq!(retired.nbf(), issued.nbf());
-        assert_eq!(retired.exp(), issued.exp());
-        assert_eq!(retired.delegated_kid(), issued.delegated_kid());
+        let identity = |e: &KeyLifecycleEvent| {
+            (
+                e.jti().to_owned(),
+                e.nbf(),
+                e.exp(),
+                e.delegated_kid().to_owned(),
+            )
+        };
+        assert_eq!(identity(retired), identity(&issued));
     }
 
     /// Successive issuances within ONE process must also stay distinct — including a
@@ -1061,8 +1085,7 @@ mod tests {
     /// Verify a minted credential exactly as a production verifier does, under the
     /// scope this test config declares.
     fn verify_minted(
-        credential: &str,
-        delegated_kid: &str,
+        key: &ActiveDelegatedKey,
         accepted_epochs: &[&str],
         now: i64,
         root_public: &VerificationKey,
@@ -1072,12 +1095,12 @@ mod tests {
             role: policy.server_role.clone(),
             trust_domain: policy.server_trust_domain.clone(),
             subject: policy.server_subject.clone(),
-            keyid: delegated_kid.to_owned(),
+            keyid: key.delegated_kid().to_owned(),
         }
         .actor_id();
         let audiences = [policy.aud.as_str()];
         verify_delegation_credential(
-            credential,
+            key.credential(),
             &DelegationVerifyParams {
                 now,
                 max_clock_skew: mcp_re_core::MaxClockSkew::ZERO,
@@ -1107,22 +1130,7 @@ mod tests {
 
         c.ensure_active(1_000).expect("issue");
         let first = c.active_snapshot().expect("a key is active");
-        let verified = verify_minted(
-            first.credential(),
-            first.delegated_kid(),
-            &["epoch-1"],
-            1_000,
-            &root_public,
-        )
-        .expect("the credential verifies under the configured scope");
-        assert_eq!(verified.trust_epoch, "epoch-1");
-        assert_eq!(verified.issuer_kid, ROOT_KID);
-        assert_eq!(verified.delegated_kid, first.delegated_kid());
-        assert_eq!(
-            verified.delegated_key.to_b64url(),
-            first.key().public_key().to_b64url(),
-            "cnf.jwk names the delegated key the snapshot signs with"
-        );
+        assert_first_credential_names_its_key(&first, &root_public);
 
         let minted = c
             .advance_trust_epoch(2, 1_010)
@@ -1131,25 +1139,39 @@ mod tests {
         let second = c.active_snapshot().expect("a successor is active");
         assert_eq!(minted.delegated_kid(), second.delegated_kid());
         assert_eq!(
-            verify_minted(
-                second.credential(),
-                second.delegated_kid(),
-                &["epoch-1"],
-                1_010,
-                &root_public,
-            )
-            .expect_err("a verifier pinned to the prior epoch must reject"),
+            verify_minted(&second, &["epoch-1"], 1_010, &root_public)
+                .expect_err("a verifier pinned to the prior epoch must reject"),
             HttpProfileError::DelegationTrustEpochStale
         );
-        let advanced = verify_minted(
-            second.credential(),
-            second.delegated_kid(),
-            &["epoch-1#2"],
-            1_010,
-            &root_public,
-        )
-        .expect("the successor verifies under the advanced epoch");
+        let advanced = verify_minted(&second, &["epoch-1#2"], 1_010, &root_public)
+            .expect("the successor verifies under the advanced epoch");
         assert_eq!(advanced.trust_epoch, "epoch-1#2");
+    }
+
+    /// The first credential verifies under the configured scope and its `cnf.jwk` names
+    /// the key the snapshot signs with.
+    fn assert_first_credential_names_its_key(
+        first: &ActiveDelegatedKey,
+        root_public: &VerificationKey,
+    ) {
+        let verified = verify_minted(first, &["epoch-1"], 1_000, root_public)
+            .expect("the credential verifies under the configured scope");
+        let carried = (
+            verified.trust_epoch.to_string(),
+            verified.issuer_kid.clone(),
+            verified.delegated_kid.clone(),
+            verified.delegated_key.to_b64url(),
+        );
+        let expected = (
+            "epoch-1".to_owned(),
+            ROOT_KID.to_owned(),
+            first.delegated_kid().to_owned(),
+            first.key().public_key().to_b64url(),
+        );
+        assert_eq!(
+            carried, expected,
+            "scope, issuer and cnf.jwk name the delegated key the snapshot signs with"
+        );
     }
 
     /// A `ttl` that cannot be added to `now` refuses the issuance instead of minting a
@@ -1167,16 +1189,8 @@ mod tests {
         cfg.window = DelegatedKeyWindow::of(i64::MAX, 1)
             .expect("the relation holds; the ceiling is not this type's");
         let mut c = DelegatedSigningCustody::new(cfg, root_key(), ok_issuer(), factory());
-        assert_eq!(
-            c.ensure_active(1_000).unwrap_err(),
-            CustodyError::FailClosedIssuance
-        );
-        assert!(c.active_snapshot().is_none(), "nothing was minted");
+        assert_first_issuance_fails_closed(&mut c);
         assert_eq!(c.root_invocations(), 0, "the root was not approached");
-        assert!(
-            c.step_events().is_empty(),
-            "no lifecycle event describes a non-key"
-        );
     }
 
     /// An outage and a root signing under a key other than the one it advertises fail the
@@ -1184,6 +1198,11 @@ mod tests {
     /// tells them apart. An issuance that adopts clears it.
     #[test]
     fn the_refusal_cause_tells_an_outage_from_a_root_signing_under_another_key() {
+        assert_outage_cause_clears_on_recovery();
+        assert_misconfigured_root_cause_is_key_mismatch();
+    }
+
+    fn assert_outage_cause_clears_on_recovery() {
         let mut answers = 0u32;
         let mut down_then_up = DelegatedSigningCustody::new(
             cfg(),
@@ -1196,10 +1215,7 @@ mod tests {
             factory(),
         );
         assert_eq!(down_then_up.last_refusal(), None);
-        assert_eq!(
-            down_then_up.ensure_active(1_000),
-            Err(CustodyError::FailClosedIssuance)
-        );
+        assert_first_issuance_fails_closed(&mut down_then_up);
         assert_eq!(
             down_then_up.last_refusal(),
             Some(IssuanceRefusal::RootUnavailable)
@@ -1209,7 +1225,9 @@ mod tests {
             .expect("the root is back")
             .is_some());
         assert_eq!(down_then_up.last_refusal(), None);
+    }
 
+    fn assert_misconfigured_root_cause_is_key_mismatch() {
         let impostor = SigningKey::from_seed_bytes(&[34u8; 32]);
         let mut misconfigured = DelegatedSigningCustody::new(
             cfg(),
@@ -1219,14 +1237,7 @@ mod tests {
             },
             factory(),
         );
-        assert_eq!(
-            misconfigured.ensure_active(1_000),
-            Err(CustodyError::FailClosedIssuance)
-        );
-        assert!(
-            misconfigured.active_snapshot().is_none(),
-            "refusal, unchanged"
-        );
+        assert_first_issuance_fails_closed(&mut misconfigured);
         assert_eq!(
             misconfigured.last_refusal(),
             Some(IssuanceRefusal::RootKeyMismatch)
@@ -1308,15 +1319,7 @@ mod tests {
             })
             .expect("a scheduled rotation mints a successor before the predecessor expires");
         let successor = c.active_snapshot().expect("a successor is active");
-        let verify = |epochs: &[&str]| {
-            verify_minted(
-                successor.credential(),
-                successor.delegated_kid(),
-                epochs,
-                rotated_at,
-                &root_key(),
-            )
-        };
+        let verify = |epochs: &[&str]| verify_minted(&successor, epochs, rotated_at, &root_key());
         assert_eq!(
             verify(&["epoch-1"]).expect_err("the revoked epoch must not be minted again"),
             HttpProfileError::DelegationTrustEpochStale
