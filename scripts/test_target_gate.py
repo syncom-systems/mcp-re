@@ -35,7 +35,9 @@ import json
 import re
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools" / "verification"))
 
@@ -82,34 +84,63 @@ def root_modules(root: Path, row: dict) -> set[str]:
     return {d.name for d in read_declarations(path) if not d.enclosing}
 
 
+class Segment(NamedTuple):
+    """One executed segment of a lane command, and where it was read from."""
+
+    where: str
+    block: str
+
+
+def _label_failures(root: Path, targets: dict[str, dict], label: str, segment: Segment) -> list[str]:
+    row = targets.get(label)
+    if row is None or row["kind"] not in TEST_KINDS:
+        return [
+            f"{segment.where}: `{label}` is not a test target of the build "
+            f"graph — it was renamed, merged or is not a test; repoint the lane"
+        ]
+    modules = root_modules(root, row)
+    return [
+        f"{segment.where}: filter `{module}::` names no module in "
+        f"`{label}` ({row['root']}) — libtest would select ZERO "
+        f"tests and exit 0"
+        for module in MODULE_FILTER.findall(segment.block)
+        if module not in modules
+    ]
+
+
+def _block_failures(
+    root: Path, targets: dict[str, dict], segment: Segment
+) -> tuple[list[str], int]:
+    """The failures of one executed segment, and how many labels it named."""
+    if not BAZEL_TEST.search(segment.block):
+        return [], 0
+    labels = [lbl for lbl in LABEL.findall(segment.block) if not lbl.startswith("//...")]
+    failures: list[str] = []
+    for label in labels:
+        failures += _label_failures(root, targets, label, segment)
+    return failures, len(labels)
+
+
+def _scanned_files(root: Path) -> Iterator[Path]:
+    for pattern in SCAN_GLOBS:
+        yield from sorted(root.glob(pattern))
+
+
+def _segments(root: Path) -> Iterator[Segment]:
+    for path in _scanned_files(root):
+        for command in commands(path):
+            where = f"{path.relative_to(root)}:{command.line}"
+            for block in command.executed_segments():
+                yield Segment(where, block)
+
+
 def check(root: Path, targets: dict[str, dict]) -> tuple[list[str], int]:
     failures: list[str] = []
     named = 0
-    for pattern in SCAN_GLOBS:
-        for path in sorted(root.glob(pattern)):
-            rel = path.relative_to(root)
-            for command, block in ((c, seg) for c in commands(path) for seg in c.executed_segments()):
-                number = command.line
-                if not BAZEL_TEST.search(block):
-                    continue
-                labels = [lbl for lbl in LABEL.findall(block) if not lbl.startswith("//...")]
-                for label in labels:
-                    named += 1
-                    row = targets.get(label)
-                    if row is None or row["kind"] not in TEST_KINDS:
-                        failures.append(
-                            f"{rel}:{number}: `{label}` is not a test target of the build "
-                            f"graph — it was renamed, merged or is not a test; repoint the lane"
-                        )
-                        continue
-                    modules = root_modules(root, row)
-                    for module in MODULE_FILTER.findall(block):
-                        if module not in modules:
-                            failures.append(
-                                f"{rel}:{number}: filter `{module}::` names no module in "
-                                f"`{label}` ({row['root']}) — libtest would select ZERO "
-                                f"tests and exit 0"
-                            )
+    for segment in _segments(root):
+        found, count = _block_failures(root, targets, segment)
+        failures += found
+        named += count
     return failures, named
 
 
@@ -120,105 +151,116 @@ def _step(run: str) -> str:
     return "jobs:\n  a:\n    steps:\n      - " + "\n".join(lines) + "\n"
 
 
+SELFTEST_CASES = [
+    ("a named target that exists", "run: bazel test //pkg:real_test\n", ""),
+    ("a named target that does not exist", "run: bazel test //pkg:ghost_test\n", "not a test target"),
+    ("a library is not a test target", "run: bazel test //pkg:a_library\n", "not a test target"),
+    (
+        "a label split from its command across folded lines",
+        "run: >-\n          scripts/run_test_lane.sh bazel test --test_output=all\n"
+        "          //pkg:ghost_test\n",
+        "not a test target",
+    ),
+    (
+        "a label split from its command by a continuation",
+        "run: |\n          bazel test --test_output=all \\\n            //pkg:ghost_test\n",
+        "not a test target",
+    ),
+    ("a variable is not a static claim", 'run: bazel test "$BENCH"\n', ""),
+    ("a build of a missing label is not a test lane", "run: bazel build //pkg:ghost\n", ""),
+    ("the whole graph is not a label", "run: bazel test //... --test_output=errors\n", ""),
+    (
+        "a usage example in a comment is not an invocation",
+        "run: |\n          # run_test_lane.sh bazel test //pkg:ghost_test\n          true\n",
+        "",
+    ),
+    (
+        "a usage message is not an invocation",
+        '  echo "usage: $0 bazel test //pkg:target --test_arg=<module>::" >&2\n',
+        "",
+    ),
+    (
+        "a filter naming a declared module",
+        "run: bazel test //pkg:real_test --test_arg=real_mod::\n",
+        "",
+    ),
+    (
+        "an inline module is declared too",
+        "run: bazel test //pkg:real_test --test_arg=other::x\n",
+        "",
+    ),
+    (
+        "a label of a neighbouring segment is not the test lane's",
+        "run: bazel build //pkg:ghost && bazel test //pkg:real_test\n",
+        "",
+    ),
+    (
+        "a filter of a neighbouring segment is not the test lane's",
+        "run: bazel test //pkg:real_test && scripts/x.sh --test_arg=ghost_mod::\n",
+        "",
+    ),
+    (
+        "a test lane after a neighbouring segment is still read",
+        "run: true && bazel test //pkg:ghost_test\n",
+        "not a test target",
+    ),
+    (
+        "a module nested in another is not a crate-root filter",
+        "run: bazel test //pkg:real_test --test_arg=nested_only::\n",
+        "names no module",
+    ),
+    (
+        "a commented-out module is not a module",
+        "run: bazel test //pkg:real_test --test_arg=commented_out::\n",
+        "names no module",
+    ),
+    (
+        "a filter naming no module selects nothing",
+        "run: bazel test //pkg:real_test --test_arg=ghost_mod::\n",
+        "names no module",
+    ),
+]
+
+
+def _selftest_tree(root: Path) -> dict[str, dict]:
+    """A crate root with one real module, one nested and one commented out, and the target
+    table naming a test and a library."""
+    (root / "pkg" / "tests").mkdir(parents=True)
+    (root / "pkg" / "tests" / "main.rs").write_text(
+        "mod real_mod;\npub mod other {\n    mod nested_only;\n}\n// mod commented_out;\n"
+    )
+    (root / ".github" / "workflows").mkdir(parents=True)
+    (root / "scripts").mkdir()
+    return {
+        "//pkg:real_test": {"kind": "rust_test", "root": "pkg/tests/main.rs"},
+        "//pkg:a_library": {"kind": "rust_library", "root": "pkg/src/lib.rs"},
+    }
+
+
+def _selftest_case(root: Path, targets: dict[str, dict], case: tuple[str, str, str]) -> bool:
+    label, content, expected = case
+    workflows = root / ".github" / "workflows"
+    # A case is a step's `run:` value, or a shell script when it is a usage line.
+    if content.startswith("  echo"):
+        (workflows / "ci.yml").write_text("jobs: {}\n", encoding="utf-8")
+        (root / "scripts" / "lane.sh").write_text(content, encoding="utf-8")
+    else:
+        (root / "scripts" / "lane.sh").write_text("", encoding="utf-8")
+        (workflows / "ci.yml").write_text(_step(content), encoding="utf-8")
+    failures = check(root, targets)[0]
+    ok = not failures if not expected else any(expected in f for f in failures)
+    print(f"  {'ok  ' if ok else 'FAIL'}  {label}")
+    if not ok:
+        print(f"        got {failures}")
+    return ok
+
+
 def selftest() -> int:
-    failed = False
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        (root / "pkg" / "tests").mkdir(parents=True)
-        (root / "pkg" / "tests" / "main.rs").write_text(
-            "mod real_mod;\npub mod other {\n    mod nested_only;\n}\n// mod commented_out;\n"
-        )
-        targets = {
-            "//pkg:real_test": {"kind": "rust_test", "root": "pkg/tests/main.rs"},
-            "//pkg:a_library": {"kind": "rust_library", "root": "pkg/src/lib.rs"},
-        }
-        cases = [
-            ("a named target that exists", "run: bazel test //pkg:real_test\n", ""),
-            ("a named target that does not exist", "run: bazel test //pkg:ghost_test\n", "not a test target"),
-            ("a library is not a test target", "run: bazel test //pkg:a_library\n", "not a test target"),
-            (
-                "a label split from its command across folded lines",
-                "run: >-\n          scripts/run_test_lane.sh bazel test --test_output=all\n"
-                "          //pkg:ghost_test\n",
-                "not a test target",
-            ),
-            (
-                "a label split from its command by a continuation",
-                "run: |\n          bazel test --test_output=all \\\n            //pkg:ghost_test\n",
-                "not a test target",
-            ),
-            ("a variable is not a static claim", 'run: bazel test "$BENCH"\n', ""),
-            ("a build of a missing label is not a test lane", "run: bazel build //pkg:ghost\n", ""),
-            ("the whole graph is not a label", "run: bazel test //... --test_output=errors\n", ""),
-            (
-                "a usage example in a comment is not an invocation",
-                "run: |\n          # run_test_lane.sh bazel test //pkg:ghost_test\n          true\n",
-                "",
-            ),
-            (
-                "a usage message is not an invocation",
-                '  echo "usage: $0 bazel test //pkg:target --test_arg=<module>::" >&2\n',
-                "",
-            ),
-            (
-                "a filter naming a declared module",
-                "run: bazel test //pkg:real_test --test_arg=real_mod::\n",
-                "",
-            ),
-            (
-                "an inline module is declared too",
-                "run: bazel test //pkg:real_test --test_arg=other::x\n",
-                "",
-            ),
-            (
-                "a label of a neighbouring segment is not the test lane's",
-                "run: bazel build //pkg:ghost && bazel test //pkg:real_test\n",
-                "",
-            ),
-            (
-                "a filter of a neighbouring segment is not the test lane's",
-                "run: bazel test //pkg:real_test && scripts/x.sh --test_arg=ghost_mod::\n",
-                "",
-            ),
-            (
-                "a test lane after a neighbouring segment is still read",
-                "run: true && bazel test //pkg:ghost_test\n",
-                "not a test target",
-            ),
-            (
-                "a module nested in another is not a crate-root filter",
-                "run: bazel test //pkg:real_test --test_arg=nested_only::\n",
-                "names no module",
-            ),
-            (
-                "a commented-out module is not a module",
-                "run: bazel test //pkg:real_test --test_arg=commented_out::\n",
-                "names no module",
-            ),
-            (
-                "a filter naming no module selects nothing",
-                "run: bazel test //pkg:real_test --test_arg=ghost_mod::\n",
-                "names no module",
-            ),
-        ]
-        workflows = root / ".github" / "workflows"
-        workflows.mkdir(parents=True)
-        (root / "scripts").mkdir()
-        for label, content, expected in cases:
-            # A case is a step's `run:` value, or a shell script when it is a usage line.
-            if content.startswith("  echo"):
-                (workflows / "ci.yml").write_text("jobs: {}\n", encoding="utf-8")
-                (root / "scripts" / "lane.sh").write_text(content, encoding="utf-8")
-            else:
-                (root / "scripts" / "lane.sh").write_text("", encoding="utf-8")
-                (workflows / "ci.yml").write_text(_step(content), encoding="utf-8")
-            failures = check(root, targets)[0]
-            ok = not failures if not expected else any(expected in f for f in failures)
-            print(f"  {'ok  ' if ok else 'FAIL'}  {label}")
-            if not ok:
-                failed = True
-                print(f"        got {failures}")
-    if failed:
+        targets = _selftest_tree(root)
+        results = [_selftest_case(root, targets, case) for case in SELFTEST_CASES]
+    if not all(results):
         print("test-target gate: SELFTEST FAILED")
         return 1
     print("test-target gate: selftest passed")
