@@ -43,6 +43,7 @@ use super::params::check_params;
 use super::sf_dictionary::member_value;
 use super::signature::signature_value_b64url;
 use super::signature::verify_under;
+use super::signature::SignatureOver;
 use super::signature::SignedMessage;
 use super::signature_input::parse_signature_input;
 use super::transport_headers::reject_mcp_method_divergence;
@@ -115,8 +116,7 @@ pub(crate) fn floor_request<R: Into<ResolverOutcome>>(
     let sig = signature_value_b64url(&request.headers, "signature", REQUEST_LABEL)?;
     verify_under(
         algorithm,
-        &base,
-        &sig,
+        SignatureOver::new(&base, &sig),
         &resolved_actor.verification_key,
         SignedMessage::Request,
     )?;

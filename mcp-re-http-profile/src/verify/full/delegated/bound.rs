@@ -39,6 +39,7 @@ use crate::verify::floor::params::check_params;
 use crate::verify::floor::sf_dictionary::member_value;
 use crate::verify::floor::signature::signature_value_b64url;
 use crate::verify::floor::signature::verify_under;
+use crate::verify::floor::signature::SignatureOver;
 use crate::verify::floor::signature::SignedMessage;
 use crate::verify::floor::signature_input::parse_signature_input;
 
@@ -125,8 +126,7 @@ pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
     verify_under(
         algorithm,
-        &base,
-        &sig,
+        SignatureOver::new(&base, &sig),
         &verified.delegated_key,
         SignedMessage::Response,
     )

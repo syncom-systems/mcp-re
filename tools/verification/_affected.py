@@ -59,17 +59,24 @@ def declares(declared: str, changed: str) -> bool:
     return changed == declared or changed.startswith(declared.rstrip("/") + "/")
 
 
+def _consumer_index(edges: list[dict]) -> dict[str, list[str]]:
+    """Each unit's consumers over a prerequisite edge."""
+    consumers: dict[str, list[str]] = {}
+    for edge in edges:
+        if edge.get("kind") in PREREQUISITE_KINDS:
+            consumers.setdefault(edge["from"], []).append(edge["to"])
+    return consumers
+
+
 def consumer_closure(units: set[str], edges: list[dict]) -> set[str]:
     """`units` plus every unit that consumes one of them over a prerequisite edge."""
+    consumers = _consumer_index(edges)
     closure = set(units)
-    grew = True
-    while grew:
-        grew = False
-        for edge in edges:
-            if edge.get("kind") in PREREQUISITE_KINDS and edge["from"] in closure:
-                if edge["to"] not in closure:
-                    closure.add(edge["to"])
-                    grew = True
+    frontier = list(units)
+    while frontier:
+        unseen = [c for c in consumers.get(frontier.pop(), ()) if c not in closure]
+        closure.update(unseen)
+        frontier.extend(unseen)
     return closure
 
 
@@ -85,6 +92,16 @@ def platform_change(paths) -> str | None:
     return None
 
 
+def _reaches_every_unit(changed: set[str]) -> bool:
+    """Whether a changed file is a workspace build input, the instrument or a registry."""
+    return any(c in WORKSPACE_BUILD_INPUTS or c.startswith(INSTRUMENT + REGISTRIES) for c in changed)
+
+
+def _declared_by(unit: dict, changed: set[str]) -> bool:
+    """Whether any of the unit's declared `paths` names a changed file."""
+    return any(declares(declared, c) for declared in unit.get("paths", []) for c in changed)
+
+
 def by_paths(units: list[dict], edges: list[dict], changed: set[str]) -> set[str]:
     """DECLARED REACH: the unit ids whose evidence this change can invalidate.
 
@@ -93,13 +110,7 @@ def by_paths(units: list[dict], edges: list[dict], changed: set[str]) -> set[str
     and the registries change what every measurement MEANS; and a prerequisite edge carries a
     producer's invalidation forward to its consumers.
     """
-    if any(c in WORKSPACE_BUILD_INPUTS for c in changed):
+    if _reaches_every_unit(changed):
         return {u["id"] for u in units}
-    if any(c.startswith(INSTRUMENT + REGISTRIES) for c in changed):
-        return {u["id"] for u in units}
-    hit = {
-        unit["id"]
-        for unit in units
-        if any(declares(declared, c) for declared in unit.get("paths", []) for c in changed)
-    }
+    hit = {unit["id"] for unit in units if _declared_by(unit, changed)}
     return consumer_closure(hit, edges)

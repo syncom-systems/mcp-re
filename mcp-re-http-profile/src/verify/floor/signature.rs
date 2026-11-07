@@ -35,7 +35,26 @@ pub(crate) enum SignedMessage {
     Response,
 }
 
-/// Verify `sig` over `base` under the RESOLVED algorithm.
+/// A signature and the signature base it claims to cover.
+///
+/// Verifying one without the other is meaningless, so they travel as one value and a caller
+/// cannot pair the base of one message with the signature of another through two operands.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SignatureOver<'a> {
+    /// The signature base the signature is checked over.
+    base: &'a [u8],
+    /// The signature, base64url as the core verifier consumes it.
+    sig: &'a str,
+}
+
+impl<'a> SignatureOver<'a> {
+    /// `sig`, the base64url signature, claimed over the signature base `base`.
+    pub(crate) fn new(base: &'a [u8], sig: &'a str) -> Self {
+        Self { base, sig }
+    }
+}
+
+/// Verify the signature in `over` under the RESOLVED algorithm.
 ///
 /// The match is exhaustive over [`ProfileAlgorithm`], which is the point: a new
 /// algorithm variant does not compile until its verifier is wired here. Before
@@ -46,8 +65,7 @@ pub(crate) enum SignedMessage {
 /// verifier-per-algorithm coupling explicit rather than assumed.
 pub(crate) fn verify_under(
     algorithm: ProfileAlgorithm,
-    base: &[u8],
-    sig: &str,
+    over: SignatureOver<'_>,
     key: &mcp_re_core::VerificationKey,
     message: SignedMessage,
 ) -> Result<(), HttpProfileError> {
@@ -63,7 +81,7 @@ pub(crate) fn verify_under(
     };
     match algorithm {
         ProfileAlgorithm::Ed25519 => {
-            verify_ed25519_with(base, sig, key, on_fail).map_err(|_| failure)
+            verify_ed25519_with(over.base, over.sig, key, on_fail).map_err(|_| failure)
         }
     }
 }

@@ -3,10 +3,20 @@
 
 #[cfg(feature = "pkcs11_keysource")]
 use super::pin::read_pkcs11_pin;
-use super::ChannelMaterial;
-use crate::capability_materialization::key_file_custody::AdmittedKeyFiles;
-use crate::config_state::ChannelKeyMaterial;
+use super::Opening;
 use crate::key_source::{KeyError, KeySource};
+
+/// The token the custody names: its module, the file holding the User PIN, and the labels
+/// of the signing key's token and object.
+///
+/// Read only by the build that has the backend; the default build refuses before looking.
+#[cfg_attr(not(feature = "pkcs11_keysource"), allow(dead_code))]
+pub(super) struct Token<'a> {
+    pub(super) module: &'a str,
+    pub(super) pin_file: &'a str,
+    pub(super) token_label: &'a str,
+    pub(super) key_label: &'a str,
+}
 
 /// Open a source whose signing key lives on a token.
 ///
@@ -14,19 +24,19 @@ use crate::key_source::{KeyError, KeySource};
 /// material that went missing.
 #[cfg(feature = "pkcs11_keysource")]
 pub(super) fn open(
-    module: &str,
-    admitted: &mut AdmittedKeyFiles<'_>,
-    pin_file: &str,
-    token_label: &str,
-    key_label: &str,
-    channel: ChannelKeyMaterial<'_>,
-    material: ChannelMaterial<'_>,
+    opening: Opening<'_, '_>,
+    token: Token<'_>,
 ) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
+    let Opening {
+        admitted,
+        channel,
+        material,
+    } = opening;
     // Read the User PIN here, at the one point it is used, so it never lands in
     // `DeploymentRequest` (which is `Debug` and freely cloned); the token keeps its own
     // scrubbed copy for re-login. The PIN comes from the file the custody check admitted, which held
     // it to the key-file floor: it unlocks the token holding the signing keys.
-    let pin = read_pkcs11_pin(admitted.take(pin_file)?)?;
+    let pin = read_pkcs11_pin(admitted.take(token.pin_file)?)?;
     let tls_key = super::exported_tls_key(admitted, material)?;
     let tls =
         crate::key_source::FileKeySource::tls_only(material.cert, tls_key, material.client_ca)?;
@@ -34,10 +44,10 @@ pub(super) fn open(
     // `open` builds the delegated handshake signer and the proxy never reads an exported
     // key from disk — a custody the request cannot even state alongside this one.
     Ok(Box::new(crate::pkcs11_keysource::Pkcs11KeySource::open(
-        module,
+        token.module,
         pin.expose(),
-        token_label,
-        key_label,
+        token.token_label,
+        token.key_label,
         tls,
         channel.pkcs11_key_label(),
     )?))
@@ -48,13 +58,8 @@ pub(super) fn open(
 /// token-backed key is built.
 #[cfg(not(feature = "pkcs11_keysource"))]
 pub(super) fn open(
-    _module: &str,
-    _admitted: &mut AdmittedKeyFiles<'_>,
-    _pin_file: &str,
-    _token_label: &str,
-    _key_label: &str,
-    _channel: ChannelKeyMaterial<'_>,
-    _material: ChannelMaterial<'_>,
+    _opening: Opening<'_, '_>,
+    _token: Token<'_>,
 ) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
     Err(KeyError::NotFound(
         "pkcs11 key source requires the pkcs11_keysource feature (build with \
