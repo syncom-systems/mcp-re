@@ -37,496 +37,27 @@
 //!   bazel run //mcp-re-conformance:scitt_vectors_test -- \
 //!     write_scitt_fixtures --ignored
 
-use std::path::PathBuf;
+#[path = "scitt_vectors_test/bytes.rs"]
+mod bytes;
+#[path = "scitt_vectors_test/manifest.rs"]
+mod manifest;
+#[path = "scitt_vectors_test/material.rs"]
+mod material;
+#[path = "scitt_vectors_test/vectors.rs"]
+mod vectors;
+#[path = "scitt_vectors_test/verdict.rs"]
+mod verdict;
 
+use manifest::committed_fixtures;
+use manifest::corpus_digest;
+use manifest::hex_sha256;
+use manifest::load_manifest;
+use manifest::Manifest;
+use manifest::ManifestEntry;
+use material::vectors_root;
 use mcp_re_core::b64url_decode;
-use mcp_re_core::b64url_encode;
-use mcp_re_core::SigningKey;
-use mcp_re_core::VerificationKey;
-use mcp_re_http_profile::chain::ChainLabel;
-use mcp_re_http_profile::chain::ChainReconstruction;
-use mcp_re_http_profile::chain::HopEvidence;
-use mcp_re_http_profile::chain::IncompleteReason;
-use mcp_re_http_profile::scitt::issue_signed_statement;
-use mcp_re_http_profile::scitt::verify_receipt_offline;
-use mcp_re_http_profile::scitt::CoseVerificationKey;
-use mcp_re_http_profile::scitt::EvidenceCommitment;
-use mcp_re_http_profile::scitt::PrototypeTransparencyService;
-use mcp_re_http_profile::scitt::Receipt;
-use mcp_re_http_profile::scitt::ReceiptPositionProfile;
-use mcp_re_http_profile::scitt::ResolvedTransparencyService;
-use mcp_re_http_profile::scitt::SignedStatement;
-use mcp_re_http_profile::scitt::StatementLeafProfile;
-use mcp_re_http_profile::HttpProfileError;
-use mcp_re_http_profile::RequestRoleEvidence;
-use mcp_re_http_profile::ResponseRoleEvidence;
-use serde::Deserialize;
-use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
-
-const ISSUER_KID: &str = "scitt-issuer-1";
-const TS_KID: &str = "scitt-ts-1";
-const ISSUED_AT: i64 = 1_700_000_000;
-
-fn issuer() -> SigningKey {
-    SigningKey::from_seed_bytes(&[55u8; 32])
-}
-fn ts() -> SigningKey {
-    SigningKey::from_seed_bytes(&[66u8; 32])
-}
-/// A real Ed25519 key from a different seed — for the untrusted-issuer vector. A
-/// MALFORMED key would be refused as bad configuration and would prove nothing about
-/// the trust decision.
-fn stranger() -> SigningKey {
-    SigningKey::from_seed_bytes(&[77u8; 32])
-}
-
-/// The corpus directory: the runfiles copy under Bazel, the source tree otherwise.
-///
-/// Bazel runs tests in a sandbox where `CARGO_MANIFEST_DIR` is not the source tree, so
-/// the manifest's runfile path is passed in. Mirrors `delegation_vectors_test`.
-fn vectors_root() -> PathBuf {
-    if let Ok(rel) = std::env::var("MCP_RE_SCITT_VECTORS_MANIFEST") {
-        for key in ["TEST_SRCDIR", "RUNFILES_DIR"] {
-            if let Ok(root) = std::env::var(key) {
-                let candidate = std::path::Path::new(&root).join(&rel);
-                if candidate.exists() {
-                    return candidate.parent().expect("manifest parent").to_path_buf();
-                }
-            }
-        }
-        let candidate = PathBuf::from(&rel);
-        if candidate.exists() {
-            return candidate.parent().expect("manifest parent").to_path_buf();
-        }
-        panic!("MCP_RE_SCITT_VECTORS_MANIFEST set but runfile not found (rel={rel})");
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("vectors")
-        .join("scitt")
-}
-
-/// One frozen vector: the exact wire octets, and the verdict a conforming verifier
-/// must reach.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Fixture {
-    name: String,
-    /// What the vector is for, in one line — a corpus a reader cannot interpret is a
-    /// corpus that gets regenerated instead of understood.
-    description: String,
-    /// The tagged `COSE_Sign1` Signed Statement, base64url.
-    statement_cose_b64url: String,
-    /// The tagged `COSE_Sign1` Receipt, base64url.
-    receipt_cose_b64url: String,
-    /// The issuer public key a verifier resolves `issuer_kid` to, base64url.
-    issuer_pubkey_b64url: String,
-    /// The transparency service public key, base64url.
-    ts_pubkey_b64url: String,
-    /// `verify_ok`, or the frozen `mcp-re.*` wire code of the expected refusal.
-    expect: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ManifestEntry {
-    file: String,
-    sha256: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Manifest {
-    schema: String,
-    corpus_digest: String,
-    fixtures: Vec<ManifestEntry>,
-}
-
-fn hex_sha256(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
-}
-
-/// The corpus digest: SHA-256 over the sorted `file sha256` lines, so the pin is
-/// independent of the order the writer happened to emit them in.
-fn corpus_digest(entries: &[ManifestEntry]) -> String {
-    let mut lines: Vec<String> = entries
-        .iter()
-        .map(|e| format!("{} {}", e.file, e.sha256))
-        .collect();
-    lines.sort();
-    hex_sha256(lines.join("\n").as_bytes())
-}
-
-fn reconstruction(label: ChainLabel, hops: usize) -> ChainReconstruction {
-    ChainReconstruction::with_authored_submission_identity(
-        label,
-        (0..hops)
-            .map(|i| HopEvidence {
-                request_evidence: RequestRoleEvidence::from_signature_base(
-                    format!("req-{i}").as_bytes(),
-                ),
-                response_evidence: ResponseRoleEvidence::from_signature_base(
-                    format!("rsp-{i}").as_bytes(),
-                ),
-            })
-            .collect(),
-        // A synthetic corpus fixture: the vectors pin the encoding of a commitment, not
-        // the bytes of a real submission, so this is a stable stand-in rather than a
-        // digest of hops that do not exist here.
-        format!("corpus-submitted-{hops}"),
-    )
-}
-
-fn statement(commitment: EvidenceCommitment, key: &SigningKey) -> SignedStatement {
-    issue_signed_statement(ISSUER_KID, commitment, ISSUED_AT, |input| {
-        b64url_decode(&key.sign(input)).map_err(|_| HttpProfileError::InvalidSignature)
-    })
-    .expect("issue")
-}
-
-/// Register `statement` into a log that already holds one unrelated entry, and return
-/// its receipt.
-///
-/// The preceding entry is not decoration. A single-leaf log yields an EMPTY inclusion
-/// path, which `inclusion-path = [ + bstr ]` (RFC 9942 §5.2, Figure 3) does not admit
-/// and which exercises no folding at all — the leaf would be the root. With a sibling
-/// present, every vector pins a proof that actually has to be walked.
-fn register(statement: &SignedStatement) -> Receipt {
-    let mut svc = PrototypeTransparencyService::new(TS_KID);
-    let filler = self::statement(
-        EvidenceCommitment::from_reconstruction(
-            &reconstruction(ChainLabel::Complete, 4),
-            None,
-            None,
-        ),
-        &issuer(),
-    );
-    svc.register(&filler, sign_tree_head).expect("filler entry");
-    svc.register(statement, sign_tree_head).expect("register")
-}
-
-/// The transparency service's tree-head signer. A fn item rather than a closure so it
-/// can be handed to more than one `register` call.
-fn sign_tree_head(head: &[u8]) -> Result<Vec<u8>, HttpProfileError> {
-    b64url_decode(&ts().sign(head)).map_err(|_| HttpProfileError::InvalidSignature)
-}
-
-fn fixture(
-    name: &str,
-    description: &str,
-    statement: &SignedStatement,
-    receipt: &Receipt,
-    expect: &str,
-) -> Fixture {
-    Fixture {
-        name: name.to_owned(),
-        description: description.to_owned(),
-        statement_cose_b64url: b64url_encode(statement.to_cose()),
-        receipt_cose_b64url: b64url_encode(receipt.to_cose()),
-        issuer_pubkey_b64url: b64url_encode(&issuer().public_key().to_bytes()),
-        ts_pubkey_b64url: b64url_encode(&ts().public_key().to_bytes()),
-        expect: expect.to_owned(),
-    }
-}
-
-/// The first occurrence of `needle` in `haystack`.
-fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|w| w == needle)
-}
-
-/// The offset of the one and only occurrence of `needle`. Panics if the pattern is
-/// absent or repeated, because a corpus writer that patched the wrong copy of an
-/// ambiguous byte string would freeze a vector testing something else entirely.
-fn find_once(haystack: &[u8], needle: &[u8]) -> usize {
-    let at = find(haystack, needle).unwrap_or_else(|| panic!("pattern {needle:02x?} not found"));
-    assert!(
-        find(&haystack[at + 1..], needle).is_none(),
-        "pattern {needle:02x?} is not unique"
-    );
-    at
-}
-
-/// CBOR head of `inclusion-proof-content` for a two-leaf log proving leaf 1:
-/// `array(3), 2, 1, array(1), bstr(32)` (RFC 9942 §5.2 Figure 3).
-const PROOF_HEAD: [u8; 6] = [0x83, 0x02, 0x01, 0x81, 0x58, 0x20];
-
-/// CBOR for the protected-header entry `vds(395) => 1` — `uint16 395`, then `1`.
-const VDS_ENTRY: [u8; 4] = [0x19, 0x01, 0x8b, 0x01];
-
-/// Replace `needle` with `replacement` of the SAME length, at its unique occurrence.
-///
-/// Equal length matters for more than convenience: it keeps every surrounding CBOR
-/// length header valid, so the receipt still parses and the vector tests the check it
-/// names rather than the decoder.
-fn splice(bytes: &[u8], needle: &[u8], replacement: &[u8]) -> Vec<u8> {
-    assert_eq!(needle.len(), replacement.len(), "same-length patch");
-    let at = find_once(bytes, needle);
-    let mut out = bytes.to_vec();
-    out[at..at + needle.len()].copy_from_slice(replacement);
-    out
-}
-
-fn build_fixtures() -> Vec<Fixture> {
-    let mut out = Vec::new();
-
-    // s01 — a complete call record: the positive.
-    let complete = statement(
-        EvidenceCommitment::from_reconstruction(
-            &reconstruction(ChainLabel::Complete, 2),
-            None,
-            None,
-        ),
-        &issuer(),
-    );
-    let receipt = register(&complete);
-    out.push(fixture(
-        "s01_complete_record",
-        "A two-hop COMPLETE call record, registered and offline-verifiable: issuer \
-         COSE_Sign1 signature, RFC 9162 inclusion proof, and the service's signature \
-         over the root the proof re-derives.",
-        &complete,
-        &receipt,
-        "verify_ok",
-    ));
-
-    // s02 — an INCOMPLETE record. It verifies exactly as well as a complete one, and
-    // says so: a receipt can never make a truncated call look whole, because the
-    // label it commits to names the failing hop.
-    let incomplete = statement(
-        EvidenceCommitment::from_reconstruction(
-            &reconstruction(
-                ChainLabel::Incomplete {
-                    hop: 1,
-                    reason: IncompleteReason::MissingContinuation,
-                },
-                2,
-            ),
-            None,
-            None,
-        ),
-        &issuer(),
-    );
-    let incomplete_receipt = register(&incomplete);
-    out.push(fixture(
-        "s02_incomplete_record",
-        "An INCOMPLETE record verifies as a receipt and remains labelled incomplete. \
-         A valid receipt over a truncated chain is a correct record OF a truncated \
-         chain, not evidence the call was whole.",
-        &incomplete,
-        &incomplete_receipt,
-        "verify_ok",
-    ));
-
-    // s03 — the payload tampered in the COSE bytes, same length so the CBOR still
-    // parses and the failure is the SIGNATURE rather than a decode error.
-    let mut tampered = complete.to_cose().to_vec();
-    let at = find(&tampered, b"complete").expect("the label is in the payload");
-    tampered[at..at + 8].copy_from_slice(b"complet3");
-    out.push(Fixture {
-        name: "s03_tampered_payload".into(),
-        description: "The committed chain label rewritten in the signed payload, at \
-                      the same length so the CBOR still parses. The refusal must be \
-                      the signature's, not the decoder's."
-            .into(),
-        statement_cose_b64url: b64url_encode(&tampered),
-        ..fixture("", "", &complete, &receipt, "mcp-re.invalid_signature")
-    });
-
-    // s04 — a receipt that is genuine, for a DIFFERENT statement. This is the
-    // substitution an attacker actually has available: both artifacts verify on
-    // their own, and only the binding between them fails. A verifier that checked
-    // the two signatures without re-deriving the root from THIS statement's leaf
-    // would accept it.
-    out.push(fixture(
-        "s04_receipt_for_another_statement",
-        "A genuine receipt paired with a different genuine statement. Both signatures \
-         verify; the inclusion proof does not re-derive the signed root from this \
-         statement's leaf. Checking signatures alone would accept the swap.",
-        &complete,
-        &incomplete_receipt,
-        "mcp-re.request_binding_mismatch",
-    ));
-
-    // s05 — a statement naming an issuer the verifier does not resolve. The
-    // signature over it is perfectly valid; nobody trusted the signer.
-    let foreign = issue_signed_statement(
-        "scitt-issuer-rogue",
-        EvidenceCommitment::from_reconstruction(
-            &reconstruction(ChainLabel::Complete, 1),
-            None,
-            None,
-        ),
-        ISSUED_AT,
-        |input| {
-            b64url_decode(&stranger().sign(input)).map_err(|_| HttpProfileError::InvalidSignature)
-        },
-    )
-    .expect("issue");
-    let foreign_receipt = register(&foreign);
-    out.push(fixture(
-        "s05_untrusted_issuer",
-        "A statement naming an issuer the verifier does not resolve, signed by a REAL \
-         Ed25519 key. The signature is valid; nobody trusted the signer. A kid never \
-         introduces trust.",
-        &foreign,
-        &foreign_receipt,
-        "mcp-re.actor_binding_failed",
-    ));
-
-    // s06 — a sibling hash altered inside the inclusion path. The path rides in the
-    // UNPROTECTED header, so this tamper leaves the service's signature over the root
-    // perfectly valid: the ONLY thing that catches it is re-deriving the root from
-    // this statement's leaf. A verifier that trusted a valid receipt signature and
-    // skipped the fold would accept a forged path.
-    let forged_path = {
-        let at = find_once(receipt.to_cose(), &PROOF_HEAD) + PROOF_HEAD.len();
-        let mut bytes = receipt.to_cose().to_vec();
-        bytes[at + 31] ^= 0x01;
-        bytes
-    };
-    out.push(Fixture {
-        name: "s06_forged_inclusion_path".into(),
-        description: "One sibling hash flipped inside the inclusion path. The proof is \
-                      unprotected, so the service's signature over the root still \
-                      verifies; only re-deriving the root from this leaf refuses it."
-            .into(),
-        receipt_cose_b64url: b64url_encode(&forged_path),
-        ..fixture(
-            "",
-            "",
-            &complete,
-            &receipt,
-            "mcp-re.request_binding_mismatch",
-        )
-    });
-
-    // s07 — a verifiable data structure this verifier does not implement. RFC 9942
-    // registers only RFC9162_SHA256 (1); anything else names a proof format whose
-    // walk is undefined here. The refusal must come from the structure check, BEFORE
-    // any signature is verified — walking an unknown proof format and only then asking
-    // about signatures would be the wrong order.
-    out.push(Fixture {
-        name: "s07_unsupported_vds".into(),
-        description: "The vds in the protected header names a structure this verifier \
-                      does not implement. It must be refused for that reason, at parse, \
-                      before any signature is checked — never walked as if it were \
-                      RFC9162_SHA256."
-            .into(),
-        receipt_cose_b64url: b64url_encode(&splice(
-            receipt.to_cose(),
-            &VDS_ENTRY,
-            &[0x19, 0x01, 0x8b, 0x02],
-        )),
-        ..fixture("", "", &complete, &receipt, "mcp-re.malformed_envelope")
-    });
-
-    // s08 — a leaf index at the tree size. RFC 9942 §5.2, quoting RFC 9162: fail the
-    // proof. The index is in the unprotected proof, so the tree-head signature stays
-    // valid; a tree of size 2 simply has no leaf 2, and arithmetic settles it before
-    // any hashing.
-    out.push(Fixture {
-        name: "s08_leaf_index_outside_tree".into(),
-        description: "leaf-index equal to tree-size. RFC 9942 §5.2 requires failing \
-                      such a proof; the signature over the tree head is untouched and \
-                      still valid, so only the bounds check refuses it."
-            .into(),
-        receipt_cose_b64url: b64url_encode(&splice(
-            receipt.to_cose(),
-            &PROOF_HEAD,
-            &[0x83, 0x02, 0x02, 0x81, 0x58, 0x20],
-        )),
-        ..fixture("", "", &complete, &receipt, "mcp-re.malformed_envelope")
-    });
-
-    // s09 — a THREE-leaf log, target on the short right edge. The one shape that
-    // separates RFC 9162 from the duplicate-last-node tree: for every power-of-two
-    // size the two constructions agree, and both this corpus and both interop corpora
-    // were recorded at size 2, so the divergence was invisible everywhere. Leaf 2 of a
-    // 3-leaf tree is promoted past a level rather than paired, which an index-bit fold
-    // gets wrong in the operand order — so this vector fails on any verifier that is
-    // not running §2.1.3.2's fn/sn walk.
-    let (right_edge, right_edge_receipt) = {
-        let mut svc = PrototypeTransparencyService::new(TS_KID);
-        for i in 0..2 {
-            let filler = statement(
-                EvidenceCommitment::from_reconstruction(
-                    &reconstruction(ChainLabel::Complete, 4 + i),
-                    None,
-                    None,
-                ),
-                &issuer(),
-            );
-            svc.register(&filler, sign_tree_head).expect("filler entry");
-        }
-        let target = statement(
-            EvidenceCommitment::from_reconstruction(
-                &reconstruction(ChainLabel::Complete, 3),
-                None,
-                None,
-            ),
-            &issuer(),
-        );
-        let receipt = svc.register(&target, sign_tree_head).expect("register");
-        assert_eq!(receipt.tree_size(), 3, "a non-power-of-two log");
-        assert_eq!(receipt.leaf_index(), 2, "the right-edge leaf");
-        (target, receipt)
-    };
-    out.push(fixture(
-        "s09_right_edge_leaf_of_a_three_leaf_log",
-        "Leaf 2 of a THREE-leaf log — the right-edge promotion case of RFC 9162          §2.1.3.2. Every power-of-two tree size hides the difference between the RFC          tree and a duplicate-last-node one; this is the smallest size that does not.",
-        &right_edge,
-        &right_edge_receipt,
-        "verify_ok",
-    ));
-
-    out
-}
-
-/// Resolve `kid` to the Ed25519 key this corpus pins. The corpus is Ed25519 on both
-/// sides; ES256 receipt verification is exercised by the unit tests, which can mint a
-/// P-256 key pair without freezing one into the vectors.
-fn resolve(kid: &str, expected: &str, key: VerificationKey) -> Option<CoseVerificationKey> {
-    (kid == expected).then(|| key.into())
-}
-
-/// Run one fixture exactly as a third party would: from the frozen octets alone.
-fn verdict(f: &Fixture) -> String {
-    let statement = match SignedStatement::from_cose(
-        &b64url_decode(&f.statement_cose_b64url).expect("statement b64url"),
-    ) {
-        Ok(s) => s,
-        Err(e) => return e.wire_code().to_owned(),
-    };
-    let receipt =
-        match Receipt::from_cose(&b64url_decode(&f.receipt_cose_b64url).expect("receipt b64url")) {
-            Ok(r) => r,
-            Err(e) => return e.wire_code().to_owned(),
-        };
-    let issuer_key = VerificationKey::from_b64url(&f.issuer_pubkey_b64url).expect("issuer key");
-    let ts_key = VerificationKey::from_b64url(&f.ts_pubkey_b64url).expect("ts key");
-    match verify_receipt_offline(
-        &statement,
-        &receipt,
-        |kid| resolve(kid, ISSUER_KID, issuer_key.clone()),
-        |kid| {
-            resolve(kid, TS_KID, ts_key.clone()).map(|key| {
-                // `stated`, not a pin: this corpus is produced by the in-process prototype
-                // log, so there is no operator-reviewed document these profiles came from.
-                // The log hashes the statement's own octets as the entry.
-                ResolvedTransparencyService::stated(
-                    key,
-                    StatementLeafProfile::StatementBytes,
-                    ReceiptPositionProfile::Bound,
-                )
-            })
-        },
-    ) {
-        Ok(()) => "verify_ok".to_owned(),
-        Err(e) => e.wire_code().to_owned(),
-    }
-}
+use vectors::build_fixtures;
+use verdict::verdict;
 
 // ---------------------------------------------------------------------------
 // Writer — run explicitly with --ignored.
@@ -566,28 +97,6 @@ fn write_scitt_fixtures() {
 // bytes on disk, never from a freshly regenerated opinion.
 // ---------------------------------------------------------------------------
 
-fn committed_fixtures() -> Vec<Fixture> {
-    let root = vectors_root();
-    let manifest: Manifest = serde_json::from_slice(
-        &std::fs::read(root.join("manifest.json")).expect("the scitt corpus is committed"),
-    )
-    .expect("manifest parses");
-    manifest
-        .fixtures
-        .iter()
-        .map(|e| {
-            let bytes = std::fs::read(root.join(&e.file)).expect("fixture is committed");
-            assert_eq!(
-                hex_sha256(&bytes),
-                e.sha256,
-                "{}: the committed bytes do not match the manifest pin",
-                e.file
-            );
-            serde_json::from_slice(&bytes).expect("fixture parses")
-        })
-        .collect()
-}
-
 #[test]
 fn every_committed_vector_reaches_its_expected_verdict() {
     let fixtures = committed_fixtures();
@@ -601,15 +110,25 @@ fn every_committed_vector_reaches_its_expected_verdict() {
 fn the_corpus_digest_pins_the_whole_set() {
     // A per-file hash catches an edited vector; the corpus digest catches a DELETED
     // one, which per-file hashes cannot see.
-    let root = vectors_root();
-    let manifest: Manifest =
-        serde_json::from_slice(&std::fs::read(root.join("manifest.json")).expect("manifest"))
-            .expect("manifest parses");
+    let manifest = load_manifest();
     assert_eq!(
         corpus_digest(&manifest.fixtures),
         manifest.corpus_digest,
         "the corpus digest does not cover the committed fixture set"
     );
+}
+
+/// Whether `name` is a vector this writer owns, and so must be pinned in the manifest.
+///
+/// `external_kat.json` is the external → us corpus, built by
+/// `tools/scitt_cross_verify.py` rather than by this writer, and pinned by the
+/// CI drift guard that regenerates it and diffs. It is deliberately not in this
+/// manifest: a corpus MCP-RE produced and a corpus MCP-RE must merely accept are
+/// different artifacts, and freezing the second here would let our own encoder
+/// define what "external" means.
+fn is_writer_vector(name: &str) -> bool {
+    let not_a_vector = name == "manifest.json" || name == "external_kat.json";
+    name.ends_with(".json") && !not_a_vector
 }
 
 #[test]
@@ -619,20 +138,12 @@ fn the_corpus_directory_holds_no_unpinned_vector() {
     // out of date invisibly — and a reader who finds it in the corpus has no way to
     // tell it is stale. The corpus is exactly what the manifest lists.
     let root = vectors_root();
-    let manifest: Manifest =
-        serde_json::from_slice(&std::fs::read(root.join("manifest.json")).expect("manifest"))
-            .expect("manifest parses");
+    let manifest = load_manifest();
     let pinned: Vec<&str> = manifest.fixtures.iter().map(|e| e.file.as_str()).collect();
     for entry in std::fs::read_dir(&root).expect("corpus dir") {
         let name = entry.expect("dir entry").file_name();
         let name = name.to_string_lossy();
-        // `external_kat.json` is the external → us corpus, built by
-        // `tools/scitt_cross_verify.py` rather than by this writer, and pinned by the
-        // CI drift guard that regenerates it and diffs. It is deliberately not in this
-        // manifest: a corpus MCP-RE produced and a corpus MCP-RE must merely accept are
-        // different artifacts, and freezing the second here would let our own encoder
-        // define what "external" means.
-        if name == "manifest.json" || name == "external_kat.json" || !name.ends_with(".json") {
+        if !is_writer_vector(&name) {
             continue;
         }
         assert!(

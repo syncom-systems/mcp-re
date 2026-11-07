@@ -6290,10 +6290,10 @@ theorem = "THM-0083"
 conjunct = "a reply correlates to the outstanding id by value AND by type, with no null-id correlation"
 path = "mcp-re-http-profile/src/envelope/response.rs"
 anchor = """
-        Some(id) if id == expected => {}
+        Some(id) if id == expected => Ok(()),
 """
 weakening = """
-        Some(id) if id.to_string().trim_matches('"') == expected.to_string().trim_matches('"') => {}
+        Some(id) if id.to_string().trim_matches('"') == expected.to_string().trim_matches('"') => Ok(()),
 """
 expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#envelope::response::tests::ids_correlate_by_value_and_by_type",
@@ -11308,7 +11308,7 @@ anchor = """
         statement,
         &receipt,
         |kid| (kid == issuer_kid).then(|| issuer.clone()),
-        |kid| pin.resolve(kid),
+        |kid| trust.pin.resolve(kid),
     )
     .map_err(|e| RegistrationError::ReceiptUnverified(e.wire_code().to_owned()))?;
 """
@@ -11317,7 +11317,7 @@ weakening = """
         statement,
         &receipt,
         |kid| (kid == issuer_kid).then(|| issuer.clone()),
-        |kid| pin.resolve(kid),
+        |kid| trust.pin.resolve(kid),
     );
 """
 expect_red = [
@@ -11344,15 +11344,15 @@ anchor = """
         ))
     })?;
     let ts_kid = receipt.ts_kid();
-    let lifecycle = ts_key(ts_kid).ok_or_else(|| {
+    let lifecycle = (trust.ts_key)(ts_kid).ok_or_else(|| {
         RegistrationError::ReceiptUnverified(format!(
             "the audit profile states no lifecycle for transparency-service key {ts_kid:?}"
         ))
     })?;
-    let now = clock();
+    let now = (trust.clock)();
 """
 weakening = """
-    let now = clock();
+    let now = (trust.clock)();
     let response = mechanism.register(statement.to_cose())?;
     let receipt = Receipt::from_cose(response.bytes()).map_err(|e| {
         RegistrationError::ReceiptUnverified(format!(
@@ -11361,7 +11361,7 @@ weakening = """
         ))
     })?;
     let ts_kid = receipt.ts_kid();
-    let lifecycle = ts_key(ts_kid).ok_or_else(|| {
+    let lifecycle = (trust.ts_key)(ts_kid).ok_or_else(|| {
         RegistrationError::ReceiptUnverified(format!(
             "the audit profile states no lifecycle for transparency-service key {ts_kid:?}"
         ))
@@ -11445,12 +11445,14 @@ weakening = """
 """
 also = [
   { path = "mcp-re-http-profile/src/sigbase.rs", anchor = """
-            if found.is_some() {
-                // RFC 9421 would join duplicates; this profile fails closed on
-                // duplicated covered fields (v0.11 grill B.1 exactly-once rule).
-                return Err(HttpProfileError::MissingCoveredComponent(component.name));
-            }
-""", weakening = "" },
+    matching
+        .next()
+        .is_none()
+        .then(|| value.trim_matches([' ', '\\t']).to_owned())
+""", weakening = """
+    let _ = matching.next();
+    Some(value.trim_matches([' ', '\\t']).to_owned())
+""" },
 ]
 expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#sigbase::tests::duplicated_covered_field_fails_closed",
@@ -12661,12 +12663,12 @@ at startup.
 id = "M521-proxy-the-rotation-loop-ignores-a-permanent-retirement"
 unit = "proxy.delegated_signing_credential"
 conjunct = "a permanently retired signer ends the rotation loop, and no failure is counted against it"
-path = "mcp-re-proxy/src/signing_plane/rotation.rs"
+path = "mcp-re-proxy/src/signing_plane/rotation/wait.rs"
 anchor = """
-    let stopped = || halt.requested() || signer.is_retired_permanently();
+        self.halt.requested() || self.signer.is_retired_permanently()
 """
 weakening = """
-    let stopped = || halt.requested();
+        self.halt.requested()
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#signing_plane::rotation::tests::a_permanently_retired_signer_ends_the_loop_without_counting_failures",
