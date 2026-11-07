@@ -189,9 +189,7 @@ impl KmsHttpClient for UreqKmsClient {
     fn post_kms(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
         let presented = self.refresh();
         self.refusal.recover(
-            &*self.credential_source,
-            presented,
-            target,
+            credential_refusal::Presentation::new(&*self.credential_source, presented, target),
             self.signed_post(target, body),
             |fresh| {
                 self.signer

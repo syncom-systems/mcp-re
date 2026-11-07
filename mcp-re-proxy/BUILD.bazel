@@ -85,6 +85,7 @@ _PROXY_LIB_SRCS = [
     "src/authorization/action_harness.rs",
     "src/aws_kms_keysource.rs",
     "src/aws_kms_keysource/credential_refusal.rs",
+    "src/aws_kms_keysource/credential_refusal/suspension.rs",
     "src/aws_sigv4.rs",
     "src/aws_sigv4/amz_date.rs",
     # ADR-MCPRE-063 Slice 1: the compatibility surface of the certificate identity
@@ -1422,6 +1423,7 @@ nt_rust_test(
     ]) + [
         # `main.rs` reaches the shared helpers via `#[path = "../common/mod.rs"]`.
         "tests/common/mod.rs",
+        "tests/common/rotation.rs",
     ],
     crate_root = "tests/integration_async/main.rs",
     crate_features = ["async_serve", "audit_commitment_reference"],
@@ -1481,6 +1483,7 @@ nt_rust_test(
     ]) + [
         # `main.rs` reaches the shared helpers in tests/common/mod.rs.
         "tests/common/mod.rs",
+        "tests/common/rotation.rs",
     ],
     crate_root = "tests/integration_async/main.rs",
     crate_features = ["async_serve", "audit_commitment_reference"] + _PROXY_EXT_FEATURES,
@@ -1763,9 +1766,13 @@ nt_rust_test(
 # why the target inherits the endpoint, key and credential variables they read.
 nt_rust_test(
     name = "integration_live_test",
-    srcs = glob(["tests/integration_live/*.rs"]) + [
+    srcs = glob([
+        "tests/integration_live/*.rs",
+        "tests/integration_live/*/*.rs",
+    ]) + [
         # `main.rs` reaches the shared helpers in tests/common/mod.rs.
         "tests/common/mod.rs",
+        "tests/common/rotation.rs",
     ],
     crate_root = "tests/integration_live/main.rs",
     crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,

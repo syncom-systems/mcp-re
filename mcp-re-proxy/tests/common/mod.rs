@@ -12,30 +12,23 @@
 
 #![allow(dead_code)] // each test binary uses a subset
 
-use mcp_re_client_core::load_signed_manifest_with_floor;
-use mcp_re_client_core::sign_manifest;
-use mcp_re_client_core::DelegatedResponseTrust;
-use mcp_re_client_core::InMemoryVersionFloor;
+mod rotation;
+
+pub use rotation::run_rotation_scenario;
+
 use mcp_re_client_core::ManifestIssuer;
 use mcp_re_client_core::RetiringIssuer;
-use mcp_re_client_core::RevocationSource;
-use mcp_re_client_core::TrustAnchorManifest;
-use mcp_re_client_core::TrustManifestError;
 
 use mcp_re_core::b64url_decode;
 use mcp_re_core::SigningKey;
 use mcp_re_core::VerificationKey;
 
 use mcp_re_http_profile::issue_delegation_credential_with_signer;
-use mcp_re_http_profile::verify_delegation_credential;
 use mcp_re_http_profile::Audience;
 use mcp_re_http_profile::Cnf;
 use mcp_re_http_profile::DelegatedJwk;
 use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationHeader;
-use mcp_re_http_profile::DelegationVerifyParams;
-use mcp_re_http_profile::HttpProfileError;
-use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::DELEGATION_ALG;
 use mcp_re_http_profile::DELEGATION_TYP;
 use mcp_re_http_profile::JWK_CRV_ED25519;
@@ -126,12 +119,13 @@ impl RootAuthority {
     }
 
     fn as_retiring_issuer(&self, valid_until: i64) -> RetiringIssuer {
+        let issuer = self.as_manifest_issuer();
         RetiringIssuer {
-            issuer_kid: self.issuer_kid.clone(),
-            public_key: self.public_key.to_b64url(),
-            role: "server".into(),
-            trust_domain: "example.com".into(),
-            subject: "did:example:issuer".into(),
+            issuer_kid: issuer.issuer_kid,
+            public_key: issuer.public_key,
+            role: issuer.role,
+            trust_domain: issuer.trust_domain,
+            subject: issuer.subject,
             valid_until,
         }
     }
@@ -168,179 +162,4 @@ impl TestRootAuthorityProvider for InMemoryTestRootAuthorityProvider {
             }),
         )
     }
-}
-
-fn org_resolver(
-    signer_kid: &str,
-    org_pub: VerificationKey,
-) -> impl Fn(&str) -> Option<VerificationKey> {
-    let kid = signer_kid.to_string();
-    move |k: &str| {
-        if k == kid {
-            Some(org_pub.clone())
-        } else {
-            None
-        }
-    }
-}
-
-fn verify_params<'a>(now: i64) -> DelegationVerifyParams<'a> {
-    DelegationVerifyParams {
-        now,
-        max_clock_skew: mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
-        verifier_audiences: &[AUD],
-        expected_profile: PROFILE_TAG,
-        expected_audience_hash: AUD_SCOPE,
-        expected_server_signer: SERVER_SIGNER,
-        accepted_epochs: &[EPOCH],
-    }
-}
-
-/// Verify a credential against the trust anchors a signed manifest loads at `now`.
-fn verify_credential_under_manifest(
-    compact_jws: &str,
-    signed_manifest: &mcp_re_client_core::SignedTrustAnchorManifest,
-    org_key: &SigningKey,
-    min_version: u64,
-    now: i64,
-) -> Result<(), HttpProfileError> {
-    let loaded = load_signed_manifest_with_floor(
-        signed_manifest,
-        org_resolver(ORG_KID, org_key.public_key()),
-        PROFILE_TAG,
-        &mut InMemoryVersionFloor::starting_at(min_version),
-        now,
-    )
-    .expect("manifest loads");
-    let set = loaded.issuer_set;
-    verify_delegation_credential(
-        compact_jws,
-        &verify_params(now),
-        // MCPRE-172: the public resolution interface, which already fails closed on a
-        // revoked issuer. The raw lifecycle lookup is no longer reachable from here.
-        |issuer_kid| {
-            set.resolve_issuer(issuer_kid, SignerSlot::Response, now)
-                .resolved()
-                .map(|a| a.verification_key)
-        },
-        |id| set.is_revoked(id),
-    )
-    .map(|_| ())
-}
-
-/// # A note on the refusal CODE, for every root-revocation row below
-///
-/// Root revocation reports `delegation_issuer_untrusted`, not `delegation_revoked`.
-///
-/// The PROPOSITION is unchanged and is what these rows protect: revoking a root
-/// invalidates every descendant delegated credential at once, before their own exp,
-/// without chasing each delegated key. What changed under MCPRE-172 is where the refusal
-/// happens. `TrustedIssuerSet::resolve_issuer` — the only public resolution interface —
-/// fails closed on a revoked issuer BEFORE the credential's signature is reached, so a
-/// revoked root can no longer yield a usable actor through any public path and cannot be
-/// composed beside an empty revocation source.
-///
-/// The more precise code was only reachable while that composition was still possible.
-/// A structural guarantee outranks a diagnostic distinction.
-///
-/// THE shared scenario: given two roots and an org manifest-signing key, drive the
-/// full trust-anchor rotation — A-only → A+B overlap → B-only(A retired) → A revoked —
-/// through SIGNED manifests, asserting acceptance/rejection at each phase. Run
-/// identically by the in-memory (CI) and Cloud KMS (live) lanes.
-pub fn run_rotation_scenario(root_a: &RootAuthority, root_b: &RootAuthority, org_key: &SigningKey) {
-    let now = 1_700_000_100;
-    let d1 = SigningKey::from_seed_bytes(&[91u8; 32]);
-    let d2 = SigningKey::from_seed_bytes(&[92u8; 32]);
-    let cred_a = root_a.issue_credential(&d1, 1, now);
-    let cred_b = root_b.issue_credential(&d2, 1, now);
-
-    let expires = now + 100_000;
-    let overlap_until = now + 1_000;
-
-    // Phase 1 — manifest v1: Root A is the only trust anchor.
-    let m1 = TrustAnchorManifest {
-        profile: PROFILE_TAG.into(),
-        manifest_version: 1,
-        current_issuers: vec![root_a.as_manifest_issuer()],
-        retiring_issuers: vec![],
-        revoked_issuers: vec![],
-        issued_at: now,
-        expires_at: expires,
-    };
-    let s1 = sign_manifest(&m1, org_key, ORG_KID);
-    verify_credential_under_manifest(&cred_a, &s1, org_key, 1, now).expect("A accepted under v1");
-    assert_eq!(
-        verify_credential_under_manifest(&cred_b, &s1, org_key, 1, now).unwrap_err(),
-        HttpProfileError::DelegationIssuerUntrusted,
-        "B unknown under v1 (not yet introduced)"
-    );
-
-    // Phase 2 — manifest v2: Root B introduced (current), Root A retiring in overlap.
-    let m2 = TrustAnchorManifest {
-        profile: PROFILE_TAG.into(),
-        manifest_version: 2,
-        current_issuers: vec![root_b.as_manifest_issuer()],
-        retiring_issuers: vec![root_a.as_retiring_issuer(overlap_until)],
-        revoked_issuers: vec![],
-        issued_at: now,
-        expires_at: expires,
-    };
-    let s2 = sign_manifest(&m2, org_key, ORG_KID);
-    verify_credential_under_manifest(&cred_a, &s2, org_key, 2, now)
-        .expect("A still accepted during overlap");
-    verify_credential_under_manifest(&cred_b, &s2, org_key, 2, now)
-        .expect("B accepted during overlap");
-    // Past the overlap deadline: A no longer a trusted anchor, B still is. Short-TTL
-    // delegated credentials are re-minted continuously, so mint FRESH ones at `past` —
-    // the question under test is the ROOT's trust, not the credential's freshness.
-    let past = overlap_until + 1;
-    let cred_a_past = root_a.issue_credential(&d1, 2, past);
-    let cred_b_past = root_b.issue_credential(&d2, 2, past);
-    assert_eq!(
-        verify_credential_under_manifest(&cred_a_past, &s2, org_key, 2, past).unwrap_err(),
-        HttpProfileError::DelegationIssuerUntrusted,
-        "A rejected after the overlap window closes"
-    );
-    verify_credential_under_manifest(&cred_b_past, &s2, org_key, 2, past)
-        .expect("B accepted after cutover");
-
-    // Phase 3 — manifest v3: Root A REVOKED (compromise). It stays LISTED (so its
-    // material still resolves and the rejection reason is the decisive `Revoked`, not a
-    // vague `Untrusted`) but is named in revoked_issuers; Root B stays current. This is
-    // the compromise-response posture — one decisive action invalidates all of A's
-    // descendants; a later manifest can drop A's entry entirely once it has propagated.
-    let m3 = TrustAnchorManifest {
-        profile: PROFILE_TAG.into(),
-        manifest_version: 3,
-        current_issuers: vec![root_a.as_manifest_issuer(), root_b.as_manifest_issuer()],
-        retiring_issuers: vec![],
-        revoked_issuers: vec![root_a.issuer_kid.clone()],
-        issued_at: now,
-        expires_at: expires,
-    };
-    let s3 = sign_manifest(&m3, org_key, ORG_KID);
-    assert_eq!(
-        verify_credential_under_manifest(&cred_a, &s3, org_key, 3, now).unwrap_err(),
-        HttpProfileError::DelegationIssuerUntrusted,
-        "revoking Root A invalidates its credential immediately, before exp"
-    );
-    verify_credential_under_manifest(&cred_b, &s3, org_key, 3, now)
-        .expect("B unaffected by A's revocation");
-
-    // Rollback protection: after accepting v3, a replayed v2 (which un-revokes A) is refused.
-    assert_eq!(
-        load_signed_manifest_with_floor(
-            &s2,
-            org_resolver(ORG_KID, org_key.public_key()),
-            PROFILE_TAG,
-            &mut InMemoryVersionFloor::starting_at(3),
-            now
-        )
-        .unwrap_err(),
-        TrustManifestError::Stale {
-            version: 2,
-            min_version: 3
-        },
-        "a rollback to the pre-revocation manifest is refused"
-    );
 }
