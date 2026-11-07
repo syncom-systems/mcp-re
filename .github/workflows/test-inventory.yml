@@ -17,6 +17,7 @@ on:
   pull_request:
     paths:
       - scripts/test_inventory_gate.py
+      - scripts/_test_inventory/**
       - .github/workflows/test-inventory.yml
 
 concurrency:

@@ -34,161 +34,26 @@
 //!
 //! std only (no new crates).
 
+#[path = "audit_vocabulary_guard_test/corpus.rs"]
+mod corpus;
+#[path = "audit_vocabulary_guard_test/producers.rs"]
+mod producers;
+#[path = "audit_vocabulary_guard_test/source.rs"]
+mod source;
+#[path = "audit_vocabulary_guard_test/vocabulary.rs"]
+mod vocabulary;
+
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 
-/// The exact, exhaustive success/lifecycle allowlist (ADR-MCPS-035 §3). These are
-/// the ONLY audit events the frozen error taxonomy cannot express; the audit
-/// module's `SUCCESS_EVENT_TYPES` must equal this set, and nothing else may be
-/// minted without an ADR.
-const EXPECTED_SUCCESS_EVENTS: &[&str] = &["mcp-re.request.accepted", "mcp-re.response.signed"];
+use corpus::{crate_packages, crate_root_of, emit_measurement, minting_files};
+use source::Source;
+use vocabulary::{
+    all_event_types, token_set, AuditSource, ACCOUNTING, EXECUTION, EXPECTED_KEY_LIFECYCLE_EVENTS,
+    EXPECTED_REJECTION_EVENTS, EXPECTED_SUCCESS_EVENTS,
+};
 
-/// The two rejection `event_type`s. Each carries a frozen `wire_code()` token in
-/// `reason`; neither is itself a `wire_code()` token.
-const EXPECTED_REJECTION_EVENTS: &[&str] = &["mcp-re.request.rejected", "mcp-re.response.rejected"];
-
-/// The three delegated-key lifecycle `event_type`s — the third audit category,
-/// authorized by ADR-MCPRE-052 §7. Not verdicts (no `reason`); emitted by the
-/// custody layer. Nothing else may join this set without an ADR.
-const EXPECTED_KEY_LIFECYCLE_EVENTS: &[&str] = &[
-    "mcp-re.delegated_key.issued",
-    "mcp-re.delegated_key.rotated",
-    "mcp-re.delegated_key.retired",
-];
-
-/// The one execution `event_type` — the fourth audit category, authorized by ADR-MCPRE-070 D1
-/// as a documented, versioned extension (vocabulary revision 2). It says the dispatch of an
-/// admitted exchange was committed to: not a success event, not a verdict (no `reason`), and
-/// never on the best-effort stream. Nothing else may join this set without an ADR.
-const EXPECTED_EXECUTION_EVENTS: &[&str] = &["mcp-re.execution.intent"];
-
-/// The one accounting `event_type` — the fifth audit category, authorized by ADR-MCPRE-070 D2
-/// and Q3 as a documented, versioned extension (vocabulary revision 3). A bounded, run- and
-/// interval-attributed aggregate count: not a success event, not a verdict (no `reason`), no
-/// actor. Nothing else may join this set without an ADR.
-const EXPECTED_ACCOUNTING_EVENTS: &[&str] = &["mcp-re.audit.accounting"];
-
-// --- runfiles resolution (same scheme as the drift guards) -------------------
-
-fn locate(env_key: &str) -> PathBuf {
-    mcp_re_test_paths::resolve_runfile(env_key)
-}
-
-fn read(env_key: &str) -> String {
-    let path = locate(env_key);
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"))
-}
-
-// --- on-disk derivation ------------------------------------------------------
-
-/// Every `mcp-re.*` wire token the frozen taxonomy renders, parsed from the
-/// `wire_code()` match arms in `error.rs`. We scan the `=> "mcp-re...."` string
-/// literals so a newly added `McpReError` variant (with its new wire_code) is
-/// picked up automatically — exactly the frozen-taxonomy process ADR-MCPS-035
-/// relies on. We start the scan at the `fn wire_code` token so the guard reads
-/// the authority it claims to read.
-fn frozen_wire_codes(error_rs: &str) -> BTreeSet<String> {
-    let body = error_rs
-        .split_once("fn wire_code")
-        .map(|(_, after)| after)
-        .unwrap_or_else(|| panic!("error.rs has no `fn wire_code` — frozen taxonomy moved?"));
-    mcp_re_string_literals(body)
-}
-
-/// Every `mcp-re.*` token mentioned anywhere in `audit.rs` (event_type constants,
-/// allowlists, doc examples). The audit vocabulary is small; we partition these
-/// into the success/rejection event types and confirm no other `mcp-re.*` token is
-/// minted as a reason that is not a frozen wire_code.
-fn audit_mcp_re_tokens(audit_rs: &str) -> BTreeSet<String> {
-    // Scan only the production region, so the unit-test fixtures (which deliberately
-    // mention bogus tokens like the bare "authorization_hash_mismatch" they assert must
-    // NOT appear) do not pollute the vocabulary set. The region is every line outside a
-    // `#[cfg(test)]` item, not everything above the first one: a token minted below the
-    // test module is still minted.
-    let production = mcp_re_test_paths::rust_source::production_half(audit_rs);
-    mcp_re_string_literals(&production)
-}
-
-/// The body of a `pub const <NAME>: &[&str] = &[ ... ];` slice declared in
-/// `audit.rs`, i.e. everything between the value opener `= &[` and its closing
-/// `]`. Anchoring on `= &[` skips the `&[&str]` TYPE annotation's brackets.
-fn slice_value_body(audit_rs: &str, const_name: &str) -> String {
-    let after_name = audit_rs
-        .split_once(&format!("pub const {const_name}"))
-        .map(|(_, a)| a)
-        .unwrap_or_else(|| panic!("audit.rs declares `pub const {const_name}`"));
-    // Collapse whitespace so a value split across lines (`=\n    &[...`) still
-    // matches the `= &[` anchor; the `&[&str]` TYPE annotation precedes the `=`.
-    let collapsed: String = after_name.split_whitespace().collect::<Vec<_>>().join(" ");
-    let after_eq = collapsed
-        .split_once("= &[")
-        .map(|(_, a)| a.to_string())
-        .unwrap_or_else(|| panic!("`{const_name}` is not in the `= &[ ... ]` form"));
-    after_eq
-        .split_once(']')
-        .map(|(b, _)| b.to_string())
-        .unwrap_or_else(|| panic!("`{const_name}` slice has no closing `]`"))
-}
-
-/// The `event_type` module's `pub const NAME: &str = "mcp-re...."` map, parsed from
-/// `audit.rs`. Lets the guard resolve a const reference (e.g. the
-/// `SUCCESS_EVENT_TYPES` slice lists `event_type::REQUEST_ACCEPTED`) back to its
-/// `mcp-re.*` string value without depending on literal duplication.
-fn event_type_consts(audit_rs: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for line in audit_rs.lines() {
-        let line = line.trim();
-        // `pub const REQUEST_ACCEPTED: &str = "mcp-re.request.accepted";`
-        if let Some(rest) = line.strip_prefix("pub const ") {
-            if let Some((name, after)) = rest.split_once(':') {
-                if let Some(q1) = after.find('"') {
-                    if let Some(q2_rel) = after[q1 + 1..].find('"') {
-                        let value = &after[q1 + 1..q1 + 1 + q2_rel];
-                        if value.starts_with("mcp-re.") {
-                            out.push((name.trim().to_string(), value.to_string()));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    out
-}
-
-/// Resolve the `mcp-re.*` values referenced inside a `&[ ... ]` slice body, where
-/// each element is either a bare `mcp-re.*` string literal OR an `event_type::NAME`
-/// reference resolved through [`event_type_consts`].
-fn resolve_slice_tokens(slice_body: &str, consts: &[(String, String)]) -> BTreeSet<String> {
-    let mut out = mcp_re_string_literals(slice_body);
-    for (name, value) in consts {
-        if slice_body.contains(&format!("event_type::{name}")) {
-            out.insert(value.clone());
-        }
-    }
-    out
-}
-
-/// Extract every double-quoted string literal beginning with `mcp-re.` from `text`.
-fn mcp_re_string_literals(text: &str) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    let bytes = text.as_bytes();
-    let mut i = 0usize;
-    while i < bytes.len() {
-        if bytes[i] == b'"' {
-            // Find the closing quote (no escaped quotes occur in these tokens).
-            if let Some(rel) = text[i + 1..].find('"') {
-                let lit = &text[i + 1..i + 1 + rel];
-                if lit.starts_with("mcp-re.") {
-                    out.insert(lit.to_string());
-                }
-                i = i + 1 + rel + 1;
-                continue;
-            }
-        }
-        i += 1;
-    }
-    out
-}
+/// The fewest source files a workspace walk may read before it is judged to measure nothing.
+const MINIMUM_FILES_SCANNED: usize = 200;
 
 // --- drift conditions --------------------------------------------------------
 
@@ -198,24 +63,14 @@ fn mcp_re_string_literals(text: &str) -> BTreeSet<String> {
 /// reason outside `wire_code()`.
 #[test]
 fn every_audit_token_is_a_wire_code_or_a_fixed_event_type() {
-    let codes = frozen_wire_codes(&read("MCP_RE_CORE_SRC_ERROR"));
-    let tokens = audit_mcp_re_tokens(&read("MCP_RE_CORE_SRC_AUDIT"));
+    let codes = Source::runfile("MCP_RE_CORE_SRC_ERROR").frozen_wire_codes();
+    let tokens = Source::runfile("MCP_RE_CORE_SRC_AUDIT").production_literals();
+    let allowed_event_types: BTreeSet<&str> = all_event_types().collect();
 
-    let allowed_event_types: BTreeSet<String> = EXPECTED_SUCCESS_EVENTS
+    let foreign: Vec<&String> = tokens
         .iter()
-        .chain(EXPECTED_REJECTION_EVENTS.iter())
-        .chain(EXPECTED_KEY_LIFECYCLE_EVENTS.iter())
-        .chain(EXPECTED_EXECUTION_EVENTS.iter())
-        .chain(EXPECTED_ACCOUNTING_EVENTS.iter())
-        .map(|s| s.to_string())
+        .filter(|token| !codes.contains(*token) && !allowed_event_types.contains(token.as_str()))
         .collect();
-
-    let mut foreign: Vec<String> = Vec::new();
-    for token in &tokens {
-        if !codes.contains(token) && !allowed_event_types.contains(token) {
-            foreign.push(token.clone());
-        }
-    }
     assert!(
         foreign.is_empty(),
         "audit.rs mentions mcp-re.* token(s) that are neither a frozen McpReError::wire_code() nor \
@@ -229,21 +84,12 @@ fn every_audit_token_is_a_wire_code_or_a_fixed_event_type() {
 /// declared in `audit.rs`, parsed from disk.
 #[test]
 fn success_event_set_is_exactly_the_two_item_allowlist() {
-    let audit = read("MCP_RE_CORE_SRC_AUDIT");
-    let declared = resolve_slice_tokens(
-        &slice_value_body(&audit, "SUCCESS_EVENT_TYPES"),
-        &event_type_consts(&audit),
-    );
-
-    let expected: BTreeSet<String> = EXPECTED_SUCCESS_EVENTS
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(
-        declared, expected,
+    AuditSource::load().assert_exact(
+        "SUCCESS_EVENT_TYPES",
+        EXPECTED_SUCCESS_EVENTS,
         "audit.rs SUCCESS_EVENT_TYPES must be EXACTLY the two-item allowlist \
          (mcp-re.request.accepted, mcp-re.response.signed) — no third success event without an ADR \
-         (ADR-MCPS-035 §3)"
+         (ADR-MCPS-035 §3)",
     );
 }
 
@@ -253,21 +99,12 @@ fn success_event_set_is_exactly_the_two_item_allowlist() {
 /// without an ADR.
 #[test]
 fn key_lifecycle_event_set_is_exactly_the_three_item_allowlist() {
-    let audit = read("MCP_RE_CORE_SRC_AUDIT");
-    let declared = resolve_slice_tokens(
-        &slice_value_body(&audit, "KEY_LIFECYCLE_EVENT_TYPES"),
-        &event_type_consts(&audit),
-    );
-
-    let expected: BTreeSet<String> = EXPECTED_KEY_LIFECYCLE_EVENTS
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(
-        declared, expected,
+    AuditSource::load().assert_exact(
+        "KEY_LIFECYCLE_EVENT_TYPES",
+        EXPECTED_KEY_LIFECYCLE_EVENTS,
         "audit.rs KEY_LIFECYCLE_EVENT_TYPES must be EXACTLY the three-item allowlist \
          (mcp-re.delegated_key.issued/rotated/retired) — no fourth lifecycle event without an ADR \
-         (ADR-MCPRE-052 §7)"
+         (ADR-MCPRE-052 §7)",
     );
 }
 
@@ -277,31 +114,7 @@ fn key_lifecycle_event_set_is_exactly_the_three_item_allowlist() {
 /// at two above) nor any other.
 #[test]
 fn execution_event_set_is_exactly_the_one_item_allowlist() {
-    let audit = read("MCP_RE_CORE_SRC_AUDIT");
-    let consts = event_type_consts(&audit);
-    let declared =
-        resolve_slice_tokens(&slice_value_body(&audit, "EXECUTION_EVENT_TYPES"), &consts);
-
-    let expected: BTreeSet<String> = EXPECTED_EXECUTION_EVENTS
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(
-        declared, expected,
-        "audit.rs EXECUTION_EVENT_TYPES must be EXACTLY the one-item allowlist \
-         (mcp-re.execution.intent) — no second execution event without an ADR (ADR-MCPRE-070 D1)"
-    );
-    for other in [
-        "SUCCESS_EVENT_TYPES",
-        "REJECTION_EVENT_TYPES",
-        "KEY_LIFECYCLE_EVENT_TYPES",
-    ] {
-        let members = resolve_slice_tokens(&slice_value_body(&audit, other), &consts);
-        assert!(
-            members.is_disjoint(&expected),
-            "{other} lists the execution intent; it is its own category (ADR-MCPRE-070 D1)"
-        );
-    }
+    AuditSource::load().assert_own_category(&EXECUTION);
 }
 
 /// Condition (2d): the accounting allowlist is EXACTLY the one expected event — derived from
@@ -310,31 +123,7 @@ fn execution_event_set_is_exactly_the_one_item_allowlist() {
 /// events keep their meanings, nor any other.
 #[test]
 fn accounting_event_set_is_exactly_the_one_item_allowlist() {
-    let audit = read("MCP_RE_CORE_SRC_AUDIT");
-    let consts = event_type_consts(&audit);
-    let declared =
-        resolve_slice_tokens(&slice_value_body(&audit, "ACCOUNTING_EVENT_TYPES"), &consts);
-    let expected: BTreeSet<String> = EXPECTED_ACCOUNTING_EVENTS
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(
-        declared, expected,
-        "audit.rs ACCOUNTING_EVENT_TYPES must be EXACTLY the one-item allowlist \
-         (mcp-re.audit.accounting) — no second accounting event without an ADR (ADR-MCPRE-070 Q3)"
-    );
-    for other in [
-        "SUCCESS_EVENT_TYPES",
-        "REJECTION_EVENT_TYPES",
-        "KEY_LIFECYCLE_EVENT_TYPES",
-        "EXECUTION_EVENT_TYPES",
-    ] {
-        let members = resolve_slice_tokens(&slice_value_body(&audit, other), &consts);
-        assert!(
-            members.is_disjoint(&expected),
-            "{other} lists the accounting record; it is its own category (ADR-MCPRE-070 Q3)"
-        );
-    }
+    AuditSource::load().assert_own_category(&ACCOUNTING);
 }
 
 /// Condition (3): no audit `event_type` is itself a frozen `wire_code()` token.
@@ -343,16 +132,10 @@ fn accounting_event_set_is_exactly_the_one_item_allowlist() {
 /// from the taxonomy.
 #[test]
 fn event_types_do_not_collide_with_frozen_wire_codes() {
-    let codes = frozen_wire_codes(&read("MCP_RE_CORE_SRC_ERROR"));
-    for ev in EXPECTED_SUCCESS_EVENTS
-        .iter()
-        .chain(EXPECTED_REJECTION_EVENTS.iter())
-        .chain(EXPECTED_KEY_LIFECYCLE_EVENTS.iter())
-        .chain(EXPECTED_EXECUTION_EVENTS.iter())
-        .chain(EXPECTED_ACCOUNTING_EVENTS.iter())
-    {
+    let codes = Source::runfile("MCP_RE_CORE_SRC_ERROR").frozen_wire_codes();
+    for ev in all_event_types() {
         assert!(
-            !codes.contains(*ev),
+            !codes.contains(ev),
             "audit event_type {ev:?} collides with a frozen McpReError::wire_code() token — \
              event_types and rejection reasons must stay disjoint (ADR-MCPS-035)"
         );
@@ -365,14 +148,14 @@ fn event_types_do_not_collide_with_frozen_wire_codes() {
 /// and the audit vocabulary must not introduce one.
 #[test]
 fn no_authorization_hash_mismatch_audit_reason() {
-    let codes = frozen_wire_codes(&read("MCP_RE_CORE_SRC_ERROR"));
+    let codes = Source::runfile("MCP_RE_CORE_SRC_ERROR").frozen_wire_codes();
     assert!(
         !codes.contains("mcp-re.authorization_hash_mismatch"),
         "the frozen Core taxonomy must NOT contain authorization_hash_mismatch (Core binds, \
          never interprets — ADR-MCPS-013)"
     );
     // And the audit production region must not mention it as a token at all.
-    let tokens = audit_mcp_re_tokens(&read("MCP_RE_CORE_SRC_AUDIT"));
+    let tokens = Source::runfile("MCP_RE_CORE_SRC_AUDIT").production_literals();
     assert!(
         !tokens.contains("mcp-re.authorization_hash_mismatch"),
         "audit.rs must not introduce an authorization_hash_mismatch reason (Core binds, never \
@@ -400,39 +183,12 @@ fn no_authorization_hash_mismatch_audit_reason() {
 /// exhaustive `From<&_> for McpReError`, and derives its token from that.
 #[test]
 fn no_producer_outside_core_mints_a_wire_token() {
-    for (env_key, who) in [
-        ("MCP_RE_PROFILE_SRC_ERROR", "HttpProfileError"),
-        (
-            "MCP_RE_PROFILE_SRC_PROJECTION",
-            "the HttpProfileError projection",
-        ),
-        ("MCP_RE_PROXY_SRC_DISPATCH", "ProxyDispatchError"),
-        (
-            "MCP_RE_PROXY_SRC_DISPATCH_PROJECTION",
-            "the ProxyDispatchError projection",
-        ),
-        (
-            "MCP_RE_CLIENT_CORE_SRC_BINDING_REFUSAL",
-            "BindingSpecRefusal",
-        ),
-        (
-            "MCP_RE_CLIENT_CORE_SRC_PROJECTION",
-            "the BindingSpecRefusal projection",
-        ),
-    ] {
-        let src = read(env_key);
-        let production = mcp_re_test_paths::rust_source::production_half(&src);
-        let minted = mcp_re_string_literals(&production);
-        assert!(
-            minted.is_empty(),
-            "{who} mints its own mcp-re.* token(s) {minted:?} instead of naming a Core              verdict and deriving the token from it. Exactly one file decides what these              strings say (mcp-re-core/src/error.rs); a second table is the parallel              namespace ADR-MCPRE-066 Slice 2 removed."
-        );
-    }
+    producers::assert_no_carrier_mints_a_token();
 
     // Positive control on the parser and the runfiles wiring: the ONE file that is
     // supposed to mint them still does, so an empty result above means "no tokens here"
     // rather than "this test reads nothing".
-    let frozen = frozen_wire_codes(&read("MCP_RE_CORE_SRC_ERROR"));
+    let frozen = Source::runfile("MCP_RE_CORE_SRC_ERROR").frozen_wire_codes();
     assert!(
         frozen.len() >= 15,
         "the sole minting authority parsed {} tokens — the runfiles wiring is broken, and          every assertion above is then vacuous",
@@ -441,28 +197,7 @@ fn no_producer_outside_core_mints_a_wire_token() {
 
     // And each projection really is where that producer's verdicts are decided, so the
     // files scanned above are the ones that replaced a table rather than empty stubs.
-    for (env_key, signature, who) in [
-        (
-            "MCP_RE_PROFILE_SRC_PROJECTION",
-            "impl From<&HttpProfileError> for McpReError",
-            "the carrier",
-        ),
-        (
-            "MCP_RE_CLIENT_CORE_SRC_PROJECTION",
-            "impl From<&BindingSpecRefusal> for McpReError",
-            "the client seam",
-        ),
-    ] {
-        let projection = read(env_key);
-        assert!(
-            projection.contains(signature),
-            "{who}'s Core projection is not where this guard is looking"
-        );
-        assert!(
-            !projection.contains("_ =>"),
-            "{who}'s Core projection has a wildcard arm — a new failure would inherit a              verdict instead of naming one"
-        );
-    }
+    producers::assert_projections_decide_the_verdicts();
 }
 
 /// ADR-MCPRE-066 §2.1, closed — **which files decide what an `mcp-re.*` verdict token says
@@ -492,49 +227,28 @@ fn no_producer_outside_core_mints_a_wire_token() {
 /// target table at compile time, and a crate with no registered source tree fails here
 /// instead of going unscanned. Its scope is therefore exactly the first-party Rust crates
 /// Bazel builds, both SDK bindings included — see [`NOT_SCANNED`] for the one exclusion.
-/// The walk itself, as a function of the crate set it is given.
 ///
-/// Extracted from the measurement so the SENSITIVITY CONTROL can run the same apparatus
-/// over a different input — ADR-MCPRE-068 Ruling 4 asks a measured proposition for the
-/// demonstration that its number can still MOVE, and a control that re-implemented the walk
-/// would be demonstrating that a second implementation moves.
-///
-/// Returns `(the files that mint a verdict token, how many files were read)`.
-fn minting_files(trees: &[(&str, &str)]) -> (BTreeSet<String>, usize) {
-    let mut found: BTreeSet<String> = BTreeSet::new();
-    let mut files_scanned = 0usize;
-    for (crate_dir, env_key) in trees {
-        // The sentinel is `<crate>/src/lib.rs`; its grandparent is the crate. The corpus is
-        // every Rust source a compiled target of the crate is built from: the library under
-        // `src/`, and the example binaries under `examples/` the build graph also compiles.
-        let sentinel = locate(env_key);
-        let crate_root = sentinel
-            .parent()
-            .and_then(|src| src.parent())
-            .unwrap_or_else(|| panic!("{env_key} resolved to a path with no crate root"))
-            .to_path_buf();
-        for tree in COMPILED_SOURCE_DIRS {
-            let root = crate_root.join(tree);
-            if !root.is_dir() {
-                continue;
-            }
-            for file in rust_sources_under(&root) {
-                files_scanned += 1;
-                let text =
-                    std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("read {file:?}: {e}"));
-                let production = mcp_re_test_paths::rust_source::production_half(&text);
-                if !verdict_tokens(&production).is_empty() {
-                    let rel = file
-                        .strip_prefix(&crate_root)
-                        .unwrap_or(&file)
-                        .to_string_lossy()
-                        .replace('\\', "/");
-                    found.insert(format!("{crate_dir}/{rel}"));
-                }
-            }
-        }
-    }
-    (found, files_scanned)
+/// The walk is [`corpus::minting_files`]; the crate list is [`CRATE_SOURCE_TREES`], and the
+/// one exclusion is [`NOT_SCANNED`].
+#[test]
+fn exactly_two_files_decide_what_a_verdict_token_says() {
+    let expected = token_set(SOLE_MINTING_FILES);
+
+    let (found, files_scanned) = minting_files(CRATE_SOURCE_TREES);
+
+    // THE MEASUREMENT, emitted in the form the ADR-MCPRE-068 `measured://` lane reads.
+    emit_measurement(&found, CRATE_SOURCE_TREES.len());
+
+    // Positive control on the walk and the runfiles wiring: an empty or tiny scan would
+    // make the equality below hold vacuously.
+    assert!(
+        files_scanned >= MINIMUM_FILES_SCANNED,
+        "the workspace walk read only {files_scanned} source files — the runfiles wiring is          broken, and this control measures nothing"
+    );
+    assert_eq!(
+        found, expected,
+        "the set of files deciding what an mcp-re.* VERDICT token says is not the two frozen          vocabularies. A file that appears here and is not one of them has re-created the          parallel namespace ADR-MCPRE-066 Slice 2 removed: state which verdict the failure IS          (an exhaustive `From<&_> for McpReError` or a `PolicyError`) and derive the token from          that. A file that DISAPPEARS from here has moved a frozen vocabulary, which is an ADR."
+    );
 }
 
 /// The corpus reaches the example binaries, not only the libraries.
@@ -546,11 +260,7 @@ fn minting_files(trees: &[(&str, &str)]) -> (BTreeSet<String>, usize) {
 /// present where the walk looks.
 #[test]
 fn the_scanned_corpus_includes_the_compiled_examples() {
-    let crate_root = locate("MCP_RE_SRC_TREE_PROXY")
-        .parent()
-        .and_then(|src| src.parent())
-        .expect("the proxy sentinel names a crate")
-        .to_path_buf();
+    let crate_root = crate_root_of("MCP_RE_SRC_TREE_PROXY");
     assert!(
         crate_root
             .join("examples")
@@ -558,36 +268,6 @@ fn the_scanned_corpus_includes_the_compiled_examples() {
             .is_file(),
         "mcp-re-proxy/examples is not in the scanned corpus — the guard_src_files runfiles \
          wiring no longer carries the example binaries the build graph compiles"
-    );
-}
-
-#[test]
-fn exactly_two_files_decide_what_a_verdict_token_says() {
-    let expected: BTreeSet<String> = SOLE_MINTING_FILES.iter().map(|s| s.to_string()).collect();
-
-    let (found, files_scanned) = minting_files(CRATE_SOURCE_TREES);
-
-    // THE MEASUREMENT, emitted in the form the ADR-MCPRE-068 `measured://` lane reads.
-    //
-    // A measured proposition is existential and scoped — over THIS corpus, the observed
-    // value was X — and the lane preserves the result as an artifact and digests it. The
-    // lines are the result; everything else the harness prints is timing and progress, which two
-    // identical runs do not agree on.
-    println!("MEASURED: files_deciding_verdict_tokens={}", found.len());
-    for file in &found {
-        println!("MEASURED: minting_file={file}");
-    }
-    println!("MEASURED: crates_scanned={}", CRATE_SOURCE_TREES.len());
-
-    // Positive control on the walk and the runfiles wiring: an empty or tiny scan would
-    // make the equality below hold vacuously.
-    assert!(
-        files_scanned >= 200,
-        "the workspace walk read only {files_scanned} source files — the runfiles wiring is          broken, and this control measures nothing"
-    );
-    assert_eq!(
-        found, expected,
-        "the set of files deciding what an mcp-re.* VERDICT token says is not the two frozen          vocabularies. A file that appears here and is not one of them has re-created the          parallel namespace ADR-MCPRE-066 Slice 2 removed: state which verdict the failure IS          (an exhaustive `From<&_> for McpReError` or a `PolicyError`) and derive the token from          that. A file that DISAPPEARS from here has moved a frozen vocabulary, which is an ADR."
     );
 }
 
@@ -608,7 +288,7 @@ fn exactly_two_files_decide_what_a_verdict_token_says() {
 fn the_measurement_moves_when_the_scanned_set_shrinks() {
     let (baseline, baseline_files) = minting_files(CRATE_SOURCE_TREES);
     assert!(
-        baseline_files >= 200,
+        baseline_files >= MINIMUM_FILES_SCANNED,
         "the unperturbed walk read only {baseline_files} files; a control over a dead \
          apparatus demonstrates nothing"
     );
@@ -735,64 +415,9 @@ fn the_scanned_crate_set_is_the_workspace() {
     );
 }
 
-/// The Bazel packages holding a first-party crate, from the target table.
-fn crate_packages(table: &str) -> BTreeSet<String> {
-    let parsed: serde_json::Value =
-        serde_json::from_str(table).unwrap_or_else(|e| panic!("the target table is not JSON: {e}"));
-    let targets = parsed
-        .get("targets")
-        .and_then(serde_json::Value::as_object)
-        .unwrap_or_else(|| panic!("the target table has no `targets` object"));
-    targets
-        .values()
-        .filter(|row| {
-            row.get("kind")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|kind| CRATE_KINDS.contains(&kind))
-        })
-        .filter_map(|row| row.get("package").and_then(serde_json::Value::as_str))
-        .map(str::to_string)
-        .collect()
-}
-
-/// Every `.rs` file under `root`, recursively. std only.
-fn rust_sources_under(root: &std::path::Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(e) => panic!("read_dir {dir:?}: {e}"),
-        };
-        for entry in entries {
-            let path = entry
-                .unwrap_or_else(|e| panic!("dir entry under {dir:?}: {e}"))
-                .path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "rs") {
-                out.push(path);
-            }
-        }
-    }
-    out
-}
-
-/// The VERDICT tokens in `text`: `mcp-re.<name>` with no further dot.
-///
-/// The dotted spellings are audit event types, a separate vocabulary with its own exact
-/// allowlists above. Conflating the two would report `audit.rs` as a third minting
-/// authority, which it is not — it names events, never verdicts.
-fn verdict_tokens(text: &str) -> BTreeSet<String> {
-    mcp_re_string_literals(text)
-        .into_iter()
-        .filter(|token| !token.trim_start_matches("mcp-re.").contains('.'))
-        .collect()
-}
-
 #[test]
 fn guard_inputs_are_non_empty() {
-    let codes = frozen_wire_codes(&read("MCP_RE_CORE_SRC_ERROR"));
+    let codes = Source::runfile("MCP_RE_CORE_SRC_ERROR").frozen_wire_codes();
     assert!(
         codes.len() >= 15,
         "parsed too few frozen wire_code tokens from error.rs ({}) — runfiles wiring is broken",
@@ -803,7 +428,7 @@ fn guard_inputs_are_non_empty() {
         codes.contains("mcp-re.invalid_signature"),
         "expected mcp-re.invalid_signature among the parsed frozen wire_codes"
     );
-    let tokens = audit_mcp_re_tokens(&read("MCP_RE_CORE_SRC_AUDIT"));
+    let tokens = Source::runfile("MCP_RE_CORE_SRC_AUDIT").production_literals();
     for ev in EXPECTED_SUCCESS_EVENTS
         .iter()
         .chain(EXPECTED_REJECTION_EVENTS.iter())

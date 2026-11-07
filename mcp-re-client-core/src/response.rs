@@ -500,30 +500,161 @@ mod delegated_tests {
         DelegatedSigningCustody::new(custody_cfg(), root_key().public_key(), issue, factory)
     }
     fn signed() -> crate::SignedRequest {
+        signed_with(json!(1), "read", EXPIRES)
+    }
+    /// A request signed by the test client for `tools/call` with the given id, tool name and
+    /// freshness-window end.
+    fn signed_with(id: Value, tool: &str, expires: i64) -> crate::SignedRequest {
         let inputs = RequestSigningInputs::new(
             CLIENT_KEY_ID.to_string(),
             audience(),
             bindings(),
             mcp_re_test_paths::unique_test_nonce(),
             CREATED,
-            EXPIRES,
+            expires,
         );
-        let params: Map<String, Value> = json!({ "name": "read" }).as_object().cloned().unwrap();
-        build_signed_request(
-            &json!(1),
-            "tools/call",
-            params,
-            TARGET,
-            &inputs,
-            &client_key(),
-        )
-        .expect("client signs request")
+        let params: Map<String, Value> = json!({ "name": tool }).as_object().cloned().unwrap();
+        build_signed_request(&id, "tools/call", params, TARGET, &inputs, &client_key())
+            .expect("client signs request")
+    }
+    /// A request whose body differs from [`signed`]'s: what an attacker signs for itself.
+    fn other_signed() -> crate::SignedRequest {
+        signed_with(json!(99), "attacker-chosen", EXPIRES)
     }
     fn expectation(signed: &crate::SignedRequest) -> ResponseExpectation {
         ResponseExpectation::for_signed(signed)
     }
     fn success_body() -> Vec<u8> {
         br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
+    }
+
+    /// An unsigned 200 carrying [`success_body`].
+    fn success_response() -> HttpResponse {
+        HttpResponse {
+            status: 200,
+            headers: vec![("content-type".into(), "application/json".into())],
+            body: success_body(),
+        }
+    }
+    /// The 200 `signed`'s request earns, delegated-signed by `custody` at `now`.
+    fn sign_success<I, F>(
+        custody: &mut DelegatedSigningCustody<I, F>,
+        signed: &crate::SignedRequest,
+        now: i64,
+    ) -> HttpResponse
+    where
+        I: FnMut(&DelegationHeader, &DelegationClaims) -> Option<String>,
+        F: FnMut() -> SigningKey,
+    {
+        let mut resp = success_response();
+        custody
+            .sign_response(now, &mut resp, signed.request())
+            .expect("server delegated-signs the success response");
+        resp
+    }
+    /// A live signing window over the first delegated key a fresh custody issues.
+    fn live_window() -> SigningWindow {
+        let mut custody = custody();
+        custody.ensure_active(NOW).expect("issue");
+        let snap = custody.active_snapshot().unwrap();
+        SigningWindow::over(std::sync::Arc::new(snap.clone()), NOW, 300)
+            .expect("a live signing window")
+    }
+    /// The delegated kid of the first key a fresh custody issues.
+    fn first_delegated_kid() -> String {
+        let mut custody = custody();
+        custody.ensure_active(NOW).expect("issue");
+        custody
+            .active_snapshot()
+            .unwrap()
+            .delegated_kid()
+            .to_owned()
+    }
+    /// The request-bound rejection the server emits for `request`.
+    fn bound_rejection(
+        request: &HttpRequest,
+        reason: &RejectionReason,
+        status: u16,
+    ) -> HttpResponse {
+        build_delegated_rejection(request, reason, status, &live_window())
+            .expect("server builds a bound delegated rejection")
+    }
+    /// The preflight-unbound rejection the server emits for `request` (or for none).
+    fn preflight_rejection(
+        request: Option<&HttpRequest>,
+        reason: &RejectionReason,
+        status: u16,
+    ) -> HttpResponse {
+        build_delegated_rejection_preflight(request, reason, status, &live_window())
+            .expect("server builds a preflight delegated rejection")
+    }
+    /// [`verify_delegated_response`] at `now` under `trust`, the test policy and the plain
+    /// expectation for `signed`.
+    fn verify_at(
+        resp: &HttpResponse,
+        trust: &dyn DelegatedResponseTrust,
+        signed: &crate::SignedRequest,
+        now: i64,
+    ) -> Result<VerifiedDelegatedResponse, HttpProfileError> {
+        verify_delegated_response(resp, trust, &expectation(signed), &policy(), now)
+    }
+    /// [`verify_at`] under an empty revocation set at [`NOW`].
+    fn verify(
+        resp: &HttpResponse,
+        signed: &crate::SignedRequest,
+    ) -> Result<VerifiedDelegatedResponse, HttpProfileError> {
+        verify_at(resp, &trust_with(StaticRevocationList::new()), signed, NOW)
+    }
+    /// [`verify`] with the route's issuer pin set to `pin`.
+    fn verify_pinned(
+        resp: &HttpResponse,
+        signed: &crate::SignedRequest,
+        pin: &str,
+    ) -> Result<VerifiedDelegatedResponse, HttpProfileError> {
+        verify_delegated_response(
+            resp,
+            &trust_with(StaticRevocationList::new()),
+            &expectation(signed).with_expected_issuer_kid(pin),
+            &policy(),
+            NOW,
+        )
+    }
+    /// [`verify_delegated_accepted_202_pinned`] under an empty revocation set at [`NOW`].
+    fn verify_202(
+        ack: &HttpResponse,
+        notification: &crate::SignedRequest,
+        pin: Option<&str>,
+    ) -> Result<ResolvedActor, HttpProfileError> {
+        verify_delegated_accepted_202_pinned(
+            ack,
+            notification.request(),
+            &trust_with(StaticRevocationList::new()),
+            &policy(),
+            pin,
+            NOW,
+        )
+    }
+    /// The verified rejection's wire code and execution contract.
+    fn rejection_of(out: &VerifiedDelegatedResponse) -> (Option<String>, ExecutionContract) {
+        match out.outcome() {
+            DelegatedOutcome::Rejection {
+                wire_code,
+                execution,
+            } => (wire_code.clone(), execution.clone()),
+            DelegatedOutcome::Success => panic!("a rejection receipt is not a success"),
+        }
+    }
+    fn rejection(wire_code: &str) -> DelegatedOutcome {
+        DelegatedOutcome::Rejection {
+            wire_code: Some(wire_code.into()),
+            execution: ExecutionContract::default(),
+        }
+    }
+    /// The verdict a response earns when `trust` revokes a credential identifier.
+    fn revoked_verdict(resp: &HttpResponse, signed: &crate::SignedRequest, identifier: String) {
+        let revoked = StaticRevocationList::new().revoke(identifier);
+        let err = verify_at(resp, &trust_with(revoked), signed, NOW).unwrap_err();
+        assert_eq!(err, HttpProfileError::DelegationRevoked);
     }
 
     #[test]
@@ -552,22 +683,12 @@ mod delegated_tests {
         for (body, expected) in cases {
             let signed = signed();
             let mut custody = custody();
-            let mut resp = HttpResponse {
-                status: 200,
-                headers: vec![("content-type".into(), "application/json".into())],
-                body,
-            };
+            let mut resp = success_response();
+            resp.body = body;
             custody
                 .sign_response(NOW, &mut resp, signed.request())
                 .expect("server delegated-signs the success response");
-            let out = verify_delegated_response(
-                &resp,
-                &trust_with(StaticRevocationList::new()),
-                &expectation(&signed),
-                &policy(),
-                NOW,
-            )
-            .expect("client verifies delegated success");
+            let out = verify(&resp, &signed).expect("client verifies delegated success");
             assert_eq!(out.continuation_state(), expected);
         }
     }
@@ -576,22 +697,8 @@ mod delegated_tests {
     fn delegated_success_is_verified_and_classified() {
         let signed = signed();
         let mut custody = custody();
-        let mut resp = HttpResponse {
-            status: 200,
-            headers: vec![("content-type".into(), "application/json".into())],
-            body: success_body(),
-        };
-        custody
-            .sign_response(NOW, &mut resp, signed.request())
-            .expect("server delegated-signs the success response");
-        let out = verify_delegated_response(
-            &resp,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&signed),
-            &policy(),
-            NOW,
-        )
-        .expect("client verifies delegated success");
+        let resp = sign_success(&mut custody, &signed, NOW);
+        let out = verify(&resp, &signed).expect("client verifies delegated success");
         assert_eq!(out.outcome(), &DelegatedOutcome::Success);
         // The delegated key is profile-issued, so its keyid is the RFC 7638 JWK
         // thumbprint of the key that actually signed (#415 rev 2 §1.5) — derived
@@ -611,25 +718,10 @@ mod delegated_tests {
     #[test]
     fn delegated_success_enforces_the_pin_against_the_root_issuer() {
         let signed = signed();
-        let mut custody = custody();
-        let mut resp = HttpResponse {
-            status: 200,
-            headers: vec![("content-type".into(), "application/json".into())],
-            body: success_body(),
-        };
-        custody
-            .sign_response(NOW, &mut resp, signed.request())
-            .expect("server delegated-signs the success response");
+        let resp = sign_success(&mut custody(), &signed, NOW);
 
         // No pin: verifies exactly as before (no behaviour change for the normal path).
-        let ok = verify_delegated_response(
-            &resp,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&signed),
-            &policy(),
-            NOW,
-        )
-        .expect("an unpinned delegated success still verifies");
+        let ok = verify(&resp, &signed).expect("an unpinned delegated success still verifies");
         assert_eq!(ok.outcome(), &DelegatedOutcome::Success);
 
         // The verified evidence reports the anchor the credential chained to.
@@ -637,39 +729,21 @@ mod delegated_tests {
 
         // A pin on the ROOT ISSUER verifies — the coordinate that is stable across
         // delegated-key rotation.
-        let pinned = verify_delegated_response(
-            &resp,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&signed).with_expected_issuer_kid(ROOT_KID),
-            &policy(),
-            NOW,
-        )
-        .expect("a pin naming the root issuer verifies");
+        let pinned =
+            verify_pinned(&resp, &signed, ROOT_KID).expect("a pin naming the root issuer verifies");
         assert_eq!(pinned.outcome(), &DelegatedOutcome::Success);
 
         // Any other root fails closed.
-        let err = verify_delegated_response(
-            &resp,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&signed).with_expected_issuer_kid("some-other-root-kid"),
-            &policy(),
-            NOW,
-        )
-        .expect_err("a pin naming a different root must fail closed");
+        let err = verify_pinned(&resp, &signed, "some-other-root-kid")
+            .expect_err("a pin naming a different root must fail closed");
         assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
 
         // And NOT against the accepted signer keyid: that is the ephemeral delegated
         // kid, so pinning it would break on the first rotation.
         let delegated_kid = ok.verified().server_signer().keyid.clone();
         assert_ne!(delegated_kid, ROOT_KID);
-        let err = verify_delegated_response(
-            &resp,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&signed).with_expected_issuer_kid(&delegated_kid),
-            &policy(),
-            NOW,
-        )
-        .expect_err("the pin binds to the issuer, not to the rotating delegated kid");
+        let err = verify_pinned(&resp, &signed, &delegated_kid)
+            .expect_err("the pin binds to the issuer, not to the rotating delegated kid");
         assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
     }
 
@@ -678,111 +752,31 @@ mod delegated_tests {
     #[test]
     fn delegated_rejection_enforces_the_pin_against_the_root_issuer() {
         let signed = signed();
-        let mut custody = custody();
-        custody.ensure_active(NOW).expect("issue");
-        let snap = custody.active_snapshot().unwrap();
         let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
-        let resp = build_delegated_rejection(
-            signed.request(),
-            &reason,
-            409,
-            &mcp_re_http_profile::custody::SigningWindow::over(
-                std::sync::Arc::new(snap.clone()),
-                NOW,
-                300,
-            )
-            .expect("a live signing window"),
-        )
-        .expect("server builds bound delegated rejection");
-        verify_delegated_response(
-            &resp,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&signed).with_expected_issuer_kid(ROOT_KID),
-            &policy(),
-            NOW,
-        )
-        .expect("a receipt whose credential chains to the pinned root verifies");
-        let err = verify_delegated_response(
-            &resp,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&signed).with_expected_issuer_kid("some-other-root-kid"),
-            &policy(),
-            NOW,
-        )
-        .expect_err("a pin naming a different root must fail closed on a receipt too");
+        let resp = bound_rejection(signed.request(), &reason, 409);
+        verify_pinned(&resp, &signed, ROOT_KID)
+            .expect("a receipt whose credential chains to the pinned root verifies");
+        let err = verify_pinned(&resp, &signed, "some-other-root-kid")
+            .expect_err("a pin naming a different root must fail closed on a receipt too");
         assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
     }
 
     #[test]
     fn delegated_bound_rejection_is_verified_and_classified() {
         let signed = signed();
-        let mut custody = custody();
-        custody.ensure_active(NOW).expect("issue");
-        let snap = custody.active_snapshot().unwrap();
         let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
-        let resp = build_delegated_rejection(
-            signed.request(),
-            &reason,
-            409,
-            &mcp_re_http_profile::custody::SigningWindow::over(
-                std::sync::Arc::new(snap.clone()),
-                NOW,
-                300,
-            )
-            .expect("a live signing window"),
-        )
-        .expect("server builds bound delegated rejection");
-        let out = verify_delegated_response(
-            &resp,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&signed),
-            &policy(),
-            NOW,
-        )
-        .expect("client verifies bound rejection");
-        assert_eq!(
-            out.outcome(),
-            &DelegatedOutcome::Rejection {
-                wire_code: Some("mcp-re.replay_detected".into()),
-                execution: ExecutionContract::default(),
-            }
-        );
+        let resp = bound_rejection(signed.request(), &reason, 409);
+        let out = verify(&resp, &signed).expect("client verifies bound rejection");
+        assert_eq!(out.outcome(), &rejection("mcp-re.replay_detected"));
     }
 
     #[test]
     fn delegated_preflight_rejection_is_verified_unbound() {
         let signed = signed();
-        let mut custody = custody();
-        custody.ensure_active(NOW).expect("issue");
-        let snap = custody.active_snapshot().unwrap();
         let reason = RejectionReason::new("mcp-re.invalid_signature", "bad request");
-        let resp = build_delegated_rejection_preflight(
-            Some(signed.request()),
-            &reason,
-            403,
-            &mcp_re_http_profile::custody::SigningWindow::over(
-                std::sync::Arc::new(snap.clone()),
-                NOW,
-                300,
-            )
-            .expect("a live signing window"),
-        )
-        .expect("server builds preflight delegated rejection");
-        let out = verify_delegated_response(
-            &resp,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&signed),
-            &policy(),
-            NOW,
-        )
-        .expect("client verifies preflight rejection unbound");
-        assert_eq!(
-            out.outcome(),
-            &DelegatedOutcome::Rejection {
-                wire_code: Some("mcp-re.invalid_signature".into()),
-                execution: ExecutionContract::default(),
-            }
-        );
+        let resp = preflight_rejection(Some(signed.request()), &reason, 403);
+        let out = verify(&resp, &signed).expect("client verifies preflight rejection unbound");
+        assert_eq!(out.outcome(), &rejection("mcp-re.invalid_signature"));
     }
 
     /// A preflight-unbound receipt the server minted for SOMEBODY ELSE'S request must
@@ -796,82 +790,24 @@ mod delegated_tests {
     #[test]
     fn a_preflight_receipt_for_another_request_is_not_an_answer_to_this_one() {
         let mine = signed();
-        // A different request: different params, so different body bytes.
-        let inputs = RequestSigningInputs::new(
-            CLIENT_KEY_ID.to_string(),
-            audience(),
-            bindings(),
-            mcp_re_test_paths::unique_test_nonce(),
-            CREATED,
-            EXPIRES,
-        );
-        let params: Map<String, Value> = json!({ "name": "attacker-chosen" })
-            .as_object()
-            .cloned()
-            .unwrap();
-        let theirs = build_signed_request(
-            &json!(99),
-            "tools/call",
-            params,
-            TARGET,
-            &inputs,
-            &client_key(),
-        )
-        .expect("the attacker signs its own request");
+        let theirs = other_signed();
         assert_ne!(mine.request().body, theirs.request().body);
 
-        let mut custody = custody();
-        custody.ensure_active(NOW).expect("issue");
-        let snap = custody.active_snapshot().unwrap();
         let reason = RejectionReason::new("mcp-re.invalid_signature", "bad request");
         // The receipt the server genuinely emitted for the ATTACKER's request.
-        let spliced = build_delegated_rejection_preflight(
-            Some(theirs.request()),
-            &reason,
-            403,
-            &mcp_re_http_profile::custody::SigningWindow::over(
-                std::sync::Arc::new(snap.clone()),
-                NOW,
-                300,
-            )
-            .expect("a live signing window"),
-        )
-        .expect("server builds a preflight rejection for the attacker's request");
+        let spliced = preflight_rejection(Some(theirs.request()), &reason, 403);
 
         // Presented as the answer to MY request, it must fail closed rather than
         // arriving as an authoritative denial of a call that may already have run.
-        let err = verify_delegated_response(
-            &spliced,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&mine),
-            &policy(),
-            NOW,
-        )
-        .expect_err("a receipt about another request must not answer this one");
+        let err = verify(&spliced, &mine)
+            .expect_err("a receipt about another request must not answer this one");
         assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
 
         // And the receipt the server produced for MY bytes still verifies, so the guard
         // refuses splicing rather than the preflight path itself.
-        let mine_receipt = build_delegated_rejection_preflight(
-            Some(mine.request()),
-            &reason,
-            403,
-            &mcp_re_http_profile::custody::SigningWindow::over(
-                std::sync::Arc::new(snap.clone()),
-                NOW,
-                300,
-            )
-            .expect("a live signing window"),
-        )
-        .expect("server builds a preflight rejection for this request");
-        let out = verify_delegated_response(
-            &mine_receipt,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&mine),
-            &policy(),
-            NOW,
-        )
-        .expect("the receipt for this request's bytes still verifies");
+        let mine_receipt = preflight_rejection(Some(mine.request()), &reason, 403);
+        let out = verify(&mine_receipt, &mine)
+            .expect("the receipt for this request's bytes still verifies");
         assert!(matches!(out.outcome(), DelegatedOutcome::Rejection { .. }));
     }
 
@@ -880,30 +816,10 @@ mod delegated_tests {
     #[test]
     fn a_preflight_receipt_about_no_request_answers_nothing() {
         let signed = signed();
-        let mut custody = custody();
-        custody.ensure_active(NOW).expect("issue");
-        let snap = custody.active_snapshot().unwrap();
         let reason = RejectionReason::new("mcp-re.invalid_signature", "bad request");
-        let generic = build_delegated_rejection_preflight(
-            None,
-            &reason,
-            403,
-            &mcp_re_http_profile::custody::SigningWindow::over(
-                std::sync::Arc::new(snap.clone()),
-                NOW,
-                300,
-            )
-            .expect("a live signing window"),
-        )
-        .expect("server builds a receipt with no request context");
-        let err = verify_delegated_response(
-            &generic,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&signed),
-            &policy(),
-            NOW,
-        )
-        .expect_err("a receipt about no request must not answer this one");
+        let generic = preflight_rejection(None, &reason, 403);
+        let err = verify(&generic, &signed)
+            .expect_err("a receipt about no request must not answer this one");
         assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
     }
 
@@ -915,39 +831,27 @@ mod delegated_tests {
     #[test]
     fn a_post_dispatch_rejection_carries_its_execution_and_retry_contract() {
         let signed = signed();
-        let mut custody = custody();
-        custody.ensure_active(NOW).expect("issue");
-        let snap = custody.active_snapshot().unwrap();
         let reason =
             RejectionReason::new("mcp-re.inner_dispatch_indeterminate", "backend already ran")
                 .with_execution(mcp_re_http_profile::ExecutionDisposition::PossiblyExecuted);
-        let resp = build_delegated_rejection(
-            signed.request(),
-            &reason,
-            503,
-            &mcp_re_http_profile::custody::SigningWindow::over(
-                std::sync::Arc::new(snap.clone()),
-                NOW,
-                300,
+        let resp = bound_rejection(signed.request(), &reason, 503);
+        let out = verify(&resp, &signed).expect("client verifies the receipt");
+        let (_, execution) = rejection_of(&out);
+        let stated = (
+            execution.is_stated(),
+            execution.execution(),
+            execution.retry(),
+            execution.retry_is_refused(),
+        );
+        assert_eq!(
+            stated,
+            (
+                true,
+                ExecutionStatus::PossiblyExecuted,
+                RetrySafety::UnsafeWithoutReconciliation,
+                true
             )
-            .expect("a live signing window"),
-        )
-        .expect("server builds a post-dispatch rejection");
-        let out = verify_delegated_response(
-            &resp,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&signed),
-            &policy(),
-            NOW,
-        )
-        .expect("client verifies the receipt");
-        let DelegatedOutcome::Rejection { execution, .. } = &out.outcome() else {
-            panic!("a 503 receipt is a rejection, got {:?}", out.outcome());
-        };
-        assert!(execution.is_stated());
-        assert_eq!(execution.execution(), ExecutionStatus::PossiblyExecuted);
-        assert_eq!(execution.retry(), RetrySafety::UnsafeWithoutReconciliation);
-        assert!(execution.retry_is_refused());
+        );
 
         // The destroyed-approval case is a DIFFERENT remedy and must not read as the
         // reconciliation one: nothing ran, but the retry needs a new elicitation.
@@ -955,33 +859,24 @@ mod delegated_tests {
             .with_execution(
                 mcp_re_http_profile::ExecutionDisposition::ApprovalSpentNothingExecuted,
             );
-        let resp = build_delegated_rejection(
-            signed.request(),
-            &reason,
-            503,
-            &mcp_re_http_profile::custody::SigningWindow::over(
-                std::sync::Arc::new(snap.clone()),
-                NOW,
-                300,
+        let resp = bound_rejection(signed.request(), &reason, 503);
+        let out = verify(&resp, &signed).expect("client verifies the receipt");
+        let (_, execution) = rejection_of(&out);
+        let spent = (
+            execution.execution(),
+            execution.retry(),
+            execution.continuation_consumed(),
+            execution.retry_is_refused(),
+        );
+        assert_eq!(
+            spent,
+            (
+                ExecutionStatus::NotExecuted,
+                RetrySafety::UnsafeWithoutNewElicitation,
+                true,
+                true
             )
-            .expect("a live signing window"),
-        )
-        .expect("server builds an approval-spent rejection");
-        let out = verify_delegated_response(
-            &resp,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&signed),
-            &policy(),
-            NOW,
-        )
-        .expect("client verifies the receipt");
-        let DelegatedOutcome::Rejection { execution, .. } = &out.outcome() else {
-            panic!("a 503 receipt is a rejection");
-        };
-        assert_eq!(execution.execution(), ExecutionStatus::NotExecuted);
-        assert_eq!(execution.retry(), RetrySafety::UnsafeWithoutNewElicitation);
-        assert!(execution.continuation_consumed());
-        assert!(execution.retry_is_refused());
+        );
     }
 
     /// An UNSTATED contract is not a statement that nothing ran. Collapsing the two is
@@ -990,12 +885,24 @@ mod delegated_tests {
     #[test]
     fn an_unstated_contract_is_not_a_did_not_run_verdict() {
         let empty = ExecutionContract::default();
-        assert!(!empty.is_stated());
-        assert_eq!(empty.execution(), ExecutionStatus::Unstated);
+        let unstated = (
+            empty.is_stated(),
+            empty.execution(),
+            empty.retry(),
+            empty.continuation_consumed(),
+            empty.retention_failed(),
+        );
+        assert_eq!(
+            unstated,
+            (
+                false,
+                ExecutionStatus::Unstated,
+                RetrySafety::Unstated,
+                false,
+                false
+            )
+        );
         assert_ne!(empty.execution(), ExecutionStatus::NotExecuted);
-        assert_eq!(empty.retry(), RetrySafety::Unstated);
-        assert!(!empty.continuation_consumed());
-        assert!(!empty.retention_failed());
 
         // A token this client does not know is a statement it did not understand —
         // never absence, and never permission.
@@ -1004,13 +911,13 @@ mod delegated_tests {
             retry_safety: Some("also_new".into()),
             ..ExecutionContract::default()
         };
-        assert!(unknown.is_stated());
-        assert!(matches!(
-            unknown.execution(),
-            ExecutionStatus::Unrecognized(_)
-        ));
-        assert!(matches!(unknown.retry(), RetrySafety::Unrecognized(_)));
-        assert!(unknown.retry_is_refused());
+        let understood = (
+            unknown.is_stated(),
+            matches!(unknown.execution(), ExecutionStatus::Unrecognized(_)),
+            matches!(unknown.retry(), RetrySafety::Unrecognized(_)),
+            unknown.retry_is_refused(),
+        );
+        assert_eq!(understood, (true, true, true, true));
     }
 
     /// `evidence_retention_indeterminate` says one thing more than the generic
@@ -1018,36 +925,13 @@ mod delegated_tests {
     #[test]
     fn a_retention_failure_is_readable_as_such() {
         let signed = signed();
-        let mut custody = custody();
-        custody.ensure_active(NOW).expect("issue");
-        let snap = custody.active_snapshot().unwrap();
         let reason = RejectionReason::new(
             mcp_re_core::McpReError::EvidenceRetentionIndeterminate.wire_code(),
             "the evidence write failed after dispatch",
         );
-        let resp = build_delegated_rejection(
-            signed.request(),
-            &reason,
-            500,
-            &mcp_re_http_profile::custody::SigningWindow::over(
-                std::sync::Arc::new(snap.clone()),
-                NOW,
-                300,
-            )
-            .expect("a live signing window"),
-        )
-        .expect("server builds a retention-indeterminate rejection");
-        let out = verify_delegated_response(
-            &resp,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&signed),
-            &policy(),
-            NOW,
-        )
-        .expect("client verifies the receipt");
-        let DelegatedOutcome::Rejection { execution, .. } = &out.outcome() else {
-            panic!("a 500 receipt is a rejection");
-        };
+        let resp = bound_rejection(signed.request(), &reason, 500);
+        let out = verify(&resp, &signed).expect("client verifies the receipt");
+        let (_, execution) = rejection_of(&out);
         assert_eq!(execution.execution(), ExecutionStatus::PossiblyExecuted);
         assert!(execution.retention_failed());
         assert!(execution.retry_is_refused());
@@ -1064,11 +948,7 @@ mod delegated_tests {
             subject: "did:example:server".into(),
             keyid: ROOT_KID.into(),
         };
-        let mut resp = HttpResponse {
-            status: 200,
-            headers: vec![("content-type".into(), "application/json".into())],
-            body: success_body(),
-        };
+        let mut resp = success_response();
         sign_pre_052_direct_root_response_for_negative_test(
             &mut resp,
             signed.request(),
@@ -1080,14 +960,7 @@ mod delegated_tests {
             NOW + 300,
         )
         .expect("server directly root-signs");
-        let err = verify_delegated_response(
-            &resp,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&signed),
-            &policy(),
-            NOW,
-        )
-        .unwrap_err();
+        let err = verify(&resp, &signed).unwrap_err();
         assert_eq!(err, HttpProfileError::DelegationCredentialMissing);
     }
 
@@ -1107,14 +980,7 @@ mod delegated_tests {
             .to_string()
             .into_bytes(),
         };
-        assert!(verify_delegated_response(
-            &resp,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&signed),
-            &policy(),
-            NOW
-        )
-        .is_err());
+        assert!(verify(&resp, &signed).is_err());
     }
 
     #[test]
@@ -1122,32 +988,11 @@ mod delegated_tests {
         // An unbound (response-only) signature presented with a 2xx status must be
         // rejected: a success MUST carry the `;req` request binding.
         let signed = signed();
-        let mut custody = custody();
-        custody.ensure_active(NOW).expect("issue");
-        let snap = custody.active_snapshot().unwrap();
         let reason = RejectionReason::new("mcp-re.invalid_signature", "x");
         // Build an UNBOUND signature but stamp a success status onto it.
-        let mut resp = build_delegated_rejection_preflight(
-            Some(signed.request()),
-            &reason,
-            200,
-            &mcp_re_http_profile::custody::SigningWindow::over(
-                std::sync::Arc::new(snap.clone()),
-                NOW,
-                300,
-            )
-            .expect("a live signing window"),
-        )
-        .expect("build unbound response");
+        let mut resp = preflight_rejection(Some(signed.request()), &reason, 200);
         resp.status = 200;
-        assert!(verify_delegated_response(
-            &resp,
-            &trust_with(StaticRevocationList::new()),
-            &expectation(&signed),
-            &policy(),
-            NOW
-        )
-        .is_err());
+        assert!(verify(&resp, &signed).is_err());
     }
 
     /// When neither verification path accepts a receipt, the verdict surfaced is the
@@ -1155,71 +1000,25 @@ mod delegated_tests {
     #[test]
     fn a_response_failing_both_paths_is_refused_with_the_bound_verdict() {
         let mine = signed();
-        let inputs = RequestSigningInputs::new(
-            CLIENT_KEY_ID.to_string(),
-            audience(),
-            bindings(),
-            mcp_re_test_paths::unique_test_nonce(),
-            CREATED,
-            EXPIRES,
-        );
-        let params: Map<String, Value> = json!({ "name": "attacker-chosen" })
-            .as_object()
-            .cloned()
-            .unwrap();
-        let theirs = build_signed_request(
-            &json!(99),
-            "tools/call",
-            params,
-            TARGET,
-            &inputs,
-            &client_key(),
-        )
-        .expect("the attacker signs its own request");
-
-        let mut custody = custody();
-        custody.ensure_active(NOW).expect("issue");
-        let snap = custody.active_snapshot().unwrap();
+        let theirs = other_signed();
         let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
-        let resp = build_delegated_rejection(
-            theirs.request(),
-            &reason,
-            409,
-            &mcp_re_http_profile::custody::SigningWindow::over(
-                std::sync::Arc::new(snap.clone()),
-                NOW,
-                300,
-            )
-            .expect("a live signing window"),
-        )
-        .expect("server builds a bound rejection for the other request");
+        let resp = bound_rejection(theirs.request(), &reason, 409);
 
         let trust = trust_with(StaticRevocationList::new());
         let (bound_err, unbound_err) = policy().with_expectations(|expect, vp| {
             let resolve = |kid: &str, slot: SignerSlot| trust.resolve_issuer(kid, slot, NOW);
             let v = Verifier::new(vp, &resolve);
+            let is_revoked = |id: &str| trust.is_revoked(id);
             (
-                v.verify_delegated_bound_response(
-                    &resp,
-                    mine.request(),
-                    expect,
-                    &|id: &str| trust.is_revoked(id),
-                    NOW,
-                )
-                .unwrap_err(),
-                v.verify_delegated_unbound_response(
-                    &resp,
-                    expect,
-                    &|id: &str| trust.is_revoked(id),
-                    NOW,
-                )
-                .unwrap_err(),
+                v.verify_delegated_bound_response(&resp, mine.request(), expect, &is_revoked, NOW)
+                    .unwrap_err(),
+                v.verify_delegated_unbound_response(&resp, expect, &is_revoked, NOW)
+                    .unwrap_err(),
             )
         });
         assert_ne!(bound_err, unbound_err, "the arm choice must be observable");
 
-        let err = verify_delegated_response(&resp, &trust, &expectation(&mine), &policy(), NOW)
-            .unwrap_err();
+        let err = verify_at(&resp, &trust, &mine, NOW).unwrap_err();
         assert_eq!(err, bound_err);
     }
 
@@ -1232,54 +1031,21 @@ mod delegated_tests {
     fn revoked_delegated_kid_rejects_success() {
         let signed = signed();
         let mut custody = custody();
-        let mut resp = HttpResponse {
-            status: 200,
-            headers: vec![("content-type".into(), "application/json".into())],
-            body: success_body(),
-        };
-        custody
-            .sign_response(NOW, &mut resp, signed.request())
-            .expect("server delegated-signs the success response");
+        let resp = sign_success(&mut custody, &signed, NOW);
         let kid = custody
             .active_snapshot()
             .unwrap()
             .delegated_kid()
             .to_owned();
-        let revoked = StaticRevocationList::new().revoke(kid);
-        let err = verify_delegated_response(
-            &resp,
-            &trust_with(revoked),
-            &expectation(&signed),
-            &policy(),
-            NOW,
-        )
-        .unwrap_err();
-        assert_eq!(err, HttpProfileError::DelegationRevoked);
+        revoked_verdict(&resp, &signed, kid);
     }
 
     /// Revoking the ROOT issuer kid rejects every credential it anchors.
     #[test]
     fn revoked_issuer_kid_rejects_success() {
         let signed = signed();
-        let mut custody = custody();
-        let mut resp = HttpResponse {
-            status: 200,
-            headers: vec![("content-type".into(), "application/json".into())],
-            body: success_body(),
-        };
-        custody
-            .sign_response(NOW, &mut resp, signed.request())
-            .expect("sign");
-        let revoked = StaticRevocationList::new().revoke(ROOT_KID);
-        let err = verify_delegated_response(
-            &resp,
-            &trust_with(revoked),
-            &expectation(&signed),
-            &policy(),
-            NOW,
-        )
-        .unwrap_err();
-        assert_eq!(err, HttpProfileError::DelegationRevoked);
+        let resp = sign_success(&mut custody(), &signed, NOW);
+        revoked_verdict(&resp, &signed, ROOT_KID.to_owned());
     }
 
     /// Revoking the credential's `jti` (not a kid) also fails closed — the client
@@ -1290,14 +1056,7 @@ mod delegated_tests {
     fn revoked_by_jti_rejects_success() {
         let signed = signed();
         let mut custody = custody();
-        let mut resp = HttpResponse {
-            status: 200,
-            headers: vec![("content-type".into(), "application/json".into())],
-            body: success_body(),
-        };
-        custody
-            .sign_response(NOW, &mut resp, signed.request())
-            .expect("server delegated-signs the success response");
+        let resp = sign_success(&mut custody, &signed, NOW);
         let jti = custody
             .step_events()
             .last()
@@ -1305,16 +1064,7 @@ mod delegated_tests {
             .jti()
             .to_owned();
         assert!(!jti.is_empty(), "the credential carries a jti to revoke by");
-        let revoked = StaticRevocationList::new().revoke(jti);
-        let err = verify_delegated_response(
-            &resp,
-            &trust_with(revoked),
-            &expectation(&signed),
-            &policy(),
-            NOW,
-        )
-        .unwrap_err();
-        assert_eq!(err, HttpProfileError::DelegationRevoked);
+        revoked_verdict(&resp, &signed, jti);
     }
 
     /// A non-empty denylist that does NOT name this credential still verifies — the
@@ -1322,28 +1072,14 @@ mod delegated_tests {
     #[test]
     fn non_revoked_credential_verifies_with_nonempty_list() {
         let signed = signed();
-        let mut custody = custody();
-        let mut resp = HttpResponse {
-            status: 200,
-            headers: vec![("content-type".into(), "application/json".into())],
-            body: success_body(),
-        };
-        custody
-            .sign_response(NOW, &mut resp, signed.request())
-            .expect("sign");
+        let resp = sign_success(&mut custody(), &signed, NOW);
         let revoked = StaticRevocationList::from_identifiers([
             "some-other/delegated/9".to_string(),
             "unrelated-root".to_string(),
         ]);
         assert!(!revoked.is_empty());
-        let out = verify_delegated_response(
-            &resp,
-            &trust_with(revoked),
-            &expectation(&signed),
-            &policy(),
-            NOW,
-        )
-        .expect("verifies — this credential is not on the denylist");
+        let out = verify_at(&resp, &trust_with(revoked), &signed, NOW)
+            .expect("verifies — this credential is not on the denylist");
         assert_eq!(out.outcome(), &DelegatedOutcome::Success);
     }
 
@@ -1353,32 +1089,9 @@ mod delegated_tests {
     #[test]
     fn revoked_delegated_key_rejection_receipt_is_rejected() {
         let signed = signed();
-        let mut custody = custody();
-        custody.ensure_active(NOW).expect("issue");
-        let snap = custody.active_snapshot().unwrap();
         let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
-        let resp = build_delegated_rejection(
-            signed.request(),
-            &reason,
-            409,
-            &mcp_re_http_profile::custody::SigningWindow::over(
-                std::sync::Arc::new(snap.clone()),
-                NOW,
-                300,
-            )
-            .expect("a live signing window"),
-        )
-        .expect("server builds bound delegated rejection");
-        let revoked = StaticRevocationList::new().revoke(snap.delegated_kid().to_owned());
-        let err = verify_delegated_response(
-            &resp,
-            &trust_with(revoked),
-            &expectation(&signed),
-            &policy(),
-            NOW,
-        )
-        .unwrap_err();
-        assert_eq!(err, HttpProfileError::DelegationRevoked);
+        let resp = bound_rejection(signed.request(), &reason, 409);
+        revoked_verdict(&resp, &signed, first_delegated_kid());
     }
 
     // ---- the skew is BOUNDED on both windows -----------------------------------
@@ -1398,24 +1111,7 @@ mod delegated_tests {
             "a week is not a skew"
         );
         // A request whose own window brackets the (much later) verification instant.
-        let inputs = RequestSigningInputs::new(
-            CLIENT_KEY_ID.to_string(),
-            audience(),
-            bindings(),
-            mcp_re_test_paths::unique_test_nonce(),
-            CREATED,
-            NOW + 100_000,
-        );
-        let params: Map<String, Value> = json!({ "name": "read" }).as_object().cloned().unwrap();
-        let signed = build_signed_request(
-            &json!(1),
-            "tools/call",
-            params,
-            TARGET,
-            &inputs,
-            &client_key(),
-        )
-        .expect("client signs request");
+        let signed = signed_with(json!(1), "read", NOW + 100_000);
 
         // A credential issued long ago: ttl is 300s, so it expired 3300s before `late`.
         let mut custody = custody();
@@ -1477,15 +1173,7 @@ mod delegated_tests {
     #[test]
     fn an_expired_trust_picture_stops_resolving_its_roots() {
         let signed = signed();
-        let mut custody = custody();
-        let mut resp = HttpResponse {
-            status: 200,
-            headers: vec![("content-type".into(), "application/json".into())],
-            body: success_body(),
-        };
-        custody
-            .sign_response(NOW, &mut resp, signed.request())
-            .expect("server delegated-signs the success response");
+        let resp = sign_success(&mut custody(), &signed, NOW);
 
         let root = ResolvedActor {
             identity: ActorIdentity {
@@ -1500,27 +1188,20 @@ mod delegated_tests {
         let live = TrustedIssuerSet::new().with_current(root.clone());
         // A hand-assembled set has no document behind it and no deadline to enforce.
         assert!(live.manifest_expires_at().is_none());
-        verify_delegated_response(&resp, &live, &expectation(&signed), &policy(), NOW)
-            .expect("a set with no expiry verifies");
+        verify_at(&resp, &live, &signed, NOW).expect("a set with no expiry verifies");
 
         let published = TrustedIssuerSet::new()
             .with_current(root)
             .with_manifest_expiry(NOW + 60);
         assert!(published.resolve_root(ROOT_KID, NOW).is_some());
-        verify_delegated_response(&resp, &published, &expectation(&signed), &policy(), NOW)
+        verify_at(&resp, &published, &signed, NOW)
             .expect("inside the document's window it verifies exactly as before");
 
         // One second past the document's own deadline nothing in it resolves.
         assert!(published.is_expired(NOW + 61));
         assert!(published.resolve_root(ROOT_KID, NOW + 61).is_none());
-        let err = verify_delegated_response(
-            &resp,
-            &published,
-            &expectation(&signed),
-            &policy(),
-            NOW + 61,
-        )
-        .expect_err("an expired trust picture must not verify a response");
+        let err = verify_at(&resp, &published, &signed, NOW + 61)
+            .expect_err("an expired trust picture must not verify a response");
         assert_eq!(err, HttpProfileError::DelegationIssuerUntrusted);
     }
 
@@ -1553,66 +1234,30 @@ mod delegated_tests {
             &client_key(),
         )
         .expect("client signs the notification");
-
-        let mut custody = custody();
-        custody.ensure_active(NOW).expect("issue");
-        let snap = custody.active_snapshot().unwrap();
         let ack = mcp_re_http_profile::sign_delegated_accepted_202(
             notification.request(),
-            &mcp_re_http_profile::custody::SigningWindow::over(
-                std::sync::Arc::new(snap.clone()),
-                NOW,
-                300,
-            )
-            .expect("a live signing window"),
+            &live_window(),
         )
         .expect("the boundary signs the acknowledgement");
 
         // Unpinned: verifies, as it always did.
-        verify_delegated_accepted_202_pinned(
-            &ack,
-            notification.request(),
-            &trust_with(StaticRevocationList::new()),
-            &policy(),
-            None,
-            NOW,
-        )
-        .expect("an unpinned route still accepts a well-formed acknowledgement");
+        verify_202(&ack, &notification, None)
+            .expect("an unpinned route still accepts a well-formed acknowledgement");
 
         // Pinned to the root this credential chains to: verifies.
-        verify_delegated_accepted_202_pinned(
-            &ack,
-            notification.request(),
-            &trust_with(StaticRevocationList::new()),
-            &policy(),
-            Some(ROOT_KID),
-            NOW,
-        )
-        .expect("the acknowledgement chains to the pinned root");
+        verify_202(&ack, &notification, Some(ROOT_KID))
+            .expect("the acknowledgement chains to the pinned root");
 
         // Pinned to a different root: fails closed, exactly as on the bodied path.
-        let err = verify_delegated_accepted_202_pinned(
-            &ack,
-            notification.request(),
-            &trust_with(StaticRevocationList::new()),
-            &policy(),
-            Some("some-other-root-kid"),
-            NOW,
-        )
-        .expect_err("a 202 from an unpinned root must not acknowledge this route");
+        let err = verify_202(&ack, &notification, Some("some-other-root-kid"))
+            .expect_err("a 202 from an unpinned root must not acknowledge this route");
         assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
 
         // And the pin is NOT the rotating delegated kid — pinning that would break on
         // the first rotation and says nothing about which server answered.
-        let err = verify_delegated_accepted_202_pinned(
-            &ack,
-            notification.request(),
-            &trust_with(StaticRevocationList::new()),
-            &policy(),
-            Some(snap.delegated_kid()),
-            NOW,
-        )
-        .expect_err("the pin binds to the issuer, not to the delegated kid");
+        let delegated_kid = first_delegated_kid();
+        let err = verify_202(&ack, &notification, Some(&delegated_kid))
+            .expect_err("the pin binds to the issuer, not to the delegated kid");
         assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
     }
 
@@ -1621,24 +1266,7 @@ mod delegated_tests {
     #[test]
     fn rotation_to_new_delegated_key_succeeds_when_old_revoked() {
         // A request whose freshness window brackets the post-rotation serve instant.
-        let inputs = RequestSigningInputs::new(
-            CLIENT_KEY_ID.to_string(),
-            audience(),
-            bindings(),
-            mcp_re_test_paths::unique_test_nonce(),
-            CREATED,
-            NOW + 600,
-        );
-        let params: Map<String, Value> = json!({ "name": "read" }).as_object().cloned().unwrap();
-        let signed = build_signed_request(
-            &json!(1),
-            "tools/call",
-            params,
-            TARGET,
-            &inputs,
-            &client_key(),
-        )
-        .expect("client signs request");
+        let signed = signed_with(json!(1), "read", NOW + 600);
 
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue key/1");
@@ -1650,14 +1278,7 @@ mod delegated_tests {
 
         // Advance past exp - overlap (300 - 60 = 240) so sign_response rotates to key/2.
         let rot = NOW + 250;
-        let mut resp = HttpResponse {
-            status: 200,
-            headers: vec![("content-type".into(), "application/json".into())],
-            body: success_body(),
-        };
-        custody
-            .sign_response(rot, &mut resp, signed.request())
-            .expect("server signs with the rotated key");
+        let resp = sign_success(&mut custody, &signed, rot);
         let kid2 = custody
             .active_snapshot()
             .unwrap()
@@ -1667,14 +1288,8 @@ mod delegated_tests {
 
         // Old key revoked; the new (active) key is not.
         let revoked = StaticRevocationList::new().revoke(kid1);
-        let out = verify_delegated_response(
-            &resp,
-            &trust_with(revoked),
-            &expectation(&signed),
-            &policy(),
-            rot,
-        )
-        .expect("response on the rotated key verifies while the old key is revoked");
+        let out = verify_at(&resp, &trust_with(revoked), &signed, rot)
+            .expect("response on the rotated key verifies while the old key is revoked");
         assert_eq!(out.outcome(), &DelegatedOutcome::Success);
     }
 }
