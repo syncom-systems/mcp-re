@@ -7,7 +7,7 @@
     "theorem_id": "THM-0135",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written. Read in verification/reviews/packets/epic-1201-assurance-closure-2026-10-21.md: verdict CLEAN, cause missing review (new).  Re-read after the owner directions of 2026-10-21 were applied (packet section 'Addendum 2'): its identity moved after the packet's 11d940f9 measurement only through test_sources, from one added test, outcome_before_success_test.rs::required::a_window_that_lapses_during_g2_is_refused_by_the_client_never_accepted (ADR-MCPRE-070 O5); no test or assertion was removed or weakened, and the reading is unchanged. It composes under the root THM-0074 (direction 4). Evidence class as registered; V0 units are tested and probed, not machine-checked proofs.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read proxy.audit_commitment_sole_producer, proxy.audit_commitment_witness, proxy.audit_intent_gate, proxy.audit_intent_gate_sole_producer and proxy.audit_posture against 2026-10-21. G1: IntentCommitment::commit still produces the event for the exchange's coordinate, commits it, and redeems the witness against the same event and provider; it now returns an OwedOutcome whose only constructor is pub(super) to audit_commitment and is called only after redeem, and IntentDisposition::Committed holds that OwedOutcome, minted only in AuditPosture::intent. The serving path still takes retention.reserve, then G1, then retention.commit, in that order, now through dispatch_obligations::take, and a refusal at any step drops what was taken. ReadyForDispatch is the only place the prepared dispatch is transmitted, and it takes an IntentDisposition. The audit commitment is still established before any plane in app.rs (moved to app/capabilities.rs). Witness tests changed only through the redeem_for helper. The window test now states the sum of the G1 and G2 waits (the_window_must_survive_the_commitment_waits). The prepared_dispatch_source scanner now strips comments lexically and has one added case; the startup_transcript audit-posture reader recognizes the same three states and refuses an unknown delivery. All cited tests resolve by name. The claim holds. The mutation lane was not run, and no test was run. Evidence class as registered (V0).",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -28,7 +28,7 @@
         "mutation_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:ca93ea2b1247072abb0fab14cff4bfd712b1015b5a060a8b4e274328a9f054a7",
+        "source_inputs": "sha256:f390c7199a0c9eabf0f1c7f240338548ae5403a83f46197f1820d262d8232e8a",
         "structural_probes": "sha256:5e752790198b6736fcd6f91641f42b2246a21f09a9617e9a4b45fc8b5d3fd726",
         "test_evidence_definition": "sha256:d1281903752387d535290577bc6b263e9424d2c0f6ff615ee3bbb6d1e929160d",
         "test_selection": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
@@ -48,7 +48,7 @@
         "mutation_probes": "sha256:0f177b32a6bc891ba55d181d87131f7ac69043a1b71805b2f6158802e27f1b76",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:1adfc0c8ca14a4a0c4a0760626e724af313d40fcf54caa86bb7d90189eabcbd8",
+        "source_inputs": "sha256:53c641bef1a9aa6cb47a53c3f9f174c4ba30f98f4b56607ff4a5fd6ccbc9f779",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:22fcb6f10b1cb4b43d8839701285f8e805c76afae8541431a18ebe42deba6931",
         "test_selection": "sha256:aab36dbf937d269bdc2291b3221f17775866b5d1ef4dc45d7d2a1ed040ba630b",
@@ -65,14 +65,14 @@
         "governing_boundaries": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        "mutation_probes": "sha256:078acb023c93d22da86ec65e08ceba5f9c5f662aad256534729ce6213dc29c9e",
+        "mutation_probes": "sha256:f59f25ab9fa56d9eed6dda3e379fed76c09d7998a5122cb2edcb9670bbd99f4f",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:e6d167cbad668c256648be1e49f42ded80f264fbf31976b56c15b8b43afdc7b2",
+        "source_inputs": "sha256:9d1fc372f25517f5ba391c8c800952225a2509358b20219ff990e845dc911c25",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:470b84b9005cfff136ceeb734369ca4e78c7f72c29e8044d431d32b9810d4af4",
-        "test_selection": "sha256:8097bba1db986cfc3553c53a6e972fdea2cfe783ad7a907711b7840aa55830e9",
-        "test_sources": "sha256:00fd1afde85e51aabdb300fa6342a686b4df78e88993cab494370e8476afeed6",
+        "test_selection": "sha256:ca1a051411d327316c6960bf109a2b79a82aa02c30475f1817b626077436b463",
+        "test_sources": "sha256:a28dcf1241cb50d878b0654db5543d64bb340b777b032fe8b53eda8d8617ba9f",
         "trusted_assumptions": "sha256:88f4f91aeef8e86339d9ba8d38a4fe3fd4f30ce03f8b50749640944d00606780",
         "unit_id": "sha256:fb310edbd9f2509e78ec84dab28fb8be2e295183c22619eb0a16e315c431f1de"
       },
@@ -88,8 +88,8 @@
         "mutation_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:c72fabfcda7c65ff52c70467802ff031de14b5b630cde0d153c20a8e6b4a7ba0",
-        "structural_probes": "sha256:a49259db16098c37d2eba857cdeab76bbfa26f5f2db29734140483ecac45b6f1",
+        "source_inputs": "sha256:ebb824f84afa831d978e4faa91e95795d270bda2e3d0e93e0b1d75446ca3be08",
+        "structural_probes": "sha256:c680fd9485de9d7c66da7c56c0c72b18e66562abbe83f4e621f553022673da2a",
         "test_evidence_definition": "sha256:3be7c5e739cbcd2807de741c32d45b943ea129d3f8b3a74160c182a04cc9f511",
         "test_selection": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
@@ -108,11 +108,11 @@
         "mutation_probes": "sha256:b0c95de1974ace504bd0f272f25626f53aef9ff96a4dd08169d555276285e640",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:37c830a27a6dc582db52df53f57cbe80a8f2c0e98406c2b6f93235b1ac62c7e9",
+        "source_inputs": "sha256:691eac37719da9276021938ef4fcc1b057022e51d92962f32469f20482fe4c22",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:0ccb62b229e3b1872b3064717150c7f1608968db3c91784589a5a3fe0082348f",
         "test_selection": "sha256:bd319493d3673222dafff45ff25bb72a68476f230649a77c94a3a5325acc2a24",
-        "test_sources": "sha256:00fd1afde85e51aabdb300fa6342a686b4df78e88993cab494370e8476afeed6",
+        "test_sources": "sha256:a28dcf1241cb50d878b0654db5543d64bb340b777b032fe8b53eda8d8617ba9f",
         "trusted_assumptions": "sha256:88f4f91aeef8e86339d9ba8d38a4fe3fd4f30ce03f8b50749640944d00606780",
         "unit_id": "sha256:c4da5e193db752491edfd2e73e5ed1a0336299af79537e76d043b7789cfd3fe2"
       }
@@ -121,8 +121,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:432d90fc757de1d26b229be7300ad2301da7af6b93a86bcb69d01c7c8b8b2bd4",
+  "review_digest": "sha256:7219278dba4a154dc4f6c551e743823fabad30adb0e4decd08d5ba4674bd73ee",
   "reviewed_fingerprint": "sha256:df790c7b287331ca3f4924495e606485937e432de42f4e938d9eb58936bbeaae",
-  "reviewer": "agent:claude-opus-5-5 (exec #1201; prepared for owner ratification, not an owner signature)",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0135"
 }

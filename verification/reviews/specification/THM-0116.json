@@ -11,7 +11,7 @@
     "theorem_id": "THM-0116",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G7.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. It replaces a record naming the owner as reviewer, because that record's fingerprint no longer matched; that record stays in git history. Read proxy.aws_kms_adapter, proxy.gcp_kms_adapter and proxy.pkcs11_adapter against their diffs since 2026-10-14. PKCS#11: pkcs11_native.rs became pkcs11_native/{closer,ec_point,error,find_objects,identity,session,session_ref,sign,template}.rs. I compared every function old to new: sign_eddsa and get_ec_point have identical bodies with self.function_list and self.handle in place of the passed values (same length-query, MAX_SIGNATURE_LEN and MAX_EC_POINT_LEN refusals, same written-length check); find_objects keeps init, collect, finalize in the same order, and its paging loop (PAGE 16, found greater than PAGE refused, MAX_OBJECT_HANDLES refused, stop on a short page) is the same logic as three small functions; the remaining functions are unchanged lines. pkcs11_keysource/ has no diff, and the e2e test changed only its ServerOptions constructor argument. AWS KMS: aws_kms_keysource.rs changed only the HTTP call chain (ureq 3 through outbound_fetch: header, bounded_by(NETWORK_TIMEOUT), fetch_with; Failure::Status) and the Presentation argument to recover; read_kms_response keeps its 256 KiB cap and bounded error body, and the credential_refusal split into suspension.rs keeps the same retry predicate order (refused, not suspended, then invalidate), the same cool-off arithmetic and the same clear-on-success; the tests that changed moved a helper without changing an expectation. GCP KMS: gcp_kms_keysource.rs changed only the same call chain and read_body type. The advertised-key establishment, the Ed25519-only algorithm refusal, the destroyed-key-version refusal, the SPKI check, verify-before-return and construction-time endpoint refusal are unchanged lines in all three adapters. The endpoint is still reached through CredentialEgress, whose agent disables redirects (max_redirects(0)). All 18 tested symbols per unit still resolve by name. Dependencies THM-0108 and THM-0089 are REVIEWED. The claim holds. The three feature lanes and the mutation lane were not run. Evidence class as registered (V0, software-protection custody; no FIPS claim).",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -34,7 +34,7 @@
         "mutation_probes": "sha256:69464d260c98f00d620cd258715a54928e69e3b98538eb50c41cadb49b7acc20",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:9d88d40b4e702a9bf3900586017ebd8f97ad343c4557383c64117330f02394a6",
+        "source_inputs": "sha256:498434dea77908c53dff612eb90a40004c7c26790c60bd67f7c20eef1305b1b4",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:1292b3afa69f83277d5e3a008a39245da9636fbe9adb1e2680ecd048e5c31101",
         "test_selection": "sha256:48b8519dcebb46c4952ad306ef23ddd9e32e0c790f09a865f8c341faeb74fdae",
@@ -48,13 +48,13 @@
         "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "governing_boundaries": "sha256:50a909bc52480f6cfb99d57df5358f9b1a101b7302a2d57df2aa424acb5596c7",
+        "governing_boundaries": "sha256:dfd1d0e3513e4f428d531029525503960051f349e511d80bd549eb0380d181f6",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "mutation_probes": "sha256:c2162332dac12121de34ab2d81512a383b7eeab3a97ca2acb143a2530b395464",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:fc4306a46b9cfe9606edacbee984025e2df9ee7d6f52984db90d3213959bb72a",
+        "source_inputs": "sha256:ec25f5a07fa39349dfa15b46d3e82db2defdd4349f376e0eb04fdada3cf70284",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:3f6e91135d2e5e9ba61a5514ef34798970585bfc9cfa3839503bfa956277fbd1",
         "test_selection": "sha256:a3bcd056c8a14a9beb211edf72eb718591c5b2a44c37bf0226949a0321e06a56",
@@ -68,17 +68,17 @@
         "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "governing_boundaries": "sha256:5d209a05864c3f7c8017766c6b264362cdb3325b12a21ba1b63408ba084c4ad3",
+        "governing_boundaries": "sha256:4d56ce4b2246f6c91b2eb23c93f92ebbc3fd2c87697d897ca3abbc46fc5dd694",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "mutation_probes": "sha256:13a449a3db143a033c52fee36bedfbd82bcf56693d34ce962d71c1dcea17ba2c",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:9bed6891e34aacfe652a010e47079810b0052c8024d266bcd0487590b398d907",
+        "source_inputs": "sha256:b9b56a004e4a9c959d8bce1784d5d27204873a82d8d782b204dd89def3d3b5eb",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:39aacf4f3c7ce9b44a8745e2040d8a287fa52103bbe47098b9b079085a088f68",
         "test_selection": "sha256:38ffde4a3514f0aa2400997ffaa4b6935f2fee67388faf5334b00bfdcd9fae53",
-        "test_sources": "sha256:9ed6dda2248bc6bfe399bd6a49d42db59851794a8db7d9383aacf1772edd56f5",
+        "test_sources": "sha256:ac661423787be64056908e01ce3a90daefe62df81a212fbcc9df6fb3f2999118",
         "trusted_assumptions": "sha256:2922414cfa3fb125e85cebcc0dfec5d8c5201a98ed7d534051f0cfcabcbd26ca",
         "unit_id": "sha256:e585dff70c96aba137c74c8de32fb627144542a08c42a30b090666c5960032e6"
       }
@@ -91,8 +91,8 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:65a6dd15f69a73440d3e3719065c3b71de78ab22d433d48991655462b4c50557",
+  "review_digest": "sha256:8b774c0a0f26c9524d25c4e49dfe5f0c00fb48ae6efe2b49bb280f45cb8cf489",
   "reviewed_fingerprint": "sha256:9a2a8e3cca72d6ca271690d2c810dbabaa822e78c5b5402a75a164e19ae43fed",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0116"
 }

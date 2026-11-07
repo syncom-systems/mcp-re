@@ -7,7 +7,7 @@
     "theorem_id": "THM-0125",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G11.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 115b1e4b after the step 9 verification-platform repairs (work/security-audit-2026-09-22-r12/STEP9-REREVIEW.md): M257 weakening removes both carriers (client check and signers shared tail); control red. Claim, premises, dependencies and entry text unchanged. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read after CI formatting (rustfmt over the nonce-cleanup test edits) and the clock-free unique_test_nonce (process id, process address, counter; work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): formatting and the test-only helper only; claim, premises, dependencies and entry text unchanged.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. It replaces a record naming the owner as reviewer, because that record's fingerprint no longer matched; that record stays in git history. Read client.request_construction and http_profile.evidence_block_carriage (body/mod.rs has no diff). mcp-re-client-core/src/request.rs replaced build_signed_request, build_signed_request_with_signer, build_signed_notification, build_signed_notification_with_signer and build_signed_tool_call by build_signed_message and build_signed_message_with_signer over one McpMessage, with McpMessage::tool_call for the common call. Compared with the old production code: check_preconditions runs continuation-on-a-notification first, then the audience cross-check, the 22-character nonce floor and expires-after-created, the same order and the same errors as before (the old notification entry points rejected the continuation before the shared core ran the other three); the body is built from id, jsonrpc, method and params alone, with the id key omitted rather than null; HttpRequestEvidenceBlock::validate runs before signing; signing goes through sign_request_full or the signer closure with a RequestSignature carrying the same key id, created, expires and nonce. The tests changed only to call build_signed_message with McpMessage::new; all 15 cited tests resolve and keep their expectations. The request is now built through one entry point rather than five, which narrows the seam the claim describes. The claim holds. The mutation lane was not run, and no test was run. Evidence class as registered (V0).",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -24,7 +24,7 @@
         "mutation_probes": "sha256:062abcfa3cabe915ac058878dc31e13a02ba949c2313ece4ba79d941077bc49e",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:2ea4a47341d6fb6e2f99739c6b3f64482c258079145f2bd0982156ed6be7382f",
+        "source_inputs": "sha256:cf3933535a5f54bf879c84ef83b6ba7df98e8bff3cc1fd089741da6067bbea1f",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:dd411a9c1ca1056683d1b37eec51987a2e9605fec90e97b6b73a48cd3f60e9e9",
         "test_selection": "sha256:efd4d9310f5e2ef2f49a3b13d03945860b1b92cad4e85914dad773a1609c2f5d",
@@ -57,8 +57,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:2d3439635ae7d12e550815be8011df84084bad8ae64ddc78c9f35bb548598978",
+  "review_digest": "sha256:78fe3235fc8ed5efda2aaf06f872db8fd271e95d904e5d6da931c32b60443f1b",
   "reviewed_fingerprint": "sha256:c7bd2c205a20e0f2f91472ee390af7b0ac7c92ba3d3c8a8486ed9584d761550a",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0125"
 }
