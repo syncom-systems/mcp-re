@@ -352,50 +352,66 @@ def stamp_defects(stamp: Stamp | None, toolchains: dict, selection: dict[str, di
             "tools/verification/regenerate-lean inside the pinned extraction container."
         ]
 
-    defects: list[str] = []
+    checks = (
+        _pipeline_defect(stamp, toolchains),
+        _selection_defect(stamp, selection),
+        _staleness_defect(stamp),
+        _hand_edit_defect(stamp),
+    )
+    return [defect for defect in checks if defect]
 
+
+def _pipeline_defect(stamp: Stamp, toolchains: dict) -> str | None:
     identity = extraction_identity(toolchains)
-    if stamp.identity != identity:
-        moved = sorted(
-            key
-            for key in set(identity) | set(stamp.identity)
-            if identity.get(key) != stamp.identity.get(key)
-        )
-        defects.append(
-            "the model was extracted by a different pipeline than the lock now pins "
-            f"({', '.join(moved)}). A model produced by an undeclared instrument is not a "
-            "model of the declared one."
-        )
+    if stamp.identity == identity:
+        return None
+    moved = sorted(
+        key
+        for key in set(identity) | set(stamp.identity)
+        if identity.get(key) != stamp.identity.get(key)
+    )
+    return (
+        "the model was extracted by a different pipeline than the lock now pins "
+        f"({', '.join(moved)}). A model produced by an undeclared instrument is not a "
+        "model of the declared one."
+    )
 
-    if stamp.selection != selection:
-        defects.append(
-            "the manifest's extraction selection has changed since the model was "
-            f"generated: stamped {sorted(stamp.selection)}, manifest declares "
-            f"{sorted(selection)}. The model does not cover what the units claim."
-        )
 
+def _selection_defect(stamp: Stamp, selection: dict[str, dict]) -> str | None:
+    if stamp.selection == selection:
+        return None
+    return (
+        "the manifest's extraction selection has changed since the model was "
+        f"generated: stamped {sorted(stamp.selection)}, manifest declares "
+        f"{sorted(selection)}. The model does not cover what the units claim."
+    )
+
+
+def _staleness_defect(stamp: Stamp) -> str | None:
     stale = sorted(
         path
         for path, recorded in stamp.sources.items()
         if not (REPO_ROOT / path).is_file() or digest(REPO_ROOT / path) != recorded
     )
-    if stale:
-        defects.append(
-            f"the model is stale: {', '.join(stale)} changed after the extraction THIS "
-            f"STAMP RECORDS."
-        )
+    if not stale:
+        return None
+    return (
+        f"the model is stale: {', '.join(stale)} changed after the extraction THIS "
+        f"STAMP RECORDS."
+    )
 
+
+def _hand_edit_defect(stamp: Stamp) -> str | None:
     written = current_written()
-    if written != stamp.written:
-        touched = sorted(
-            name
-            for name in set(written) | set(stamp.written)
-            if written.get(name) != stamp.written.get(name)
-        )
-        defects.append(
-            f"the generated model was modified after extraction: {', '.join(touched)}. "
-            "Generated output is machine-owned; a hand-edit that makes a proof pass is a "
-            "forged artifact, not weak evidence."
-        )
-
-    return defects
+    if written == stamp.written:
+        return None
+    touched = sorted(
+        name
+        for name in set(written) | set(stamp.written)
+        if written.get(name) != stamp.written.get(name)
+    )
+    return (
+        f"the generated model was modified after extraction: {', '.join(touched)}. "
+        "Generated output is machine-owned; a hand-edit that makes a proof pass is a "
+        "forged artifact, not weak evidence."
+    )

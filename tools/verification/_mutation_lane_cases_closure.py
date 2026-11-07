@@ -40,6 +40,7 @@ def test_a_partial_run_writes_no_evidence_record():
 def test_the_probe_set_participates_in_the_units_fingerprint():
     """A closure over a suite that can silently shrink proves as little as the v3 test
     component did: deleting a probe must invalidate the standing mutation PASS."""
+    from _fingerprint import Registries
     from _fingerprint import fingerprint_unit
     from _manifest import load_verification
     from _assumptions import load_assumptions
@@ -48,7 +49,8 @@ def test_the_probe_set_participates_in_the_units_fingerprint():
     doc = load_verification()
     toolchains, assumptions = load_toolchains(), load_assumptions()
     unit = UNITS["http_profile.request_floor_result"]
-    components = fingerprint_unit(unit, doc, toolchains, assumptions)["components"]
+    registries = Registries(doc, toolchains, assumptions)
+    components = fingerprint_unit(unit, registries)["components"]
     scoped = [p for p in lane.load_probes() if p["unit"] == unit["id"]]
     assert len(components["mutation_probes"]) == len(scoped)
     assert components["mutation_lane_identity"], "the lane binary must be measured"
@@ -56,9 +58,7 @@ def test_the_probe_set_participates_in_the_units_fingerprint():
     # And SCOPED: another unit's probes must not enter this unit's fingerprint, or every
     # unit would be dirtied by every other unit's probe edits.
     other = UNITS["proxy.epoch_bound_session_store"]
-    other_probes = fingerprint_unit(other, doc, toolchains, assumptions)["components"][
-        "mutation_probes"
-    ]
+    other_probes = fingerprint_unit(other, registries)["components"]["mutation_probes"]
     assert set(other_probes).isdisjoint(components["mutation_probes"])
     assert other_probes
 

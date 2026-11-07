@@ -53,6 +53,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from _evidence import EvidenceRecord, load_records
+from _fingerprint import Registries
 from _fingerprint import fingerprint_unit
 from _lanes import EXTRACTION_LANES, FORMAL
 from _lanes import required as lane_required
@@ -89,7 +90,7 @@ def requirements(doc: dict, toolchains: dict, assumptions: dict) -> list[Require
     """
     out: list[Requirement] = []
     for unit in doc.get("unit", []):
-        fingerprint = fingerprint_unit(unit, doc, toolchains, assumptions)["fingerprint"]
+        fingerprint = fingerprint_unit(unit, Registries(doc, toolchains, assumptions))["fingerprint"]
         for lane in sorted(FORMAL_LANE_NAMES):
             # Read from the declared evidence URI, never from the class alone, except where
             # the catalogue says the tier is the requirement (`_lanes.required`).

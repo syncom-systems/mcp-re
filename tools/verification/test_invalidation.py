@@ -130,6 +130,7 @@ def test_every_component_the_encoding_produces_has_a_classification():
     from pathlib import Path as _Path
 
     _sys.path.insert(0, str(_Path(__file__).resolve().parent))
+    from _fingerprint import Registries
     from _fingerprint import fingerprint_unit
     from _manifest import load_verification
     from _assumptions import load_assumptions
@@ -139,12 +140,10 @@ def test_every_component_the_encoding_produces_has_a_classification():
     doc = load_verification()
     toolchains = load_toolchains()
     assumptions = load_assumptions()
-    boundaries = load_trust_boundaries()
+    registries = Registries(doc, toolchains, assumptions, load_trust_boundaries())
     produced = set()
     for unit in doc["unit"]:
-        produced |= set(
-            fingerprint_unit(unit, doc, toolchains, assumptions, boundaries)["components"]
-        )
+        produced |= set(fingerprint_unit(unit, registries)["components"])
     assert len(produced) >= 30, produced
 
     accounted = set(COMPONENT_STATE) | STRUCTURAL_COMPONENT | set(UNRESOLVED_COMPONENT)

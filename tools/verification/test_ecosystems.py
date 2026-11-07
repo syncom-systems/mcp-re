@@ -39,6 +39,7 @@ from _ecosystems import (  # noqa: E402
     unit_projects,
     valid_target,
 )
+from _fingerprint import Registries  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import SCHEMA_VERSION, load_verification  # noqa: E402
 from _assumptions import load_assumptions  # noqa: E402
@@ -79,7 +80,7 @@ TS_UNIT = {
 
 
 def fingerprint(unit: dict) -> dict:
-    return fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)
+    return fingerprint_unit(unit, Registries(DOC, TOOLCHAINS, ASSUMPTIONS))
 
 
 def moved(unit: dict, mutate) -> bool:

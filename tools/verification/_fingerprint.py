@@ -135,6 +135,8 @@ extensionless script because an extensionless file cannot be imported.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import _rust_targets
 import _tree
 from _boundary_crossings import FORMAL_CLASSES
@@ -205,6 +207,7 @@ __all__ = [
     "POLICY_DOCUMENTS",
     "REVIEW_ENCODING_VERSION",
     "RUST_TARGETS_TABLE",
+    "Registries",
     "SEMANTIC_UNIT_COMPONENTS",
     "STRUCTURAL_LANE_INPUTS",
     "TEST_LANE_INPUTS",
@@ -420,13 +423,19 @@ def _conditional_components(unit: dict) -> dict:
     return components
 
 
-def fingerprint_unit(
-    unit: dict,
-    doc: dict,
-    toolchains: dict,
-    assumptions: dict,
-    boundaries: dict | None = None,
-) -> dict:
+@dataclass(frozen=True)
+class Registries:
+    """The registry documents a fingerprint reads besides the unit itself."""
+
+    doc: dict
+    toolchains: dict
+    assumptions: dict
+    boundaries: dict | None = None
+
+
+def fingerprint_unit(unit: dict, registries: Registries) -> dict:
+    doc, toolchains = registries.doc, registries.toolchains
+    assumptions, boundaries = registries.assumptions, registries.boundaries
     components = {
         "encoding_version": ENCODING_VERSION,
         "unit_id": unit["id"],
@@ -445,13 +454,7 @@ def fingerprint_unit(
     }
 
 
-def fingerprint_read_set(
-    unit: dict,
-    doc: dict,
-    toolchains: dict,
-    assumptions: dict,
-    boundaries: dict | None = None,
-) -> frozenset[str]:
+def fingerprint_read_set(unit: dict, registries: Registries) -> frozenset[str]:
     """Every repo path whose bytes can move this unit's fingerprint.
 
     Computed by fingerprinting the unit and recording what was read, so the answer cannot
@@ -462,7 +465,5 @@ def fingerprint_read_set(
     Tracked files, plus wildcard-free inputs nothing occupies yet — creating one of those
     moves the digest, so a filter naming it is live.
     """
-    reads = collect_reads(
-        lambda: fingerprint_unit(unit, doc, toolchains, assumptions, boundaries)
-    )
+    reads = collect_reads(lambda: fingerprint_unit(unit, registries))
     return frozenset(reads | set(POLICY_DOCUMENTS))

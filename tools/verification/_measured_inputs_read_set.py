@@ -22,10 +22,11 @@ from _measured_inputs_support import (
 
 
 def unit_read_sets() -> dict[str, frozenset[str]]:
+    from _fingerprint import Registries
     from _fingerprint import fingerprint_read_set
 
     return {
-        unit_id: fingerprint_read_set(unit, DOC, TOOLCHAINS, ASSUMPTIONS)
+        unit_id: fingerprint_read_set(unit, Registries(DOC, TOOLCHAINS, ASSUMPTIONS))
         for unit_id, unit in UNITS.items()
     }
 
@@ -70,7 +71,9 @@ def test_the_read_set_holds_every_file_the_fingerprint_opens():
     for unit_id, unit in UNITS.items():
         observer = ObservingTree()
         with _tree.reading(observer):
-            read_set = _fingerprint.fingerprint_read_set(unit, DOC, TOOLCHAINS, ASSUMPTIONS)
+            read_set = _fingerprint.fingerprint_read_set(
+                unit, _fingerprint.Registries(DOC, TOOLCHAINS, ASSUMPTIONS)
+            )
         observed += len(observer.read_paths)
         if observer.read_paths - read_set:
             missing[unit_id] = sorted(observer.read_paths - read_set)
@@ -100,7 +103,7 @@ def test_the_fingerprint_reads_nothing_beside_its_tree():
         "sys.path.insert(0, sys.argv[1])\n"
         "from pathlib import Path\n"
         "import _tree\n"
-        "from _fingerprint import fingerprint_unit\n"
+        "from _fingerprint import Registries, fingerprint_unit\n"
         "from _manifest import load_verification\n"
         "from _assumptions import load_assumptions\n"
         "from _toolchain_lock import load_toolchains\n"
@@ -108,7 +111,7 @@ def test_the_fingerprint_reads_nothing_beside_its_tree():
         "with _tree.reading(tree):\n"
         "    doc = load_verification(tree_checks=False)\n"
         "    tc, asm = load_toolchains(), load_assumptions(tree_checks=False)\n"
-        "    print(json.dumps({u['id']: fingerprint_unit(u, doc, tc, asm)['fingerprint']\n"
+        "    print(json.dumps({u['id']: fingerprint_unit(u, Registries(doc, tc, asm))['fingerprint']\n"
         "                      for u in doc['unit']}))\n"
     )
     with tempfile.TemporaryDirectory(prefix="mcp-re-seam-") as scratch:
@@ -126,9 +129,9 @@ def test_the_fingerprint_reads_nothing_beside_its_tree():
         doc = load_verification(tree_checks=False)
         toolchains, assumptions = load_toolchains(), load_assumptions(tree_checks=False)
         here = {
-            unit["id"]: _fingerprint.fingerprint_unit(unit, doc, toolchains, assumptions)[
-                "fingerprint"
-            ]
+            unit["id"]: _fingerprint.fingerprint_unit(
+                unit, _fingerprint.Registries(doc, toolchains, assumptions)
+            )["fingerprint"]
             for unit in doc["unit"]
         }
     tree.close()

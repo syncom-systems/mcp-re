@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from _verification_trigger.config import REPO, WORKFLOWS  # noqa: I001  (puts tools/verification on sys.path)
 
+from _fingerprint import Registries
 from _fingerprint import fingerprint_read_set
 from _assumptions import load_assumptions
 from _manifest import load_verification
@@ -40,6 +41,8 @@ def fingerprint_inputs() -> list[str]:
     assumptions, boundaries = load_assumptions(), load_trust_boundaries()
     required: set[str] = set()
     for unit in doc.get("unit", []):
-        required |= fingerprint_read_set(unit, doc, toolchains, assumptions, boundaries)
+        required |= fingerprint_read_set(
+            unit, Registries(doc, toolchains, assumptions, boundaries)
+        )
     required |= set(structural_probe_paths(_registries.rows("structural-probes", "probe")))
     return sorted(required)

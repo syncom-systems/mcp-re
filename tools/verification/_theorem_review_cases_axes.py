@@ -12,6 +12,7 @@ from _assumptions import (
 from _fingerprint import (
     EVIDENCE_UNIT_COMPONENTS,
     SEMANTIC_UNIT_COMPONENTS,
+    Registries,
     assumption_digest,
     fingerprint_unit,
 )
@@ -184,10 +185,10 @@ def test_every_unit_component_is_placed_on_exactly_one_axis():
     known = set(COMPONENT_STATE) | set(STRUCTURAL_COMPONENT) | set(UNRESOLVED_COMPONENT)
     assert known <= placed, sorted(known - placed)
     doc = load_verification()
-    toolchains, assumptions = load_toolchains(), load_assumptions()
+    registries = Registries(doc, load_toolchains(), load_assumptions())
     produced = set()
     for unit in doc["unit"]:
-        produced |= set(fingerprint_unit(unit, doc, toolchains, assumptions)["components"])
+        produced |= set(fingerprint_unit(unit, registries)["components"])
     assert produced <= placed, sorted(produced - placed)
     assert placed <= produced | known, sorted(placed - produced - known)
 
