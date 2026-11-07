@@ -9,7 +9,7 @@
     "theorem_id": "THM-0090",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G7.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written. Read in verification/reviews/packets/epic-1201-assurance-closure-2026-10-21.md: verdict CLEAN-NOTE, cause implementation change (TLS connector) + dependency change.  Re-read after the owner directions of 2026-10-21 were applied (packet section 'Addendum 2'): ASM-0092 (the public Web PKI premise, NP-290, direction 6) joins its premise closure through unit://proxy.outbound_destination. The claim's 'endpoint its rule admitted' rests on server authentication by RootedConnector::public(), which that premise now states, with the root-set CAs as the external trust boundary and revocation not claimed. CLEAN. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read proxy.outbound_destination. Two sources of change. This refactor's: address.rs parse_inet_aton_ipv4 now assembles the one to four numeric parts in assemble_inet_aton by width instead of four match arms; I checked it for each part count against the old arms (the host is still refused above four parts and for an empty host; for n parts the last part must fit in 32 - 8(n-1) bits and each leading part in a byte; the result is the same u32), and the address tests are unchanged. The rest is the ureq 3 upgrade and its follow-ups (other merged work): VettedDestination::agent builds the agent with max_redirects(0), proxy(None) and the global timeout, over the default connector chained with the proxy's own RootedConnector; a certificate-derived destination gets VettingResolver (every resolved address must satisfy resolved_ip_is_public, an empty resolution is refused, and only vetted addresses are pinned) and an operator-configured one the default resolver, as the scope states. The capability still exposes only get(path) and post(path) on the vetted authority, whose url.rs join is unchanged; a search of mcp-re-proxy/src finds no ureq agent or request built outside outbound_fetch. A 3xx answer is returned, not followed, as before. All 18 tested symbols the unit names still name a test function. The claim, scope and premises are unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -29,10 +29,10 @@
         "mutation_probes": "sha256:210c91c4378cbc8bb2e7aafef7e96fcd24d62ac03aea4e2fd9f1dc8b99fcad73",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:4997dd3eedbfeed3120757842d081393a03918d843878afaf311ac778c358acc",
+        "source_inputs": "sha256:a65ea0ae8fe91d01b7b88d8f338802fe868e545ff75685dddc53664d2b5b3227",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:2e1b641d3f36c12970da53033ec9abcde530a46b7a7cc552d21e5f28586db851",
-        "test_selection": "sha256:af855704383a15a4365d8a8b3d3f56219d5674f5577cec2a7857f68a873a01f6",
+        "test_selection": "sha256:1666b09b1072ff220728fca21bdaa51b0593c6b7807d6375e596fb1b3f152269",
         "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "trusted_assumptions": "sha256:51288ce4a4308e5349b9c5437a3d40c36fc943a965a9a68139eee9487a7c7a08",
         "unit_id": "sha256:3e994a3dbeeed61fa80e86194cc6a73609fa0959e860fee5a3aff3985a4f455e"
@@ -44,8 +44,8 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:6369b9318af63e58005354e659cc9790a66f0657c6a2fff8aa00d11a210c634c",
+  "review_digest": "sha256:c3d2124d71c1f3ec4d54c8c82b597b60364bfe5d8167d19e71562b3b7f5408e6",
   "reviewed_fingerprint": "sha256:ce22a7ec651a2fbdc6bf3f8083a57b398a12164a06108086209e4099aad34d9d",
-  "reviewer": "agent:claude-opus-5-5 (exec #1201; prepared for owner ratification, not an owner signature)",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0090"
 }

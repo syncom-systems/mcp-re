@@ -7,7 +7,7 @@
     "theorem_id": "THM-0079",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G3_G4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read after CI formatting (rustfmt over the nonce-cleanup test edits) and the clock-free unique_test_nonce (process id, process address, counter; work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): formatting and the test-only helper only; claim, premises, dependencies and entry text unchanged.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. It replaces a record naming the owner as reviewer, because that record's fingerprint no longer matched. Read http_profile.replay_key (mcp-re-http-profile/src/replay.rs) and the core cache it calls. The only source change is that HttpReplayKey::check_and_insert hands the cache one ReplayTriple (signer slot, audience slot, nonce) instead of three loose strings, with the same three values in the same slots; the five-tuple pre-serialization onto the signer and audience slots, the 0x1F separator and the composite-slot injectivity are untouched, and the replay::tests the unit cites are unchanged. mcp-re-core/src/replay.rs builds its (signer, audience, nonce) map key from the triple's three fields exactly as it did from the arguments; its tests only gained an admit() helper with the same expectations. The three cited dispatch_test tests (duplicate nonce is a replay; same nonce under another audience or another resolved actor does not collide) were compared body for body with the old file: only the helper that builds the verified evidence changed, the assertions are identical. The claim, scope and premises are unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -24,11 +24,11 @@
         "mutation_probes": "sha256:52f74d241cc35b9c0e60c52888ca62ad1e3141d936525d4eb37aa83744d02095",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:06a4edd86ea8d03e4da52f5b9f2be883bb01893457e8f4231120a4cb68204f96",
+        "source_inputs": "sha256:283846471acc5d8a0266c627838eeb058c840755dd71480c8f5f85fb37190430",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:38c10fd74b43140fd520225514952d7374c24d55d07f4c58044137d0f8d7c81b",
         "test_selection": "sha256:bcb773975a62adea948d61f4206f753e6516aa5ffc6ec558f6fabfbb577f6684",
-        "test_sources": "sha256:58784b602693956528bb74ed2a03e4269fd74e61ab340f947aa4a9269ecd53d2",
+        "test_sources": "sha256:06ece0f2fdf532f18cbf3cfa683911feaaeaab9ad9e35dcc13d0e1101d2fd2df",
         "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "unit_id": "sha256:868f8d2567046bdded909dda187896acbe69a3ad153ee053a924d8ec48b7e305"
       }
@@ -37,8 +37,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:3ca14d75a35f98b61105e0348fff1719deb937a104ae2d1d66c16591b0fb1004",
+  "review_digest": "sha256:1175ac5fa8fda2bf03e58350e7fdba73dc07ec5ceef9d1c2e9b7d19e97a0571c",
   "reviewed_fingerprint": "sha256:0a86dcbe3cd3bc26670dbfdad6fde47bfba5d3c7e28b4b90cb951f66bd774cc5",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0079"
 }

@@ -10,7 +10,7 @@
     "theorem_id": "THM-0081",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G8.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 4f9eb062 after the CodeQL remediation (work/security-audit-2026-09-22-r12/CODEQL-REREVIEW.md): test sources only; the accept-any-server TLS test verifier was replaced by verification against the test's server CA, no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded. Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written. Read in verification/reviews/packets/epic-1201-assurance-closure-2026-10-21.md: verdict CLEAN, cause implementation change.  Evidence class as registered; V0 units are tested and probed, not machine-checked proofs.\n\nAgent re-review for the tokio 1.54.1 / Rust 1.99.1 modernization (work/modernization-2026-10-22/security-triage.md), recorded at the clippy-lint commit 'fix(proxy): clear the clippy 1.99 lints behind the toolchain bump'. This record is NOT an owner signature: it attests the agent's substantive reading only, and owner adoption is a ledger line the owner appends. Reading: the unit's source_inputs moved through async_serve/inbound.rs and request.rs only: `read_body`'s refusal is boxed and unboxed at its one caller before the handler, in the same position the refusal_site_totality test requires (`read_body(` precedes `handler(`); no refusal site was added, removed or moved out of the exchange lifecycle. Claim, premises and dependencies are unchanged; the semantic input moved, and the tests the unit selects pass at this revision (40/40 Bazel tests, rustfmt and lint lanes clean on Rust 1.99.1). Evidence class as registered.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read proxy.refusal_site_totality. The serving subtree still mints its one answer through served(); a search of http_profile_serve for ServedHttpResponse shows it named in signatures and constructed only in served(), and scripts/refusal_provenance_gate.py (clause 12c, the single served mint across the workspace) passes on this tree. refusal_site_totality_test.rs is unchanged since the last review. disposition now takes &mut ExchangeProgress and enters the terminal through p.refuse() (#1209); it still derives the contract by matching retry_semantics() over its three variants with no wildcard arm, so the retry derivation the claim names holds, and a new unit test pins that a second refusal of a post-dispatch terminal reports PossiblyExecuted. The reply_assembly rewrites (dispatched exchange and success exit as types, #1245/#1256; answer_dispatched taking one Dispatched value) are other merged work that keeps every Err arm returning what its stage produced. This refactor's own change to the subtree is a test-store consolidation in continuation/answer_leg.rs (a RecordingStore tier replaces UnreachableStore with the same outage behaviour). The claim, scope and premises are unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -21,18 +21,18 @@
         "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "gate_controls": "sha256:a3beacf511e7ed963ec360edb80bd78ffb819adb8e4c610a0747c3385f02135a",
+        "gate_controls": "sha256:e9694d885db8b49abb05471bae4914cc4e11a679a86e486f2976ea73edf7fea1",
         "governing_boundaries": "sha256:0a4219d8a19e20ff2960514e039965bd6cda62dff649ca56a5231c737a109ebc",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "mutation_probes": "sha256:8054fdfa84776e9272aabf60a73e42e9fc0885c97ae7495b7e87a8b36f0c33c0",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:e386088b037a8341419ccac96162236040ad601e891cfbcfa130a0e7e2578373",
+        "source_inputs": "sha256:907bd23c3670e3bcaedcd00d79e081e3952fcd86388d23f981515d3ffa0040cf",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:a1967bb2ac6e57f9c7df1d8d1290bcc77839707051845054089fa1ec59b87023",
-        "test_selection": "sha256:e9ef8d990efa8f93df81039a0343a9156b6549320241f2737c7e96ba9bbaebf8",
-        "test_sources": "sha256:94dfaa338808959316751debd390baf2894b099a7cb4e4220d54664b9bfba57c",
+        "test_selection": "sha256:b1f9f706daf7d9e51521230585664d91709579eb21b5ccf4c25bbe8b493c811b",
+        "test_sources": "sha256:c470da46f277f367ea6d539ff07db4b0b1ff2a00fdf22a4dee74cbb9074952ab",
         "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "unit_id": "sha256:d309c94f8db2d416d9ad170fa4ca025dee71ec8c4f75700e7d732aeccdbb0b8b"
       }
@@ -44,8 +44,8 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:da8d00456260a4fa909b693aa5804984739cc31af308366cea55b0fe2379988b",
+  "review_digest": "sha256:b524d4e4bd43805137948be0e85a691f30605f2849df7f1ce351ba72b60a89ae",
   "reviewed_fingerprint": "sha256:bf723ba252cf5ed8ae595e4e7db470ecc277a5c56d7a64eb0c5c236b1b93ee86",
-  "reviewer": "agent:claude-sonnet-5-5 (modernization 2026-10-22; prepared for owner ratification, not an owner signature)",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0081"
 }
