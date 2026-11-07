@@ -435,7 +435,11 @@
    "package": "mcp-re-conformance",
    "root": "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs",
    "srcs": [
-    "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs"
+    "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs",
+    "mcp-re-conformance/tests/audit_vocabulary_guard_test/corpus.rs",
+    "mcp-re-conformance/tests/audit_vocabulary_guard_test/producers.rs",
+    "mcp-re-conformance/tests/audit_vocabulary_guard_test/source.rs",
+    "mcp-re-conformance/tests/audit_vocabulary_guard_test/vocabulary.rs"
    ],
    "testonly": true,
    "verus_deps": []
