@@ -141,7 +141,7 @@ max_class_without_assumption = "V0"
 #    Production files use `std::time::Instant` for local deadlines and elapsed-time
 #    measurement: `mcp-re-client/src/serve/` and `mcp-re-transport/src/limits.rs`, and
 #    mcp-re-proxy's `async_serve/`, cli.rs, delegated_tls.rs, `http_inner/`,
-#    managed_worker.rs, `stage_timers/`, trust_epoch.rs. (MCPRE-175 made three of those
+#    managed_worker.rs, `stage_timers/`, `trust_epoch/`. (MCPRE-175 made three of those
 #    owner subtrees; the count is deliberately not restated, because an inventory with a
 #    number in it goes stale in a way the reader cannot see.) `Instant` is monotonic and not
 #    comparable to any peer's clock, so it cannot participate in the skew question this
@@ -302,11 +302,11 @@ paths = [
   # class — `RedisEpochReader` holds a Redis connection of its own — and the file was not
   # listed, so a unit reaching it crossed this boundary without the model saying so. Named
   # precisely: the reader, not the cache that reacts to what it read.
-  "mcp-re-proxy/src/trust_epoch.rs",
+  "mcp-re-proxy/src/trust_epoch/redis_reader.rs",
   # r11 R11-346/R11-518. The MRTR correlation tier keeps its entries in the same store
   # class, and a unit reached it without the model saying so. The file that holds the
   # connection, not the trait or the in-process reference beside it — same rule as
-  # `trust_epoch.rs` above.
+  # `trust_epoch/redis_reader.rs` above.
   "mcp-re-proxy/src/redis_continuation_store.rs",
 ]
 beyond = "Whether Redis replication and etcd consensus behave as their premises state, and who else can write the keyspaces a fleet keeps its cross-replica state in. THM-0092's scope says the first in as many words, and no umbrella premise stands in for both mechanisms; ASM-0047 says the second, which is load-bearing for the correlation tier in a way it is not for the others — a planted replay entry can only refuse a request, a planted correlation entry manufactures an approval."

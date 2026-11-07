@@ -3145,7 +3145,7 @@ expect_red = [
 id = "M96-a-failed-read-is-not-a-healthy-source"
 unit = "proxy.trust_epoch_source"
 conjunct = "a source outage is reported, never read as a steady epoch"
-path = "mcp-re-proxy/src/trust_epoch.rs"
+path = "mcp-re-proxy/src/trust_epoch/source.rs"
 anchor = """
                 self.set_healthy(false, &e.0);
                 return;
@@ -3154,16 +3154,16 @@ weakening = """
                 return;
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::read_error_marks_unhealthy_and_emits_nothing",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::recovery_after_outage_catches_an_epoch_that_advanced_during_it",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::read_error_marks_unhealthy_and_emits_nothing",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::recovery_after_outage_catches_an_epoch_that_advanced_during_it",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
 ]
 
 [[probe]]
 id = "M627-an-unreachable-epoch-store-builds-no-source"
 unit = "proxy.trust_epoch_source"
 conjunct = "no source is built over a store that does not answer"
-path = "mcp-re-proxy/src/trust_epoch.rs"
+path = "mcp-re-proxy/src/trust_epoch/redis_reader.rs"
 anchor = """
     let reader = RedisEpochReader::connect(url, epoch_key).map_err(|e| e.0)?;
 """
@@ -3171,7 +3171,7 @@ weakening = """
     let reader = RedisEpochReader::connect_lazy(url, epoch_key).map_err(|e| e.0)?;
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_unreachable_epoch_store_builds_no_source",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::redis_reader::tests::an_unreachable_epoch_store_builds_no_source",
 ]
 note = """
 The lazy reader is a legitimate constructor, and the signing plane uses it: there the first
@@ -3185,7 +3185,7 @@ store to avoid. Runs only in the `redis_replay` lane, where the source is compil
 id = "M97-a-regression-is-a-change"
 unit = "proxy.trust_epoch_source"
 conjunct = "a change of the shared epoch — any change, a regressed counter included — flushes; rollback is not representable on this side"
-path = "mcp-re-proxy/src/trust_epoch.rs"
+path = "mcp-re-proxy/src/trust_epoch/source.rs"
 anchor = """
             Some(ref prev) if epoch != *prev => {
 """
@@ -3193,7 +3193,7 @@ weakening = """
             Some(ref prev) if epoch.counter > prev.counter => {
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_regressed_counter_flushes_rather_than_being_adopted_silently",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::a_regressed_counter_flushes_rather_than_being_adopted_silently",
 ]
 
 [[probe]]
@@ -3922,7 +3922,7 @@ conjunct = "a source nothing is driving reports unhealthy — for a poller that 
 # The weakening restores the code as it shipped: reporting only the PANIC exit. Under it the
 # panic control stays green and the graceful-stop control turns red, which is the point —
 # the two exits are two facts, and the battery covered one of them.
-path = "mcp-re-proxy/src/trust_epoch.rs"
+path = "mcp-re-proxy/src/trust_epoch/poller.rs"
 anchor = """
         let _ = ran;
         source.report_poller_gone();
@@ -3933,7 +3933,7 @@ weakening = """
         }
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_gracefully_stopped_poller_reports_unhealthy_at_once",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::poller::tests::a_gracefully_stopped_poller_reports_unhealthy_at_once",
 ]
 
 [[probe]]
@@ -12609,7 +12609,7 @@ replica can tell from no change.
 id = "M518-proxy-a-trust-epoch-flush-keys-on-the-counter-alone"
 unit = "proxy.trust_epoch_source"
 conjunct = "the trust cache is flushed when the epoch state changes, and the state is the counter together with the generation of the advance that set it"
-path = "mcp-re-proxy/src/trust_epoch.rs"
+path = "mcp-re-proxy/src/trust_epoch/source.rs"
 anchor = """
             Some(ref prev) if epoch != *prev => {
 """
@@ -12617,7 +12617,7 @@ weakening = """
             Some(ref prev) if epoch.counter != prev.counter => {
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_advance_onto_an_already_seen_counter_still_flushes",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::an_advance_onto_an_already_seen_counter_still_flushes",
 ]
 note = """
 A store rolled back and then advanced onto the counter a replica last saw reads as no change, so

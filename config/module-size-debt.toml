@@ -639,12 +639,6 @@ baseline_sha = "c939c2f"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/trust_epoch.rs"
-baseline_prod_loc = 451
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
 path = "mcp-re-proxy/src/shared_replay.rs"
 baseline_prod_loc = 447
 baseline_sha = "d1fc5fa"
