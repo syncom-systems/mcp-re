@@ -8034,6 +8034,7 @@ description = "A KMS endpoint's literal spelling and its machine interpretation 
 paths = [
   "mcp-re-proxy/src/kms_endpoint_policy/mod.rs",
   "mcp-re-proxy/src/kms_endpoint_policy/authority.rs",
+  "mcp-re-proxy/src/kms_endpoint_policy/host.rs",
   # #742 slice 2: the rule as a VALUE. `KmsEndpoint` is the only producer in the crate of
   # credential egress to a KMS/STS endpoint, so what this unit owns now includes the fact
   # that the decision cannot be skipped rather than only what the decision is. Gated with
@@ -8065,14 +8066,14 @@ evidence = [
 tested_symbols = [
   # The two readings agree, which is the whole claim.
   "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::the_authority_returned_is_the_host_and_port_that_will_be_reached",
-  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::check_host_refuses_a_host_a_parser_would_rewrite_to_a_different_address",
-  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::check_port_refuses_a_port_whose_text_and_value_differ",
+  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::host::tests::check_host_refuses_a_host_a_parser_would_rewrite_to_a_different_address",
+  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::host::tests::check_port_refuses_a_port_whose_text_and_value_differ",
   # Where the two readings diverge is at the authority split, and userinfo is how R9's
   # Critical re-pointed the root-key bootstrap: a `@` makes the host a reader sees and the
   # host a URL parser reaches two different strings.
   "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::split_authority_divides_on_the_bracket_not_the_first_colon",
   "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::split_authority_refuses_a_bracket_that_does_not_close_or_is_followed_by_junk",
-  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::check_host_refuses_a_bracket_shaped_host_that_is_not_an_address",
+  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::host::tests::check_host_refuses_a_bracket_shaped_host_that_is_not_an_address",
   # A bracket is IPv6 notation and nothing else, so the bracketed spelling and the address
   # the socket layer reaches are the same authority. ADR-MCPRE-069 NP-027's one R1 control.
   "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::a_bracketed_host_must_be_an_ipv6_literal",
