@@ -10212,7 +10212,7 @@ paths = [
   # the failure visible to the budget above instead of serving a document the operator did
   # not write. No theorem claims the bound in terms; recorded in the Phase-1 packet.
   "mcp-re-proxy/src/trust_plane/snapshot.rs",
-  # NOT `trust_epoch.rs`: the epoch→event source is `proxy.trust_epoch_source`, split out
+  # NOT `trust_epoch/redis_reader.rs`: the epoch→event source is `proxy.trust_epoch_source`, split out
   # on 2026-09-05 when THM-0097 was registered. Assumption reach is derived scope → unit →
   # theorem, so a unit holding the reader would carry ASM-0044 into a theorem that is true
   # without any cross-connection propagation. The seam between the two is
@@ -10397,6 +10397,10 @@ paths = [
   # reader's absent-key rule, which is the one place a foreign read's MEANING is decided
   # locally and belongs beside the comparison that consumes it.
   "mcp-re-proxy/src/trust_epoch.rs",
+  "mcp-re-proxy/src/trust_epoch/poller.rs",
+  "mcp-re-proxy/src/trust_epoch/redis_reader.rs",
+  "mcp-re-proxy/src/trust_epoch/shared.rs",
+  "mcp-re-proxy/src/trust_epoch/source.rs",
   # What one read returns, and the single Redis read that produces it.
   "mcp-re-proxy/src/trust_epoch/state.rs",
 ]
@@ -10418,50 +10422,50 @@ evidence = [
 # The e2e in `tests/integration_ext/redis_trust_epoch_e2e_test.rs` is NOT a member, for
 # the reason recorded on `proxy.trust_resolution_window`: it self-skips green without a store.
 tested_symbols = [
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::first_poll_establishes_baseline_without_flush",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::epoch_advance_emits_a_single_flush_all",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::first_poll_establishes_baseline_without_flush",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::epoch_advance_emits_a_single_flush_all",
   # Rollback is not representable on this side: any change flushes, and a flush can only
   # tighten. Without this, `!=` may become `>` and a regressed store silently adopts.
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_regressed_counter_flushes_rather_than_being_adopted_silently",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::read_error_marks_unhealthy_and_emits_nothing",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::recovery_after_outage_catches_an_epoch_that_advanced_during_it",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::draining_does_not_read_the_store",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::the_request_path_does_not_wait_on_a_stalled_epoch_read",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_source_that_stops_being_polled_stops_reporting_healthy",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::a_regressed_counter_flushes_rather_than_being_adopted_silently",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::read_error_marks_unhealthy_and_emits_nothing",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::recovery_after_outage_catches_an_epoch_that_advanced_during_it",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::draining_does_not_read_the_store",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::the_request_path_does_not_wait_on_a_stalled_epoch_read",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::a_source_that_stops_being_polled_stops_reporting_healthy",
   # The OTHER exit, and the one the supervisor did not report: a poller asked to stop left
   # `is_healthy()` true for the whole missed-poll tolerance, so the latch described a source
   # nothing was driving. The liveness bound in that control is a minute wide, so a pass is a
   # statement about the exit path and not about how long the test waited (R11-707).
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_gracefully_stopped_poller_reports_unhealthy_at_once",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_poller_that_never_ran_is_not_healthy",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_poisoned_queue_still_delivers_the_flush",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::poller::tests::a_gracefully_stopped_poller_reports_unhealthy_at_once",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::a_poller_that_never_ran_is_not_healthy",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::a_poisoned_queue_still_delivers_the_flush",
   # THE POLLER. The only controls that run `trust_epoch_poller_body`, which is what makes
   # "flush within one poll interval" a fact about the deployment rather than about
   # `poll_once` driven by hand.
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::the_poller_body_reads_at_once_then_on_its_cadence_and_stops_when_asked",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_poller_whose_read_panics_reports_the_source_unhealthy_at_once",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::poller::tests::the_poller_body_reads_at_once_then_on_its_cadence_and_stops_when_asked",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::poller::tests::a_poller_whose_read_panics_reports_the_source_unhealthy_at_once",
   # THE COMPOSITION, in process: this source under the production cache type through the
   # production adapter. Advance → the next answer is the store's; outage → nothing flushes
   # and the deadline governs. Listed here because the source is what these drive; the
   # cache's half of each is a member of `proxy.trust_resolution_window` in its own right.
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_observed_advance_makes_the_next_lookup_the_stores_answer",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::an_observed_advance_makes_the_next_lookup_the_stores_answer",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
   # The reader's one local rule about a foreign read's meaning. Exists only under
   # `redis_replay`, which is why the battery names `proxy_ext_unit_test`.
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_absent_epoch_key_is_a_read_failure_not_epoch_zero",  # ADR-MCPRE-069 batch 19. Two controls in this unit's own file, each a clause of this
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::redis_reader::tests::an_absent_epoch_key_is_a_read_failure_not_epoch_zero",  # ADR-MCPRE-069 batch 19. Two controls in this unit's own file, each a clause of this
   # statement that its other controls do not reach: a source driven DIRECTLY is not subject
   # to the poller's liveness bound — the bound is the poller's property and not the source's
   # — and one epoch read cannot consume the rotation overlap, which is what keeps a single
   # read from spending the window the rotation depends on.
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_directly_driven_source_is_not_subject_to_the_liveness_bound",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::one_epoch_read_cannot_consume_the_rotation_overlap",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_advance_onto_an_already_seen_counter_still_flushes",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::a_directly_driven_source_is_not_subject_to_the_liveness_bound",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::redis_reader::tests::one_epoch_read_cannot_consume_the_rotation_overlap",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::an_advance_onto_an_already_seen_counter_still_flushes",
   "//mcp-re-proxy:proxy_unit_test#trust_epoch::state::tests::equal_counters_under_different_generations_are_different_states",
   # The startup half of fail-closed: the eager first read is what refuses an unreachable
   # store, and the trust plane spawns its poller only over a source this returned. The
   # signing plane holds its own reader of the same store and its own refusal, in
   # `proxy.signing_plane_epoch_read_refusal`.
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_unreachable_epoch_store_builds_no_source",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::redis_reader::tests::an_unreachable_epoch_store_builds_no_source",
 ]
 # The Redis reader and its two controls exist only under `redis_replay`. The selectors name
 # `proxy_ext_unit_test` so the fingerprint says the battery measured the crate that carries
