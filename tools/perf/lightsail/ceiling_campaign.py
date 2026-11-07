@@ -20,8 +20,8 @@ from ceiling_manifest import binaries, drifted_instruments, initial_manifest, la
 from ceiling_seal import finish
 from common import base_env, log, ports, read_json, run_logged, write_json
 from hostfacts import check_expected, inventory
-from phases import (DEFAULT_REPLAY_POOL, STARTUP_LOG_ENV, Context, phase_a_point, phase_b_point,
-                    startup_facts)
+from phases import (DEFAULT_REPLAY_POOL, STARTUP_LOG_ENV, BPoint, Context, Topology, phase_a_point,
+                    phase_b_point, startup_facts)
 import isolation
 from redis_tier import Tier
 
@@ -66,7 +66,7 @@ def smoke(ctx: Context) -> bool:
 
     Both proxies must also have STATED the pool this run asked for: a sweep whose proxy
     opened another pool would measure a configuration nobody declared."""
-    point = phase_a_point(ctx, "smoke", 1, 1, 1)
+    point = phase_a_point(ctx, Topology("smoke", 1, 1), 1)
     if point["status"] != "COMPLETE":
         return False
     smoke_dir = ctx.run_dir / "phase-a" / "smoke"
@@ -101,8 +101,8 @@ class Sweeps:
 def _phase_a(s: Sweeps) -> None:
     run_dir = s.ctx.run_dir
     for n in s.sweep:
-        _tolerant(run_dir, s.steps, f"A-scaling-c{n}", lambda n=n: phase_a_point(s.ctx, "scaling", n, 1, s.args.reps))
-    _tolerant(run_dir, s.steps, "A-shipped-auto", lambda: phase_a_point(s.ctx, "shipped-auto", 0, 0, s.args.reps))
+        _tolerant(run_dir, s.steps, f"A-scaling-c{n}", lambda n=n: phase_a_point(s.ctx, Topology("scaling", n, 1), s.args.reps))
+    _tolerant(run_dir, s.steps, "A-shipped-auto", lambda: phase_a_point(s.ctx, Topology("shipped-auto", 0, 0), s.args.reps))
 
 
 def _phase_b_repeats(s: Sweeps, primary: str) -> None:
@@ -111,21 +111,21 @@ def _phase_b_repeats(s: Sweeps, primary: str) -> None:
     for attempt in range(2, s.args.b_repeats + 1):
         for n in repeat_cores(interim["phase_b"], s.sweep):
             _tolerant(run_dir, s.steps, f"B-scaling-c{n}-a{attempt}",
-                      lambda n=n, a=attempt: phase_b_point(s.ctx, "scaling", n, 1, primary, a))
+                      lambda n=n, a=attempt: phase_b_point(s.ctx, BPoint("scaling", n, 1, primary, a)))
 
 
 def _phase_b_other_modes(s: Sweeps, modes: list[str]) -> None:
     for mode in modes[1:]:
         for n in s.sweep:
             _tolerant(s.ctx.run_dir, s.steps, f"B-{mode}-c{n}",
-                      lambda n=n, m=mode: phase_b_point(s.ctx, f"scaling-{m}", n, 1, m, 1))
+                      lambda n=n, m=mode: phase_b_point(s.ctx, BPoint(f"scaling-{m}", n, 1, m, 1)))
 
 
 def _phase_b_partitioned(s: Sweeps, primary: str) -> None:
     for n in (int(x) for x in s.args.partitioned.split(",") if x):
         if n < s.vcpus:
             _tolerant(s.ctx.run_dir, s.steps, f"B-partitioned-c{n}",
-                      lambda n=n: phase_b_point(s.ctx, "partitioned", n, 1, primary, 1, partition=True))
+                      lambda n=n: phase_b_point(s.ctx, BPoint("partitioned", n, 1, primary, 1, partition=True)))
 
 
 def _phase_b(s: Sweeps) -> None:
@@ -133,13 +133,13 @@ def _phase_b(s: Sweeps) -> None:
     modes = [m for m in s.args.b_modes.split(",") if m]
     primary = modes[0] if modes else "cold"
     for n in s.sweep:
-        _tolerant(run_dir, s.steps, f"B-scaling-c{n}", lambda n=n: phase_b_point(s.ctx, "scaling", n, 1, primary, 1))
+        _tolerant(run_dir, s.steps, f"B-scaling-c{n}", lambda n=n: phase_b_point(s.ctx, BPoint("scaling", n, 1, primary, 1)))
     _phase_b_repeats(s, primary)
     _phase_b_other_modes(s, modes)
     _phase_b_partitioned(s, primary)
     for attempt in range(1, s.args.b_repeats + 1):
         _tolerant(run_dir, s.steps, f"B-shipped-auto-a{attempt}",
-                  lambda a=attempt: phase_b_point(s.ctx, "shipped-auto", 0, 0, primary, a))
+                  lambda a=attempt: phase_b_point(s.ctx, BPoint("shipped-auto", 0, 0, primary, a)))
 
 
 def _identity_check(run_dir: Path, steps: list, args) -> tuple[dict, list[str]]:
