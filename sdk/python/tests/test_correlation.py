@@ -53,6 +53,17 @@ def _record(store: CorrelationStore, signed, **over) -> str:
     return store.record(signed, **args)
 
 
+def _elicit(store, correlation_id, now):
+    """Record an input-required reply for `correlation_id` at `now`."""
+    store.record_input_required(
+        correlation_id,
+        response_digest_alg="sha256",
+        response_digest_value="x",
+        request_state="s",
+        now=now,
+    )
+
+
 class TestRecordAndTake:
     def test_the_correlation_id_is_the_request_evidence_handle(self):
         store, signed = CorrelationStore(), _sign()
@@ -364,28 +375,14 @@ class TestInputRequiredAssociatesWithoutConsuming:
         assert _sign().body()
 
     def test_an_unbound_elicitation_is_rejected(self):
-        store = CorrelationStore()
         with pytest.raises(McpReError) as ei:
-            store.record_input_required(
-                "not-outstanding",
-                response_digest_alg="sha256",
-                response_digest_value="x",
-                request_state="s",
-                now=IN_WINDOW,
-            )
+            _elicit(CorrelationStore(), "not-outstanding", IN_WINDOW)
         assert ei.value.wire_code == "mcp-re.request_binding_mismatch"
 
     def test_a_late_elicitation_is_rejected(self):
         store, signed = CorrelationStore(), _sign()
-        cid = _record(store, signed)
         with pytest.raises(McpReError) as ei:
-            store.record_input_required(
-                cid,
-                response_digest_alg="sha256",
-                response_digest_value="x",
-                request_state="s",
-                now=LATE,
-            )
+            _elicit(store, _record(store, signed), LATE)
         assert ei.value.wire_code == "mcp-re.expired_request"
 
     def test_an_elicitation_for_an_answered_request_is_a_replay(self):
@@ -393,11 +390,5 @@ class TestInputRequiredAssociatesWithoutConsuming:
         cid = _record(store, signed)
         store.take(cid, now=IN_WINDOW)
         with pytest.raises(McpReError) as ei:
-            store.record_input_required(
-                cid,
-                response_digest_alg="sha256",
-                response_digest_value="x",
-                request_state="s",
-                now=IN_WINDOW,
-            )
+            _elicit(store, cid, IN_WINDOW)
         assert ei.value.wire_code == "mcp-re.replay_detected"
