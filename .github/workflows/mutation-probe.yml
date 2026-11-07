@@ -49,6 +49,7 @@ on:
       - "verification/policy/verification.toml"
       - "tools/verification/verify-mutations"
       - "tools/verification/test_mutation_lane.py"
+      - "tools/verification/_mutation_lane_*.py"
       - "tools/verification/_manifest.py"
       - "tools/verification/_record_rules.py"
       - "tools/verification/_assumptions.py"
