@@ -30,6 +30,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -196,14 +198,7 @@ def run(args: argparse.Namespace) -> int:
     targets = _load(args.targets, TARGETS_SCHEMA)
     gate = Gate()
     if args.baseline or args.scaled:
-        if not (args.baseline and args.scaled):
-            raise SystemExit("error: --baseline and --scaled must be given together")
-        check_scaling(
-            _load_report(args.baseline),
-            _load_report(args.scaled),
-            targets,
-            gate,
-        )
+        _check_scaling_pair(args, targets, gate)
     if args.report:
         check_report(_load_report(args.report), targets, gate)
     if not (args.report or args.baseline):
@@ -211,17 +206,36 @@ def run(args: argparse.Namespace) -> int:
     return _report_gate(gate, targets)
 
 
+def _check_scaling_pair(args: argparse.Namespace, targets: dict, gate: Gate) -> None:
+    if not (args.baseline and args.scaled):
+        raise SystemExit("error: --baseline and --scaled must be given together")
+    check_scaling(_load_report(args.baseline), _load_report(args.scaled), targets, gate)
+
+
 # --- self-test: synthetic pass + fail, no files ------------------------------
 
-def _synth_report(succ, fail, tput, p50, p99, p999, cores=1):
-    return {
-        "schema": REPORT_SCHEMA,
-        "config": {"declared_cores": cores},
-        "results": {
-            "successes": succ, "failures": fail, "throughput_rps": tput,
-            "added_latency_us": {"p50": p50, "p99": p99, "p999": p999},
-        },
-    }
+@dataclass(frozen=True)
+class _Synth:
+    """A synthetic load-harness report's measured numbers; the defaults are a clean run."""
+
+    successes: int = 1000
+    failures: int = 0
+    throughput_rps: float = 5000.0
+    p50: int = 100
+    p99: int = 900
+    p999: int = 3000
+    cores: int = 1
+
+    def report(self) -> dict:
+        return {
+            "schema": REPORT_SCHEMA,
+            "config": {"declared_cores": self.cores},
+            "results": {
+                "successes": self.successes, "failures": self.failures,
+                "throughput_rps": self.throughput_rps,
+                "added_latency_us": {"p50": self.p50, "p99": self.p99, "p999": self.p999},
+            },
+        }
 
 
 def _targets(status, targets=None, factor=None):
@@ -230,75 +244,108 @@ def _targets(status, targets=None, factor=None):
                                "per_core_scaling": {"gated": True, "linear_tolerance_min": factor}}}
 
 
-def selftest() -> int:
-    ok = True
+def _failures_of_report(synth: _Synth, targets: dict) -> tuple[list[str], list[str]]:
+    gate = Gate()
+    check_report(synth.report(), targets, gate)
+    return gate.failures, gate.warnings
 
-    # 1. Pending targets: a clean run passes on correctness alone; capacity skipped.
+
+def _scaling_failures(baseline: _Synth, scaled: _Synth, targets: dict) -> list[str]:
+    gate = Gate()
+    check_scaling(baseline.report(), scaled.report(), targets, gate)
+    return gate.failures
+
+
+def _pending_cases_hold() -> bool:
+    """Pending targets: a clean run passes on correctness alone, capacity skipped; and
+    correctness bites even when pending — dropped requests fail."""
     pend = _targets("pending")
-    g = Gate(); check_report(_synth_report(1000, 0, 5000.0, 100, 900, 3000), pend, g)
-    ok &= (not g.failures) and (len(g.warnings) >= 1)
+    clean_failures, warnings = _failures_of_report(_Synth(), pend)
+    dropped, _ = _failures_of_report(_Synth(successes=900, failures=100), pend)
+    return (
+        (not clean_failures) and len(warnings) >= 1
+        and any("request failure" in f for f in dropped)
+    )
 
-    # 2. Correctness bites even when pending: dropped requests fail.
-    g = Gate(); check_report(_synth_report(900, 100, 5000.0, 100, 900, 3000), pend, g)
-    ok &= any("request failure" in f for f in g.failures)
 
-    # 3. Declared targets: below floor / above a ceiling fails.
+def _declared_cases_hold() -> bool:
+    """Declared targets: below floor or above a ceiling fails, and a compliant run passes."""
     decl = _targets("declared",
                     {"aggregate_throughput_rps_min": 4000.0,
                      "p50_added_us_max": 500, "p99_added_us_max": 2000, "p999_added_us_max": 5000})
-    g = Gate(); check_report(_synth_report(1000, 0, 3999.0, 100, 900, 3000), decl, g)
-    ok &= any("throughput_rps" in f for f in g.failures)
-    g = Gate(); check_report(_synth_report(1000, 0, 9000.0, 100, 9001, 3000), decl, g)
-    ok &= any("p99" in f for f in g.failures)
-    # A compliant run passes.
-    g = Gate(); check_report(_synth_report(1000, 0, 9000.0, 100, 900, 3000), decl, g)
-    ok &= not g.failures
+    below_floor, _ = _failures_of_report(_Synth(throughput_rps=3999.0), decl)
+    above_ceiling, _ = _failures_of_report(_Synth(throughput_rps=9000.0, p99=9001), decl)
+    compliant, _ = _failures_of_report(_Synth(throughput_rps=9000.0), decl)
+    return (
+        any("throughput_rps" in f for f in below_floor)
+        and any("p99" in f for f in above_ceiling)
+        and not compliant
+    )
 
-    # 4. Scaling lane: below-factor fails, at/above passes (only when declared).
+
+def _scaling_cases_hold() -> bool:
+    """Scaling lane: below-factor fails, at/above passes (only when declared)."""
     scal = _targets("declared", factor=0.8)
-    g = Gate(); check_scaling(_synth_report(1, 0, 1000.0, 0, 0, 0, cores=1),
-                              _synth_report(1, 0, 3000.0, 0, 0, 0, cores=4), scal, g)
-    ok &= any("per-core scaling" in f for f in g.failures)  # 3000/(1000*4)=0.75 < 0.8
-    g = Gate(); check_scaling(_synth_report(1, 0, 1000.0, 0, 0, 0, cores=1),
-                              _synth_report(1, 0, 3400.0, 0, 0, 0, cores=4), scal, g)
-    ok &= not g.failures  # 0.85 >= 0.8
+    one_core = _Synth(throughput_rps=1000.0, successes=1, p50=0, p99=0, p999=0)
+    below = _scaling_failures(one_core, _Synth(throughput_rps=3000.0, successes=1, p50=0, p99=0, p999=0, cores=4), scal)
+    above = _scaling_failures(one_core, _Synth(throughput_rps=3400.0, successes=1, p50=0, p99=0, p999=0, cores=4), scal)
+    # 3000/(1000*4)=0.75 < 0.8, and 3400/(1000*4)=0.85 >= 0.8.
+    return any("per-core scaling" in f for f in below) and not above
 
-    # 5. A non-declarable hardware class is REFUSED, and a declared one is not — through
-    #    the real loader, because the refusal lives there and a synthetic dict would skip it.
-    #    The set is DERIVED from the declaration, so an empty one would refuse nothing
-    #    while every case below still passed for the wrong reason.
-    import tempfile
-    ok &= bool(non_declarable_hw_classes())
+
+def _hardware_class_holds(tmp: str, hw: str, refused: bool) -> bool:
+    """Through the real loader, because the refusal lives there and a synthetic dict would skip it."""
+    doc = _Synth().report()
+    doc["config"]["hardware_class"] = hw
+    path = str(Path(tmp) / f"{hw}.json")
+    Path(path).write_text(json.dumps(doc))
+    try:
+        _load_report(path)
+    except SystemExit as exc:
+        return refused and hw in str(exc)
+    return not refused
+
+
+def _hardware_cases_hold() -> bool:
+    """A non-declarable hardware class is REFUSED, and a declared one is not.
+
+    The set is DERIVED from the declaration, so an empty one would refuse nothing while
+    every case below still passed for the wrong reason.
+    """
     with tempfile.TemporaryDirectory() as tmp:
-        for hw, refused in (
-            ("kind-local", True),
-            ("smoke", True),
-            # The two co-located developer-class contexts: a self-hosted Actions runner is
-            # still a machine whose load generator shares the proxy's cores, so it detects
-            # regression and states no capacity.
-            ("apple-m4-pro-14c-dev", True),
-            ("dev1-macos-arm64", True),
-            ("e2-standard-8", False),
-        ):
-            doc = _synth_report(1000, 0, 5000.0, 100, 900, 3000)
-            doc["config"]["hardware_class"] = hw
-            path = str(Path(tmp) / f"{hw}.json")
-            Path(path).write_text(json.dumps(doc))
-            try:
-                _load_report(path)
-                ok &= not refused
-            except SystemExit as exc:
-                ok &= refused and hw in str(exc)
+        held = [
+            _hardware_class_holds(tmp, hw, refused)
+            for hw, refused in (
+                ("kind-local", True),
+                ("smoke", True),
+                # The two co-located developer-class contexts: a self-hosted Actions runner is
+                # still a machine whose load generator shares the proxy's cores, so it detects
+                # regression and states no capacity.
+                ("apple-m4-pro-14c-dev", True),
+                ("dev1-macos-arm64", True),
+                ("e2-standard-8", False),
+            )
+        ]
         # A report with NO hardware_class at all is not refused: absence is the pre-v2
         # shape, and inventing a refusal for it would fail reports the gate has always
         # accepted. The two named classes are the ones that assert a non-class.
         path = str(Path(tmp) / "absent.json")
-        Path(path).write_text(json.dumps(_synth_report(1000, 0, 5000.0, 100, 900, 3000)))
+        Path(path).write_text(json.dumps(_Synth().report()))
         try:
             _load_report(path)
+            held.append(True)
         except SystemExit:
-            ok = False
+            held.append(False)
+    return bool(non_declarable_hw_classes()) and all(held)
 
+
+def selftest() -> int:
+    ok = all([
+        _pending_cases_hold(),
+        _declared_cases_hold(),
+        _scaling_cases_hold(),
+        _hardware_cases_hold(),
+    ])
     print("slo_gate selftest:", "OK" if ok else "FAILED")
     return 0 if ok else 1
 
