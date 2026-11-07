@@ -912,7 +912,7 @@ what ships rather than about what was written.
 ## NP-013 — every exchange terminates, and no slot is leaked
 
 **Controls:** `sdk/typescript/test/transport.test.ts` (6),
-`sdk/python/tests/test_transport.py` (4).
+`sdk/python/tests/test_transport_shutdown.py` (4).
 **Carrier:** each SDK transport's concurrency semaphore and exchange completion path.
 **Statement.** *The number of exchanges in flight is bounded, so a burst cannot exhaust the
 poster; exchanges run concurrently rather than head-of-line blocking; an invalid bound is
@@ -931,7 +931,7 @@ they emit" — which is this proposition, stated in a test file and nowhere in t
 
 ## NP-014 — after close, the Python SDK signs and transmits nothing
 
-**Controls:** `sdk/python/tests/test_transport.py` (4).
+**Controls:** `sdk/python/tests/test_transport_shutdown.py` (4).
 **Carrier:** the Python transport adapter's `close`.
 **Statement.** *After `close()`, further work is refused, in-flight work is aborted rather
 than drained, an in-flight notification is aborted too, and nothing is delivered to a caller
@@ -974,7 +974,7 @@ Both are `theorem_claim` components, so that is a ratification event and an owne
 about what the Python root promises — R6, not a registration. Packet at
 `verification/reviews/packets/adr069-np-014-ratification-2026-09-20.md`.
 
-**Lane.** The four controls are in `sdk/python/tests/test_transport.py`, which opens with
+**Lane.** The four controls are in `sdk/python/tests/test_transport_shutdown.py`, which opens with
 `pytest.importorskip("mcp")`. They are selected and PASS in the authoritative lane — the
 prepared `.venv-cp314` that `scripts/prepare_python_matrix.sh` builds, where the `dev` extra
 supplies `mcp` — and select to ZERO in an environment without it. Whoever ratifies this

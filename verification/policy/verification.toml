@@ -5380,13 +5380,13 @@ evidence = [
   "mutation://sdk_python/exchange_binding/the_verifier_sees_this_transmission",
 ]
 tested_symbols = [
-  "pytest#tests/test_transport.py::test_the_signed_body_is_the_request_the_caller_described",
-  "pytest#tests/test_transport.py::test_the_verifier_is_shown_the_bytes_that_were_transmitted",
+  "pytest#tests/test_transport_signing.py::test_the_signed_body_is_the_request_the_caller_described",
+  "pytest#tests/test_transport_signing.py::test_the_verifier_is_shown_the_bytes_that_were_transmitted",
   # The anti-vacuity control for the stubbed verdicts: a duck-typed stub cannot track the
   # core's shape, so a renamed member would leave the adapter reading `None` in production.
-  "pytest#tests/test_transport.py::test_the_stubbed_verdict_shape_is_the_cores_own",
+  "pytest#tests/test_transport_receipts.py::test_the_stubbed_verdict_shape_is_the_cores_own",
   # ADR-MCPRE-069 `register`: the bindings reach the core, which digests the real bytes.
-  "pytest#tests/test_transport.py::test_authorization_bindings_reach_the_core_which_digests_the_real_bytes",
+  "pytest#tests/test_transport_shutdown.py::test_authorization_bindings_reach_the_core_which_digests_the_real_bytes",
   #
   # `tests/test_transport_e2e.py` holds the strongest controls for this proposition — a
   # tampered response and an unsigned one, failing closed against the real proxy — and NONE
@@ -5428,9 +5428,9 @@ tested_symbols = [
   # One signed PREFLIGHT receipt answers any request from any client of that issuer for the
   # credential's whole validity window, so the caller must be able to tell "the boundary
   # rejected MY request" from "a generic rejection arrived".
-  "pytest#tests/test_transport.py::test_an_unbound_rejection_receipt_is_reported_as_not_request_bound",
-  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[None]",
-  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[]",
+  "pytest#tests/test_transport_receipts.py::test_an_unbound_rejection_receipt_is_reported_as_not_request_bound",
+  "pytest#tests/test_transport_receipts.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[None]",
+  "pytest#tests/test_transport_receipts.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[]",
 ]
 
 # C3. The leaf the whole root FAMILY exists for. A byte-level parity fixture pins what the
@@ -5450,10 +5450,10 @@ evidence = [
   "mutation://sdk_python/execution_report/only_what_the_receipt_said",
 ]
 tested_symbols = [
-  "pytest#tests/test_transport.py::test_a_post_dispatch_rejection_reports_its_execution_and_retry_contract",
+  "pytest#tests/test_transport_receipts.py::test_a_post_dispatch_rejection_reports_its_execution_and_retry_contract",
   # The transport deadline is the condition under which this SDK knows LEAST about whether
   # the call ran, which is exactly where a synthesized verdict does the damage.
-  "pytest#tests/test_transport.py::test_a_transport_deadline_does_not_synthesize_what_the_peer_never_said",
+  "pytest#tests/test_transport_failures.py::test_a_transport_deadline_does_not_synthesize_what_the_peer_never_said",
 ]
 
 # C4. Separate from C3 deliberately, and the separation is the authority boundary: C3 is
@@ -5472,20 +5472,20 @@ evidence = [
   "mutation://sdk_python/local_failure/no_borrowed_vocabulary",
 ]
 tested_symbols = [
-  "pytest#tests/test_transport.py::test_a_wire_failure_is_delivered_as_a_correlated_json_rpc_error",
-  "pytest#tests/test_transport.py::test_a_local_signer_failure_is_delivered_without_claiming_a_wire_code",
-  "pytest#tests/test_transport.py::test_an_unexpected_exception_is_delivered_without_claiming_a_wire_code",
+  "pytest#tests/test_transport_failures.py::test_a_wire_failure_is_delivered_as_a_correlated_json_rpc_error",
+  "pytest#tests/test_transport_failures.py::test_a_local_signer_failure_is_delivered_without_claiming_a_wire_code",
+  "pytest#tests/test_transport_failures.py::test_an_unexpected_exception_is_delivered_without_claiming_a_wire_code",
   # Letting an exchange's exception escape would cancel every OTHER in-flight exchange, so
   # one flaky connection ends the session — a remotely triggerable session kill.
-  "pytest#tests/test_transport.py::test_one_exchanges_network_error_does_not_take_down_the_session",
+  "pytest#tests/test_transport_failures.py::test_one_exchanges_network_error_does_not_take_down_the_session",
   # ADR-MCPRE-069 `register`: the binding raises a core refusal as `WireRefusal` with the
   # frozen token in `.wire_code`, and what the taxonomy pins is that TOKEN, read from the
   # typed field and never from prose.
-  "pytest#tests/test_transport.py::test_a_core_refusal_is_delivered_as_its_wire_code",
-  "pytest#tests/test_transport.py::test_a_value_error_that_merely_says_a_token_is_a_local_condition",
-  "pytest#tests/test_transport.py::test_a_value_error_that_is_not_a_token_is_labelled_a_local_condition",
-  "pytest#tests/test_transport.py::test_a_notifications_wire_code_is_the_bare_token_too",
-  "pytest#tests/test_transport.py::test_the_cores_own_fail_closed_error_is_delivered_rather_than_hanging",
+  "pytest#tests/test_transport_failures.py::test_a_core_refusal_is_delivered_as_its_wire_code",
+  "pytest#tests/test_transport_failures.py::test_a_value_error_that_merely_says_a_token_is_a_local_condition",
+  "pytest#tests/test_transport_failures.py::test_a_value_error_that_is_not_a_token_is_labelled_a_local_condition",
+  "pytest#tests/test_transport_failures.py::test_a_notifications_wire_code_is_the_bare_token_too",
+  "pytest#tests/test_transport_failures.py::test_the_cores_own_fail_closed_error_is_delivered_rather_than_hanging",
 ]
 
 # C5. REBUILDING rather than editing is the proposition. Editing left every other top-level
@@ -5504,8 +5504,8 @@ evidence = [
   "mutation://sdk_python/reply_envelope/rebuilt_never_edited",
 ]
 tested_symbols = [
-  "pytest#tests/test_transport.py::test_a_verified_reply_carrying_a_method_is_refused_not_dispatched",
-  "pytest#tests/test_transport.py::test_a_verified_reply_with_neither_result_nor_error_is_refused",
+  "pytest#tests/test_transport_receipts.py::test_a_verified_reply_carrying_a_method_is_refused_not_dispatched",
+  "pytest#tests/test_transport_receipts.py::test_a_verified_reply_with_neither_result_nor_error_is_refused",
 ]
 
 # C6. A pause is not a result. The CLASSIFICATION of a reply as terminal — and the refusal of
@@ -5582,8 +5582,8 @@ evidence = [
   "mutation://sdk_python/correlation_lifecycle/the_window_and_the_bound",
 ]
 tested_symbols = [
-  "pytest#tests/test_transport.py::test_a_failed_exchange_does_not_leave_its_correlation_entry_outstanding",
-  "pytest#tests/test_transport.py::test_close_clears_abandoned_correlation_state",
+  "pytest#tests/test_transport_shutdown.py::test_a_failed_exchange_does_not_leave_its_correlation_entry_outstanding",
+  "pytest#tests/test_transport_shutdown.py::test_close_clears_abandoned_correlation_state",
   "pytest#tests/test_correlation.py::TestFailsClosed::test_a_late_response_is_rejected",
   # The store's own API, stated as the store's: see the description.
   "pytest#tests/test_correlation.py::TestFailsClosed::test_a_response_binding_to_nothing_outstanding_is_rejected",
@@ -5591,11 +5591,11 @@ tested_symbols = [
   # ADR-MCPRE-069 `register`. The first is the root's own headline property under real
   # concurrency and was claimed by nothing; the next two close the continuation paths, where
   # an open leg stays outstanding while its answer leg runs.
-  "pytest#tests/test_transport.py::test_every_concurrent_reply_is_correlated_to_its_own_request",
+  "pytest#tests/test_transport_shutdown.py::test_every_concurrent_reply_is_correlated_to_its_own_request",
   "pytest#tests/test_transport_replay.py::test_a_completed_chain_leaves_no_correlation_entry_outstanding",
   "pytest#tests/test_transport_replay.py::test_an_unanswered_elicitation_leaves_no_correlation_entry_outstanding",
-  "pytest#tests/test_transport.py::test_correlation_state_belongs_to_the_transport_not_the_config",
-  "pytest#tests/test_transport.py::test_an_injected_clock_and_ttl_are_honoured",
+  "pytest#tests/test_transport_shutdown.py::test_correlation_state_belongs_to_the_transport_not_the_config",
+  "pytest#tests/test_transport_signing.py::test_an_injected_clock_and_ttl_are_honoured",
   # ADR-MCPRE-069 batch 5. `correlation.py` is in this unit's `paths` and its own test file
   # was in no unit's battery: the ten above are all reached through `transport.py`, so the
   # store's own API — where two of this statement's three clauses explicitly live — had no
@@ -5673,7 +5673,7 @@ tested_symbols = [
   "pytest#tests/test_nonce_floor.py::test_a_non_string_override_is_refused_without_raising_typeerror",
   "pytest#tests/test_nonce_floor.py::test_a_factory_at_exactly_the_floor_is_accepted",
   "pytest#tests/test_transport.py::test_a_sub_floor_nonce_override_is_refused_before_a_notification_is_signed",
-  "pytest#tests/test_transport.py::test_freshness_is_generated_here_so_a_caller_cannot_repeat_a_nonce",
+  "pytest#tests/test_transport_signing.py::test_freshness_is_generated_here_so_a_caller_cannot_repeat_a_nonce",
 ]
 
 # C11. In the chain because telling an application its `notifications/cancelled` reached the
@@ -5700,7 +5700,7 @@ tested_symbols = [
   "pytest#tests/test_transport.py::test_a_notification_is_transmitted_as_a_signed_post",
   "pytest#tests/test_transport.py::test_send_notification_verified_raises_when_the_202_does_not_verify",
   "pytest#tests/test_transport.py::test_send_notification_verified_posts_the_signed_notification",
-  "pytest#tests/test_transport.py::test_the_config_hook_takes_precedence_over_the_process_global_sink",
+  "pytest#tests/test_transport_failures.py::test_the_config_hook_takes_precedence_over_the_process_global_sink",
   "pytest#tests/test_transport.py::test_a_client_side_response_is_refused_rather_than_carried_as_a_notification",
   "pytest#tests/test_transport.py::test_a_refused_client_side_response_does_not_cancel_other_exchanges",
 ]
@@ -5724,18 +5724,18 @@ evidence = [
 tested_symbols = [
   # One per anchor member: the claim is that NONE of the seven is defaulted, and a single
   # id would establish it for whichever one the parametrization happened to run first.
-  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[issuer_key_id]",
-  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[issuer_pubkey_b64url]",
-  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[issuer_trust_domain]",
-  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[issuer_subject]",
-  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[expected_audience_hash]",
-  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[verifier_audiences]",
-  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[accepted_epochs]",
-  "pytest#tests/test_transport.py::test_a_bare_string_denylist_is_refused_rather_than_expanded_per_character",
-  "pytest#tests/test_transport.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad0]",
-  "pytest#tests/test_transport.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad1]",
-  "pytest#tests/test_transport.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad2]",
-  "pytest#tests/test_transport.py::test_a_well_formed_denylist_and_the_empty_ttl_only_posture_are_accepted",
+  "pytest#tests/test_transport_signing.py::test_an_incomplete_trust_anchor_fails_at_construction[issuer_key_id]",
+  "pytest#tests/test_transport_signing.py::test_an_incomplete_trust_anchor_fails_at_construction[issuer_pubkey_b64url]",
+  "pytest#tests/test_transport_signing.py::test_an_incomplete_trust_anchor_fails_at_construction[issuer_trust_domain]",
+  "pytest#tests/test_transport_signing.py::test_an_incomplete_trust_anchor_fails_at_construction[issuer_subject]",
+  "pytest#tests/test_transport_signing.py::test_an_incomplete_trust_anchor_fails_at_construction[expected_audience_hash]",
+  "pytest#tests/test_transport_signing.py::test_an_incomplete_trust_anchor_fails_at_construction[verifier_audiences]",
+  "pytest#tests/test_transport_signing.py::test_an_incomplete_trust_anchor_fails_at_construction[accepted_epochs]",
+  "pytest#tests/test_transport_signing.py::test_a_bare_string_denylist_is_refused_rather_than_expanded_per_character",
+  "pytest#tests/test_transport_signing.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad0]",
+  "pytest#tests/test_transport_signing.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad1]",
+  "pytest#tests/test_transport_signing.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad2]",
+  "pytest#tests/test_transport_signing.py::test_a_well_formed_denylist_and_the_empty_ttl_only_posture_are_accepted",
 ]
 
 # ---------------------------------------------------------------------------------------
@@ -5872,9 +5872,9 @@ tested_symbols = [
   # ADR-MCPRE-069 `register`: `authorization.py` was in the predecessor unit's paths and no
   # control in its battery named it.
   "pytest#tests/test_transport.py::test_the_authorization_policy_is_checked_at_open_too",
-  "pytest#tests/test_transport.py::test_the_canonical_bindings_json_emits_raw_utf8_like_json_stringify",
-  "pytest#tests/test_transport.py::test_the_correlation_entry_records_the_authorization_binding_digest",
-  "pytest#tests/test_transport.py::test_a_request_with_no_bindings_records_no_digest",
+  "pytest#tests/test_transport_signing.py::test_the_canonical_bindings_json_emits_raw_utf8_like_json_stringify",
+  "pytest#tests/test_transport_signing.py::test_the_correlation_entry_records_the_authorization_binding_digest",
+  "pytest#tests/test_transport_signing.py::test_a_request_with_no_bindings_records_no_digest",
   # ADR-MCPRE-069 batch 6. `authorization.py` is in this unit's `paths` and
   # `test_authorization.py` was in no unit's battery: all four controls above reach the
   # providers through `transport.py`, so the policy's own arms and the canonical order were
