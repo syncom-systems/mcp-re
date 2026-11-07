@@ -9274,10 +9274,10 @@ id = "M320-httpprofile-the-evidence-block-is-a-closed-value"
 unit = "http_profile.evidence_block_closure"
 theorem = "THM-0015"
 conjunct = "the request evidence block PARSED and validated under the profile tag — parsing a block is refusing the members it does not declare, not reading past them"
-path = "mcp-re-http-profile/src/block.rs"
+path = "mcp-re-http-profile/src/block/request.rs"
 anchor = "#[serde(deny_unknown_fields)]\npub struct HttpRequestEvidenceBlock {\n"
 weakening = "pub struct HttpRequestEvidenceBlock {\n"
-expect_red = ["//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::unknown_field_fails_closed"]
+expect_red = ["//mcp-re-http-profile:mcp_re_http_profile_test#block::request::tests::unknown_field_fails_closed"]
 note = """
 THE CLOSURE IS A DERIVE, WHICH IS EXACTLY WHY IT NEEDS A FALSIFIER. `validate` is a function
 whose refusals a reader can see; `deny_unknown_fields` is one attribute line, and deleting it
