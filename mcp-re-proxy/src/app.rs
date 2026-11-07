@@ -7,22 +7,11 @@
 //! flips `shutdown`. It decides as little as possible: what it branches on is either a
 //! named rule in [`crate::startup_plan`] or a plane's own answer.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use std::time::Duration;
 
-use crate::async_serve::ServedHttpRequest;
-use crate::clock::now_unix;
 use crate::config_state::validation::ValidatedDeployment;
-use crate::config_state::ChannelBindingEffects;
 use crate::deployment_request::DeploymentRequest;
-use crate::http_inner::HttpInnerPool;
-use crate::key_source::ResponseSigner;
-use crate::startup_posture::PostureLog;
-use crate::startup_posture::Seam;
-use crate::HttpProfileProxy;
-use crate::ServerOptions;
-use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
@@ -93,432 +82,83 @@ pub fn build_actor_resolver(
 mod entry;
 pub use entry::{run, run_request, run_with};
 
+/// The startup readings and the value every stage runs against.
+mod boot;
+/// The serving proxy and its optional capabilities.
+mod capabilities;
+/// The trust, replay, inner and signing stages.
+mod planes;
+/// The serving path proper.
+mod serving;
+/// The transport stages.
+mod transport;
+pub(crate) use serving::serve_fleet;
+
+use boot::{Preflight, Startup};
+
 /// The serving path proper. Reachable only with a [`crate::config_state::validation::ValidatedDeployment`], which
 /// is the whole point: there is no route into it that skips the guards.
-// A documented threshold exception (CLAUDE.md case B), stated in the terms that rule asks
-// for rather than as "it is complicated". 531 lines, of which 290 are code — the rest is
-// this argument.
-//
-// WHAT INVARIANT REQUIRES LOCALITY. Two, and both are enforced rather than asserted:
-//
-//   1. ORDER OF EFFECTS IS BEHAVIOUR. What this function reports as it starts is an
-//      ORDERED transcript, and `tests/startup_transcript/` captures it from the shipped
-//      binary and asserts on the sequence — a `Vec`, not a set, because a posture line
-//      that moved across the trust/replay boundary would be a real change. Statements
-//      moved into helpers keep their order only by the call site's discipline, and that
-//      discipline is invisible at the point a later edit would break it.
-//   2. FAILURE RECLAIMS IN A STATED ORDER. After `MaterializingRuntime::begin`, every `?`
-//      drops the builder, which reclaims what is installed in the order it owns. The ~38
-//      fallible expressions below are one region for that reason: their unwinding is a
-//      property of a single scope, not of whatever order locals happen to be declared in.
-//
-// WHY THE SUBORDINATE RESPONSIBILITIES ARE NOT SEPARABLE. They largely are, and have been:
-// every classification this function used to perform inline now lives in `startup_plan`
-// (pure) or `config_state` (layer A), and every resource with a teardown obligation lives
-// in the plane that owns it. What remains is the assembly itself — the part whose content
-// IS the order and the ownership. Regions that are neither leave: the identity seam was
-// the most recent, a pure three-way selection that had become readable only by reading an
-// `if` inside a 300-line body.
-//
-// WHAT COMPENSATES FOR THE SIZE. The startup transcript harness above (order, from the
-// real binary), `app_startup_characterization_test` (refusals reachable at this altitude),
-// and the plans' own unit tests (every pure decision, tested without starting a proxy).
-//
-// The allowance is on this function alone rather than on the module, so anything else here
-// that grows past the threshold is still reported.
-#[allow(clippy::too_many_lines)]
+///
+/// The sequence below IS the startup transcript's order, and that order is behaviour:
+/// `tests/startup_transcript/` captures it from the shipped binary and asserts on the
+/// sequence — a `Vec`, not a set — because a posture line that moved across the
+/// trust/replay boundary would be a real change. Each stage is one named step that either
+/// hands back what the next needs or refuses with nothing leaking: after
+/// `Startup::begin`, every `?` drops the runtime, which reclaims what is installed in the
+/// order it owns (ADR-MCPRE-056 §10; ADR-MCPRE-057 §9).
+///
+/// Every classification lives in `startup_plan` (pure) or `config_state` (layer A), and every
+/// resource with a teardown obligation lives in the plane that owns it. What remains here is
+/// the order, and the stages named in [`boot`], [`planes`] and [`capabilities`] are where each
+/// step's own rule is written down. Compensating evidence: the startup transcript harness
+/// (order, from the real binary), `app_startup_characterization_test` (refusals reachable at
+/// this altitude) and the plans' own unit tests.
 fn run_validated(
     config: &ValidatedDeployment,
     audit: crate::audit_commitment::AuditPlan,
     shutdown: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    let values = config.config();
-    // Clock-fault diagnosis (audit #94 F5). The host clock is read ONCE, and every startup
-    // consumer of the boot instant receives that reading. A faulted reading that only feeds
-    // per-request freshness fails closed, so it warns; where it would be the reference time
-    // for the boot-time stale-CRL refusal, `CrlReference::of` refuses, and the TLS plane
-    // cannot be materialized without the reference it produces.
-    let startup_reading = crate::clock::StartupReading::read();
-    let crl_reference =
-        crate::tls_plane::CrlReference::of(&startup_reading, config.state().crl_revocation())?;
-    if startup_reading.is_faulted() {
-        eprintln!(
-            "mcp-re-proxy: WARNING: the system clock reads at/near the Unix epoch ({} < {}s); this \
-             almost certainly means the host clock is unset or broken. Freshness checks will \
-             FAIL CLOSED (every request denied) until the clock is corrected — fix the host clock \
-             (NTP/RTC) rather than treating the resulting denials as a load problem.",
-            startup_reading.unix_seconds(),
-            crate::clock::EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
-        );
-    }
-
-    // Security posture note. The hard guards (memory/weak replay,
-    // over-ceiling/disabled cert lifetime, lb-assertion, node-local replay under
-    // --fleet) are ALL rejected at parse time by
-    // `config_state::validation::unsafe_config_violations` — the proxy never reaches here with them.
-    // A group/world-readable key file is a HARD error (refuse startup). WHICH files those
-    // are, what a mode means and which groups this process is in are all the key-file
-    // custody owner's — this root names the two custody states and holds the evidence.
-    let admitted_key_files = crate::capability_materialization::admit_key_files(
-        config.state().custody(),
-        config.state().channel_credential_custody(),
-        config.state().key_file_access(),
-    )?;
-    // A disabled (`none`/`0`) or over-ceiling `--max-client-cert-lifetime` is
-    // rejected at parse time (`config_state::validation::unsafe_config_violations`), so by here it is
-    // always a bounded lifetime within the ceiling — no runtime check needed.
-
-    // Key material + trust.
-    //
-    // Issue #3838 (ADR-MCPS-014): the response-signing key is NOT extracted here. The
-    // witness is handed to the signing plane AS the response signer, which signs by
-    // delegation (`sign_response`), so a non-exporting HSM/KMS source never surrenders its
-    // private key. The channel credential is the witness's own product: chain, peer trust
-    // anchors and handshake key, with the requested custody already compared against the
-    // custody they establish.
-    let roots = crate::capability_materialization::build_key_source(
-        admitted_key_files,
-        &values.channel_credential.credential_chain,
-        &values.peer_trust_anchors,
-    )
-    .map_err(|e| e.to_string())?;
-    let channel_credential = roots.channel_credential().map_err(|e| e.to_string())?;
-    // ADR-MCPRE-056 §9: there is no shared worker set here any more. EVERY long-lived
-    // thread startup creates belongs to the plane that owns the resource it maintains, so
-    // the ~38 fallible expressions between here and `serve_fleet` each halt and reclaim
-    // whatever is already running on their way out — and each plane also gets to say what
-    // its own resource means once it stops. None of those expressions says so: that is
-    // the point of expressing the lifetime as ownership instead of as cleanup nobody was
-    // going to write at 38 return points.
-    // Trust (ADR-MCPRE-056 §8). The plane owns the store, the freshness flag and the
-    // workers that refresh them; what comes back is two narrow live handles.
-    //
-    // The response authority (ADR-MCPRE-052; CF-09): the root issuer kid the delegated
-    // credential chains to and the shared trust epoch, each read once and paired into the
-    // trust plan and the signing plan by their one producer. Trust must not enroll the kid
-    // as a request signer and flushes its cache on an epoch advance; signing mints under
-    // both.
-    let (trust_plan, signing_plan) = crate::startup_plan::response_authority_plans(config);
-    // Transport custody and the offline client-cert revocation posture, both already
-    // classified by layer A (ADR-MCPRE-056 §8).
-    let tls_plan = crate::startup_plan::ChannelEstablishmentPlan::from_validated(config);
-
-    // ADR-MCPRE-057 §3 and §9 — the lifecycle becomes a value here, owned by the runtime
-    // it describes. Everything above this line is pure and the next statement is the
-    // first effect this process performs; `begin` records validation, planning and the
-    // start of materialization from the proof it is handed, so this root asserts nothing
-    // on its own word. From here every teardown-bearing resource is owned the moment it
-    // is acquired: a failure at any `?` below drops the builder, which reclaims what was
-    // installed in the documented order instead of unwinding locals in reverse
-    // declaration order (F3).
-    let mut building = crate::materializing_runtime::MaterializingRuntime::begin(config)?;
-    // ADR-MCPRE-070 §11: a required audit commitment is established before any plane, so a
-    // provider that cannot be refuses startup with nothing yet running. Declared below.
-    let audit = crate::serving_capabilities::audit_commitment(audit, building.control())?;
-
-    building.install_trust(crate::trust_plane::TrustPlane::materialize(
-        &trust_plan,
-        Arc::clone(&shutdown),
-    )?)?;
-    let resolver = building.trust()?.resolver();
-    // Response-slot signing custody (ADR-MCPRE-052, MCPRE-122): delegated-signing is
-    // the ONLY response mode. The ROOT key is the credential ISSUER only; the resolver
-    // resolves the ROOT public key (by its issuer kid) for the Response slot, and NO
-    // directly-held server key exists. The delegated key is never enrolled (authorized
-    // by the credential alone). The root key source is only borrowed here (for its
-    // public key); it is moved into the issuer at proxy build, so KMS-rooted delegated
-    // signing works on the async serving path.
-    let response_pub = roots.response_public_key().map_err(|e| e.to_string())?;
-    // Derived once by the `ServerIdentity` owner, and handed over whole: the resolver reads
-    // the server actor, its keyid and the trust domain through the owner's projections.
-    let resolve_actor = build_actor_resolver(
-        building.trust()?.signers(),
-        Arc::clone(&resolver),
-        config.state().server_identity().clone(),
-        response_pub,
-    );
-    let expected_audience = AudienceTuple {
-        audience_id: values.audience.clone(),
-        target_uri: config.state().request_target().as_str().to_owned(),
-        route: values.route.clone(),
-    };
-    // ADR-MCPRE-056 §5.4: from here on, every optional capability states its posture in
-    // BOTH directions through `posture`. `assert_complete` below refuses to start — in
-    // every build profile — if any seam is left silent.
-    let mut posture = PostureLog::new();
-
-    // ADR-MCPRE-065 §8: the authorization authority — MAY-ACT, the question neither the
-    // signature nor the channel answers. DECIDED HERE, beside the trust plane whose
-    // document enrols it, and before the first networked store is opened: an authority
-    // that cannot be built is a startup refusal, and an operator reads it without first
-    // waiting on a replay backend. The evaluator itself is installed further down, once
-    // the proxy it decides for exists; `Established` keeps the artifact and the posture
-    // together so the two cannot come from different readings.
-    let (authorization, authorization_state) = crate::authorization::capability::evaluator_for(
-        config.state(),
-        trust_plan.response_kid(),
-        &values.audience,
-    )?
-    .into_parts();
-    posture.declare(Seam::Authorization, authorization_state);
-
-    // Mode-A transport binding, the certificate field the identity is read from and where
-    // the connection seam reads it, all projected from the ONE state `config_state::transport`
-    // recognised.
-    let ChannelBindingEffects {
-        binding,
-        identity_policy,
-        peer_identity_provenance,
-    } = config.state().channel_binding().serving_effects();
-    // ADR-MCPRE-051 §4: the AUTHORITATIVE async replay tier. The atomic
-    // insert-if-absent is AWAITED on the per-core request path without blocking a
-    // runtime worker. Shared selects a durable networked store — etcd (CP/linearizable)
-    // or redis (horizontally scaled) — both fail closed on any store error (an outage is
-    // never a fresh nonce).
-    //
-    // Which tier this deployment asked for is decided PURELY, from configuration alone;
-    // `replay_plane` only establishes it. Every refusal the plan can raise is a statement
-    // about the config; every refusal materialization raises is a statement about the
-    // build or the environment.
-    let replay_plan = config.state().replay().materialization_plan();
-    // ONE process-lifetime control runtime for every networked control-plane client:
-    // the redis replay ConnectionManager's reconnect task, the admission source and the
-    // MRTR continuation store. Distinct from the per-core serving runtimes and held
-    // alive for the whole serve. The builder owns it from `begin`: the first networked
-    // arm to ask starts it, and that arm's owner selected the store that needs it.
-    // The redis store's reconnect machinery binds to the runtime it is CREATED in, so the
-    // substrate must outlive every USE of the tier — discharged by draining the fleet
-    // before anything is reclaimed, not by drop order. See `replay_plane`.
-    let replay = crate::replay_plane::MaterializedReplay::materialize(
-        &replay_plan,
-        config.state().freshness(),
-        building.control(),
-    )?
-    .into_admission();
-
-    // Materialized HERE, not where the channel credential is established, so the CRL load
-    // and its stale-CRL refusal sit after the trust posture and before the revocation
-    // posture: a deployment with both a stale CRL and an unreadable trust file sees the
-    // trust diagnostic first.
-    // Transport custody (ADR-MCPRE-056 §8). The plane owns the serving TLS config, the
-    // per-request revocation index and the CRL reload worker; the channel credential is MOVED
-    // in so no second copy of the key material can drift from the one a reload rebuilds.
-    building.install_tls(crate::tls_plane::TlsPlane::materialize(
-        &tls_plan,
-        channel_credential,
+    let Preflight {
+        reading,
         crl_reference,
-        Arc::clone(&shutdown),
-    )?)?;
-    let client_revocation = building.tls()?.revocation();
-    let config_snapshot = building.tls()?.snapshot();
-
-    // ADR-MCPS-023 §A1 (MCPS-58): the operator-visible revocation posture. Rendered by
-    // the plane that parsed the CRLs, so what an operator is told is assertable in a test
-    // rather than only readable in a transcript.
-    for line in crate::tls_plane::revocation_posture_lines(
-        &tls_plan,
-        &building.tls()?.revocation_currency(),
-    ) {
-        eprintln!("{line}");
-    }
-
-    // MCPS-85 (ADR-MCPS-049 clause 3): under --fleet, state the PER-TIER
-    // cross-replica revocation-lag bounds explicitly, derived from real config
-    // (the two tiers have different cadences). Zero-window revocation is never
-    // claimed on either.
-    if config.state().topology().is_fleet() {
-        let trust_bound = crate::trust_plane::fleet_trust_bound(&trust_plan);
-        let crl_bound = building.tls()?.fleet_crl_bound(&tls_plan);
-        // r12 R12-628: THREE slots, three postures. The response-slot anchor is read once
-        // and held for the process lifetime — deliberately, because it is the deployment's
-        // own trust anchor and is revoked by root rotation rather than by a trust-store
-        // entry — so neither the trust-epoch kill switch nor the CRL reload reaches it. An
-        // operator reading two numbers and an omission cannot tell that from an oversight.
-        eprintln!(
-            "mcp-re-proxy: FLEET cross-replica revocation-lag bounds (ADR-MCPS-049 clause 3): \
-             trust-key-status={trust_bound}; client-cert-crl={crl_bound}; \
-             response-signer-anchor=restart-only (read once at startup; withdrawn by root \
-             rotation, not by the trust store or a CRL); zero-window revocation NOT claimed"
-        );
-    }
-
-    // #4030 ONLINE OCSP client-cert revocation. Attached to `ServerOptions` below rather
-    // than to the PEP, because revocation is decided during the TLS handshake.
-    let (ocsp_checker, ocsp_state) = crate::serving_capabilities::online_ocsp().into_parts();
-    posture.declare(Seam::OnlineOcspClientRevocation, ocsp_state);
-    // A build without the backend still DECLARES the seam above — that is the point of
-    // `Seam::ALL` not varying by `cfg` — but there is no checker type in it to carry, so
-    // the artifact is uninhabited and goes nowhere.
-    #[cfg(not(feature = "online_ocsp"))]
-    let _ = ocsp_checker;
-    // The admission limit the boundary resolved, and the shard shape this host gives the
-    // request, resolved ONCE: the inner plane and the fleet both size from these two values.
-    let in_flight_limit = config.state().in_flight_limit();
-    let topology = crate::async_fleet::ResolvedTopology::resolve(config.state().shard_topology());
-    let bounds = config.state().connection_bounds();
-    let serve_options = ServerOptions {
-        identity_policy,
-        peer_identity_provenance,
-        limits: values.limits.served(in_flight_limit, topology.shards()),
-        // The owner's resolved bounds: serving reads every timeout and limit here, not the request.
-        connection_bounds: bounds,
-        // The owner's sealed window; serving reads both bounds from it, not from the request.
-        client_credential_window: config.state().client_credential_window(),
-        client_revocation: client_revocation.clone(),
-        #[cfg(feature = "online_ocsp")]
-        ocsp_checker,
-        target: config.state().request_target().clone(),
-    };
-
-    // ADR-MCPRE-051 §3: the async inner plane — a per-core pooled hyper client to
-    // the stateless Streamable-HTTP inner backends. Forwarding is AWAITED, never
-    // blocking a per-core runtime worker.
-    let backends = &values.inner_http_urls;
-    let pool = HttpInnerPool::from_url_strs(backends.expose().to_vec(), bounds.read_timeout())?;
-    // Named where the pool that forwards to them is BUILT. Reporting them from the fleet
-    // instead would mean carrying the URLs through serving purely to print them, and the
-    // fleet does not forward — it accepts.
-    eprintln!("mcp-re-proxy: HTTP inner backends {backends}");
-    let pool = crate::inner_plane_bound::raised_to_fleet_ceiling(pool, in_flight_limit, topology);
-
-    // Response-signing custody (ADR-MCPRE-056 §8; ADR-MCPRE-052). The plane owns the
-    // root issuer, the delegated snapshot and the worker that maintains it; what comes
-    // back is the signer alone. `roots` is MOVED in here — it was only borrowed above, for
-    // the channel credential and the response public key.
-    //
-    // The plane must outlive the proxy that signs with it, and it does: both are locals
-    // of this function, and `serve_fleet` returns before either is dropped.
-    building.install_signing(crate::signing_plane::SigningPlane::materialize(
-        &signing_plan,
         roots,
-        &startup_reading,
-    )?)?;
-    // ADR-MCPRE-050 + §5: assemble the RFC 9421 serving PEP with the async inner plane,
-    // the authoritative replay tier, and the optional Mode-A channel binding.
-    // Response-signature validity window: 300s.
-    let mut proxy = HttpProfileProxy::new_delegated(
-        resolve_actor,
-        expected_audience,
-        replay,
-        Box::new(pool),
-        300,
-        building.signing()?.signer(),
-    );
-    // §5.1/§13.1: the verifier-local acceptance policy, projected by the freshness owner
-    // from the same skew that drives the replay `retain_until`, so an admitted nonce is
-    // retained for exactly as long as its signature can still be accepted.
-    let mut verifier_policy = config.state().freshness().verifier_policy();
-    let (mcp_transport, transport_state) = crate::serving_capabilities::mcp_transport_contract(
-        config.state().mcp_transport_contract(),
-    );
-    verifier_policy = verifier_policy.with_mcp_transport(mcp_transport);
-    posture.declare(Seam::McpTransportContract, transport_state);
-    eprintln!(
-        "mcp-re-proxy: freshness gate = created-{skew}s .. expires+{skew}s (RFC 9421 §5.1)",
-        skew = verifier_policy.max_clock_skew()
-    );
-    proxy = proxy.with_verifier_policy(verifier_policy);
-    proxy = proxy.with_transport_binding(binding);
+        channel_credential,
+    } = boot::preflight(config)?;
+    let mut start = Startup::begin(config, shutdown)?;
+    let audit = capabilities::establish_audit_commitment(&start, audit)?;
 
-    // ADR-MCPS-035 / ADR-MCPRE-070 §2: the observer opens here, over the commitment above.
-    // OFF installs nothing: the serving path's default is the no-emission posture.
-    let (audit, audit_state) =
-        crate::serving_capabilities::audit_posture(config.state().audit(), audit)?.into_parts();
-    if let Some(audit) = audit {
-        proxy = proxy.with_audit_posture(audit);
-    }
-    posture.declare(Seam::SecurityAuditRecord, audit_state);
+    let seam = planes::install_trust(&mut start, &roots)?;
+    let authorization = capabilities::authorization(&mut start)?;
+    let replay = planes::materialize_replay(&mut start)?;
+    transport::install_tls(&mut start, channel_credential, crl_reference)?;
+    let serving = transport::serving_options(&mut start)?;
+    let pool = planes::inner_pool(&start)?;
+    planes::install_signing(&mut start, roots, &reading)?;
 
-    // ADR-MCPRE-054: evidence retention. Opening the store is effectful and refuses
-    // startup, which is why this is the one capability here that can return an error.
-    let (retention, retention_state) =
-        crate::serving_capabilities::evidence_retention(config.state().retention())?.into_parts();
-    if let Some(retention) = retention {
-        proxy = proxy.with_evidence_retention(Arc::new(retention));
-    }
-    posture.declare(Seam::EvidenceRetention, retention_state);
+    let proxy = capabilities::serving_proxy(&start, seam, replay, pool)?;
+    let proxy = capabilities::with_verifier_policy(&mut start, proxy, serving.binding);
+    let proxy = capabilities::with_audit_and_retention(&mut start, proxy, audit)?;
+    let proxy = capabilities::with_correlation(&mut start, proxy, authorization)?;
+    let proxy = capabilities::with_admission(&mut start, proxy)?;
+    // Every optional capability has now stated its posture. Serving with an incomplete one is
+    // refused in EVERY build profile (ADR-MCPRE-056 §5.4): the transcript is this deployment's
+    // statement of which security controls are running, and an operator must not read a list
+    // that silently omits an entry.
+    start.posture.assert_complete()?;
 
-    let (verified_context, verified_context_state) =
-        crate::serving_capabilities::verified_context_carrier(config.state().verified_context())
-            .into_parts();
-    if let Some(policy) = verified_context {
-        proxy = proxy.with_verified_context_carrier(policy);
-    }
-    posture.declare(Seam::VerifiedContextCarrier, verified_context_state);
-
-    // ADR-MCPS-047: the shared MRTR continuation correlation store, and MCPRE-493 §7:
-    // the admission-currency gate. Both connect over the SAME shared control runtime the
-    // fleet uses, and both are established in `serving_capabilities`, which is where each
-    // one's own rule is written down. Both refuse startup for a capability that was
-    // SELECTED and cannot be established; they differ in what an omitted flag means.
-    // `into_parts` is consuming, so the artifact installed below and the posture declared
-    // after it come from one value: no store under an OFF line, no ON line over nothing.
-    let (continuation_store, continuation_state) =
-        crate::serving_capabilities::mrtr_continuation_store(
-            &config.state().continuation_control().continuation_plan(),
-            building.control(),
-        )?
-        .into_parts();
-    if let Some(store) = continuation_store {
-        proxy = proxy.with_continuation_store(
-            store,
-            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
-        );
-    }
-    posture.declare(Seam::MrtrContinuationStore, continuation_state);
-
-    if let Some(evaluator) = authorization {
-        proxy = proxy.with_authorization(evaluator);
-    }
-
-    let (admission, admission_state) = crate::serving_capabilities::admission_currency(
-        config.state().admission(),
-        config.state().freshness().max_clock_skew(),
-        building.control(),
-    )?
-    .into_parts();
-    if let Some(enforcer) = admission {
-        proxy = proxy.with_admission_enforcer(enforcer);
-    }
-    posture.declare(Seam::AdmissionCurrency, admission_state);
-
-    // Every optional capability has now stated its posture. Serving with an incomplete
-    // one is refused in EVERY build profile (ADR-MCPRE-056 §5.4): the transcript is this
-    // deployment's statement of which security controls are running, and an operator must
-    // not read a list that silently omits an entry.
-    posture.assert_complete()?;
-
-    // ADR-MCPRE-051 §1: serve on the per-core async fleet (SO_REUSEPORT + tokio), the
-    // production data plane. Blocks until SIGTERM/SIGINT drains the fleet.
-    //
-    // ADR-MCPRE-056 §10: every resource with a teardown obligation goes to one owner —
-    // the three planes, the proxy, and the control runtime the proxy's networked clients
-    // are bound to. The order they come apart in is stated and enforced there, rather
-    // than being whatever order these locals happen to be declared in.
-    // The last two teardown-bearing resources join the owner, and `finish` assembles.
-    //
-    // `MaterializationSucceeded` is applied INSIDE `finish`, after every required
-    // resource has been taken, and the runtime keeps the lifecycle — so a `Materialized`
-    // lifecycle cannot exist over an incomplete graph, and nothing can serve on one that
-    // reached the state another way. That is the equivalence ADR-MCPRE-057 §9 asks for:
-    // the lifecycle state and the ownership state are the same fact, not two facts kept
-    // in step by convention.
-    // Composed BEFORE the runtime exists. `--bind` resolution can fail, and a failure
-    // after `finish` would drop a materialized runtime instead of tearing it down in the
-    // order it owns — the one thing that type is for.
-    let fleet_cfg = fleet_config(values, topology, in_flight_limit)?;
-
-    building.install_proxy(proxy)?;
-    let runtime = building.finish()?;
-
-    runtime.serve(
-        crate::materialized_runtime::FleetServing {
-            config_snapshot: Arc::clone(&config_snapshot),
-            serve_options: Arc::new(serve_options),
-            shutdown,
-        },
-        fleet_cfg,
-    )
+    // Composed BEFORE the runtime exists: `--bind` resolution can fail, and a failure after
+    // `finish` would drop a materialized runtime instead of tearing it down in the order it
+    // owns — the one thing that type is for.
+    let fleet_cfg = fleet_config(
+        config.config(),
+        start.sizing.topology,
+        start.sizing.in_flight_limit,
+    )?;
+    start.building.install_proxy(proxy)?;
+    // `MaterializationSucceeded` is applied INSIDE `finish`, after every required resource has
+    // been taken, so a `Materialized` lifecycle cannot exist over an incomplete graph.
+    let runtime = start.building.finish()?;
+    runtime.serve(serving.fleet, fleet_cfg)
 }
 
 /// The serving topology this deployment asked for, with `--bind` resolved.
@@ -550,79 +190,6 @@ fn fleet_config(
         listen_backlog: crate::async_fleet::DEFAULT_LISTEN_BACKLOG,
         in_flight,
     })
-}
-
-/// ADR-MCPRE-051 §1/§3 — serve on the per-core async fleet forwarding over the
-/// pooled HTTP inner plane. Built when `--inner-http-url` is set; the sync stdio
-/// serving path is used otherwise.
-///
-/// Consumes the fully-built `proxy` (adds the async replay tier + async HTTP inner
-/// to it), binds one `SO_REUSEPORT` listener per core, and serves
-/// `Proxy::handle_with_transport_async` on each core's own tokio runtime until a
-/// SIGTERM/SIGINT drains the fleet within the bounded grace window.
-///
-/// The authoritative replay tier and async HTTP inner have already been wired into
-/// `proxy` by the caller.
-///
-/// # This function owns no teardown obligation
-///
-/// It borrows the proxy through an `Arc` and returns once `fleet.shutdown_and_join()` has
-/// returned, which is the DRAIN: no request can be in flight afterwards. Everything that
-/// must then happen in a particular order — each plane's post-owner transition, and
-/// reclaiming the control runtime the proxy's networked clients are bound to — belongs to
-/// [`crate::materialized_runtime::MaterializedRuntime`], the sole issuer of `authorized` and
-/// so the only caller, which tears down after. The drain here and the ordering there is
-/// deliberate: this function's contract is "no request is running when I return", and
-/// that is all a caller should have to know to sequence anything after it.
-pub(crate) fn serve_fleet(
-    proxy: Arc<HttpProfileProxy>,
-    serving: crate::materialized_runtime::FleetServing,
-    authorized: crate::materialized_runtime::fleet_serve_authorized::FleetServeAuthorized,
-) -> Result<(), String> {
-    // MCPRE-116: hand the fleet the SNAPSHOT, not a one-shot `load()`. The accept
-    // loop re-reads it per connection, so the CRL hot-reload task's atomic swap is
-    // observed by the next handshake instead of being written to a config nothing
-    // reads again.
-    let server_config = Arc::clone(&serving.config_snapshot);
-    // The caller owns the shutdown flag (the binary wires it to SIGTERM/SIGINT; a
-    // test flips it directly). We hand a clone to the fleet and poll the same flag.
-
-    // One handler per core over the SHARED `Proxy` (Send + Sync, MCPRE-111); each
-    // request awaits the async replay tier + async HTTP inner without blocking the
-    // per-core runtime worker.
-    let handler_proxy = Arc::clone(&proxy);
-    let make_handler = move |_core: usize| {
-        let proxy = Arc::clone(&handler_proxy);
-        Arc::new(
-            move |req: ServedHttpRequest| -> crate::async_serve::HandlerResponseFuture {
-                let proxy = Arc::clone(&proxy);
-                Box::pin(async move { proxy.handle(req, now_unix()).await })
-            },
-        )
-    };
-
-    let fleet = crate::async_fleet::serve_fleet(
-        authorized.into_fleet_config(),
-        server_config,
-        serving.serve_options,
-        make_handler,
-        Arc::clone(&serving.shutdown),
-    )
-    .map_err(|e| format!("start async fleet: {e}"))?;
-    eprintln!(
-        "mcp-re-proxy: async fleet serving on {} ({} per-core workers)",
-        fleet.local_addr(),
-        fleet.worker_count(),
-    );
-
-    // Block until the caller flips `shutdown`, then drain the fleet (bounded).
-    while !serving.shutdown.load(Ordering::SeqCst) {
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    eprintln!("mcp-re-proxy: shutdown signal received; draining async fleet");
-    fleet.shutdown_and_join();
-    eprintln!("mcp-re-proxy: async fleet drained, exiting cleanly");
-    Ok(())
 }
 
 // EVERY TARGET (r12 R12-627). The `unix` half was for the key-file permission controls, and
