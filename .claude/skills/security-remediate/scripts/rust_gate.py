@@ -40,10 +40,13 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rust_resolver import RustResolver  # noqa: E402
-import size_debt  # noqa: E402
+from _rust_gate_checks import registry_part, size_part  # noqa: E402
+from _rust_gate_verdicts import (  # noqa: E402
+    INLINE_TEST, lint_verdict, rustfmt_verdict, tests_verdict)
 
 SIZE_GATE = "scripts/module_size_gate.py"
 # Seconds each, whole tree, and attributable under the lane invariant: a new module that
@@ -59,13 +62,6 @@ REGISTRY_GATES = ("scripts/unit_closure_gate.py", "scripts/verification_trigger_
 # Its tests run as this file's integration targets.
 EXTENSION_LANES = {"sdk/python/": ("//sdk/python:core_lane_test",)}
 RUST_RULES = "rust_library|rust_binary|rust_test|rust_shared_library|rust_static_library|rust_proc_macro"
-_DIAGNOSTIC = re.compile(r"^error(?:\[E\d+\])?: ", re.M)
-# libtest's "running N tests", and stdlib unittest's "Ran N tests in" for a `py_test` lane.
-_RUNNING = re.compile(r"^(?:running|Ran) (\d+) tests?(?: in .*)?$", re.M)
-_FAILED_TEST = re.compile(r"^---- (\S+) stdout ----$", re.M)
-_INLINE_TEST = re.compile(r"#\[(?:tokio::)?test\b")
-_FMT_DIFF = re.compile(r"^Diff in (\S+?\.rs):\d+:$", re.M)
-_FMT_PARSE = re.compile(r"^\s*--> (\S+?\.rs):\d+:\d+$", re.M)
 
 
 def bazel() -> list[str]:
@@ -131,13 +127,7 @@ def unit_test_targets(targets: list[str]) -> list[str]:
 
 def _lint(targets: list[str], log: str) -> dict:
     rc, out = _run(bazel() + ["build", "--config=lint", "--keep_going", *targets], log)
-    errors = [ln for ln in out.splitlines() if _DIAGNOSTIC.match(ln)][:15]
-    if rc == 0:
-        return {"verdict": "ok", "exit": rc, "log": log}
-    if errors:
-        return {"verdict": "new-failures", "exit": rc, "log": log, "errors_head": errors}
-    return {"verdict": "infra", "exit": rc, "log": log,
-            "why": "the lint build failed without a diagnostic — analysis, fetch or toolchain"}
+    return lint_verdict(rc, out, log)
 
 
 def _rustfmt(targets: list[str], touched: list[str], log: str) -> dict:
@@ -145,22 +135,7 @@ def _rustfmt(targets: list[str], touched: list[str], log: str) -> dict:
     # would also compile the targets and report a compile error as a format failure.
     rc, out = _run(bazel() + ["build", "--config=rustfmt", "--output_groups=rustfmt_checks",
                               "--keep_going", *targets], log)
-    if rc == 0:
-        return {"verdict": "ok", "exit": rc, "log": log}
-    rel = lambda p: os.path.relpath(p) if os.path.isabs(p) else p  # noqa: E731
-    diffs = sorted({rel(p) for p in _FMT_DIFF.findall(out)})
-    unparsable = sorted({rel(p) for p in _FMT_PARSE.findall(out)} & set(touched))
-    if unparsable:
-        return {"verdict": "new-failures", "exit": rc, "log": log, "unformatted": unparsable,
-                "why": "rustfmt cannot parse a touched file"}
-    mine = [p for p in diffs if p in set(touched)]
-    if mine:
-        return {"verdict": "new-failures", "exit": rc, "log": log, "unformatted": mine}
-    if diffs:
-        return {"verdict": "infra", "exit": rc, "log": log, "unformatted": diffs,
-                "why": "rustfmt diffs only in untouched files — the lane did not start formatted"}
-    return {"verdict": "infra", "exit": rc, "log": log,
-            "why": "the rustfmt build failed without a diff — analysis, fetch or toolchain"}
+    return rustfmt_verdict(rc, out, touched, log)
 
 
 def _testlog(label: str) -> str:
@@ -176,97 +151,131 @@ def _test(targets: list[str], filt: str | list[str], log: str) -> dict:
         if f:
             cmd.append("--test_arg=" + f)
     rc, out = _run(cmd, log)
-    logs = {t: _testlog(t) for t in targets}
-    ran = sum(int(n) for text in logs.values() for n in _RUNNING.findall(text))
-    failed = [name for text in logs.values() for name in _FAILED_TEST.findall(text)]
-    compile_error = bool(_DIAGNOSTIC.search(out))
-    if rc != 0 and (failed or compile_error):
-        return {"verdict": "new-failures", "exit": rc, "log": log, "failed": failed[:15],
-                "compile_error": compile_error and not failed}
-    if rc != 0:
-        return {"verdict": "infra", "exit": rc, "log": log,
-                "why": "bazel test failed before any test ran"}
-    if ran == 0:
-        return {"verdict": "infra", "exit": rc, "log": log,
-                "why": "0 tests ran — this selection measured nothing"}
-    return {"verdict": "ok", "exit": rc, "log": log, "ran": ran}
+    return tests_verdict(rc, out, {t: _testlog(t) for t in targets}, log)
 
 
-def gate(file: str, related: list[str], its: list[str], work_dir: str,
-         resolver: RustResolver | None = None, touched: list[str] | None = None) -> list[dict]:
-    r = resolver or RustResolver(".")
+@dataclass(frozen=True)
+class Edit:
+    """The file a writer changed, the files that bind to it, and every file it touched."""
+    file: str
+    related: list = field(default_factory=list)
+    touched: list | None = None
+
+
+@dataclass(frozen=True)
+class _Plan:
+    """What one file's gate runs: its sources, the targets that compile them, the unit tests."""
+    file: str
+    edited: list
+    sources: list
+    own: list
+    touched_targets: list
+    lint_scope: list
+    units: list
+    work_dir: str
+
+    @property
+    def tag(self) -> str:
+        return _slug(self.file)
+
+    def log(self, stem: str) -> str:
+        return os.path.join(self.work_dir, "%s-%s.log" % (stem, self.tag))
+
+
+def _plan(edit: Edit, work_dir: str) -> _Plan | None:
+    file = edit.file
     own = compiling_targets([file])
     if not own:
-        return [{"gate": "targets", "verdict": "infra",
-                 "why": "%s is compiled by no Rust target in the build graph" % file}]
-    edited = sorted({f for f in (touched or []) + [file] if f.endswith(".rs")})
+        return None
+    edited = sorted({f for f in (edit.touched or []) + [file] if f.endswith(".rs")})
     touched_targets = compiling_targets([f for f in edited if f != file])
-    lint_scope = sorted(set(own + touched_targets + compiling_targets(related)))
+    lint_scope = sorted(set(own + touched_targets + compiling_targets(edit.related)))
     # Unit tests of every touched source file, not only the edited one: a writer's new test
     # often lives in a neighbouring module, and a filter on this file's module skips it.
     sources = [f for f in edited
                if not {"tests", "benches", "examples"} & set(f.split("/"))]
     units = unit_test_targets(sorted(set(own + compiling_targets(
         [f for f in sources if f != file]))))
-    tag = _slug(file)
-    parts: list[dict] = [dict(_lint(sorted(set(lint_scope + units)),
-                                    os.path.join(work_dir, "lint-%s.log" % tag)),
-                              gate="clippy", targets=lint_scope)]
-    fmt_scope = sorted(set(own + touched_targets))
-    parts.append(dict(_rustfmt(fmt_scope, edited, os.path.join(work_dir, "fmt-%s.log" % tag)),
-                      gate="rustfmt", targets=fmt_scope))
+    return _Plan(file, edited, sources, own, touched_targets, lint_scope, units, work_dir)
 
-    rc, out = _run([sys.executable, SIZE_GATE], os.path.join(work_dir, "size-%s.log" % tag))
-    soft, debt = size_debt.classify("module-size", out) if rc else (False, [])
-    debt = size_debt.attributable(debt, edited) if soft else []
-    size_verdict = ("ok" if rc == 0 or (soft and not debt) else
-                    "size-debt" if soft else "new-failures")
-    record = size_debt.encountered(edited)
-    # `exit` is this writer's status, so it agrees with the verdict the journal and the
-    # reviewer read: growth in files the writer did not touch, and recorded size debt, are
-    # not a failure of this change. The script's own status stays as `raw_exit`.
-    parts.append({"gate": "module-size", "verdict": size_verdict,
-                  "exit": 1 if size_verdict == "new-failures" else 0, "raw_exit": rc,
-                  **({} if rc == 0 else {"head": out.strip().splitlines()[-5:]}),
-                  **({"debt": debt} if debt else {}),
-                  **({"record": record} if record else {}),
-                  **({"note": "size growth only in files this writer did not touch"}
-                     if rc and soft and not debt else {})})
 
+def _build_parts(plan: _Plan) -> list[dict]:
+    """clippy under the workspace lint policy, then the scoped rustfmt lane."""
+    clippy = dict(_lint(sorted(set(plan.lint_scope + plan.units)), plan.log("lint")),
+                  gate="clippy", targets=plan.lint_scope)
+    fmt_scope = sorted(set(plan.own + plan.touched_targets))
+    fmt = dict(_rustfmt(fmt_scope, plan.edited, plan.log("fmt")),
+               gate="rustfmt", targets=fmt_scope)
+    return [clippy, fmt]
+
+
+def _size_part(plan: _Plan) -> dict:
+    rc, out = _run([sys.executable, SIZE_GATE], plan.log("size"))
+    return size_part(rc, out, plan.edited)
+
+
+def _registry_parts(plan: _Plan) -> list[dict]:
+    parts = []
     for gate_cmd in REGISTRY_GATES:
         script, *args = gate_cmd.split()
         if not os.path.isfile(script):
             continue
-        rc, out = _run([sys.executable, script, *args],
-                       os.path.join(work_dir, "%s-%s.log" % (os.path.basename(script), tag)))
-        parts.append({"gate": "registry", "lane": os.path.basename(script),
-                      "verdict": "ok" if rc == 0 else "new-failures", "exit": rc,
-                      **({} if rc == 0 else {"head": [ln for ln in out.splitlines()
-                                                      if "FAIL" in ln or ln.startswith("  ")][:5]})})
+        rc, out = _run([sys.executable, script, *args], plan.log(os.path.basename(script)))
+        parts.append(registry_part(script, rc, out))
+    return parts
 
-    if any(p["verdict"] == "new-failures" for p in parts):
-        return parts          # a tree that does not compile has no test result to add
-    mods = sorted({"::".join(r.module_path(f)) for f in sources})
+
+def _run_units(plan: _Plan, filters: list[str]) -> dict:
+    if not plan.units:
+        return {"gate": "test", "target": "unit", "verdict": "infra",
+                "why": "no unit-test target compiles %s's crate" % plan.file}
+    return dict(_test(plan.units, filters, plan.log("test-unit")),
+                gate="test", target="unit", targets=plan.units, filter=filters)
+
+
+def _nothing_ran(part: dict, plan: _Plan) -> bool:
+    ran_nothing = "0 tests ran" in part.get("why", "") or not plan.units
+    return part["verdict"] == "infra" and ran_nothing
+
+
+def _excuse_without_own_tests(part: dict, plan: _Plan) -> dict:
+    """A selection that ran nothing is not a failure of a file that has no tests of its own."""
+    has_own = INLINE_TEST.search(open(plan.file, encoding="utf-8", errors="replace").read())
+    if _nothing_ran(part, plan) and not has_own:
+        part["verdict"] = "ok"
+        part["note"] = "the file has no unit tests of its own"
+    return part
+
+
+def _unit_part(plan: _Plan, r: RustResolver) -> dict:
+    mods = sorted({"::".join(r.module_path(f)) for f in plan.sources})
     # A crate root has the empty module path, which selects every test in the target.
     filters = [] if "" in mods else [m + "::" for m in mods]
-    if units:
-        parts.append(dict(_test(units, filters,
-                                os.path.join(work_dir, "test-unit-%s.log" % tag)),
-                          gate="test", target="unit", targets=units, filter=filters))
-    else:
-        parts.append({"gate": "test", "target": "unit", "verdict": "infra",
-                      "why": "no unit-test target compiles %s's crate" % file})
-    has_own = _INLINE_TEST.search(open(file, encoding="utf-8", errors="replace").read())
-    if parts[-1]["verdict"] == "infra" and not has_own and (
-            "0 tests ran" in parts[-1].get("why", "") or not units):
-        parts[-1]["verdict"] = "ok"
-        parts[-1]["note"] = "the file has no unit tests of its own"
-    its = sorted(set(its) | {lane for prefix, lanes in EXTENSION_LANES.items()
-                             if file.startswith(prefix) for lane in lanes})
-    if its:
-        parts.append(dict(_test(its, "", os.path.join(work_dir, "test-it-%s.log" % tag)),
-                          gate="test", target="integration", targets=its))
-    return parts
+    return _excuse_without_own_tests(_run_units(plan, filters), plan)
+
+
+def _integration_part(plan: _Plan, its: list[str]) -> dict | None:
+    lanes = sorted(set(its) | {lane for prefix, lanes in EXTENSION_LANES.items()
+                               if plan.file.startswith(prefix) for lane in lanes})
+    if not lanes:
+        return None
+    return dict(_test(lanes, "", plan.log("test-it")),
+                gate="test", target="integration", targets=lanes)
+
+
+def gate(edit: Edit, its: list[str], work_dir: str,
+         resolver: RustResolver | None = None) -> list[dict]:
+    r = resolver or RustResolver(".")
+    plan = _plan(edit, work_dir)
+    if plan is None:
+        return [{"gate": "targets", "verdict": "infra",
+                 "why": "%s is compiled by no Rust target in the build graph" % edit.file}]
+    parts = _build_parts(plan) + [_size_part(plan)] + _registry_parts(plan)
+    if any(p["verdict"] == "new-failures" for p in parts):
+        return parts          # a tree that does not compile has no test result to add
+    parts.append(_unit_part(plan, r))
+    integration = _integration_part(plan, its)
+    return parts + [integration] if integration else parts
 
 
 def main() -> int:
@@ -279,8 +288,8 @@ def main() -> int:
     a = ap.parse_args()
     os.makedirs(a.work_dir, exist_ok=True)
     ids = lambda s: [x.strip() for x in s.split(",") if x.strip()]  # noqa: E731
-    print(json.dumps(gate(a.file, ids(a.related), ids(a.it), a.work_dir,
-                          touched=ids(a.touched)), indent=1))
+    edit = Edit(a.file, ids(a.related), ids(a.touched))
+    print(json.dumps(gate(edit, ids(a.it), a.work_dir), indent=1))
     return 0
 
 

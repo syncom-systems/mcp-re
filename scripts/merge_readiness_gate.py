@@ -123,707 +123,77 @@ on it — see that file for why the decision has to be re-bound to the head it w
 
 from __future__ import annotations
 
-import argparse
-import json
-import subprocess
 import sys
-from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-WORKFLOWS = REPO / ".github" / "workflows"
+from _merge_readiness.candidate import (
+    VERIFICATION_TOML,
+    changed_files,
+    check_runs,
+    gh_json,
+    git,
+    manifest_at,
+    ruleset_required_checks,
+)
+from _merge_readiness.cli import parser, run
+from _merge_readiness.derivation import (
+    UMBRELLA,
+    WORKFLOWS,
+    checks_for_lanes,
+    lane_scripts,
+    pull_request_workflows,
+    umbrella_checks,
+    workflow_jobs,
+)
+from _merge_readiness.errors import Undecidable
+from _merge_readiness.paths import REPO
+from _merge_readiness.report import Outcome, report
+from _merge_readiness.selftest import selftest
+from _merge_readiness.verdict import (
+    FAILED,
+    FAILING_CONCLUSIONS,
+    NOT_READY,
+    READY,
+    classify,
+    decide,
+    skipped_by_itself,
+)
 
-from workflow_reader import glob_matches, named_paths, read  # noqa: E402
-
-sys.path.insert(0, str(REPO / "tools" / "verification"))
-
-import _affected  # noqa: E402
-from _evidence import MALFORMED_LANE, required_lanes  # noqa: E402
-from _lanes import LANES  # noqa: E402
-from _manifest import SCHEMA_VERSION, load_verification  # noqa: E402
-import _registries  # noqa: E402
-
-#: The only three answers. A caller that wants to know whether to merge reads exactly one
-#: of these; there is deliberately no fourth "green except…" state to argue with.
-READY, NOT_READY, FAILED = "READY", "NOT_READY", "FAILED"
-
-#: Conclusions that are a verdict about the code rather than an incomplete measurement.
-#: `cancelled` is NOT here: a cancelled run measured nothing, so it is an absence.
-FAILING_CONCLUSIONS = {"failure", "timed_out", "action_required", "startup_failure"}
-
-#: The umbrella that runs every lane in one invocation. A job naming it satisfies every
-#: lane's requirement, which is why the mapping cannot be read off lane scripts alone.
-UMBRELLA = "tools/verification/verify"
-
-class Undecidable(Exception):
-    """The gate cannot answer. Never the same thing as NOT_READY, and never merged on."""
-
-
-# --------------------------------------------------------------------------- derivation
-
-
-def lane_scripts() -> dict[str, str]:
-    """`{lane: script}` from the lane catalogue the umbrella runs — the naming authority."""
-    return {lane.name: lane.script for lane in LANES}
-
-
-def workflow_jobs() -> list[tuple[str, str, set[str]]]:
-    """`(workflow, check name, scripts that job invokes)` for every job in every workflow.
-
-    The check name is the job's `name:`, because that is the string GitHub reports and
-    therefore the only one a readiness query can match on; a job without one is reported
-    under its key. A lane whose job cannot be named fails loudly below rather than
-    resolving to nothing.
-
-    COUNT INVOCATIONS, NOT MENTIONS. The scripts are read from the job's commands, which the
-    workflow reader gives without comments, trailing comments or usage lines. These
-    workflows are heavily commented, and explaining why a step exists means naming what it
-    runs: a comment in `ci.yml` reading "`tools/verification/verify --manifests` fails on the
-    same fact" once made the CARGO job look like it invoked the umbrella.
-
-    A name carrying an expression (`mutation probe shard ${{ matrix.shard }}`) is a template,
-    not a check name: GitHub reports one check per expansion, and none of them is the string
-    the workflow states. Such a job is a shard whose lane is carried by the job that composes
-    its shards, so it is not returned; were it returned, a deferral that skips the shards
-    would read as a required check that is missing.
-    """
-    jobs: list[tuple[str, str, set[str]]] = []
-    for path in sorted(WORKFLOWS.glob("*.yml")):
-        for job in read(path).jobs.values():
-            if "${{" in job.name:
-                continue
-            invoked = {
-                script
-                for command in job.commands()
-                for script in named_paths(command.executed)
-            }
-            jobs.append((path.name, job.name, invoked))
-    return jobs
-
-
-def pull_request_workflows(changed: set[str]) -> set[str]:
-    """The workflow files a pull request changing `changed` starts, by GitHub's rule: a
-    `pull_request` trigger with no path filter, or a filter matching a changed file.
-
-    The complete verification run is not among them (it starts only on schedule and dispatch),
-    so a lane only that run executes is never a pre-merge requirement.
-    """
-    started: set[str] = set()
-    for path in sorted(WORKFLOWS.glob("*.yml")):
-        trigger = read(path).triggers.get("pull_request")
-        if trigger is None:
-            continue
-        if trigger.paths is not None:
-            starts = any(glob_matches(p, c) for p in trigger.paths for c in changed)
-        elif trigger.paths_ignore is not None:
-            starts = any(not any(glob_matches(p, c) for p in trigger.paths_ignore) for c in changed)
-        else:
-            starts = True
-        if starts:
-            started.add(path.name)
-    return started
-
-
-def umbrella_checks() -> set[str]:
-    """The check names that run the umbrella, and therefore several lanes at once.
-
-    Kept apart from the per-lane mapping because it answers a different question: not
-    "which job runs this lane" but "whose failure is attributable to one lane". Derived
-    the same way, from the workflows, so a job that stops invoking the umbrella stops
-    being treated as one.
-    """
-    return {name for _wf, name, invoked in workflow_jobs() if UMBRELLA in invoked}
-
-
-def checks_for_lanes(
-    lanes: set[str], scripts: dict[str, str], started: set[str] | None = None
-) -> dict[str, list[str]]:
-    """`{lane: [check names]}` — every job that executes each lane, from the workflows.
-
-    `started` is the set of workflow files the change's pull request starts. A lane whose jobs
-    all live in workflows that do not start has NO pre-merge check: it maps to `[]`, and the
-    caller reports it as deferred to the complete run rather than as satisfied or missing.
-    `None` means every workflow counts.
-
-    A lane is run by a job invoking its own script OR the umbrella that contains it, and
-    BOTH shapes exist here: `mutation` has a dedicated path-filtered job and is also inside
-    the umbrella. All of them are returned rather than one picked, because any job that
-    actually measured the lane at this SHA satisfies it, and choosing between them here
-    would be this file inventing a policy the workflows do not state.
-
-    Resolving to nothing raises: a required lane no workflow runs is exactly the shape that
-    lets a merge proceed on evidence that never existed, and it must not read as satisfied.
-    """
-    jobs = workflow_jobs()
-    resolved: dict[str, list[str]] = {}
-    for lane in sorted(lanes):
-        if lane == MALFORMED_LANE:
-            raise Undecidable(
-                "a unit declares an evidence entry that is not a URI, so the lane it "
-                "claims cannot be named; fix the manifest before asking about a merge"
-            )
-        script = scripts.get(lane)
-        if script is None:
-            raise Undecidable(
-                f"lane '{lane}' is claimed by the manifest but is not in the lane catalogue, so "
-                f"no script and no job can be derived for it"
-            )
-        wanted = {f"tools/verification/{script}", UMBRELLA}
-        runners = [(wf, name) for wf, name, invoked in jobs if invoked & wanted]
-        found = sorted({name for wf, name in runners if started is None or wf in started})
-        if not runners:
-            raise Undecidable(
-                f"lane '{lane}' (tools/verification/{script}) is required but no workflow "
-                f"job invokes it or the umbrella; nothing would ever measure it"
-            )
-        resolved[lane] = found
-    return resolved
-
-
-# ------------------------------------------------------------------------------ verdict
-
-
-def classify(check: dict | None, sha: str) -> tuple[bool, str]:
-    """`(satisfied, why)` for one required check, against all four conditions."""
-    if check is None:
-        return False, "missing — no such check at this SHA"
-    if check.get("head_sha") != sha:
-        return False, f"measured at {str(check.get('head_sha'))[:12]}, not the candidate"
-    status = check.get("status") or ""
-    if status != "completed":
-        return False, f"status {status or '(empty)'}"
-    conclusion = check.get("conclusion") or ""
-    if conclusion == "success":
-        return True, "completed/success"
-    return False, f"conclusion {conclusion or '(empty)'}"
-
-
-def skipped_by_itself(check: dict | None, sha: str) -> bool:
-    """Whether a check is completed/skipped at this SHA: the job chose not to measure."""
-    return bool(check) and check.get("head_sha") == sha and check.get("status") == "completed" \
-        and check.get("conclusion") == "skipped"
-
-
-def decide(
-    required: dict[str, list[str]],
-    runs: dict[str, dict],
-    sha: str,
-    shared: set[str] | None = None,
-) -> tuple[str, list[tuple]]:
-    """The answer, plus one row per required lane for the human-readable table.
-
-    A lane is satisfied when ANY job that runs it met all four conditions — including the
-    umbrella, whose SUCCESS does cover every lane it contains.
-
-    It is `FAILED` only when a check whose verdict is that lane's OWN establishes failure.
-    `shared` names the jobs that run several lanes; their failure is not attributable to
-    any one of them, so it refuses as NOT_READY with the reason saying which job went red.
-    Inventing a per-lane verdict from a shared job's failure would send someone to fix a
-    lane that never ran badly.
-    """
-    shared = shared or set()
-    rows, satisfied, failing = [], True, False
-    for lane, names in sorted(required.items()):
-        verdicts = [(name, *classify(runs.get(name), sha)) for name in names]
-        winner = next((v for v in verdicts if v[1]), None)
-        if winner is not None:
-            rows.append((lane, winner[0], "OK", winner[2]))
-            continue
-        satisfied = False
-        own = [n for n in names if n not in shared]
-        attributable = [n for n in own if (runs.get(n) or {}).get("conclusion") in FAILING_CONCLUSIONS]
-        if attributable:
-            failing = True
-            rows.append((lane, attributable[0], "FAILED", "this lane's own job failed"))
-            continue
-        name, _ok, why = verdicts[0]
-        red_shared = [n for n in names if n in shared
-                      and (runs.get(n) or {}).get("conclusion") in FAILING_CONCLUSIONS]
-        if red_shared:
-            why = (f"{red_shared[0]} failed, but it runs several lanes — its verdict is not "
-                   f"attributable to '{lane}'")
-        elif len(verdicts) > 1:
-            why = f"{why}; none of {len(verdicts)} jobs satisfied it"
-        rows.append((lane, name, "NOT SATISFIED", why))
-    if failing:
-        return FAILED, rows
-    return (READY if satisfied else NOT_READY), rows
-
-
-# -------------------------------------------------------------------------------- input
-
-
-def git(*args: str) -> str:
-    done = subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True)
-    if done.returncode != 0:
-        raise Undecidable(f"git {' '.join(args)}: {done.stderr.strip()}")
-    return done.stdout.strip()
-
-
-#: The registry whose `[[unit]]` entries decide which lanes a candidate needs.
-VERIFICATION_TOML = _registries.relative("verification")
-
-
-def manifest_at(sha: str) -> dict:
-    """The verification registry AS THE CANDIDATE CARRIES IT, not as the tree carries it.
-
-    Every other fact this gate reads is bound to the commit under review: the candidate
-    sha, its check runs, their conclusions. The required-lane SET was the exception — it
-    came from `verification/policy/verification.toml` in the working tree — so a verdict
-    was two tree states joined, and looked exactly like a correct one.
-
-    It is not a theoretical hazard and it was not one-directional. Both shapes were
-    measured in one campaign, in one workspace with two active PRs: 192 -> 197, where the
-    tree carried MORE units than the candidate, and 212 -> 206, where it carried FEWER.
-    Only the first is harmless. Deriving the required set from a SMALLER estate than the
-    commit being merged is the shape that returns READY for a candidate whose real
-    required set is larger, which is the one thing this gate exists to prevent.
-
-    Read raw rather than through `load_verification`: that validator resolves each unit's
-    `paths` globs against the CHECKED-OUT tree, so validating the candidate's registry from
-    another branch would fail on files the candidate has and the tree does not — a tree
-    fact again, in the one place that must carry none. The candidate's own lanes validate
-    its registry; this gate needs its unit and edge tables and the one property whose drift
-    would change what a lane MEANS:
-
-      * `git show` failing (no such commit, or a candidate carrying no registry at all)
-        and unparsable TOML both raise `Undecidable` — the brief's fallback (b), which
-        costs nothing once the ESTATE comes from the candidate rather than the tree. Note
-        the scope: this binds which units and which lanes to the candidate. The
-        lane-to-check mapping (`_lanes.LANES`, `.github/workflows`) is still read from the
-        working tree, so "every input comes from one commit" is not yet true of the whole
-        verdict;
-      * a `schema_version` this tooling does not implement is `Undecidable` for the same
-        reason `load_verification` refuses it: the lane names would be read under a schema
-        nobody here implements.
-    """
-    try:
-        blob = _registries.text_at("verification", sha, REPO)
-        if blob is None:
-            raise Undecidable(f"{VERIFICATION_TOML} is absent at {sha[:12]}")
-        doc = _registries.parse(blob, f"{VERIFICATION_TOML} at {sha[:12]}")
-    except _registries.ManifestError as exc:
-        raise Undecidable(str(exc)) from exc
-    if doc.get("schema_version") != SCHEMA_VERSION:
-        raise Undecidable(
-            f"{VERIFICATION_TOML} at {sha[:12]} declares schema_version "
-            f"{doc.get('schema_version')!r}; this gate implements {SCHEMA_VERSION}, so the "
-            f"lanes its units require would be read under a schema nobody here implements"
-        )
-    return doc
-
-
-def gh_json(*args: str):
-    done = subprocess.run(["gh", *args], capture_output=True, text=True)
-    if done.returncode != 0:
-        raise Undecidable(f"gh {' '.join(args)}: {done.stderr.strip()}")
-    return json.loads(done.stdout or "null")
-
-
-def check_runs(repo: str, sha: str) -> dict[str, dict]:
-    """The latest check run per name at `sha`. Later attempts supersede earlier ones."""
-    raw = subprocess.run(
-        ["gh", "api", "--paginate", f"repos/{repo}/commits/{sha}/check-runs?per_page=100",
-         "--jq", ".check_runs[]"],
-        capture_output=True, text=True,
-    )
-    if raw.returncode != 0:
-        raise Undecidable(f"gh api check-runs: {raw.stderr.strip()}")
-    latest: dict[str, dict] = {}
-    for line in raw.stdout.splitlines():
-        if not line.strip():
-            continue
-        run = json.loads(line)
-        prior = latest.get(run["name"])
-        if prior is None or (run.get("started_at") or "") >= (prior.get("started_at") or ""):
-            latest[run["name"]] = run
-    return latest
-
-
-def ruleset_required_checks(repo: str, base: str) -> list[str]:
-    """The check contexts the repository's own ruleset requires on the target branch.
-
-    Read from the API rather than transcribed, so this file holds no opinion about which
-    checks are required and cannot drift from the ruleset. An empty or unreadable answer
-    RAISES: a fallback authority that turns out to require nothing would make every
-    unit-less change READY, which is the same false green the fallback exists to avoid.
-    """
-    branch = base.split("/")[-1]
-    raw = subprocess.run(
-        ["gh", "api", f"repos/{repo}/rulesets", "--jq",
-         '.[] | select(.enforcement == "active") | .id'],
-        capture_output=True, text=True,
-    )
-    if raw.returncode != 0:
-        raise Undecidable(f"gh api rulesets: {raw.stderr.strip()}")
-    ids = [line.strip() for line in raw.stdout.splitlines() if line.strip()]
-    contexts: set[str] = set()
-    for rid in ids:
-        detail = subprocess.run(
-            ["gh", "api", f"repos/{repo}/rulesets/{rid}", "--jq", "@json"],
-            capture_output=True, text=True,
-        )
-        if detail.returncode != 0:
-            continue
-        payload = json.loads(detail.stdout or "{}")
-        conditions = payload.get("conditions", {}).get("ref_name", {})
-        include = conditions.get("include", [])
-        if include and not any(
-            token in ("~ALL", "~DEFAULT_BRANCH", f"refs/heads/{branch}") for token in include
-        ):
-            continue
-        for rule in payload.get("rules", []):
-            if rule.get("type") != "required_status_checks":
-                continue
-            for check in rule.get("parameters", {}).get("required_status_checks", []):
-                if check.get("context"):
-                    contexts.add(check["context"])
-    if not contexts:
-        raise Undecidable(
-            f"no declared unit is affected and the ruleset for '{branch}' requires no status "
-            "check, so nothing at all governs this candidate; decide it deliberately"
-        )
-    return sorted(contexts)
-
-
-def changed_files(sha: str, base: str) -> set[str]:
-    merge_base = git("merge-base", base, sha)
-    return set(git("diff", "--name-only", f"{merge_base}..{sha}").splitlines())
-
-
-# --------------------------------------------------------------------------------- main
-
-
-def report(
-    sha: str, units: set[str], rows: list[tuple], state: str, authority: str, declared: int,
-    deferred: list[str] | None = None,
-) -> None:
-    print(f"candidate      {sha}")
-    print(f"authority      {authority}")
-    # Both numbers, and the sha they came from: a reader can see that the estate the
-    # required set was derived from is the candidate's own, rather than trusting it.
-    print(f"registry       {VERIFICATION_TOML}@{sha[:12]} — {declared} declared unit(s)")
-    print(f"affected units {len(units)}")
-    for lane, check, mark, why in rows:
-        # Under the ruleset authority the "lane" IS the check, so printing both would be
-        # the same string twice.
-        label = check if lane == check else f"{lane:<16} {check}"
-        print(f"  {mark:<14} {label}  [{why}]")
-    if deferred:
-        print(f"deferred       {', '.join(deferred)} — no pre-merge job runs these lanes; the "
-              f"complete run (schedule or dispatch) remeasures them, and until then the "
-              f"evidence is stale, not verified")
-    print(f"MERGE-READINESS: {state}")
+__all__ = [
+    "FAILED",
+    "FAILING_CONCLUSIONS",
+    "NOT_READY",
+    "READY",
+    "REPO",
+    "UMBRELLA",
+    "VERIFICATION_TOML",
+    "WORKFLOWS",
+    "Outcome",
+    "Undecidable",
+    "changed_files",
+    "check_runs",
+    "checks_for_lanes",
+    "classify",
+    "decide",
+    "gh_json",
+    "git",
+    "lane_scripts",
+    "main",
+    "manifest_at",
+    "pull_request_workflows",
+    "report",
+    "ruleset_required_checks",
+    "selftest",
+    "skipped_by_itself",
+    "umbrella_checks",
+    "workflow_jobs",
+]
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--sha", help="candidate commit; defaults to the PR head or HEAD")
-    parser.add_argument("--pr", help="resolve the candidate from this PR number")
-    parser.add_argument("--base", default="origin/main", help="merge base ref")
-    parser.add_argument("--repo", default="matssun/mcp-re")
-    parser.add_argument("--selftest", action="store_true")
-    args = parser.parse_args(argv)
-
-    if args.selftest:
+    args = parser(__doc__.splitlines()[0]).parse_args(argv)
+    if "--selftest" in argv:
         return selftest()
-
-    try:
-        sha = args.sha
-        if args.pr and not sha:
-            sha = gh_json("pr", "view", args.pr, "--repo", args.repo, "--json", "headRefOid")["headRefOid"]
-        sha = git("rev-parse", sha or "HEAD")
-
-        # From the CANDIDATE, never from the tree: see `manifest_at`.
-        manifest = manifest_at(sha)
-        units, edges = manifest.get("unit", []), manifest.get("edge", [])
-        affected = _affected.by_paths(units, edges, changed_files(sha, args.base))
-        lanes: set[str] = set()
-        for unit in units:
-            if unit["id"] in affected:
-                lanes |= required_lanes(unit)
-        # The branch ruleset is ALWAYS required: "no lane was required" and "every required
-        # lane passed" are different facts, so a closure that asks for nothing still leaves
-        # the ruleset's checks. Lanes the closure requires add their pre-merge jobs to it.
-        # A lane no pre-merge job runs is deferred to the complete run and reported as such.
-        required = {name: [name] for name in ruleset_required_checks(args.repo, args.base)}
-        runs = check_runs(args.repo, sha)
-        deferred: list[str] = []
-        authority = "branch ruleset (no declared unit affected)"
-        if lanes:
-            authority = "branch ruleset + the pre-merge lane checks of the verification-unit closure"
-            resolved = checks_for_lanes(
-                lanes, lane_scripts(), pull_request_workflows(changed_files(sha, args.base))
-            )
-            # A lane job that reports itself SKIPPED is a deferral, not a measurement: the
-            # bounded mutation probe skips when `select-units` defers the scope, and a job that
-            # succeeded having applied nothing would otherwise read as the lane measured.
-            skipped = {lane for lane, names in resolved.items() if names and all(skipped_by_itself(runs.get(n), sha) for n in names)}
-            deferred = sorted({lane for lane, names in resolved.items() if not names} | skipped)
-            required.update({lane: names for lane, names in resolved.items() if names and lane not in skipped})
-        state, rows = decide(required, runs, sha, umbrella_checks())
-        report(sha, affected, rows, state, authority, len(units), deferred)
-        return {READY: 0, NOT_READY: 1, FAILED: 2}[state]
-    except Undecidable as exc:
-        print(f"MERGE-READINESS: UNDECIDABLE — {exc}", file=sys.stderr)
-        return 3
-
-
-# ----------------------------------------------------------------------------- selftest
-
-
-def selftest() -> int:
-    """The false-ready catalogue: every shape that must NOT read as READY."""
-    sha = "a" * 40
-    req = {"test": ["verification platform"]}
-
-    def run(check):
-        return decide(req, {"verification platform": check} if check else {}, sha)[0]
-
-    cases = [
-        (None, NOT_READY, "missing check"),
-        ({"name": "verification platform", "head_sha": sha, "status": "queued", "conclusion": None}, NOT_READY, "queued"),
-        ({"name": "verification platform", "head_sha": sha, "status": "in_progress", "conclusion": None}, NOT_READY, "in_progress"),
-        ({"name": "verification platform", "head_sha": sha, "status": "completed", "conclusion": None}, NOT_READY, "null conclusion"),
-        ({"name": "verification platform", "head_sha": sha, "status": "completed", "conclusion": ""}, NOT_READY, "empty conclusion"),
-        ({"name": "verification platform", "head_sha": sha, "status": "completed", "conclusion": "skipped"}, NOT_READY, "skipped while required"),
-        ({"name": "verification platform", "head_sha": sha, "status": "completed", "conclusion": "cancelled"}, NOT_READY, "cancelled measured nothing"),
-        ({"name": "verification platform", "head_sha": sha, "status": "completed", "conclusion": "neutral"}, NOT_READY, "neutral"),
-        ({"name": "verification platform", "head_sha": "b" * 40, "status": "completed", "conclusion": "success"}, NOT_READY, "green at another SHA"),
-        ({"name": "verification platform", "head_sha": sha, "status": "completed", "conclusion": "failure"}, FAILED, "failure"),
-        ({"name": "verification platform", "head_sha": sha, "status": "completed", "conclusion": "timed_out"}, FAILED, "timed_out"),
-        ({"name": "verification platform", "head_sha": sha, "status": "completed", "conclusion": "success"}, READY, "the only ready shape"),
-    ]
-    bad = 0
-    for check, want, label in cases:
-        got = run(check)
-        if got != want:
-            print(f"  FAIL {label}: wanted {want}, got {got}")
-            bad += 1
-
-    # A required lane that no job runs must refuse, not resolve to an empty requirement.
-    try:
-        checks_for_lanes({"nosuchlane"}, {})
-        print("  FAIL an unrunnable lane resolved instead of refusing")
-        bad += 1
-    except Undecidable:
-        pass
-
-    # COUNT INVOCATIONS, NOT MENTIONS. A comment that NAMES the umbrella must not make its
-    # job look like it RUNS the umbrella. This is not hypothetical: a comment in `ci.yml`
-    # explaining that `tools/verification/verify --manifests` enforces N1 made the cargo job
-    # resolve as an umbrella job, and every lane was attributed to it. Both directions,
-    # because a control that only refuses prose could refuse the real invocation too.
-    import tempfile as _tempfile
-
-    prose = (
-        "jobs:\n"
-        "  someJob:\n"
-        "    name: a job that only TALKS about the umbrella\n"
-        "    steps:\n"
-        "      # tools/verification/verify --manifests is what enforces this\n"
-        "      - run: echo hello\n"
-    )
-    real = prose.replace("      - run: echo hello", "      - run: tools/verification/verify --gate")
-    for label, body, expect_umbrella in (("a comment does not invoke", prose, False),
-                                         ("a run: line does invoke", real, True)):
-        with _tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "probe.yml"
-            path.write_text(body, encoding="utf-8")
-            global WORKFLOWS
-            saved, WORKFLOWS = WORKFLOWS, Path(tmp)
-            try:
-                found = {name for _wf, name, invoked in workflow_jobs() if UMBRELLA in invoked}
-            finally:
-                WORKFLOWS = saved
-        got = bool(found)
-        if got != expect_umbrella:
-            print(f"  FAIL {label}: umbrella jobs resolved to {found}")
-            bad += 1
-
-    # The umbrella satisfies a lane whose own script no workflow names literally.
-    resolved = checks_for_lanes({"test", "mutation"}, lane_scripts())
-    for lane in ("test", "mutation"):
-        if lane not in resolved:
-            print(f"  FAIL lane '{lane}' resolved to no check")
-            bad += 1
-
-    # PRE-MERGE REQUIREMENTS ARE WHAT A PULL REQUEST STARTS. The complete run starts on schedule
-    # and dispatch only, so a lane that only it executes is deferred, never "missing" (which
-    # would block every merge) and never "satisfied" (which would claim a measurement).
-    for changed in ({"MODULE.bazel", "MODULE.bazel.lock", _registries.relative("toolchains")},
-                    {"tools/verification/verify"}, {"mcp-re-core/src/lib.rs"}):
-        started = pull_request_workflows(changed)
-        if "verification.yml" in started or "pre-merge.yml" not in started:
-            print(f"  FAIL a pull request changing {sorted(changed)} started {sorted(started)}")
-            bad += 1
-        resolved = checks_for_lanes({"test", "lean", "verus"}, lane_scripts(), started)
-        if any(resolved[lane] for lane in ("test", "lean", "verus")):
-            print(f"  FAIL a lane only the complete run executes was required before merge: {resolved}")
-            bad += 1
-    if pull_request_workflows({"MODULE.bazel"}) & {"mutation-probe.yml"}:
-        print("  FAIL a MODULE.bazel change started the mutation probe, whose filter does not name it")
-        bad += 1
-    if "mutation-probe.yml" not in pull_request_workflows({"mcp-re-core/src/lib.rs"}):
-        print("  FAIL a probed source change did not start the mutation probe")
-        bad += 1
-    if checks_for_lanes({"mutation"}, lane_scripts(), {"mutation-probe.yml"})["mutation"] != [
-        "V0 evidence self-test (mutation probes)"
-    ]:
-        print("  FAIL the mutation lane did not resolve to its bounded pre-merge job")
-        bad += 1
-
-    # A DEFERRING JOB IS NOT A MEASURING ONE. A skipped check is the job's own statement that it
-    # applied nothing; a ruleset check that is skipped stays unsatisfied.
-    probe = "V0 evidence self-test (mutation probes)"
-    skipped = {"name": probe, "head_sha": sha, "status": "completed", "conclusion": "skipped"}
-    if not skipped_by_itself(skipped, sha) or skipped_by_itself({**skipped, "head_sha": "b" * 40}, sha) \
-            or skipped_by_itself({**skipped, "conclusion": "success"}, sha) or skipped_by_itself(None, sha):
-        print("  FAIL skipped_by_itself misread a check")
-        bad += 1
-    if decide({"ruleset": ["ruleset"]}, {"ruleset": {**skipped, "name": "ruleset"}}, sha)[0] != NOT_READY:
-        print("  FAIL a skipped ruleset check read as satisfied")
-        bad += 1
-
-    # paths-ignore: a pull request starts the workflow unless EVERY changed file is ignored.
-    import tempfile as _t
-    for label, filt, changed, expect in (
-        ("only ignored files", "paths-ignore:\n      - 'docs/**'", {"docs/a.md"}, False),
-        ("one non-ignored file", "paths-ignore:\n      - 'docs/**'", {"docs/a.md", "src/a.rs"}, True),
-        ("a paths filter that matches", "paths:\n      - 'src/**'", {"src/a.rs"}, True),
-        ("a paths filter that does not", "paths:\n      - 'src/**'", {"docs/a.md"}, False),
-    ):
-        with _t.TemporaryDirectory() as tmp:
-            (Path(tmp) / "w.yml").write_text(
-                f"name: w\non:\n  pull_request:\n    {filt}\njobs:\n  j:\n    steps:\n      - run: true\n",
-                encoding="utf-8")
-            saved, WORKFLOWS = WORKFLOWS, Path(tmp)
-            try:
-                got = "w.yml" in pull_request_workflows(changed)
-            finally:
-                WORKFLOWS = saved
-        if got != expect:
-            print(f"  FAIL pull_request_workflows, {label}: started={got}")
-            bad += 1
-
-    # ATTRIBUTION. A shared job's failure must never be reported as a lane's own verdict.
-    UMB = "verification platform"
-    DED = "V0 evidence self-test (mutation probes)"
-    red_umbrella = {UMB: {"name": UMB, "head_sha": sha,
-                          "status": "completed", "conclusion": "failure"}}
-
-    # Only the umbrella runs this lane, and it went red: NOT_READY, never FAILED.
-    state, rows = decide({"lean": [UMB]}, red_umbrella, sha, {UMB})
-    if state != NOT_READY:
-        print(f"  FAIL an umbrella failure was attributed to a single lane: {state}")
-        bad += 1
-    if "not attributable" not in rows[0][3]:
-        print("  FAIL the row does not say the umbrella's verdict is unattributable")
-        bad += 1
-
-    # A lane with its OWN job: that job's failure IS the lane's verdict.
-    state, _ = decide({"mutation": [DED]},
-                      {DED: {"name": DED, "head_sha": sha,
-                             "status": "completed", "conclusion": "failure"}}, sha, {UMB})
-    if state != FAILED:
-        print(f"  FAIL a dedicated job's failure did not read as FAILED: {state}")
-        bad += 1
-
-    # The umbrella is red, but the lane's own job passed: satisfied, because a lane is
-    # satisfied by ANY job that actually measured it.
-    both = dict(red_umbrella)
-    both[DED] = {"name": DED, "head_sha": sha, "status": "completed", "conclusion": "success"}
-    state, _ = decide({"mutation": [DED, UMB]}, both, sha, {UMB})
-    if state != READY:
-        print(f"  FAIL a passing dedicated job was overridden by a red umbrella: {state}")
-        bad += 1
-
-    # And the umbrella's SUCCESS does cover a lane it contains.
-    state, _ = decide({"lean": [UMB]},
-                      {UMB: {"name": UMB, "head_sha": sha,
-                             "status": "completed", "conclusion": "success"}}, sha, {UMB})
-    if state != READY:
-        print(f"  FAIL a successful umbrella did not satisfy a lane it runs: {state}")
-        bad += 1
-
-    # The fallback authority answers the SAME four conditions. A ruleset check that is
-    # queued must not read as READY just because the manifest asked for nothing.
-    fallback = {c: [c] for c in ("Bazel build + test",)}
-    queued = {"Bazel build + test": {
-        "name": "Bazel build + test", "head_sha": sha,
-        "status": "queued", "conclusion": None}}
-    if decide(fallback, queued, sha)[0] != NOT_READY:
-        print("  FAIL a queued ruleset check read as ready under the fallback authority")
-        bad += 1
-    if decide(fallback, {}, sha)[0] != NOT_READY:
-        print("  FAIL a missing ruleset check read as ready under the fallback authority")
-        bad += 1
-
-    # A build-input change must widen to every unit, not to the units that declare it.
-    manifest = load_verification()
-    every = _affected.by_paths(manifest["unit"], manifest.get("edge", []), {"bazel/crates.lock"})
-    if len(every) != len(manifest["unit"]):
-        print(f"  FAIL a crates.lock change widened to {len(every)} of {len(manifest['unit'])} units")
-        bad += 1
-
-    # A glob entry in a unit's `paths` names the files it expands to. A prefix test can never
-    # match one, so a change confined to a globbed directory went uncounted (#1242).
-    synthetic = [{"id": "g", "paths": ["src/serve/**/*.rs"]}]
-    for path, want in (("src/serve/a.rs", True), ("src/serve/x/y/a.rs", True),
-                       ("src/serve/a.py", False), ("src/other/a.rs", False)):
-        if ("g" in _affected.by_paths(synthetic, [], {path})) != want:
-            print(f"  FAIL glob unit path vs {path}: wanted affected={want}")
-            bad += 1
-    # The same, over the registry as declared: every glob entry reaches its unit through a
-    # file only the glob names. Counted, so an empty population cannot read as a pass.
-    from _boundary_crossings import expand_paths
-
-    globbed = 0
-    for unit in manifest["unit"]:
-        literal = [p for p in unit.get("paths", []) if not _affected.is_glob(p)]
-        for pattern in unit.get("paths", []):
-            if pattern in literal:
-                continue
-            only = sorted(f for f in expand_paths([pattern])
-                          if not any(_affected.declares(p, f) for p in literal))
-            if not only:
-                continue
-            globbed += 1
-            if unit["id"] not in _affected.by_paths([unit], [], {only[0]}):
-                print(f"  FAIL {unit['id']}: a change to {only[0]} (named by {pattern}) is not counted")
-                bad += 1
-    if globbed == 0:
-        print("  FAIL no unit declares a glob path that names a file of its own; the control measured nothing")
-        bad += 1
-
-    # The registry the required set is derived from must come from the COMMIT, not the
-    # tree. Perturbed rather than asserted: a version of `manifest_at` that read the tree
-    # would return the tree's unit count for every sha, so the control compares two
-    # commits that declare DIFFERENT numbers and requires the answers to differ with them.
-    # `git log -1 --format=%H -- <path>` finds the last commit that CHANGED the registry,
-    # so its parent is guaranteed to carry a different one wherever history has any.
-    changed_at = git("log", "-1", "--format=%H", "--", VERIFICATION_TOML)
-    if changed_at:
-        parent = git("rev-parse", f"{changed_at}^")
-        here, before = len(manifest_at(changed_at).get("unit", [])), len(
-            manifest_at(parent).get("unit", [])
-        )
-        for sha_, read in ((changed_at, here), (parent, before)):
-            declared = git("show", f"{sha_}:{VERIFICATION_TOML}").count("\n[[unit]]")
-            if read != declared:
-                print(f"  FAIL manifest_at({sha_[:12]}) read {read}; the blob declares {declared}")
-                bad += 1
-    # A candidate carrying no registry, or naming no commit, is UNDECIDABLE — never a
-    # verdict. `git()` raises it; this asserts the gate does not swallow it somewhere.
-    try:
-        manifest_at("0000000000000000000000000000000000000000")
-    except Undecidable:
-        pass
-    else:
-        print("  FAIL a candidate with no readable registry produced a manifest anyway")
-        bad += 1
-
-    print(f"merge_readiness_gate selftest: {'PASS' if bad == 0 else f'FAIL ({bad})'}")
-    return 1 if bad else 0
+    return run(args)
 
 
 if __name__ == "__main__":

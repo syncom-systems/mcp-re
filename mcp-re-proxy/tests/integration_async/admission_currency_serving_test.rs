@@ -22,459 +22,46 @@
 //!   * and — the property #493 exists for — a revocation written to a SHARED source
 //!     is honoured by a replica that never saw the original call.
 
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
+mod fixtures;
+mod outage;
+mod rig;
+mod wire;
+
 use std::sync::Arc;
 
-use mcp_re_core::b64url_decode;
-use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
-use mcp_re_http_profile::authoritative_admission::record::issue_admission_state_record;
-use mcp_re_http_profile::authoritative_admission::record::AdmissionStateClaims;
-use mcp_re_http_profile::authoritative_admission::record::AdmissionStateCurrentness;
-use mcp_re_http_profile::custody::DelegatedKeyWindow;
-use mcp_re_http_profile::issue_admission_assertion;
-use mcp_re_http_profile::issue_delegation_credential;
-use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::AdmissionBinding;
 use mcp_re_http_profile::AdmissionClaims;
-use mcp_re_http_profile::AdmissionPolicy;
 use mcp_re_http_profile::AdmissionStatus;
-use mcp_re_http_profile::ArtifactBinding;
-use mcp_re_http_profile::ArtifactType;
-use mcp_re_http_profile::Audience;
-use mcp_re_http_profile::AudienceTuple;
-use mcp_re_http_profile::CustodyConfig;
-use mcp_re_http_profile::DelegatedSigningCustody;
-use mcp_re_http_profile::DelegationClaims;
-use mcp_re_http_profile::DelegationHeader;
-use mcp_re_http_profile::HttpProfileError;
-use mcp_re_http_profile::HttpRequest;
-use mcp_re_http_profile::HttpRequestEvidenceBlock;
-use mcp_re_http_profile::ResolvedActor;
-use mcp_re_http_profile::SignerSlot;
-use mcp_re_http_profile::PROFILE_TAG;
+use mcp_re_proxy::admission_enforcer::AdmissionEnforcement;
+use mcp_re_proxy::admission_enforcer::AdmissionFacet;
+use mcp_re_proxy::admission_enforcer::AdmissionRefusalClass;
+use mcp_re_proxy::admission_source::InMemoryAdmissionSource;
 use mcp_re_test_paths::unique_test_nonce;
 
-use mcp_re_proxy::admission_enforcer::AdmissionEnforcement;
-use mcp_re_proxy::admission_source::AdmissionFuture;
-use mcp_re_proxy::admission_source::AdmissionRecordVerifier;
-use mcp_re_proxy::admission_source::AdmissionSourceError;
-use mcp_re_proxy::admission_source::AnsweredAs;
-use mcp_re_proxy::admission_source::AsyncAdmissionSource;
-use mcp_re_proxy::admission_source::InMemoryAdmissionSource;
-use mcp_re_proxy::async_inner::AsyncInnerServer;
-use mcp_re_proxy::async_replay::AsyncReplayTier;
-use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
-use mcp_re_proxy::async_serve::ServedHttpRequest;
-use mcp_re_proxy::http_profile_dispatch::{ReplayAdmission, ReplayPosture};
-use mcp_re_proxy::http_profile_serve::AdmissionAuthorityResolver;
-use mcp_re_proxy::ActorResolver;
-use mcp_re_proxy::DelegatedRotor;
-use mcp_re_proxy::DelegatedServerSigner;
-use mcp_re_proxy::HttpProfileProxy;
-
-const CLIENT_SEED: [u8; 32] = [11u8; 32];
-const ROOT_SEED: [u8; 32] = [33u8; 32];
-const AUTHORITY_SEED: [u8; 32] = [44u8; 32];
-const NOW: i64 = 1_700_000_100;
-const CREATED: i64 = 1_700_000_000;
-const EXPIRES: i64 = 1_700_000_300;
-const TARGET: &str = "https://mcp.example.com/mcp?route=a";
-const CLIENT_KEY_ID: &str = "client-key-1";
-const ROOT_KID: &str = "root-kid";
-const AUTHORITY_KID: &str = "admission-root-1";
-const VERIFIER_AUD: &str = "verifier-1";
-const AUD_SCOPE: &str = "aud-scope-1";
-const EPOCH: &str = "epoch-1";
-const TTL: i64 = 300;
-const WORKLOAD: &str = "workload-7";
-
-/// What an admission refusal looks like ON THE WIRE.
-///
-/// Not `mcp-re.admission_not_current`: no such token exists, deliberately. The
-/// taxonomy is frozen and every wire code is a core token, so an admission failure
-/// collapses onto `actor_binding_failed` — the caller is not authorized to act, which
-/// is the true statement the client can act on.
-///
-/// The cost is real and worth naming: a revoked workload, an unknown one, and an
-/// authority outage are indistinguishable to the client, and to an operator reading
-/// only the wire code. That is why the propagation harness below measures the
-/// TRANSITION from served to refused under a single changing variable rather than
-/// keying off the code.
-const ADMISSION_REFUSED: &str = "mcp-re.actor_binding_failed";
-/// A `Required` call that carried no admission evidence at all.
-const ABSENT_ADMISSION_EVIDENCE: &str = "mcp-re.missing_envelope";
-
-fn client_key() -> SigningKey {
-    SigningKey::from_seed_bytes(&CLIENT_SEED)
-}
-fn root_key() -> SigningKey {
-    SigningKey::from_seed_bytes(&ROOT_SEED)
-}
-/// The ADMISSION AUTHORITY's root — a different key from the response-signing root,
-/// so "trusted to sign responses" can never be mistaken for "trusted to admit".
-fn authority_key() -> SigningKey {
-    SigningKey::from_seed_bytes(&AUTHORITY_SEED)
-}
-
-fn audience() -> AudienceTuple {
-    AudienceTuple {
-        audience_id: VERIFIER_AUD.into(),
-        target_uri: TARGET.into(),
-        route: Some("a".into()),
-    }
-}
-
-fn actor_resolver() -> ActorResolver {
-    Box::new(move |key_id: &str, slot: SignerSlot| {
-        let (role, subject, key) = match (key_id, slot) {
-            (CLIENT_KEY_ID, SignerSlot::Request) => {
-                ("client", "did:example:host-a", client_key().public_key())
-            }
-            (ROOT_KID, SignerSlot::Response) => {
-                ("server", "did:example:server", root_key().public_key())
-            }
-            _ => return None::<ResolvedActor>.into(),
-        };
-        Some(ResolvedActor {
-            identity: ActorIdentity {
-                role: role.into(),
-                trust_domain: "example.com".into(),
-                subject: subject.into(),
-                keyid: key_id.into(),
-            },
-            verification_key: key,
-            slot,
-        })
-        .into()
-    })
-}
-
-/// Resolves ONLY the configured admission authority. Anything else is untrusted —
-/// a kid never introduces trust.
-fn authority_resolver() -> AdmissionAuthorityResolver {
-    Arc::new(|kid: &str| (kid == AUTHORITY_KID).then(|| authority_key().public_key()))
-}
-
-/// The actor id the PEP's verifier resolves for the signing client — the value an
-/// assertion must name so it cannot be presented by anyone else.
-fn client_actor_id() -> String {
-    ActorIdentity {
-        role: "client".into(),
-        trust_domain: "example.com".into(),
-        subject: "did:example:host-a".into(),
-        keyid: CLIENT_KEY_ID.into(),
-    }
-    .actor_id()
-}
-
-/// The DEPLOYMENT's declared currentness budget for an authoritative record.
-///
-/// Wide enough that the record's own window is never what these batteries measure — they
-/// are about the currency comparison and the degraded fork, and a record expiring underneath
-/// them would make every one of them pass for the wrong reason. The budget's own boundary is
-/// measured where it is decided, in `admission_state_record::currentness`.
-const RECORD_MAX_AGE: i64 = 3_600;
-
-/// A store that will act on records signed by [`authority_key`] and no other.
-fn admission_store() -> InMemoryAdmissionSource {
-    InMemoryAdmissionSource::new(AdmissionRecordVerifier::new(
-        authority_resolver(),
-        PROFILE_TAG,
-        AdmissionStateCurrentness {
-            max_record_age: RECORD_MAX_AGE,
-            max_clock_skew: 30,
-        },
-    ))
-}
-
-/// The AUTHORITY's statement about a workload, signed and published.
-///
-/// Every publication advances the revision, because that is what a publication is; the
-/// generation moves only when the admitted configuration does. The two counters are
-/// deliberately independent here for the same reason they are in the record.
-fn publish_state(
-    source: &InMemoryAdmissionSource,
-    generation: u64,
-    revision: u64,
-    status: AdmissionStatus,
-) {
-    let record = issue_admission_state_record(
-        &AdmissionStateClaims {
-            iss: "did:example:admission".into(),
-            iat: NOW,
-            nbf: NOW,
-            exp: NOW + RECORD_MAX_AGE,
-            mcp_re_profile: PROFILE_TAG.into(),
-            mcp_re_admission_id: WORKLOAD.into(),
-            mcp_re_admission_generation: generation,
-            mcp_re_admission_status: status,
-            mcp_re_state_revision: revision,
-            issuer_kid: AUTHORITY_KID.into(),
-        },
-        |input| {
-            b64url_decode(&authority_key().sign(input))
-                .map_err(|_| HttpProfileError::InvalidSignature)
-        },
-    )
-    .expect("the authority issues its own record");
-    source.publish(WORKLOAD, record);
-}
-
-/// The authority admits the workload at `generation` — publication 1.
-///
-/// Deliberately not named for the Verus proof escape hatch that would shadow it:
-/// `tools/verification/_seams.py` matches that mechanism in its code form, and a test
-/// helper spelled the same way is indistinguishable from a real one to the gate whose job
-/// is to notice unregistered seams. A gate that cannot tell them apart is one someone
-/// eventually silences.
-fn publish_admitted(source: &InMemoryAdmissionSource, generation: u64) {
-    publish_state(source, generation, 1, AdmissionStatus::Admitted);
-}
-
-/// The authority revokes, KEEPING the generation and advancing the publication.
-fn revoke(source: &InMemoryAdmissionSource, generation: u64) {
-    publish_state(source, generation, 2, AdmissionStatus::Revoked);
-}
-
-/// A source whose authority can be taken down: lookups fail as unavailable while `down`,
-/// and otherwise answer from the wrapped store. The in-process store cannot be unreachable
-/// on its own, so the outage lives in this double and not in production code.
-struct OutageSwitch {
-    store: InMemoryAdmissionSource,
-    down: std::sync::atomic::AtomicBool,
-}
-
-impl OutageSwitch {
-    fn new(store: InMemoryAdmissionSource) -> Self {
-        OutageSwitch {
-            store,
-            down: std::sync::atomic::AtomicBool::new(false),
-        }
-    }
-
-    fn store(&self) -> &InMemoryAdmissionSource {
-        &self.store
-    }
-
-    fn set_unavailable(&self, down: bool) {
-        self.down.store(down, Ordering::SeqCst);
-    }
-}
-
-impl AsyncAdmissionSource for OutageSwitch {
-    fn current<'a>(&'a self, admission_id: &'a str, now: i64) -> AdmissionFuture<'a, AnsweredAs> {
-        if self.down.load(Ordering::SeqCst) {
-            return Box::pin(async move {
-                Err(AdmissionSourceError::Unavailable {
-                    details: "injected outage".to_owned(),
-                })
-            });
-        }
-        self.store.current(admission_id, now)
-    }
-}
-
-fn admission_claims(generation: u64, status: AdmissionStatus, iat: i64) -> AdmissionClaims {
-    AdmissionClaims {
-        iss: "did:example:admission".into(),
-        iat,
-        nbf: iat,
-        exp: iat + 600,
-        jti: format!("adm#{generation}"),
-        aud: Audience::One(VERIFIER_AUD.into()),
-        mcp_re_profile: PROFILE_TAG.into(),
-        mcp_re_admission_id: WORKLOAD.into(),
-        mcp_re_admitted_actor: client_actor_id(),
-        mcp_re_admission_generation: generation,
-        mcp_re_admitted_state_digest: b64url_encode(&sha2::Sha256::digest(b"admitted-state")),
-        mcp_re_admission_status: status,
-        issuer_kid: AUTHORITY_KID.into(),
-    }
-}
-
-fn issue_assertion(claims: &AdmissionClaims, signer: &SigningKey) -> String {
-    issue_admission_assertion(claims, |input| {
-        b64url_decode(&signer.sign(input)).map_err(|_| HttpProfileError::InvalidSignature)
-    })
-    .expect("issue")
-}
-
-use sha2::Digest;
-
-/// A signed call, optionally declaring the admission it acts under. `nonce` must be
-/// fresh per call: the replay tier is real here.
-fn signed_call(admission: Option<(&AdmissionClaims, &SigningKey)>, nonce: &str) -> HttpRequest {
-    let mut req = HttpRequest {
-        method: "POST".into(),
-        target_uri: TARGET.into(),
-        headers: vec![
-            ("Content-Type".into(), "application/json".into()),
-            ("Authorization".into(), "Bearer tok".into()),
-        ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
-            .to_vec(),
-    };
-    let evidence =
-        admission.map(|(c, k)| (AdmissionBinding::opaque_from(c), issue_assertion(c, k)));
-    let block = HttpRequestEvidenceBlock {
-        profile: PROFILE_TAG.into(),
-        audience: audience(),
-        artifact_bindings: vec![ArtifactBinding::opaque_digest(
-            ArtifactType::OauthDpop,
-            b"tok",
-        )],
-        continuation: None,
-        admission: evidence.as_ref().map(|(b, _)| b.clone()),
-        admission_assertion: evidence.as_ref().map(|(_, jws)| jws.clone()),
-        authorization_decision: None,
-    };
-    sign_request_full(
-        &mut req,
-        &block,
-        &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        nonce,
-    )
-    .expect("signs");
-    req
-}
-
-/// An inner that COUNTS the calls that reached it. The count is the assertion that
-/// matters for a currency check: a rejection issued after the tool ran is a record of
-/// something that already happened.
-fn counting_inner(calls: Arc<AtomicUsize>) -> Box<dyn AsyncInnerServer> {
-    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
-        move |_forwarded: &[u8]| -> Vec<u8> {
-            calls.fetch_add(1, Ordering::SeqCst);
-            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
-        },
-        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
-    ))
-}
-
-fn custody_cfg() -> CustodyConfig {
-    CustodyConfig {
-        issuer_kid: ROOT_KID.into(),
-        iss: "did:example:server".into(),
-        profile: PROFILE_TAG.into(),
-        aud: VERIFIER_AUD.into(),
-        audience_hash: AUD_SCOPE.into(),
-        trust_epoch: EPOCH.parse().expect("epoch base"),
-        server_role: "server".into(),
-        server_trust_domain: "example.com".into(),
-        server_subject: "did:example:server".into(),
-        window: DelegatedKeyWindow::of(TTL, 60).expect("0 < overlap < ttl"),
-    }
-}
-
-fn ready_signer() -> Arc<DelegatedServerSigner> {
-    let root = root_key();
-    let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
-        Some(issue_delegation_credential(&root, h, c))
-    };
-    let mut n = 100u8;
-    let factory = move || {
-        n = n.wrapping_add(1);
-        SigningKey::from_seed_bytes(&[n; 32])
-    };
-    let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
-        custody_cfg(),
-        root_key().public_key(),
-        issue,
-        factory,
-    ));
-    let signer = rotor.signer();
-    rotor.rotate(NOW).expect("issue first delegated key");
-    std::mem::forget(rotor);
-    signer
-}
-
-/// One fleet replica: its own signer and replay tier, consulting `source` for
-/// admission. Replicas share the SOURCE and nothing else, which is what makes a
-/// cross-replica revocation claim meaningful.
-fn replica(
-    source: Arc<dyn AsyncAdmissionSource>,
-    policy: AdmissionPolicy,
-    enforcement: AdmissionEnforcement,
-    calls: Arc<AtomicUsize>,
-) -> HttpProfileProxy {
-    HttpProfileProxy::new_delegated(
-        actor_resolver(),
-        audience(),
-        ReplayAdmission::new(
-            AsyncReplayTier::new(
-                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
-            ),
-            ReplayPosture::SingleProcess,
-        ),
-        counting_inner(calls),
-        300,
-        ready_signer(),
-    )
-    .with_admission(source, policy, enforcement, authority_resolver())
-}
-
-fn served_of(req: &HttpRequest) -> ServedHttpRequest {
-    ServedHttpRequest {
-        method: req.method.clone(),
-        target_uri: req.target_uri.clone(),
-        headers: req.headers.clone(),
-        body: req.body.clone(),
-        peer: None,
-        assertion: None,
-    }
-}
-
-fn wire_code_of(body: &[u8]) -> String {
-    serde_json::from_slice::<serde_json::Value>(body)
-        .ok()
-        .and_then(|v| {
-            v.get("error")?
-                .get("data")?
-                .get("mcp_re_error")?
-                .get("wire_code")?
-                .as_str()
-                .map(str::to_owned)
-        })
-        .unwrap_or_default()
-}
-
-fn block_on<F: std::future::Future>(f: F) -> F::Output {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("runtime")
-        .block_on(f)
-}
-
-/// The default enforcing policy: no degraded mode, so an unreachable authority is a
-/// refusal rather than a judgement call.
-fn strict_policy() -> AdmissionPolicy {
-    AdmissionPolicy {
-        max_assertion_age: 600,
-        max_clock_skew: 30,
-        degraded_propagation_bound: 0,
-        allow_degraded_mode: false,
-    }
-}
-
-/// A policy that refuses everything, installed to measure ONE proposition.
-struct RefusesEverything;
-
-impl mcp_re_proxy::authorization::AuthorizationEvaluator for RefusesEverything {
-    fn evaluate(
-        &self,
-        _: &mcp_re_proxy::authorization::AuthorizationRequest,
-    ) -> Result<mcp_re_proxy::authorization::AuthorizedDecision, mcp_re_policy::PolicyError> {
-        Err(mcp_re_policy::PolicyError::AuthorizationScopeDenied)
-    }
-}
+use fixtures::admission_claims;
+use fixtures::admission_store;
+use fixtures::admitted_claims;
+use fixtures::admitted_source;
+use fixtures::authority_key;
+use fixtures::issue_assertion;
+use fixtures::revoke;
+use fixtures::root_key;
+use fixtures::sign_state_record;
+use fixtures::state_claims;
+use fixtures::ABSENT_ADMISSION_EVIDENCE;
+use fixtures::ADMISSION_REFUSED;
+use fixtures::NOW;
+use fixtures::WORKLOAD;
+use outage::OutageSwitch;
+use rig::degraded_policy;
+use rig::recorded_facets;
+use rig::recorded_refusal_classes;
+use rig::strict_policy;
+use rig::RefusesEverything;
+use rig::Rig;
+use wire::evidence_call;
+use wire::wire_code_of;
 
 /// ADMISSION IS NOT AUTHORIZATION (ADR-MCPRE-065 §3).
 ///
@@ -487,20 +74,9 @@ impl mcp_re_proxy::authorization::AuthorizationEvaluator for RefusesEverything {
 /// admission is ordered first and refuses on its own.
 #[test]
 fn an_admitted_workload_is_still_refused_by_a_denying_policy() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let proxy = replica(
-        source,
-        strict_policy(),
-        AdmissionEnforcement::Required,
-        Arc::clone(&calls),
-    )
-    .with_authorization(Arc::new(RefusesEverything));
-    let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
-    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
+    let rig = Rig::strict(admitted_source(5)).authorizing(Arc::new(RefusesEverything));
 
-    let served = block_on(proxy.handle(served_of(&req), NOW));
+    let served = rig.serve_claims(&admitted_claims(5), NOW);
     assert_eq!(served.status, 403);
     assert_eq!(
         wire_code_of(&served.body),
@@ -508,7 +84,7 @@ fn an_admitted_workload_is_still_refused_by_a_denying_policy() {
         "the refusal is the POLICY's, not admission's — admission had already passed"
     );
     assert_eq!(
-        calls.load(Ordering::SeqCst),
+        rig.backend_calls(),
         0,
         "the backend must never have been asked"
     );
@@ -516,26 +92,16 @@ fn an_admitted_workload_is_still_refused_by_a_denying_policy() {
 
 #[test]
 fn a_current_admitted_workload_is_served() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let proxy = replica(
-        source,
-        strict_policy(),
-        AdmissionEnforcement::Required,
-        Arc::clone(&calls),
-    );
-    let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
-    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
+    let rig = Rig::strict(admitted_source(5));
 
-    let served = block_on(proxy.handle(served_of(&req), NOW));
+    let served = rig.serve_claims(&admitted_claims(5), NOW);
     assert_eq!(
         served.status,
         200,
         "{}",
         String::from_utf8_lossy(&served.body)
     );
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(rig.backend_calls(), 1);
 }
 
 /// A BORROWED assertion does not admit its holder.
@@ -548,26 +114,17 @@ fn a_current_admitted_workload_is_served() {
 /// the ONLY thing wrong with it is that it was issued to somebody else.
 #[test]
 fn an_assertion_issued_to_another_actor_does_not_admit_this_caller() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let proxy = replica(
-        source,
-        strict_policy(),
-        AdmissionEnforcement::Required,
-        Arc::clone(&calls),
-    );
-    let mut claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
+    let rig = Rig::strict(admitted_source(5));
+    let mut claims = admitted_claims(5);
     claims.mcp_re_admitted_actor = "client:example.com:did:example:host-b:client-key-2".into();
-    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
 
-    let served = block_on(proxy.handle(served_of(&req), NOW));
+    let served = rig.serve_claims(&claims, NOW);
     assert_eq!(
         served.status, 403,
         "an assertion naming another actor must not admit this one"
     );
     assert_eq!(
-        calls.load(Ordering::SeqCst),
+        rig.backend_calls(),
         0,
         "the tool ran on a borrowed admission"
     );
@@ -578,87 +135,39 @@ fn an_assertion_issued_to_another_actor_does_not_admit_this_caller() {
 /// currency.
 #[test]
 fn a_superseded_generation_is_refused_before_the_backend_runs() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 6);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let proxy = replica(
-        source,
-        strict_policy(),
-        AdmissionEnforcement::Required,
-        Arc::clone(&calls),
-    );
-    let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
-    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
+    let rig = Rig::strict(admitted_source(6));
 
-    let served = block_on(proxy.handle(served_of(&req), NOW));
-    assert_eq!(served.status, 403);
-    assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED);
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
+    let served = rig.serve_claims(&admitted_claims(5), NOW);
+    rig.assert_refused(
+        &served,
         0,
-        "the tool ran for a workload whose admission had been superseded"
+        "the tool ran for a workload whose admission had been superseded",
     );
 }
 
 /// A gate refusal is recorded as the gate's refusal, never as a gate that was not consulted.
 #[test]
 fn an_admission_refusal_is_recorded_as_the_gates_refusal() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 6);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
-    let proxy = replica(
-        source,
-        strict_policy(),
-        AdmissionEnforcement::Required,
-        Arc::clone(&calls),
-    )
-    .with_audit_sink(sink.clone());
-    let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
-    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
+    let (rig, sink) = Rig::strict(admitted_source(6)).audited();
 
-    let served = block_on(proxy.handle(served_of(&req), NOW));
+    let served = rig.serve_claims(&admitted_claims(5), NOW);
     assert_eq!(served.status, 403);
-    let admissions: Vec<_> = sink
-        .records()
-        .iter()
-        .filter(|r| r.event().event_type() == "mcp-re.request.rejected")
-        .filter_map(|r| r.subject.admission())
-        .collect();
     assert_eq!(
-        admissions,
-        vec![mcp_re_proxy::admission_enforcer::AdmissionFacet::Refused],
+        recorded_facets(&sink, "mcp-re.request.rejected"),
+        vec![AdmissionFacet::Refused],
     );
-}
-
-/// The refusal classes a replica's audit sink recorded for the request records it refused.
-fn recorded_refusal_classes(
-    sink: &mcp_re_proxy::CollectingAuditSink,
-) -> Vec<Option<mcp_re_proxy::admission_enforcer::AdmissionRefusalClass>> {
-    sink.records()
-        .iter()
-        .filter(|r| r.event().event_type() == "mcp-re.request.rejected")
-        .map(|r| r.subject.admission_refusal())
-        .collect()
 }
 
 /// One refusal through a fresh replica over `source`, and the classes its record carried.
 fn refusal_classes_for(
     source: Arc<InMemoryAdmissionSource>,
     claims: Option<&AdmissionClaims>,
-    nonce: &str,
-) -> Vec<Option<mcp_re_proxy::admission_enforcer::AdmissionRefusalClass>> {
-    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
-    let proxy = replica(
-        source,
-        strict_policy(),
-        AdmissionEnforcement::Required,
-        Arc::new(AtomicUsize::new(0)),
-    )
-    .with_audit_sink(sink.clone());
-    let key = authority_key();
-    let req = signed_call(claims.map(|c| (c, &key)), nonce);
-    let served = block_on(proxy.handle(served_of(&req), NOW));
+) -> Vec<Option<AdmissionRefusalClass>> {
+    let (rig, sink) = Rig::strict(source).audited();
+    let served = match claims {
+        Some(claims) => rig.serve_claims(claims, NOW),
+        None => rig.serve_bare(NOW),
+    };
     assert_eq!(served.status, 403);
     recorded_refusal_classes(&sink)
 }
@@ -669,60 +178,43 @@ fn refusal_classes_for(
 #[test]
 fn a_refused_admission_names_which_fact_refused_it_in_the_record() {
     use mcp_re_http_profile::authoritative_admission::record::AdmissionRecordRefusal as Bad;
-    use mcp_re_proxy::admission_enforcer::AdmissionRefusalClass as Class;
+    use AdmissionRefusalClass as Class;
 
-    let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
+    let claims = admitted_claims(5);
 
     // Nothing published: the authority has nothing to say about this workload.
-    let absent = refusal_classes_for(
-        Arc::new(admission_store()),
-        Some(&claims),
-        &unique_test_nonce(),
-    );
+    let absent = refusal_classes_for(Arc::new(admission_store()), Some(&claims));
     assert_eq!(absent, vec![Some(Class::NoRecord)]);
 
     // Something published that the authority did not sign.
     let forged = Arc::new(admission_store());
     forged.publish(WORKLOAD, "not-a-record".to_owned());
     assert_eq!(
-        refusal_classes_for(forged, Some(&claims), &unique_test_nonce()),
+        refusal_classes_for(forged, Some(&claims)),
         vec![Some(Class::RecordRefused(Bad::Malformed))]
     );
 
     // An authentic record at a newer generation: a superseded call, not a missing record.
-    let moved_on = Arc::new(admission_store());
-    publish_admitted(&moved_on, 6);
     assert_eq!(
-        refusal_classes_for(moved_on, Some(&claims), &unique_test_nonce()),
+        refusal_classes_for(admitted_source(6), Some(&claims)),
         vec![Some(Class::NotCurrent)]
     );
 
     // The deployment requires admission and the call presented none.
     assert_eq!(
-        refusal_classes_for(Arc::new(admission_store()), None, &unique_test_nonce()),
+        refusal_classes_for(Arc::new(admission_store()), None),
         vec![Some(Class::NoEvidence)]
     );
 }
 
 #[test]
 fn a_revoked_workload_is_refused_though_its_assertion_is_still_valid() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
+    let source = admitted_source(5);
     revoke(&source, 5);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let proxy = replica(
-        source,
-        strict_policy(),
-        AdmissionEnforcement::Required,
-        Arc::clone(&calls),
-    );
-    let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
-    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
+    let rig = Rig::strict(source);
 
-    let served = block_on(proxy.handle(served_of(&req), NOW));
-    assert_eq!(served.status, 403);
-    assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED);
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let served = rig.serve_claims(&admitted_claims(5), NOW);
+    rig.assert_refused(&served, 0, "the backend ran for a revoked workload");
 }
 
 /// A healthy authority that has never heard of this workload is a definitive
@@ -730,48 +222,26 @@ fn a_revoked_workload_is_refused_though_its_assertion_is_still_valid() {
 /// degraded fork and be served on its own assertion — admitted by being unknown.
 #[test]
 fn an_unknown_workload_is_refused_not_routed_into_degraded_mode() {
-    let source = Arc::new(admission_store());
-    let calls = Arc::new(AtomicUsize::new(0));
-    let proxy = replica(
-        source,
-        AdmissionPolicy {
-            // Degraded mode ENABLED and wide open: if the unknown workload were
-            // mistaken for an outage, this policy would serve it.
-            allow_degraded_mode: true,
-            degraded_propagation_bound: 3600,
-            ..strict_policy()
-        },
+    // Degraded mode ENABLED and wide open: if the unknown workload were mistaken for an
+    // outage, this policy would serve it.
+    let rig = Rig::new(
+        Arc::new(admission_store()),
+        degraded_policy(3600),
         AdmissionEnforcement::Required,
-        Arc::clone(&calls),
     );
-    let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
-    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
 
-    let served = block_on(proxy.handle(served_of(&req), NOW));
-    assert_eq!(served.status, 403);
-    assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED);
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let served = rig.serve_claims(&admitted_claims(5), NOW);
+    rig.assert_refused(&served, 0, "the backend ran for an unknown workload");
 }
 
 #[test]
 fn an_unreachable_authority_fails_closed_by_default() {
-    let source = Arc::new(OutageSwitch::new(admission_store()));
-    publish_admitted(source.store(), 5);
+    let source = OutageSwitch::admitting(5);
     source.set_unavailable(true);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let proxy = replica(
-        source,
-        strict_policy(),
-        AdmissionEnforcement::Required,
-        Arc::clone(&calls),
-    );
-    let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
-    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
+    let rig = Rig::strict(source);
 
-    let served = block_on(proxy.handle(served_of(&req), NOW));
-    assert_eq!(served.status, 403);
-    assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED);
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let served = rig.serve_claims(&admitted_claims(5), NOW);
+    rig.assert_refused(&served, 0, "the backend ran with the authority unreachable");
 }
 
 /// R7-C093: the degraded window is elapsed OUTAGE time, not assertion freshness.
@@ -793,63 +263,27 @@ fn an_unreachable_authority_fails_closed_by_default() {
 /// against an enforcer that reported `Degraded` for everything.
 #[test]
 fn a_degraded_serve_and_a_live_confirmed_one_are_different_records() {
-    let source = Arc::new(OutageSwitch::new(admission_store()));
-    publish_admitted(source.store(), 5);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let policy = AdmissionPolicy {
-        allow_degraded_mode: true,
-        degraded_propagation_bound: 1,
-        ..strict_policy()
-    };
-    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
-    let proxy = replica(
-        Arc::clone(&source) as Arc<dyn AsyncAdmissionSource>,
-        policy,
+    let source = OutageSwitch::admitting(5);
+    let (rig, sink) = Rig::new(
+        Arc::clone(&source) as _,
+        degraded_policy(1),
         AdmissionEnforcement::Required,
-        Arc::clone(&calls),
     )
-    .with_audit_sink(sink.clone());
+    .audited();
 
-    let confirmed = admission_claims(5, AdmissionStatus::Admitted, NOW - 30);
-    assert_eq!(
-        block_on(proxy.handle(
-            served_of(&signed_call(
-                Some((&confirmed, &authority_key())),
-                &unique_test_nonce(),
-            )),
-            NOW,
-        ))
-        .status,
-        200,
-    );
+    assert_eq!(rig.confirm_live().status, 200);
 
     source.set_unavailable(true);
     let fresh = admission_claims(5, AdmissionStatus::Admitted, NOW + 55);
     assert_eq!(
-        block_on(proxy.handle(
-            served_of(&signed_call(
-                Some((&fresh, &authority_key())),
-                &unique_test_nonce(),
-            )),
-            NOW + 60,
-        ))
-        .status,
+        rig.serve_claims(&fresh, NOW + 60).status,
         200,
         "inside P, the replica serves on its last-known state",
     );
 
-    let admissions: Vec<_> = sink
-        .records()
-        .iter()
-        .filter(|r| r.event().event_type() == "mcp-re.request.accepted")
-        .filter_map(|r| r.subject.admission())
-        .collect();
     assert_eq!(
-        admissions,
-        vec![
-            mcp_re_proxy::admission_enforcer::AdmissionFacet::LiveConfirmed,
-            mcp_re_proxy::admission_enforcer::AdmissionFacet::Degraded,
-        ],
+        recorded_facets(&sink, "mcp-re.request.accepted"),
+        vec![AdmissionFacet::LiveConfirmed, AdmissionFacet::Degraded],
         "the two serves are different records; before R11-106 they were the same one"
     );
 }
@@ -860,49 +294,28 @@ fn a_degraded_serve_and_a_live_confirmed_one_are_different_records() {
 /// however long. Every assertion below is FRESH; only the outage ages.
 #[test]
 fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
-    let source = Arc::new(OutageSwitch::new(admission_store()));
-    publish_admitted(source.store(), 5);
-    let calls = Arc::new(AtomicUsize::new(0));
+    let source = OutageSwitch::admitting(5);
     // P is ONE SECOND, because the window is elapsed time on the monotonic clock and the
     // control ages the OUTAGE by waiting — which is the only thing that ages it. A 120s
     // bound would need a 120s test. `max_clock_skew` keeps the strict policy's value: it
     // governs the assertion-freshness comparison below and does NOT widen this window.
-    let policy = AdmissionPolicy {
-        allow_degraded_mode: true,
-        degraded_propagation_bound: 1,
-        ..strict_policy()
-    };
-    let proxy = replica(
-        Arc::clone(&source) as Arc<dyn AsyncAdmissionSource>,
-        policy,
+    let rig = Rig::new(
+        Arc::clone(&source) as _,
+        degraded_policy(1),
         AdmissionEnforcement::Required,
-        Arc::clone(&calls),
     );
 
     // The authority is reachable: this call establishes last-known state to serve on.
-    let confirmed = admission_claims(5, AdmissionStatus::Admitted, NOW - 30);
-    let served = block_on(proxy.handle(
-        served_of(&signed_call(
-            Some((&confirmed, &authority_key())),
-            &unique_test_nonce(),
-        )),
-        NOW,
-    ));
+    let served = rig.confirm_live();
     assert_eq!(served.status, 200, "a live-confirmed admission serves");
 
     source.set_unavailable(true);
 
     // 60s into the outage: inside P, and the assertion is fresh.
     let fresh = admission_claims(5, AdmissionStatus::Admitted, NOW + 55);
-    let served = block_on(proxy.handle(
-        served_of(&signed_call(
-            Some((&fresh, &authority_key())),
-            &unique_test_nonce(),
-        )),
-        NOW + 60,
-    ));
+    let served = rig.serve_claims(&fresh, NOW + 60);
     assert_eq!(served.status, 200, "within P, degraded mode serves");
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(rig.backend_calls(), 2);
 
     // Past P, with an EQUALLY FRESH assertion. A revocation could have propagated by now
     // and this replica would not know it.
@@ -914,20 +327,8 @@ fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
     // moves, in either direction.
     std::thread::sleep(std::time::Duration::from_millis(1_100));
     let just_issued = admission_claims(5, AdmissionStatus::Admitted, NOW + 155);
-    let served = block_on(proxy.handle(
-        served_of(&signed_call(
-            Some((&just_issued, &authority_key())),
-            &unique_test_nonce(),
-        )),
-        NOW + 160,
-    ));
-    assert_eq!(served.status, 403);
-    assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED);
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        2,
-        "no third call reached the inner"
-    );
+    let served = rig.serve_claims(&just_issued, NOW + 160);
+    rig.assert_refused(&served, 2, "no third call reached the inner");
 }
 
 /// R7-C093, the other half: a replica that has NEVER reached the authority has no
@@ -935,70 +336,40 @@ fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
 /// a window that has to have been opened by a real read.
 #[test]
 fn a_replica_that_never_reached_the_authority_does_not_enter_degraded_mode() {
-    let source = Arc::new(OutageSwitch::new(admission_store()));
-    publish_admitted(source.store(), 5);
+    let source = OutageSwitch::admitting(5);
     source.set_unavailable(true);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let policy = AdmissionPolicy {
-        allow_degraded_mode: true,
-        degraded_propagation_bound: 120,
-        ..strict_policy()
-    };
-    let proxy = replica(
-        Arc::clone(&source) as Arc<dyn AsyncAdmissionSource>,
-        policy,
-        AdmissionEnforcement::Required,
-        Arc::clone(&calls),
-    );
+    let rig = Rig::new(source, degraded_policy(120), AdmissionEnforcement::Required);
 
     let fresh = admission_claims(5, AdmissionStatus::Admitted, NOW - 10);
-    let served = block_on(proxy.handle(
-        served_of(&signed_call(
-            Some((&fresh, &authority_key())),
-            &unique_test_nonce(),
-        )),
-        NOW,
-    ));
+    let served = rig.serve_claims(&fresh, NOW);
 
-    assert_eq!(served.status, 403);
-    assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED);
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
+    rig.assert_refused(
+        &served,
         0,
-        "the backend must not run for a workload whose admission was never confirmed here"
+        "the backend must not run for a workload whose admission was never confirmed here",
     );
 }
 
 #[test]
 fn a_call_without_admission_evidence_is_refused_when_required_and_served_when_optional() {
-    let claims_free = signed_call(None, &unique_test_nonce());
-
-    let calls = Arc::new(AtomicUsize::new(0));
-    let strict = replica(
-        Arc::new(admission_store()),
-        strict_policy(),
-        AdmissionEnforcement::Required,
-        Arc::clone(&calls),
-    );
-    let served = block_on(strict.handle(served_of(&claims_free), NOW));
+    let strict = Rig::strict(Arc::new(admission_store()));
+    let served = strict.serve_bare(NOW);
     assert_eq!(served.status, 403);
     assert_eq!(
         wire_code_of(&served.body),
         ABSENT_ADMISSION_EVIDENCE,
         "absent evidence is not an unreachable authority"
     );
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(strict.backend_calls(), 0);
 
-    let calls = Arc::new(AtomicUsize::new(0));
-    let lenient = replica(
+    let lenient = Rig::new(
         Arc::new(admission_store()),
         strict_policy(),
         AdmissionEnforcement::Optional,
-        Arc::clone(&calls),
     );
-    let served = block_on(lenient.handle(served_of(&claims_free), NOW));
+    let served = lenient.serve_bare(NOW);
     assert_eq!(served.status, 200);
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(lenient.backend_calls(), 1);
 }
 
 /// An assertion signed by a key the deployment does not trust as an admission
@@ -1006,22 +377,12 @@ fn a_call_without_admission_evidence_is_refused_when_required_and_served_when_op
 /// call's own request signature verifies.
 #[test]
 fn an_assertion_from_an_untrusted_authority_is_refused() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let proxy = replica(
-        source,
-        strict_policy(),
-        AdmissionEnforcement::Required,
-        Arc::clone(&calls),
-    );
-    let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
-    // Signed by the RESPONSE-signing root, which is trusted — for responses.
-    let req = signed_call(Some((&claims, &root_key())), &unique_test_nonce());
+    let rig = Rig::strict(admitted_source(5));
 
-    let served = block_on(proxy.handle(served_of(&req), NOW));
+    // Signed by the RESPONSE-signing root, which is trusted — for responses.
+    let served = rig.serve_signed_by(&admitted_claims(5), &root_key(), NOW);
     assert_eq!(served.status, 403);
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(rig.backend_calls(), 0);
 }
 
 /// The cross-replica property #493 was opened for, at last testable: a revocation
@@ -1031,60 +392,25 @@ fn an_assertion_from_an_untrusted_authority_is_refused() {
 /// of the call.
 #[test]
 fn a_revocation_on_the_shared_source_is_honoured_by_a_replica_that_never_saw_the_workload() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
-    let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
-
-    let calls_a = Arc::new(AtomicUsize::new(0));
-    let replica_a = replica(
-        Arc::clone(&source) as Arc<dyn AsyncAdmissionSource>,
-        strict_policy(),
-        AdmissionEnforcement::Required,
-        Arc::clone(&calls_a),
-    );
-    let calls_b = Arc::new(AtomicUsize::new(0));
-    let replica_b = replica(
-        Arc::clone(&source) as Arc<dyn AsyncAdmissionSource>,
-        strict_policy(),
-        AdmissionEnforcement::Required,
-        Arc::clone(&calls_b),
-    );
+    let source = admitted_source(5);
+    let claims = admitted_claims(5);
+    let replica_a = Rig::strict(Arc::clone(&source) as _);
+    let replica_b = Rig::strict(Arc::clone(&source) as _);
 
     // A serves the workload happily.
-    let served = block_on(replica_a.handle(
-        served_of(&signed_call(
-            Some((&claims, &authority_key())),
-            &unique_test_nonce(),
-        )),
-        NOW,
-    ));
-    assert_eq!(served.status, 200);
+    assert_eq!(replica_a.serve_claims(&claims, NOW).status, 200);
 
     // The authority revokes it. Nothing tells B; B simply consults the shared source.
     revoke(&source, 5);
 
-    let served = block_on(replica_b.handle(
-        served_of(&signed_call(
-            Some((&claims, &authority_key())),
-            &unique_test_nonce(),
-        )),
-        NOW,
-    ));
-    assert_eq!(served.status, 403);
-    assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED);
-    assert_eq!(calls_b.load(Ordering::SeqCst), 0);
+    let served = replica_b.serve_claims(&claims, NOW);
+    replica_b.assert_refused(&served, 0, "B ran the backend for a revoked workload");
 
     // And A, which had already served it, refuses the next one too.
-    let served = block_on(replica_a.handle(
-        served_of(&signed_call(
-            Some((&claims, &authority_key())),
-            &unique_test_nonce(),
-        )),
-        NOW,
-    ));
+    let served = replica_a.serve_claims(&claims, NOW);
     assert_eq!(served.status, 403);
     assert_eq!(
-        calls_a.load(Ordering::SeqCst),
+        replica_a.backend_calls(),
         1,
         "only the pre-revocation call ran"
     );
@@ -1095,22 +421,10 @@ fn a_revocation_on_the_shared_source_is_honoured_by_a_replica_that_never_saw_the
 /// issued is not a fresher client, it is a client asserting an admission nobody made.
 #[test]
 fn a_generation_ahead_of_the_authority_is_refused() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let proxy = replica(
-        source,
-        strict_policy(),
-        AdmissionEnforcement::Required,
-        Arc::clone(&calls),
-    );
-    let claims = admission_claims(9, AdmissionStatus::Admitted, CREATED);
-    let req = signed_call(Some((&claims, &authority_key())), &unique_test_nonce());
+    let rig = Rig::strict(admitted_source(5));
 
-    let served = block_on(proxy.handle(served_of(&req), NOW));
-    assert_eq!(served.status, 403);
-    assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED);
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let served = rig.serve_claims(&admitted_claims(9), NOW);
+    rig.assert_refused(&served, 0, "the backend ran for a generation nobody issued");
 }
 
 /// The authoritative record is consulted by ADMISSION ID, and the id comes from the
@@ -1118,88 +432,32 @@ fn a_generation_ahead_of_the_authority_is_refused() {
 /// because the binding it names must also match the assertion it carries.
 #[test]
 fn a_binding_naming_another_workload_does_not_borrow_its_admission() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
+    let source = admitted_source(5);
     // A genuine, currently-admitted record for a DIFFERENT workload, published under its
     // own name. The point of the test is that naming it in a binding does not borrow it.
-    let other = issue_admission_state_record(
-        &AdmissionStateClaims {
-            iss: "did:example:admission".into(),
-            iat: NOW,
-            nbf: NOW,
-            exp: NOW + RECORD_MAX_AGE,
-            mcp_re_profile: PROFILE_TAG.into(),
-            mcp_re_admission_id: "workload-other".into(),
-            mcp_re_admission_generation: 5,
-            mcp_re_admission_status: AdmissionStatus::Admitted,
-            mcp_re_state_revision: 1,
-            issuer_kid: AUTHORITY_KID.into(),
-        },
-        |input| {
-            b64url_decode(&authority_key().sign(input))
-                .map_err(|_| HttpProfileError::InvalidSignature)
-        },
-    )
-    .expect("the authority issues its own record");
-    source.publish("workload-other", other);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let proxy = replica(
-        source,
-        strict_policy(),
-        AdmissionEnforcement::Required,
-        Arc::clone(&calls),
+    let other = state_claims("workload-other", 5, 1, AdmissionStatus::Admitted);
+    source.publish(
+        "workload-other",
+        sign_state_record(&other, &authority_key()),
     );
-    source_revoked_workload_call(&proxy, &calls);
-}
+    let rig = Rig::strict(source);
 
-fn source_revoked_workload_call(proxy: &HttpProfileProxy, calls: &Arc<AtomicUsize>) {
     // The assertion is for WORKLOAD; the binding claims `workload-other`. The two must
     // describe the same admission, so this is refused as a binding mismatch rather
     // than being looked up against the other workload's healthy record.
-    let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
+    let claims = admitted_claims(5);
     let mut binding = AdmissionBinding::opaque_from(&claims);
     binding.admission_id = "workload-other".into();
+    let assertion = issue_assertion(&claims, &authority_key());
+    let req = evidence_call(Some(binding), Some(assertion), &unique_test_nonce());
 
-    let mut req = HttpRequest {
-        method: "POST".into(),
-        target_uri: TARGET.into(),
-        headers: vec![
-            ("Content-Type".into(), "application/json".into()),
-            ("Authorization".into(), "Bearer tok".into()),
-        ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
-            .to_vec(),
-    };
-    let block = HttpRequestEvidenceBlock {
-        profile: PROFILE_TAG.into(),
-        audience: audience(),
-        artifact_bindings: vec![ArtifactBinding::opaque_digest(
-            ArtifactType::OauthDpop,
-            b"tok",
-        )],
-        continuation: None,
-        admission: Some(binding),
-        admission_assertion: Some(issue_assertion(&claims, &authority_key())),
-        authorization_decision: None,
-    };
-    sign_request_full(
-        &mut req,
-        &block,
-        &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
-    )
-    .expect("signs");
-
-    let served = block_on(proxy.handle(served_of(&req), NOW));
+    let served = rig.serve(&req, NOW);
     assert_eq!(served.status, 403);
     assert_eq!(
         wire_code_of(&served.body),
         "mcp-re.request_binding_mismatch"
     );
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(rig.backend_calls(), 0);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1213,37 +471,6 @@ fn source_revoked_workload_call(proxy: &HttpProfileProxy, calls: &Arc<AtomicUsiz
 // served on the caller's own assertion. Corrupting a record must never be a cheaper
 // un-revoke than issuing one.
 
-/// A degraded-mode deployment that has ALREADY earned its window — the configuration in
-/// which a misclassified refusal would actually serve a revoked workload.
-///
-/// Every test below opens the window first with a live-confirmed call, so nothing here
-/// passes merely because degraded mode was unreachable.
-fn degraded_replica_with_an_open_window(
-    source: &Arc<InMemoryAdmissionSource>,
-    calls: &Arc<AtomicUsize>,
-) -> HttpProfileProxy {
-    let proxy = replica(
-        Arc::clone(source) as Arc<dyn AsyncAdmissionSource>,
-        AdmissionPolicy {
-            allow_degraded_mode: true,
-            degraded_propagation_bound: 120,
-            ..strict_policy()
-        },
-        AdmissionEnforcement::Required,
-        Arc::clone(calls),
-    );
-    let confirmed = admission_claims(5, AdmissionStatus::Admitted, NOW - 30);
-    let served = block_on(proxy.handle(
-        served_of(&signed_call(
-            Some((&confirmed, &authority_key())),
-            &unique_test_nonce(),
-        )),
-        NOW,
-    ));
-    assert_eq!(served.status, 200, "the degraded window must start OPEN");
-    proxy
-}
-
 /// **Corrupting a record while the store is reachable does not admit anybody.**
 ///
 /// The store answered; it simply has nothing this deployment will act on. That is a
@@ -1252,10 +479,8 @@ fn degraded_replica_with_an_open_window(
 /// caller on its own assertion.
 #[test]
 fn a_corrupt_record_on_a_reachable_store_is_refused_and_never_degraded() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let proxy = degraded_replica_with_an_open_window(&source, &calls);
+    let source = admitted_source(5);
+    let rig = Rig::with_an_open_degraded_window(&source);
 
     for (label, corrupt) in [
         ("garbage", "not-a-record".to_owned()),
@@ -1264,18 +489,12 @@ fn a_corrupt_record_on_a_reachable_store_is_refused_and_never_degraded() {
     ] {
         source.publish(WORKLOAD, corrupt);
         let fresh = admission_claims(5, AdmissionStatus::Admitted, NOW + 5);
-        let served = block_on(proxy.handle(
-            served_of(&signed_call(
-                Some((&fresh, &authority_key())),
-                &format!("n-corrupt-{}", label.replace(' ', "-")),
-            )),
-            NOW + 10,
-        ));
+        let served = rig.serve_claims(&fresh, NOW + 10);
         assert_eq!(served.status, 403, "{label}: a corrupt record must refuse");
         assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED, "{label}");
     }
     assert_eq!(
-        calls.load(Ordering::SeqCst),
+        rig.backend_calls(),
         1,
         "only the window-opening call reached the inner"
     );
@@ -1288,45 +507,18 @@ fn a_corrupt_record_on_a_reachable_store_is_refused_and_never_degraded() {
 /// outrun the real authority, because it cannot sign one.
 #[test]
 fn a_record_minted_by_a_store_writer_is_refused_and_never_degraded() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let proxy = degraded_replica_with_an_open_window(&source, &calls);
+    let source = admitted_source(5);
+    let rig = Rig::with_an_open_degraded_window(&source);
 
     let attacker = SigningKey::from_seed_bytes(&[77u8; 32]);
-    let forged = issue_admission_state_record(
-        &AdmissionStateClaims {
-            iss: "did:example:admission".into(),
-            iat: NOW,
-            nbf: NOW,
-            exp: NOW + RECORD_MAX_AGE,
-            mcp_re_profile: PROFILE_TAG.into(),
-            mcp_re_admission_id: WORKLOAD.into(),
-            // An arbitrarily high generation, which is exactly what a store-only writer
-            // would reach for to outrun the authority's anti-rollback counter.
-            mcp_re_admission_generation: u64::MAX,
-            mcp_re_admission_status: AdmissionStatus::Admitted,
-            mcp_re_state_revision: u64::MAX,
-            issuer_kid: AUTHORITY_KID.into(),
-        },
-        |input| {
-            b64url_decode(&attacker.sign(input)).map_err(|_| HttpProfileError::InvalidSignature)
-        },
-    )
-    .expect("the attacker can certainly produce bytes");
-    source.publish(WORKLOAD, forged);
+    // An arbitrarily high generation, which is exactly what a store-only writer would reach
+    // for to outrun the authority's anti-rollback counter.
+    let high = state_claims(WORKLOAD, u64::MAX, u64::MAX, AdmissionStatus::Admitted);
+    source.publish(WORKLOAD, sign_state_record(&high, &attacker));
 
     let fresh = admission_claims(u64::MAX, AdmissionStatus::Admitted, NOW + 5);
-    let served = block_on(proxy.handle(
-        served_of(&signed_call(
-            Some((&fresh, &authority_key())),
-            &unique_test_nonce(),
-        )),
-        NOW + 10,
-    ));
-    assert_eq!(served.status, 403);
-    assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED);
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let served = rig.serve_claims(&fresh, NOW + 10);
+    rig.assert_refused(&served, 1, "only the window-opening call reached the inner");
 }
 
 /// **An expired authenticated record on a reachable store does not admit anybody.**
@@ -1336,48 +528,23 @@ fn a_record_minted_by_a_store_writer_is_refused_and_never_degraded() {
 /// nothing here detects a substitution, and nothing has to.
 #[test]
 fn an_expired_authentic_record_on_a_reachable_store_is_refused_and_never_degraded() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let proxy = degraded_replica_with_an_open_window(&source, &calls);
+    let source = admitted_source(5);
+    let rig = Rig::with_an_open_degraded_window(&source);
 
     // A record the authority really published, whose window has since closed. The CALL is
     // fresh — the request signature and the assertion are both current — so the only stale
     // thing is the authoritative state, which is the proposition. (Advancing `now` past the
     // record instead would expire the request signature first and refuse for the wrong
     // reason; that is what the first draft of this test measured.)
-    let stale = issue_admission_state_record(
-        &AdmissionStateClaims {
-            iss: "did:example:admission".into(),
-            iat: NOW - 100,
-            nbf: NOW - 100,
-            exp: NOW - 40,
-            mcp_re_profile: PROFILE_TAG.into(),
-            mcp_re_admission_id: WORKLOAD.into(),
-            mcp_re_admission_generation: 5,
-            mcp_re_admission_status: AdmissionStatus::Admitted,
-            mcp_re_state_revision: 1,
-            issuer_kid: AUTHORITY_KID.into(),
-        },
-        |input| {
-            b64url_decode(&authority_key().sign(input))
-                .map_err(|_| HttpProfileError::InvalidSignature)
-        },
-    )
-    .expect("the authority issues its own record");
-    source.publish(WORKLOAD, stale);
+    let mut stale = state_claims(WORKLOAD, 5, 1, AdmissionStatus::Admitted);
+    stale.iat = NOW - 100;
+    stale.nbf = NOW - 100;
+    stale.exp = NOW - 40;
+    source.publish(WORKLOAD, sign_state_record(&stale, &authority_key()));
 
     let fresh = admission_claims(5, AdmissionStatus::Admitted, NOW + 5);
-    let served = block_on(proxy.handle(
-        served_of(&signed_call(
-            Some((&fresh, &authority_key())),
-            &unique_test_nonce(),
-        )),
-        NOW + 10,
-    ));
-    assert_eq!(served.status, 403);
-    assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED);
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let served = rig.serve_claims(&fresh, NOW + 10);
+    rig.assert_refused(&served, 1, "only the window-opening call reached the inner");
 }
 
 /// **The exact attack the r11 ruling pins, end to end on the serving path.**
@@ -1395,73 +562,32 @@ fn an_expired_authentic_record_on_a_reachable_store_is_refused_and_never_degrade
 #[test]
 fn restoring_a_revoked_workloads_old_admitted_record_does_not_restore_service() {
     let source = Arc::new(admission_store());
-    let calls = Arc::new(AtomicUsize::new(0));
-
-    let admitted = issue_admission_state_record(
-        &AdmissionStateClaims {
-            iss: "did:example:admission".into(),
-            iat: NOW,
-            nbf: NOW,
-            exp: NOW + RECORD_MAX_AGE,
-            mcp_re_profile: PROFILE_TAG.into(),
-            mcp_re_admission_id: WORKLOAD.into(),
-            mcp_re_admission_generation: 5,
-            mcp_re_admission_status: AdmissionStatus::Admitted,
-            mcp_re_state_revision: 1,
-            issuer_kid: AUTHORITY_KID.into(),
-        },
-        |input| {
-            b64url_decode(&authority_key().sign(input))
-                .map_err(|_| HttpProfileError::InvalidSignature)
-        },
-    )
-    .expect("the authority issues its own record");
-
-    source.publish(WORKLOAD, admitted.clone());
-    let proxy = replica(
-        Arc::clone(&source) as Arc<dyn AsyncAdmissionSource>,
-        strict_policy(),
-        AdmissionEnforcement::Required,
-        Arc::clone(&calls),
+    let admitted = sign_state_record(
+        &state_claims(WORKLOAD, 5, 1, AdmissionStatus::Admitted),
+        &authority_key(),
     );
-
+    source.publish(WORKLOAD, admitted.clone());
+    let rig = Rig::strict(Arc::clone(&source) as _);
     let claims = admission_claims(5, AdmissionStatus::Admitted, NOW - 30);
-    let served = block_on(proxy.handle(
-        served_of(&signed_call(
-            Some((&claims, &authority_key())),
-            &unique_test_nonce(),
-        )),
-        NOW,
-    ));
+
+    let served = rig.serve_claims(&claims, NOW);
     assert_eq!(served.status, 200, "t0: the workload is admitted");
 
     // t1 — revocation, same generation, next publication.
     revoke(&source, 5);
-    let served = block_on(proxy.handle(
-        served_of(&signed_call(
-            Some((&claims, &authority_key())),
-            &unique_test_nonce(),
-        )),
-        NOW + 1,
-    ));
+    let served = rig.serve_claims(&claims, NOW + 1);
     assert_eq!(served.status, 403, "t1: the revocation is honoured");
 
     // t2 — the old bytes restored verbatim. Genuine signature, genuine authority.
     source.publish(WORKLOAD, admitted);
-    let served = block_on(proxy.handle(
-        served_of(&signed_call(
-            Some((&claims, &authority_key())),
-            &unique_test_nonce(),
-        )),
-        NOW + 2,
-    ));
+    let served = rig.serve_claims(&claims, NOW + 2);
     assert_eq!(
         served.status, 403,
         "t2: store-write access without the signing authority did not un-revoke"
     );
     assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED);
     assert_eq!(
-        calls.load(Ordering::SeqCst),
+        rig.backend_calls(),
         1,
         "only the t0 call ever reached the inner"
     );
