@@ -49,7 +49,8 @@ COLIMA = os.environ.get("MCP_RE_ARBITER_COLIMA", "/opt/homebrew/bin/colima")
 
 SOURCES = ("host_gate.py", "host_gate_config.py", "host_gate_state.py", "host_gate_capacity.py",
            "host_gate_reservation.py", "host_gate_admission.py", "host_gate_quiescence.py",
-           "host_gate_participation.py", "host_locks.py", "lock_holder.py", "job_liveness.py", "vm_participant.py", "job_identity.py",
+           "host_gate_participation.py", "host_locks.py", "lock_holder.py", "lock_holder_session.py",
+           "lock_holder_take.py", "job_liveness.py", "vm_participant.py", "job_identity.py",
            "arbiter_error.py", "runner_arbiter.py", "runner_arbiter_common.py",
            "runner_arbiter_admission.py", "runner_arbiter_assertion.py", "runner_arbiter_lease.py",
            "runner_arbiter_operator.py", "environment_preflight.py",
