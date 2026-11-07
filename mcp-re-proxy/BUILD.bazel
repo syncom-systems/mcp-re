@@ -1994,7 +1994,7 @@ nt_rust_binary(
     srcs = [
         "examples/hpp_common/mod.rs",
         "examples/http_profile_client.rs",
-    ],
+    ] + glob(["examples/http_profile_client/*.rs"]),
     crate_root = "examples/http_profile_client.rs",
     edition = "2021",
     deps = [
