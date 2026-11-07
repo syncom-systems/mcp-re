@@ -32,54 +32,32 @@
 //!   HPP_TARGET=http://127.0.0.1:8601/mcp \
 //!   bazel run //mcp-re-proxy:http_profile_proxy
 
-use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
-use http_body_util::BodyExt;
-use http_body_util::Full;
-use hyper::body::Bytes;
-use hyper::body::Incoming;
 use hyper::service::service_fn;
-use hyper::Request;
-use hyper::Response;
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
-use mcp_re_core::McpReError;
-use mcp_re_http_profile::build_delegated_rejection;
-use mcp_re_http_profile::build_delegated_rejection_preflight;
-use mcp_re_http_profile::sign_delegated_accepted_202;
-use mcp_re_http_profile::sign_delegated_response_full;
-use mcp_re_http_profile::ArtifactBinding;
-use mcp_re_http_profile::HttpRequest;
-use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RejectionReason;
-use mcp_re_http_profile::RequestRoleEvidence;
-use mcp_re_http_profile::Verifier;
-use mcp_re_http_profile::VerifierPolicy;
-
-use mcp_re_http_profile::result_class::input_required_state;
-
-use mcp_re_proxy::async_inner::AsyncInnerServer;
-use mcp_re_proxy::async_replay::AsyncReplayTier;
-use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
-use mcp_re_proxy::config_state::FreshnessWindow;
 use mcp_re_proxy::continuation_store::InMemoryContinuationStore;
 use mcp_re_proxy::http_inner::HttpInnerPool;
 use mcp_re_proxy::http_profile_dispatch::ReplayAdmission;
-use mcp_re_proxy::http_profile_dispatch::ReplayPosture;
 use mcp_re_proxy::http_profile_serve::continuation::ContinuationPlane;
-use mcp_re_proxy::http_profile_serve::continuation::ContinuationRefusal;
 use mcp_re_proxy::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS;
-use mcp_re_proxy::replay_tier::ReplayDurabilityTier;
-#[cfg(feature = "redis_replay")]
-use mcp_re_proxy::RedisAsyncAtomicReplayStore;
 
 // Shared demo material; each example uses a different subset, so allow dead code.
 #[allow(dead_code)]
 #[path = "hpp_common/mod.rs"]
 mod hpp_common;
+
+#[path = "http_profile_proxy/body.rs"]
+mod body;
+#[path = "http_profile_proxy/pipeline.rs"]
+mod pipeline;
+#[path = "http_profile_proxy/receipts.rs"]
+mod receipts;
+#[path = "http_profile_proxy/replay.rs"]
+mod replay;
 
 /// Shared proxy state: the inner-plane client pool and the replay admission (an in-memory
 /// single-process tier OR a shared Redis tier, with the posture declared for it). All
@@ -95,76 +73,28 @@ struct ProxyState {
     continuations: ContinuationPlane,
 }
 
+impl ProxyState {
+    fn new(inner_url: &str, replay: ReplayAdmission) -> Self {
+        let inner_uri = inner_url.parse().expect("HPP_INNER_URL is a valid URI");
+        ProxyState {
+            inner: HttpInnerPool::new(vec![inner_uri], Duration::from_secs(10))
+                .expect("build inner pool"),
+            replay,
+            continuations: ContinuationPlane::wired(
+                Arc::new(InMemoryContinuationStore::new()),
+                DEFAULT_CONTINUATION_TTL_SECS,
+            ),
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let bind = std::env::var("HPP_BIND").expect("HPP_BIND (e.g. 127.0.0.1:8601)");
     let inner_url =
         std::env::var("HPP_INNER_URL").expect("HPP_INNER_URL (e.g. http://127.0.0.1:8620/mcp/)");
-    let inner_uri = inner_url.parse().expect("HPP_INNER_URL is a valid URI");
-
-    // Replay tier: a shared Redis tier under fleet-strict when HPP_REDIS_URL is set
-    // (the multi-replica production posture — a nonce admitted on one replica is
-    // rejected on any other sharing the store); otherwise a single-process
-    // in-memory cache (fleet_strict off).
-    let (replay, fleet_strict): (ReplayAdmission, bool) = match std::env::var("HPP_REDIS_URL") {
-        Ok(url) => {
-            let tier_str = std::env::var("HPP_REPLAY_TIER")
-                .unwrap_or_else(|_| "redis-wait-quorum:2:2000".to_string());
-            let tier = ReplayDurabilityTier::parse(&tier_str).expect("HPP_REPLAY_TIER");
-            #[cfg(feature = "redis_replay")]
-            {
-                // As the shipped `replay_plane::backends::establish_redis`: the declared
-                // tier is a construction parameter of the store that serves.
-                let store = RedisAsyncAtomicReplayStore::connect_with_wait_quorum(
-                    &url,
-                    mcp_re_proxy::async_redis_store::system_clock(),
-                    tier.wait_quorum_params(),
-                )
-                .await
-                .unwrap_or_else(|e| panic!("connect redis {url}: {e:?}"));
-                eprintln!("{}", tier.startup_audit_line("redis"));
-                (
-                    ReplayAdmission::new(
-                        AsyncReplayTier::new(
-                            Arc::new(store),
-                            FreshnessWindow::new(5).expect("5s is inside the §5.1 skew bound"),
-                        ),
-                        ReplayPosture::FleetStrict(tier),
-                    ),
-                    true,
-                )
-            }
-            #[cfg(not(feature = "redis_replay"))]
-            {
-                let _ = (url, tier);
-                panic!(
-                    "HPP_REDIS_URL is set but this example was built without the \
-                         `redis_replay` feature; rebuild with \
-                         `--features redis_replay` for the shared multi-replica tier"
-                );
-            }
-        }
-        Err(_) => (
-            ReplayAdmission::new(
-                AsyncReplayTier::new(
-                    Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-                    FreshnessWindow::new(0).expect("0s is inside the §5.1 skew bound"),
-                ),
-                ReplayPosture::SingleProcess,
-            ),
-            false,
-        ),
-    };
-
-    let state = Arc::new(ProxyState {
-        inner: HttpInnerPool::new(vec![inner_uri], Duration::from_secs(10))
-            .expect("build inner pool"),
-        replay,
-        continuations: ContinuationPlane::wired(
-            Arc::new(InMemoryContinuationStore::new()),
-            DEFAULT_CONTINUATION_TTL_SECS,
-        ),
-    });
+    let (replay, fleet_strict) = replay::from_env().await;
+    let state = Arc::new(ProxyState::new(&inner_url, replay));
 
     let listener = TcpListener::bind(&bind).await.expect("bind HPP_BIND");
     eprintln!(
@@ -174,300 +104,16 @@ async fn main() {
     );
 
     loop {
-        let (tcp, _peer) = match listener.accept().await {
-            Ok(pair) => pair,
-            Err(_) => continue,
+        let Ok((tcp, _peer)) = listener.accept().await else {
+            continue;
         };
         let state = Arc::clone(&state);
         tokio::spawn(async move {
             let io = TokioIo::new(tcp);
-            let service = service_fn(move |req| handle(Arc::clone(&state), req));
+            let service = service_fn(move |req| pipeline::handle(Arc::clone(&state), req));
             let _ = hyper::server::conn::http1::Builder::new()
                 .serve_connection(io, service)
                 .await;
         });
-    }
-}
-
-/// One request through the full HTTP-profile pipeline. Always returns a hyper
-/// response — a signed reply on success, a signed rejection receipt on any
-/// fail-closed step.
-async fn handle(
-    state: Arc<ProxyState>,
-    req: Request<Incoming>,
-) -> Result<Response<Full<Bytes>>, Infallible> {
-    let method = req.method().as_str().to_owned();
-    let headers: Vec<(String, String)> = req
-        .headers()
-        .iter()
-        .map(|(name, value)| {
-            (
-                name.as_str().to_owned(),
-                value.to_str().unwrap_or("").to_owned(),
-            )
-        })
-        .collect();
-    let body = match req.into_body().collect().await {
-        Ok(collected) => collected.to_bytes().to_vec(),
-        Err(_) => {
-            return Ok(to_hyper(rejection(
-                None,
-                None,
-                McpReError::SerializationFailed.wire_code(),
-                400,
-            )))
-        }
-    };
-
-    // The canonical @target-uri both sides sign over (deployment-configured).
-    let http_req = HttpRequest {
-        method,
-        target_uri: hpp_common::target(),
-        headers,
-        body,
-    };
-
-    let now = hpp_common::now_unix();
-    let resolver = hpp_common::resolver();
-    let expected_audience = hpp_common::audience();
-    // The proof request carries no artifact bindings, so no credential material is
-    // needed; a binding with no obtainable credential still fails closed.
-    let no_material = |_b: &ArtifactBinding| None;
-
-    // Step 2 — verify (RFC 9421 + 9530 + evidence block).
-    let verified = match Verifier::new(&VerifierPolicy::default(), &resolver).verify_request(
-        &http_req,
-        &expected_audience,
-        &no_material,
-        now,
-    ) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("reject: verify_request_full -> {}", e.wire_code());
-            // The request never verified: nothing to bind the receipt to.
-            return Ok(to_hyper(rejection(
-                Some(&http_req),
-                None,
-                e.wire_code(),
-                403,
-            )));
-        }
-    };
-
-    // Step 3a — MRTR continuation prep (ADR-MCPS-047). A verified request carrying a
-    // continuation is an ANSWER leg: the plane reads the open leg's retained evidence
-    // without spending it, keyed by the actor the VERIFIER resolved and the `requestState`
-    // the client re-presents. A store that did not answer is refused as this deployment's
-    // fault, never as the caller's forged continuation.
-    let prep = match state
-        .continuations
-        .read_answer(&verified, &http_req.body, &expected_audience.audience_id)
-        .await
-    {
-        Ok(prep) => prep,
-        Err(refusal) => {
-            return Ok(to_hyper(continuation_rejection(
-                &http_req, &verified, refusal,
-            )))
-        }
-    };
-
-    // Step 3 — replay admission (fail-closed) through the configured tier, on the entry
-    // point the shipped serving path awaits: a shared Redis tier detects a replay across
-    // ALL replicas; the fleet-strict gate refuses a sub-minimum tier, and a
-    // store that self-reports the single-process class, before the store is touched. A
-    // continuation, when present, is verified here against the retained handles before the
-    // nonce is burned, and the awaited atomic admission is the last step.
-    if let Err(e) = state.replay.admit(&verified, prep.binding(), now).await {
-        // Verified, then refused by replay admission: bind the receipt to its evidence.
-        return Ok(to_hyper(rejection(
-            Some(&http_req),
-            Some(verified.evidence()),
-            e.wire_code(),
-            409,
-        )));
-    }
-
-    // Step 3b — the answer leg is admitted, so retire its continuation NOW, before the
-    // backend runs. Of two concurrent answer legs that both bound successfully, exactly one
-    // retires the approval; the other, and a tier that did not answer the spend, are
-    // refused with the classification the plane states for each.
-    if let Some(refusal) = state.continuations.retire(prep).await.refusal() {
-        return Ok(to_hyper(continuation_rejection(
-            &http_req, &verified, refusal,
-        )));
-    }
-
-    // Step 4 — strip the proxy-owned top-level `_meta` (the request evidence
-    // block) so the backend sees clean MCP, then forward through the real inner
-    // pool. Preparing takes the plane's capacity and transmits nothing; dispatching
-    // consumes it and never errors: a dead/hostile backend yields a synthesized
-    // inner-unavailable response, which we STILL sign (fail-closed, never a silent
-    // allow).
-    let forwarded = strip_top_level_meta(&http_req.body);
-    let prepared = match state.inner.prepare(&forwarded) {
-        Ok(prepared) => prepared,
-        Err(why) => panic!("the example's inner plane refused to prepare: {why:?}"),
-    };
-    // The example wires an in-process closure inner, which has no transport to fail and so
-    // only ever reports `Replied`. The production path classifies all three post-commitment
-    // outcomes; here anything else would be a bug in the seam, not a case this demo can
-    // exercise.
-    let inner_bytes = match prepared.dispatch().await {
-        mcp_re_proxy::async_inner::DispatchedOutcome::Replied(bytes) => bytes,
-        other => panic!("the example's in-process inner cannot report {other:?}"),
-    };
-
-    // Step 4a — a one-way NOTIFICATION (a JSON-RPC message with no `id`) earns a signed
-    // bodyless 202, not a bodied reply (#424 / #418), exactly as the production serving
-    // path does it. The backend already received it above; the 202 states only that the
-    // enforcement boundary authenticated and accepted the message, NOT that any action
-    // completed. Without this the notification fell through to the bodied signer, which
-    // had no reply to sign and refused the exchange the SDKs are proved against.
-    if is_notification(&http_req.body) {
-        return Ok(
-            match sign_delegated_accepted_202(&http_req, &hpp_common::signing_window(now)) {
-                Ok(ack) => to_hyper(ack),
-                Err(e) => to_hyper(rejection(
-                    Some(&http_req),
-                    Some(verified.evidence()),
-                    e.wire_code(),
-                    500,
-                )),
-            },
-        );
-    }
-
-    // Step 5 — sign the backend reply, bound to THIS request.
-    let mut response = HttpResponse {
-        status: 200,
-        headers: vec![("Content-Type".into(), "application/json".into())],
-        body: inner_bytes,
-    };
-    // The DELEGATED signer signs; the root only vouches for it via the credential the
-    // response carries (ADR-MCPRE-052). The root key never touches a response, and the
-    // verifier enrols only the root — it learns the delegated key from the credential.
-    match sign_delegated_response_full(&mut response, &http_req, &hpp_common::signing_window(now)) {
-        Ok(response_base) => {
-            // Step 6 — MRTR open-leg record (ADR-MCPS-047). When the signed reply is an
-            // `InputRequiredResult`, retain evidence handles over the two signature bases a
-            // later answer leg must bind to: THIS request's, and the reply's just produced.
-            // A reply that cannot be classified is refused rather than signed away as
-            // terminal (MCPRE-495); a continuation that cannot be recorded is refused rather
-            // than returned unanswerable.
-            let open_leg_state = match input_required_state(&response.body) {
-                Ok(state) => state,
-                Err(e) => {
-                    return Ok(to_hyper(rejection(
-                        Some(&http_req),
-                        Some(verified.evidence()),
-                        e.wire_code(),
-                        502,
-                    )))
-                }
-            };
-            if let Some(request_state) = open_leg_state {
-                if let Err(refusal) = state
-                    .continuations
-                    .record_open(
-                        &verified,
-                        &expected_audience.audience_id,
-                        &request_state,
-                        response_base,
-                    )
-                    .await
-                {
-                    return Ok(to_hyper(continuation_rejection(
-                        &http_req, &verified, refusal,
-                    )));
-                }
-            }
-            Ok(to_hyper(response))
-        }
-        Err(e) => Ok(to_hyper(rejection(
-            Some(&http_req),
-            Some(verified.evidence()),
-            e.wire_code(),
-            500,
-        ))),
-    }
-}
-
-/// A DELEGATED-signed rejection receipt (ADR-MCPRE-052): a client that requires
-/// delegation must be able to READ the refusal, so a receipt is signed the same way an
-/// answer is — a direct-root receipt would fail the client's own verifier and the wire
-/// code would be lost.
-///
-/// `evidence` is `Some` once the request has verified: the receipt is then BOUND to it,
-/// which is strictly stronger. Before verification there is nothing to bind to, so the
-/// preflight form is used.
-fn rejection(
-    request: Option<&HttpRequest>,
-    evidence: Option<&RequestRoleEvidence>,
-    wire_code: &'static str,
-    status: u16,
-) -> HttpResponse {
-    let now = hpp_common::now_unix();
-    let reason = RejectionReason::new(
-        wire_code,
-        format!("mcp-re http-profile proxy rejected: {wire_code}"),
-    );
-    let window = hpp_common::signing_window(now);
-    match (request, evidence) {
-        (Some(req), Some(_)) => build_delegated_rejection(req, &reason, status, &window),
-        _ => build_delegated_rejection_preflight(request, &reason, status, &window),
-    }
-    .expect("rejection signs")
-}
-
-/// The bound receipt for a continuation refusal, carrying the classification the plane
-/// stated.
-fn continuation_rejection(
-    request: &HttpRequest,
-    verified: &mcp_re_http_profile::VerifiedMcpRequest,
-    refusal: ContinuationRefusal,
-) -> HttpResponse {
-    rejection(
-        Some(request),
-        Some(verified.evidence()),
-        refusal.error().wire_code(),
-        refusal.status(),
-    )
-}
-
-/// Remove the top-level `_meta` object (carrying the proxy-owned request evidence
-/// block) so the forwarded body is clean MCP JSON-RPC. Non-object bodies pass
-/// through unchanged (the inner would reject them anyway).
-fn strip_top_level_meta(body: &[u8]) -> Vec<u8> {
-    match serde_json::from_slice::<serde_json::Value>(body) {
-        Ok(mut v) => {
-            if let Some(obj) = v.as_object_mut() {
-                obj.remove("_meta");
-            }
-            serde_json::to_vec(&v).unwrap_or_else(|_| body.to_vec())
-        }
-        Err(_) => body.to_vec(),
-    }
-}
-
-/// Translate the profile `HttpResponse` (status + headers + body) into a hyper
-/// response, preserving every signed header (Content-Digest, Signature-Input,
-/// Signature, Content-Type).
-fn to_hyper(resp: HttpResponse) -> Response<Full<Bytes>> {
-    let mut builder = Response::builder().status(resp.status);
-    for (k, v) in &resp.headers {
-        builder = builder.header(k, v);
-    }
-    builder
-        .body(Full::new(Bytes::from(resp.body)))
-        .expect("response builds")
-}
-
-/// A JSON-RPC NOTIFICATION: a message with a `method` and NO `id` (JSON-RPC 2.0 §4.1).
-/// The same classification the production serving path performs.
-fn is_notification(body: &[u8]) -> bool {
-    match serde_json::from_slice::<serde_json::Value>(body) {
-        Ok(v) => v.get("method").is_some() && v.get("id").is_none(),
-        Err(_) => false,
     }
 }

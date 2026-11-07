@@ -13,6 +13,8 @@ from _rust_source_walk import crate_sources
 #: `(label, source, expected production line count)`.
 REGION_CASES: list[tuple[str, str, int]] = [
     ("no test module", "fn a() {}\nfn b() {}\n", 2),
+    ("a `#![cfg(test)]` first line makes the whole file test code", "// doc\n#![cfg(test)]\nfn a() {}\nfn b() {}\n", 0),
+    ("`#![cfg(test)]` below code is not a whole-file attribute", "fn a() {}\n#![cfg(test)]\nfn b() {}\n", 3),
     ("narrow #[cfg(test)]", "fn a() {}\n#[cfg(test)]\nmod tests {\n    fn t() {}\n}\n", 1),
     (
         "#[cfg(all(test, unix))] — the form that broke the first census",

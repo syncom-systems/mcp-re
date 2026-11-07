@@ -104,6 +104,12 @@ _PROXY_LIB_SRCS = [
     # place `peer_certificates()` is read.
     "src/communication_assurance/channel_associated_credential/mod.rs",
     "src/communication_assurance/channel_associated_credential/rustls_adapter.rs",
+    "src/communication_assurance/channel_associated_credential/mechanism_harness/authority.rs",
+    "src/communication_assurance/channel_associated_credential/mechanism_harness/handshake.rs",
+    "src/communication_assurance/channel_associated_credential/mechanism_harness/leaf.rs",
+    "src/communication_assurance/channel_associated_credential/mechanism_harness/mod.rs",
+    "src/communication_assurance/channel_associated_credential/mechanism_harness/peers.rs",
+    "src/communication_assurance/channel_associated_credential/mechanism_harness/tls_config.rs",
     "src/communication_assurance/channel_associated_identity.rs",
     "src/communication_assurance/mechanism_verified_credential/mod.rs",
     "src/communication_assurance/mechanism_verified_credential/rustls_adapter.rs",
@@ -1970,6 +1976,10 @@ nt_rust_binary(
     srcs = [
         "examples/hpp_common/mod.rs",
         "examples/http_profile_proxy.rs",
+        "examples/http_profile_proxy/body.rs",
+        "examples/http_profile_proxy/pipeline.rs",
+        "examples/http_profile_proxy/receipts.rs",
+        "examples/http_profile_proxy/replay.rs",
     ],
     crate_features = _PROXY_DEPLOY_FEATURES,
     crate_root = "examples/http_profile_proxy.rs",
