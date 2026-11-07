@@ -393,7 +393,7 @@ nt_rust_test(
 )
 nt_rust_test(
     name = "delegation_vectors_test",
-    srcs = ["tests/delegation_vectors_test.rs"],
+    srcs = ["tests/delegation_vectors_test.rs"] + glob(["tests/delegation_vectors_test/*.rs"]),
     data = glob(["tests/vectors/delegation-profile/**"]),
     edition = "2021",
     env = {
