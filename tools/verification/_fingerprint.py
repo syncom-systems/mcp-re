@@ -135,27 +135,94 @@ extensionless script because an extensionless file cannot be imported.
 
 from __future__ import annotations
 
-import functools
-import hashlib
-import json
-from contextvars import ContextVar
-
-from _ecosystems import build_configuration_patterns
-from _ecosystems import RUST
-from _ecosystems import test_project_for
-from _ecosystems import formal_source_patterns
-from _ecosystems import unit_ecosystem
-from _ecosystems import unit_projects
-from _lean_sources import generated_model_paths, LAKEFILE, theorem_source_paths
-import _registries
 import _rust_targets
 import _tree
-from _premise import is_model_registration
+from _boundary_crossings import FORMAL_CLASSES
+from _ecosystems import RUST
+from _ecosystems import unit_ecosystem
+from _fingerprint_boundaries import declared_boundaries
+from _fingerprint_boundaries import governing_boundaries
+from _fingerprint_digest import assumption_digest
+from _fingerprint_digest import canonical_digest
+from _fingerprint_digest import collect_reads
+from _fingerprint_digest import digest_paths
+from _fingerprint_digest import record
+from _fingerprint_evidence import RUST_TARGETS_TABLE
+from _fingerprint_evidence import consumed_contracts
+from _fingerprint_evidence import mutation_probes
+from _fingerprint_evidence import registry_entries
+from _fingerprint_evidence import test_selection
+from _fingerprint_evidence import test_source_patterns
+from _fingerprint_evidence import test_sources
+from _fingerprint_evidence import trusted_assumptions
+from _fingerprint_lanes import GENERATED_MODEL_LANE_INPUTS
+from _fingerprint_lanes import LEAN_LANE_INPUTS
+from _fingerprint_lanes import MEASURED_LANE_INPUTS
+from _fingerprint_lanes import MUTATION_LANE_INPUTS
+from _fingerprint_lanes import STRUCTURAL_LANE_INPUTS
+from _fingerprint_lanes import TEST_LANE_INPUTS
+from _fingerprint_lanes import VERUS_LANE_INPUTS
+from _fingerprint_lanes import generated_model_lane_identity
+from _fingerprint_lanes import lean_lane_identity
+from _fingerprint_lanes import measured_lane_identity
+from _fingerprint_lanes import mutation_lane_identity
+from _fingerprint_lanes import structural_lane_identity
+from _fingerprint_lanes import test_lane_identity
+from _fingerprint_lanes import verus_lane_identity
+from _fingerprint_review_digest import EVIDENCE_UNIT_COMPONENTS
+from _fingerprint_review_digest import REVIEW_ENCODING_VERSION
+from _fingerprint_review_digest import SEMANTIC_UNIT_COMPONENTS
+from _fingerprint_review_digest import review_digest
+from _fingerprint_review_digest import semantic_unit_components
+from _fingerprint_review_digest import theorem_review_digests
+from _fingerprint_sources import GENERATED_ROOT
+from _fingerprint_sources import build_configuration
+from _fingerprint_sources import crate_sources
+from _fingerprint_sources import formal_sources
+from _fingerprint_sources import generated_inputs
+from _fingerprint_sources import toolchain_identity
+from _fingerprint_sources import unit_crates
+from _fingerprint_theorem import THEOREM_ENCODING_VERSION
+from _fingerprint_theorem import fingerprint_theorem
+from _fingerprint_theorem import theorem_premises
 from _lanes import claims
-from _manifest import REPO_ROOT, TOOLCHAINS_LOCK_TOML, VERIFICATION_TOML
+from _lean_sources import LAKEFILE
+from _lean_sources import theorem_source_paths
+from _manifest import REPO_ROOT
+from _manifest import TOOLCHAINS_LOCK_TOML
+from _manifest import VERIFICATION_TOML
 from _assumptions import ASSUMPTIONS_TOML
-from _boundary_crossings import expand_paths, FORMAL_CLASSES
-from _trust_boundaries import load_trust_boundaries, TRUST_BOUNDARIES_TOML
+from _trust_boundaries import TRUST_BOUNDARIES_TOML
+
+__all__ = [
+    "ENCODING_VERSION",
+    "EVIDENCE_UNIT_COMPONENTS",
+    "GENERATED_MODEL_LANE_INPUTS",
+    "GENERATED_ROOT",
+    "LEAN_LANE_INPUTS",
+    "MEASURED_LANE_INPUTS",
+    "MUTATION_LANE_INPUTS",
+    "POLICY_DOCUMENTS",
+    "REVIEW_ENCODING_VERSION",
+    "RUST_TARGETS_TABLE",
+    "SEMANTIC_UNIT_COMPONENTS",
+    "STRUCTURAL_LANE_INPUTS",
+    "TEST_LANE_INPUTS",
+    "THEOREM_ENCODING_VERSION",
+    "VERUS_LANE_INPUTS",
+    "WORKSPACE_BUILD_INPUTS",
+    "assumption_digest",
+    "canonical_digest",
+    "fingerprint_read_set",
+    "fingerprint_theorem",
+    "fingerprint_unit",
+    "review_digest",
+    "semantic_unit_components",
+    "test_source_patterns",
+    "theorem_premises",
+    "theorem_review_digests",
+    "toolchain_identity",
+]
 
 # Every attestation carrying an earlier version is UNKNOWN from the moment this moves, which
 # is the intended cost: an attestation computed over a narrower set of inputs cannot answer
@@ -174,85 +241,6 @@ POLICY_DOCUMENTS = tuple(
     path.relative_to(REPO_ROOT).as_posix()
     for path in (VERIFICATION_TOML, TOOLCHAINS_LOCK_TOML, ASSUMPTIONS_TOML, TRUST_BOUNDARIES_TOML)
 )
-
-#: The committed build-graph table every Rust label resolves through.
-RUST_TARGETS_TABLE = _rust_targets.TABLE.relative_to(REPO_ROOT).as_posix()
-
-#: Where extraction deposits machine-generated proof input. Units do not declare paths here
-#: — see `_generated_inputs`, which derives the population from the lakefile instead.
-GENERATED_ROOT = "verification/lean/generated"
-
-
-#: The read set of the fingerprint being computed under `fingerprint_read_set`, or None
-#: when nobody is asking. Recorded where bytes are read rather than restated beside each
-#: component: a second list of "what the fingerprint reads" is the drift
-#: `scripts/verification_trigger_gate.py` exists to catch, so there is no second list.
-_READS: ContextVar[set[str] | None] = ContextVar("fingerprint_reads", default=None)
-
-
-def _record(*paths: str) -> None:
-    reads = _READS.get()
-    if reads is not None:
-        reads.update(paths)
-
-
-def _is_pattern(path: str) -> bool:
-    return any(ch in path for ch in "*?[")
-
-
-def _digest_paths(patterns: list[str], *, tracked_only: bool = False) -> dict[str, str]:
-    """SHA-256 per file, keyed by repo-relative path, sorted.
-
-    Content-addressed rather than mtime-based: a file restored to identical content is
-    identical evidence, and a file whose bytes changed is not, regardless of timestamps.
-
-    Every file digested is recorded in the read set if git tracks it; the read set
-    describes the committed tree, as `_tracked_files` explains. A wildcard-free pattern
-    is recorded even when nothing occupies it, because creating that file moves the
-    digest. `tracked_only` inputs are the exception: they name alternatives — a
-    `poetry.lock` where a project uses `uv` — that contribute nothing until tracked.
-    """
-    tree = _tree.current()
-    tracked = tree.tracked() if tracked_only or _READS.get() is not None else None
-    out: dict[str, str] = {}
-    for pattern in sorted(patterns):
-        if not tracked_only and not _is_pattern(pattern):
-            _record(pattern)
-        for rel in tree.files(pattern):
-            if tracked is not None and rel not in tracked:
-                if tracked_only:
-                    continue
-            else:
-                _record(rel)
-            out[rel] = "sha256:" + hashlib.sha256(tree.read(rel)).hexdigest()
-    return out
-
-
-def _unit_crates(unit: dict) -> list[str]:
-    """The projects the unit's declared paths live in.
-
-    Derived from the paths rather than configured, for the reason `verify-verus` derives
-    its `-p` argument the same way: a unit whose source moves to another project must not
-    keep fingerprinting the one it left. Which build system decides what a project IS is
-    `_ecosystems`' (issue #745).
-    """
-    return unit_projects(unit)
-
-
-def _crate_sources(crates: list[str]) -> dict[str, str]:
-    return _digest_paths([f"{crate}/src/**/*.rs" for crate in crates])
-
-
-def _formal_sources(unit: dict) -> dict[str, str]:
-    """Whole-project sources for a unit whose evidence comes from a prover run.
-
-    Empty where the ecosystem has no prover lane, which is what keeps a V1/V3 declaration
-    over Python or TypeScript source from deriving a fingerprint that pretends a whole-
-    project measurement happened. The class check that refuses such a unit outright is the
-    schema's; this is the half that would otherwise measure it as if it had one.
-    """
-    return _digest_tracked(formal_source_patterns(unit))
-
 
 def _tracked_files() -> frozenset[str]:
     """Every path git tracks in the tree being measured, as repo-relative POSIX strings.
@@ -274,531 +262,47 @@ def _tracked_files() -> frozenset[str]:
     return _tree.current().tracked()
 
 
-def _digest_tracked(patterns: list[str]) -> dict[str, str]:
-    """`_digest_paths`, restricted to what git tracks — for the glob-driven inputs."""
-    return _digest_paths(patterns, tracked_only=True)
+def _proof_closure(crates: list[str]) -> tuple[dict[str, str], list[str]]:
+    """The first-party crates a prover run compiles alongside `crates`, and their source.
 
-
-def _build_configuration(unit: dict, formal_closure: list[str]) -> dict[str, str]:
-    """The dependency and configuration inputs that decide what this unit's source IS.
-
-    Ecosystem-supplied (`build_configuration_patterns`), because a Python project's
-    `pyproject.toml` and `uv.lock` bear exactly the weight a crate's `BUILD.bazel` and the
-    module lock bear: a dependency swap or a lockfile bump alters what a claim is
-    about without touching a declared source line. Absent alternatives — `poetry.lock` where
-    a project uses `uv` — contribute nothing rather than an error.
-
-    `formal_closure` closes R9-C039/R9-C040. A formal unit's `proof_dependencies` digests
-    the SOURCE of the crates the prover compiles alongside it, and nothing digested their
-    manifests — so the `verify` feature could stop travelling down the closure, or a
-    dependency of a dependency could be swapped, and the unit still derived FRESH over a
-    prover run that had checked something else. The source of a crate and the manifest that
-    decides what that crate IS are the same input to this question, and it was answered for
-    the unit's own crates and not for the ones its proof reaches through.
+    Returned with the closure itself, because the build configuration of those crates is
+    digested too: the source of a crate and the manifest that decides what it IS are the
+    same input to the question.
     """
-    patterns = build_configuration_patterns(unit)
-    for project in formal_closure:
-        patterns.extend(f"{project}/{name}" for name in RUST.project_inputs)
-    return _digest_tracked(patterns)
+    record(RUST_TARGETS_TABLE)
+    closure: set[str] = set()
+    for crate in crates:
+        closure |= _rust_targets.dependency_closure(crate)
+    formal_closure = sorted(closure - set(crates))
+    return crate_sources(formal_closure), formal_closure
 
 
-def _toolchain_identity(toolchains: dict, ecosystem: str | None = None) -> dict:
-    """Every pinned identity governing this unit, plus every unresolved one named as such.
+def _source_components(unit: dict) -> dict:
+    """The source, generated-model and build-configuration components.
 
-    ECOSYSTEM-SCOPED ENTRIES are the exception, and they exist because a runtime is a
-    toolchain that governs one family of units. A table declaring `ecosystem = "python"`
-    enters the fingerprint of Python units only: the interpreter decides the outcome of the
-    Python batteries and of nothing else, so making a CPython patch bump dirty all 76 units
-    — every Rust one included — would state a blast radius that did not happen, and a blast
-    radius nobody believes is one people learn to re-baseline past.
-
-    An entry with no `ecosystem` key governs everything, which is what every pin above the
-    runtime does: the Rust channel, the provers, the extraction container, the schema.
+    A formal unit's evidence comes from a whole-crate prover run, so the crate is the
+    measured object. Digesting only the declared paths would leave every other file the
+    theorem reads — the types it quantifies over, the helpers it calls — free to change
+    under an attestation that still derives FRESH.
     """
-    identity: dict[str, object] = {}
-    for name, entry in sorted(toolchains.items()):
-        if name == "schema_version" or not isinstance(entry, dict):
-            continue
-        scope = entry.get("ecosystem")
-        if scope is not None and scope != ecosystem:
-            continue
-        scalars = {
-            key: value
-            for key, value in sorted(entry.items())
-            if not isinstance(value, dict) and key != "note"
-        }
-        identity[name] = scalars
-        for sub_name, sub in sorted(entry.items()):
-            if isinstance(sub, dict):
-                identity[f"{name}.{sub_name}"] = {
-                    key: value
-                    for key, value in sorted(sub.items())
-                    if key != "note"
-                }
-    return identity
-
-
-def canonical_digest(value) -> str:
-    """The one encoding every fingerprint in this module uses.
-
-    Single function rather than an inlined `json.dumps` per call site, because "how a
-    fingerprint is encoded" is exactly the fact that must not have two implementations: two
-    encoders that agree today and diverge later would make two records incomparable while
-    both look well-formed.
-    """
-    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def assumption_digest(entry: dict) -> str:
-    """A digest of WHAT AN ASSUMPTION TRUSTS — its whole registry entry.
-
-    Exposed because two axes read it: a unit's `trusted_assumptions` component, and the
-    assumption review axis, which is fresh only while the entry a reviewer ratified still
-    hashes the same.
-    """
-    return canonical_digest(entry)
-
-
-def _trusted_assumptions(unit_id: str, assumptions: dict) -> dict[str, str]:
-    """Each in-scope assumption's id, mapped to a digest of WHAT IT TRUSTS.
-
-    Ids alone would let an assumption be rewritten — its description widened, its scope
-    extended, its mechanism swapped — without any unit deriving DIRTY_ASSUMPTION. The
-    registry entry is the trusted claim, so the entry's content is what participates.
-    """
-    out: dict[str, str] = {}
-    for entry in assumptions.get("assumption", []):
-        if f"unit://{unit_id}" not in entry.get("scope", []):
-            continue
-        out[entry["id"]] = assumption_digest(entry)
-    return out
-
-
-def _test_selection(unit: dict) -> dict:
-    """WHICH tests were selected: the resolved project, the exact symbols, and each Rust
-    test target as the build graph states it.
-
-    Empty for a unit with no `test://` evidence — measured, and empty, which is a different
-    claim from "not accounted for".
-
-    The target rows are the build configuration the selection resolves in. A feature-gated
-    control does not merely fail to run without its feature — it does not EXIST, so the same
-    symbol under a target whose features changed is a different selection, and a target
-    re-rooted at another crate selects different code. The label alone would not move when
-    either happened; its row does.
-    """
-    if not claims(unit, "test"):
-        return {}
-    _record(RUST_TARGETS_TABLE)
-    labels = sorted({str(s).partition("#")[0] for s in unit.get("tested_symbols", [])})
+    crates = unit_crates(unit)
+    source_inputs = digest_paths(unit["paths"])
+    proof_dependencies: dict[str, str] = {}
+    formal_closure: list[str] = []
+    if unit["class"] in FORMAL_CLASSES:
+        source_inputs |= formal_sources(unit)
+        proof_dependencies, formal_closure = _proof_closure(crates)
     return {
-        "project": test_project_for(unit),
-        "symbols": sorted(str(s) for s in unit.get("tested_symbols", [])),
-        "targets": {
-            label: {"root": row["root"], "features": row["features"]}
-            for label in labels
-            for row in [_rust_targets.target(label)]
-            if label.startswith("//") and row is not None
-        },
+        "source_inputs": source_inputs,
+        "generated_inputs": generated_inputs(unit),
+        "build_configuration": build_configuration(unit, formal_closure),
+        "proof_dependencies": proof_dependencies,
     }
 
 
-def test_source_patterns(unit: dict) -> list[str]:
-    """The globs naming the integration-test targets this unit's selectors run."""
-    if not claims(unit, "test"):
-        return []
-    _record(RUST_TARGETS_TABLE)
-    patterns: set[str] = set()
-    for symbol in unit.get("tested_symbols", []):
-        label = str(symbol).partition("#")[0]
-        row = _rust_targets.target(label) if label.startswith("//") else None
-        # A target built from a crate runs code in the unit's own `paths`; an integration
-        # target's sources are its own, and the build graph lists them.
-        if row is not None and not row["crate"]:
-            patterns.update(row["srcs"])
-    return sorted(patterns)
-
-
-def _test_sources(unit: dict) -> dict[str, str]:
-    """The bytes of the integration-test targets this unit's selectors run.
-
-    Without this, a control could keep its declared name and lose its body: the selector
-    still resolves, the lane still reports a pass, and the fingerprint never moves. The
-    name is the label; the file is the evidence.
-    """
-    return _digest_paths(test_source_patterns(unit))
-
-
-#: The code that decides WHICH tests a selector names and WHERE they run. Not a build
-#: input — a measurement instrument, and evidence whose instrument changed is evidence
-#: whose meaning changed.
-TEST_LANE_INPUTS = (
-    "tools/verification/verify-tests",
-    "tools/verification/_manifest.py",
-    # The admission primitives every unit record passes through: which keys it may carry,
-    # which it must, and the one read of the registry from the source tree.
-    "tools/verification/_record_rules.py",
-    # The adapter registry: which ecosystem a path belongs to, which project runs the
-    # battery, and how a selected result is read. It decides what a symbol NAMES, so a
-    # change to it changes what the recorded evidence means — the same argument that put
-    # the lane itself here (issue #745).
-    "tools/verification/_ecosystems.py",
-    # What a Rust label resolves to — its crate root, sources and features — is read from
-    # the build-graph table through this module.
-    "tools/verification/_rust_targets.py",
-    # Which units the lane covers: the scheme that claims it and the tiers it applies to are
-    # read from the lane catalogue.
-    "tools/verification/_lanes.py",
-)
-
-
-def _test_lane_identity(unit: dict) -> dict[str, str]:
-    if not claims(unit, "test"):
-        return {}
-    return _digest_paths(list(TEST_LANE_INPUTS))
-
-
-def _consumed_contracts(unit: dict, doc: dict) -> list[str]:
-    """The producer contracts this unit consumes, DERIVED from its incoming edges.
-
-    One authority. The relation lives on the edge — which names the contract and the
-    producer that exports it, and is refused unless that producer really does — so a unit
-    field saying the same thing is a second answer that nothing reconciles. It was authored
-    by no unit while nine edges named no contract, which is what a duplicate authority looks
-    like before anyone notices: three representations that have never had to agree.
-
-    In the fingerprint because a change in WHICH producer contract a unit consumes changes
-    its dependency identity. `exported_contracts` carries the producer's side of the same
-    relation.
-    """
-    return sorted(
-        {
-            edge["contract"]
-            for edge in doc.get("edge", [])
-            if edge["kind"] == "CONTRACT_CONSUMES" and edge["to"] == unit["id"]
-        }
-    )
-
-
-def _mutation_probes(unit_id: str) -> dict[str, str]:
-    """Each probe scoped to this unit, mapped to a digest of WHAT IT PROVES.
-
-    Ids alone would let a probe be hollowed out — its weakening softened, its `expect_red`
-    widened to a control that fails for another reason — with no unit deriving DIRTY. The
-    registry entry is the claim, so the entry's content is what participates. Same argument,
-    and same shape, as `_trusted_assumptions`.
-    """
-    return _registry_entries("mutation-probes", "probe", unit_id)
-
-
-#: The lane that decides what "a declared control went red" means.
-MUTATION_LANE_INPUTS = (
-    "tools/verification/verify-mutations",
-    # The registry's schema and what a probe's sites resolve to: whether an anchor is STALE
-    # is decided here, before the lane weakens anything.
-    "tools/verification/_mutation.py",
-    # What a probe's `expect_red` label RUNS: the label is resolved to its crate root and
-    # features through the build-graph table, and the ecosystem adapter builds the argv and
-    # reads the result. Either one changing changes what a recorded red means.
-    "tools/verification/_rust_targets.py",
-    "tools/verification/_ecosystems.py",
-    # Which units the lane covers: the scheme that claims it and the tiers it applies to are
-    # read from the lane catalogue.
-    "tools/verification/_lanes.py",
-)
-
-
-def _mutation_lane_identity(unit: dict) -> dict[str, str]:
-    if not claims(unit, "mutation"):
-        return {}
-    return _digest_paths(list(MUTATION_LANE_INPUTS))
-
-
-def _registry_entries(name: str, key: str, unit_id: str) -> dict[str, str]:
-    """Each record in registry `name` scoped to this unit, digested WHOLE.
-
-    The generalization of `_mutation_probes`, and it exists because ADR-MCPRE-068 added two
-    more registries with the same property: ids alone would let a record be hollowed out —
-    a hostile construction softened into one that was never illegal, an expected error code
-    widened, a measurement's protocol pointed at a different corpus — with no unit deriving
-    DIRTY. The registry entry IS the claim, so the entry's content participates.
-    """
-    _record(_registries.relative(name))
-    rel = _registries.relative(name)
-    if not _tree.current().is_file(rel):
-        return {}
-    return dict(_entries_by_unit(_tree.text(rel), key).get(unit_id, {}))
-
-
-@functools.lru_cache(maxsize=16)
-def _entries_by_unit(text: str, key: str) -> dict[str, dict[str, str]]:
-    """Every `[[key]]` record of a registry's `text`, digested whole and grouped by unit.
-
-    Once per distinct text: a fingerprint asks for every unit's records, and grouping the
-    registry once is what lets that cost one pass rather than one per unit.
-    """
-    out: dict[str, dict[str, str]] = {}
-    for record in _registries.parse(text, key).get(key, []):
-        out.setdefault(record.get("unit"), {})[record["id"]] = canonical_digest(record)
-    return out
-
-
-def _trust_boundaries() -> dict:
-    """The declared trust boundaries, loaded and checked once per registry text and tree."""
-    text = _tree.text(_registries.relative("trust-boundaries"))
-    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    return _tree.current().memo(f"trust-boundaries:{digest}", load_trust_boundaries)
-
-
-#: The lane that decides what a machine-checked PROOF is, and whether one was checked.
-#:
-#: Two files, and the criterion for membership is *can changing this alter whether the lane
-#: reports valid Verus evidence, what proved-symbol population was activated, or whether a
-#: zero/non-activated run is accepted?* — not *is it imported*. `verify-verus` imports
-#: `_evidence`, `_manifest` and this module and none of them is here on that account.
-#:
-#: `toolchain_identity` does NOT cover this. It pins the prover's INPUTS — `vstd.vir`,
-#: `libvstd.rlib`, the `verus.binaries` executables, the solver. These two are the code that
-#: COMPARES those pins, sets `VERUS_Z3_PATH` from the lock, refuses a `focus` run, and
-#: decides between NOT_REQUIRED, SKIPPED, PASS and FAIL. Pinning an instrument's inputs is
-#: not pinning the instrument, and this lane's own history is a record of that check being
-#: strengthened: the digest set was once `vstd.vir` and the commit alone, and a substituted
-#: `rust_verify` shipping the pinned vstd passed both.
-VERUS_LANE_INPUTS = (
-    "tools/verification/verify-verus",
-    # The adjudicator, separately: it reads the prover's own JSON report and decides whether
-    # the unit's evidence EXISTS — prover identity as reported, whole-crate verification
-    # rather than a partial run, and whether the named theorems were processed. Same
-    # position `_structural.py` holds for the structural lane and `_measured.py` for the
-    # measured one, and both of those are lane inputs already.
-    "tools/verification/_verus_results.py",
-    # Which crate is verified for a unit: the `verus_verify` target is chosen by the PACKAGE
-    # the build-graph table files it under. A filing change re-points a unit at another
-    # target's run without touching the runner.
-    "tools/verification/_rust_targets.py",
-    # Whether the artifact verifiers' postconditions constrain at all: the lane refuses unless
-    # the probe's negatives fail, and that adjudication lives here.
-    "tools/verification/_verus_nonvacuity.py",
-    # Which units the lane covers: the scheme that claims it and the tiers it applies to are
-    # read from the lane catalogue.
-    "tools/verification/_lanes.py",
-)
-
-#: The lane that decides what "the compiler refused the hostile construction" means.
-STRUCTURAL_LANE_INPUTS = (
-    "tools/verification/verify-structural",
-    # The adjudicator, separately: it decides whether a refusal is ATTRIBUTABLE to the
-    # boundary the probe attacks, and a change there changes what every structural record
-    # means without touching the runner.
-    "tools/verification/_structural.py",
-    # Which units the lane covers: the scheme that claims it and the tiers it applies to are
-    # read from the lane catalogue.
-    "tools/verification/_lanes.py",
-)
-
-#: The lane that decides what "the apparatus can still MOVE" means.
-MEASURED_LANE_INPUTS = (
-    "tools/verification/verify-measured",
-    "tools/verification/_measured.py",
-    # Which units the lane covers: the scheme that claims it and the tiers it applies to are
-    # read from the lane catalogue.
-    "tools/verification/_lanes.py",
-)
-
-
-#: The lane that decides what "the extracted-model theorem STANDS" means.
-#:
-#: The judgement cone, not the import closure — `verify-lean` transitively imports fourteen
-#: modules and most of them decide nothing about the verdict. Each entry answers yes to one
-#: question: can changing this file alter whether the lane reports valid Lean evidence, what
-#: theorem population was activated, or whether a run that elaborated nothing is accepted?
-LEAN_LANE_INPUTS = (
-    # The runner: which units are in scope, what PASS / FAIL / UNAVAILABLE mean, and when a
-    # record is written at all — including the `external_termination` path that deliberately
-    # writes NONE.
-    "tools/verification/verify-lean",
-    # What "the theorem stands" means: the kernel baseline, which axioms are permissible,
-    # and what a registered premise excuses. Softening it widens every standing PASS without
-    # touching a theorem.
-    "tools/verification/_lean_axioms.py",
-    # What "asking the prover" is: elaboration, the `lake` invocation, and the rule that
-    # decides whether a non-zero exit is evidence or an OOM kill.
-    "tools/verification/_lean_query.py",
-    # Whether the model the theorems were elaborated against corresponds to this tree, and
-    # (since the stamp split) whether an observation is a FAIL or an UNAVAILABLE.
-    "tools/verification/_lean_model.py",
-    # Whether the pinned image IS a build of the toolchain the tree declares.
-    # `toolchain_identity` digests the recorded pins; this decides whether the record is an
-    # identity at all, which is the check that was one-directional until issue #541.
-    "tools/verification/_extraction_identity.py",
-    # `selection(doc)` — which symbols and theorems the lane is asked about — and the V2/V3
-    # class rules. It rides in on `test_lane_identity` today only because the one lean unit
-    # ALSO claims `test://`; a lean-only unit would have it measured by nobody.
-    "tools/verification/_manifest.py",
-    # The admission primitives under that loader and under the premise registry's.
-    "tools/verification/_record_rules.py",
-    # The V2/V3 class rules `selection(doc)` rests on: which selection keys a class must
-    # declare and that its evidence says so.
-    "tools/verification/_unit_rules.py",
-    # Which premises the registry admits: a registered premise is what excuses an axiom, so
-    # a loader that admits a malformed one widens what the lane accepts.
-    "tools/verification/_assumptions.py",
-    # Whether a tool the lane needs is pinned at all: an unpinned or absent identity makes
-    # the run UNAVAILABLE rather than a verdict.
-    "tools/verification/_toolchain_lock.py",
-    # Which units the lane covers: the scheme that claims it and the tiers it applies to are
-    # read from the lane catalogue.
-    "tools/verification/_lanes.py",
-)
-
-#: `_lean_probe.py` is deliberately NOT above, and the reason is the criterion rather than
-#: the topic. The probe runs only under `verify-lean --activation-probe`, which returns
-#: before any unit is looked at, writes no evidence record and names nothing the manifest
-#: declares. So changing it cannot alter whether the lane reports valid Lean evidence, which
-#: theorems were activated, or whether a run that elaborated nothing is accepted — it can
-#: only weaken the separate proof that the lane's refusals still fire. That is a control ON
-#: the lane, gated by its own CI step, not part of what a `lean` record MEANS. The two files
-#: it depends on to make its judgement, `_lean_axioms.py` and `_lean_query.py`, are in the
-#: cone above, so excluding the probe drops no judging code.
-
-#: The lane that decides what "the committed model IS the model this tree extracts" means.
-GENERATED_MODEL_LANE_INPUTS = (
-    "tools/verification/check-generated",
-    # How the model is DERIVED from source. The pinned Charon and Aeneas are in
-    # `toolchain_identity`; the invocation is not, and it decides what the model means
-    # relative to the Rust it came from.
-    "tools/verification/regenerate-lean",
-    "tools/verification/_lean_model.py",
-    "tools/verification/_extraction_identity.py",
-    # Which units the lane covers: the scheme that claims it and the tiers it applies to are
-    # read from the lane catalogue.
-    "tools/verification/_lanes.py",
-)
-
-
-#: Unlike the four lane identities above, these two carry no `claims` guard: they are
-#: added to the component map only where the unit declares the scheme, so an empty return
-#: would be an unreachable second answer to a question the call site has already asked.
-def _generated_inputs(unit: dict) -> dict[str, str]:
-    """The machine-generated proof input this unit's evidence was measured against.
-
-    Declared paths under `GENERATED_ROOT`, UNION the extracted modules the Lean package
-    actually elaborates. The paths half alone was a component with an empty population: no
-    unit lists a file under `verification/lean/generated/`, and none should — a `.lean` path
-    in a Rust unit's `paths` collapses `unit_ecosystem` to None and takes the test lane's
-    target resolution with it. So the declared invalidation rule `generated-model drift ->
-    DIRTY_EVIDENCE` was wired to nothing, and measured 0 of 244 units.
-
-    Derived from the unit's extraction DECLARATION instead: a unit claiming `lean://` is
-    measured against the model the lakefile's libraries resolve to, which is what
-    `regenerate-lean` produces and what `lake build` elaborates.
-    """
-    declared = [p for p in unit["paths"] if p.startswith(GENERATED_ROOT)]
-    if not claims(unit, "lean"):
-        return _digest_paths(declared)
-    return _digest_paths(sorted({*declared, *generated_model_paths()}))
-
-
-def _lean_lane_identity() -> dict[str, str]:
-    return _digest_paths(list(LEAN_LANE_INPUTS))
-
-
-def _generated_model_lane_identity() -> dict[str, str]:
-    return _digest_paths(list(GENERATED_MODEL_LANE_INPUTS))
-
-
-def _verus_lane_identity(unit: dict) -> dict[str, str]:
-    if not claims(unit, "verus"):
-        return {}
-    return _digest_paths(list(VERUS_LANE_INPUTS))
-
-
-def _structural_lane_identity(unit: dict) -> dict[str, str]:
-    if not claims(unit, "structural"):
-        return {}
-    return _digest_paths(list(STRUCTURAL_LANE_INPUTS))
-
-
-def _measured_lane_identity(unit: dict) -> dict[str, str]:
-    if not claims(unit, "measured"):
-        return {}
-    return _digest_paths(list(MEASURED_LANE_INPUTS))
-
-
-def _boundary_files(patterns: tuple[str, ...]) -> frozenset[str]:
-    """The files a boundary's patterns name, walked once per tree."""
-    return _tree.current().memo(
-        f"boundary:{patterns!r}", lambda: frozenset(expand_paths(list(patterns)))
-    )
-
-
-def _governing_boundaries(unit: dict, boundaries: dict) -> dict[str, str]:
-    """The declared trust boundaries this unit's paths cross, by id and content digest.
-
-    `trust-boundaries.toml` decides how far a unit may be promoted: a theorem about code on
-    this side of a boundary says nothing about the other side, so
-    `max_class_without_assumption` is what keeps a proof's meaning honest across it. That
-    cap participated in NO fingerprint. Widening it — or deleting the boundary, or narrowing
-    its `paths` so it stops covering a unit — relaxed the rule and invalidated nothing, so
-    every claim above it kept deriving FRESH while the argument beneath it had changed.
-
-    The digest covers the whole entry, not the cap alone, because each field can weaken the
-    reading on its own: `paths` decides WHICH units the cap binds, `beyond` states what is
-    being trusted, and `kind` is how a reader classifies the trust. Only the boundaries a
-    unit actually crosses are included, so a change to an unrelated boundary does not dirty
-    the whole tree — the same relation `boundary_class_violations` uses to decide the rule.
-    """
-    unit_files = expand_paths(unit["paths"])
-    crossed: dict[str, str] = {}
-    for boundary in boundaries.get("boundary", []):
-        if not unit_files & _boundary_files(tuple(boundary["paths"])):
-            continue
-        crossed[boundary["id"]] = canonical_digest(
-            {
-                "kind": boundary.get("kind"),
-                "beyond": boundary.get("beyond"),
-                "max_class_without_assumption": boundary.get(
-                    "max_class_without_assumption"
-                ),
-                "paths": sorted(boundary["paths"]),
-            }
-        )
-    return dict(sorted(crossed.items()))
-
-
-def fingerprint_unit(
-    unit: dict,
-    doc: dict,
-    toolchains: dict,
-    assumptions: dict,
-    boundaries: dict | None = None,
-) -> dict:
-    crates = _unit_crates(unit)
-    formal = unit["class"] in FORMAL_CLASSES
-    # A formal unit's evidence comes from a whole-crate prover run, so the crate is the
-    # measured object. Digesting only the declared paths would leave every other file the
-    # theorem reads — the types it quantifies over, the helpers it calls — free to change
-    # under an attestation that still derives FRESH.
-    source_inputs = _digest_paths(unit["paths"])
-    if formal:
-        source_inputs |= _formal_sources(unit)
-    proof_dependencies: dict[str, str] = {}
-    formal_closure: list[str] = []
-    if formal:
-        _record(RUST_TARGETS_TABLE)
-        closure: set[str] = set()
-        for crate in crates:
-            closure |= _rust_targets.dependency_closure(crate)
-        formal_closure = sorted(closure - set(crates))
-        proof_dependencies = _crate_sources(formal_closure)
-    components = {
-        "encoding_version": ENCODING_VERSION,
-        "unit_id": unit["id"],
-        "class": unit["class"],
-        "source_inputs": source_inputs,
-        "generated_inputs": _generated_inputs(unit),
-        "build_configuration": _build_configuration(unit, formal_closure),
+def _declaration_components(unit: dict) -> dict:
+    """What the unit declares it claims, as sorted lists."""
+    return {
         "enabled_features": sorted(unit.get("features", [])),
         # The theorems the unit claims, by prover-reported name. In the fingerprint
         # because deleting one is a reduction in evidence: the source digest would move
@@ -812,80 +316,98 @@ def fingerprint_unit(
         "extracted_symbols": sorted(unit.get("extracted_symbols", [])),
         "lean_theorems": sorted(unit.get("lean_theorems", [])),
         "exported_contracts": sorted(unit.get("exported_contracts", [])),
-        "consumed_contracts": _consumed_contracts(unit, doc),
-        "proof_dependencies": proof_dependencies,
         "test_evidence_definition": sorted(unit.get("evidence", [])),
-        "test_selection": _test_selection(unit),
-        "test_sources": _test_sources(unit),
-        "test_lane_identity": _test_lane_identity(unit),
+    }
+
+
+def _evidence_components(unit: dict, doc: dict) -> dict:
+    """The components that measure what the unit's evidence actually ran."""
+    return {
+        "consumed_contracts": consumed_contracts(unit, doc),
+        "test_selection": test_selection(unit),
+        "test_sources": test_sources(unit),
+        "test_lane_identity": test_lane_identity(unit),
         "mutation_probes": (
-            _mutation_probes(unit["id"]) if claims(unit, "mutation") else {}
+            mutation_probes(unit["id"]) if claims(unit, "mutation") else {}
         ),
-        "mutation_lane_identity": _mutation_lane_identity(unit),
+        "mutation_lane_identity": mutation_lane_identity(unit),
         # ADR-MCPRE-068 Phase 0D. The same closure the mutation components give the negative
         # battery, for the two classes whose falsifiers are a refused COMPILATION and a
         # moving APPARATUS. Empty for every unit that does not declare the scheme, which is
         # why they could not land at 0B: a component that is `{}` everywhere would have
         # spent a whole re-attestation on nothing.
         "structural_probes": (
-            _registry_entries("structural-probes", "probe", unit["id"])
+            registry_entries("structural-probes", "probe", unit["id"])
             if claims(unit, "structural")
             else {}
         ),
-        "structural_lane_identity": _structural_lane_identity(unit),
+        "structural_lane_identity": structural_lane_identity(unit),
         "measurements": (
-            _registry_entries("measurements", "measurement", unit["id"])
+            registry_entries("measurements", "measurement", unit["id"])
             if claims(unit, "measured")
             else {}
         ),
-        "measured_lane_identity": _measured_lane_identity(unit),
-        "trusted_assumptions": _trusted_assumptions(unit["id"], assumptions),
-        # The boundaries whose cap binds this unit's class. See `_governing_boundaries`:
+        "measured_lane_identity": measured_lane_identity(unit),
+    }
+
+
+def _governance_components(unit: dict, assumptions: dict, boundaries: dict | None) -> dict:
+    """The premises the unit trusts and the trust boundaries whose cap binds it."""
+    return {
+        "trusted_assumptions": trusted_assumptions(unit["id"], assumptions),
+        # The boundaries whose cap binds this unit's class. See `governing_boundaries`:
         # the cap was a gate that participated in no fingerprint, so relaxing it left every
         # claim above it reading as fresh.
-        "governing_boundaries": _governing_boundaries(
-            unit, _trust_boundaries() if boundaries is None else boundaries
+        "governing_boundaries": governing_boundaries(
+            unit, declared_boundaries() if boundaries is None else boundaries
         ),
-        "toolchain_identity": _toolchain_identity(
-            toolchains, eco.name if (eco := unit_ecosystem(unit)) is not None else None
+    }
+
+
+def _revision_components(unit: dict, doc: dict, toolchains: dict) -> dict:
+    """The pinned toolchains and the model, threat and review-policy revisions."""
+    ecosystem = unit_ecosystem(unit)
+    return {
+        "toolchain_identity": toolchain_identity(
+            toolchains, ecosystem.name if ecosystem is not None else None
         ),
         "formal_model_revision": doc.get("formal_model_revision"),
         "threat_model_revision": doc.get("threat_model_revision"),
         "review_policy_revision": doc["policy_revision"],
     }
+
+
+def _conditional_components(unit: dict) -> dict:
+    """The components added ONLY WHERE THE UNIT DECLARES the scheme they measure.
+
+    A key present-but-empty on every other unit would move every fingerprint and invalidate
+    every standing attestation, to record the absence of a thing none of them has.
+    """
+    components: dict = {}
     # ADR-MCPRE-068 Phase 1. The rules of a gate control are the production carrier of the
     # proposition it defends, so softening one is a reduction in evidence exactly as
     # deleting a runtime check is. The scripts cannot go in `paths` — a `.py` path in a
     # Rust unit collapses `unit_ecosystem` to None and takes the test lane's target
     # resolution with it — so they are digested as their own component instead.
-    #
-    # ADDED ONLY WHEN THE UNIT DECLARES ONE. A key present-but-empty on every other unit
-    # would move all 156 fingerprints and invalidate every standing attestation, to record
-    # the absence of a thing none of them has.
     if unit.get("gate_controls"):
-        components["gate_controls"] = _digest_paths(sorted(unit["gate_controls"]))
-    # The extraction lanes' identity, ADDED ONLY WHERE THE UNIT DECLARES `lean://`, for the
-    # reason `gate_controls` is conditional: one unit declares the scheme today, and an
-    # always-present key would move the other 243 fingerprints to record the absence of a
-    # thing none of them has. The four host lanes' identities are unconditional because each
-    # landed while its population was being established and paid that cost once.
+        components["gate_controls"] = digest_paths(sorted(unit["gate_controls"]))
+    # The seventh formal lane, and the last one whose instrument was outside the identity.
+    # 238 of 244 units claim no `verus://`, and an always-present key would move all of
+    # them to record the absence of a thing they never had. The population it does reach is
+    # the repository's entire machine-checked surface — the same six units that declare
+    # `proved_symbols`, export a `contract://`, and carry class V1.
+    if claims(unit, "verus"):
+        components["verus_lane_identity"] = verus_lane_identity(unit)
+    # The extraction lanes' identity, for `lean://`: one unit declares the scheme today.
     #
-    # Two components rather than one shared list. `lean` and `generated-model` answer
+    # Two lane components rather than one shared list. `lean` and `generated-model` answer
     # different propositions — *do the theorems stand* and *is the committed model the one
     # this tree extracts* — and a unit could in principle come to claim one without the
     # other. They overlap in `_lean_model.py` and `_extraction_identity.py`, and the overlap
     # is the honest statement that those two decide something for both.
-    # The seventh formal lane, and the last one whose instrument was outside the identity.
-    # Conditional for the same reason as the two above: 238 of 244 units claim no `verus://`,
-    # and an always-present key would move all of them to record the absence of a thing they
-    # never had. The population it does reach is the repository's entire machine-checked
-    # surface — the same six units that declare `proved_symbols`, export a `contract://`, and
-    # carry class V1.
-    if claims(unit, "verus"):
-        components["verus_lane_identity"] = _verus_lane_identity(unit)
     if claims(unit, "lean"):
-        components["lean_lane_identity"] = _lean_lane_identity()
-        components["generated_model_lane_identity"] = _generated_model_lane_identity()
+        components["lean_lane_identity"] = lean_lane_identity()
+        components["generated_model_lane_identity"] = generated_model_lane_identity()
         # The BYTES the declared `lean_theorems` are stated in. `lean_theorems` is a list of
         # names, and a name survives its own statement being emptied: rewrite the theorem to
         # `: True := trivial` and it still resolves, still reports an axiom closure inside
@@ -894,9 +416,28 @@ def fingerprint_unit(
         # Derived from the lakefile rather than listed: the build definition is what decides
         # which modules elaborate, and a second list would drift from it. The lakefile joins
         # the digest because it decides what the set CONTAINS.
-        components["lean_theorem_sources"] = _digest_paths(
-            [LAKEFILE, *theorem_source_paths()]
-        )
+        components["lean_theorem_sources"] = digest_paths([LAKEFILE, *theorem_source_paths()])
+    return components
+
+
+def fingerprint_unit(
+    unit: dict,
+    doc: dict,
+    toolchains: dict,
+    assumptions: dict,
+    boundaries: dict | None = None,
+) -> dict:
+    components = {
+        "encoding_version": ENCODING_VERSION,
+        "unit_id": unit["id"],
+        "class": unit["class"],
+        **_source_components(unit),
+        **_declaration_components(unit),
+        **_evidence_components(unit, doc),
+        **_governance_components(unit, assumptions, boundaries),
+        **_revision_components(unit, doc, toolchains),
+        **_conditional_components(unit),
+    }
     return {
         "unit_id": unit["id"],
         "fingerprint": canonical_digest(components),
@@ -915,320 +456,13 @@ def fingerprint_read_set(
 
     Computed by fingerprinting the unit and recording what was read, so the answer cannot
     drift from the encoding: a component added to `fingerprint_unit` reads through
-    `_digest_paths` or a registry, and both record. The trigger gate checks the
+    `digest_paths` or a registry, and both record. The trigger gate checks the
     verification workflow re-runs on every path in it.
 
     Tracked files, plus wildcard-free inputs nothing occupies yet — creating one of those
     moves the digest, so a filter naming it is live.
     """
-    token = _READS.set(set())
-    try:
-        fingerprint_unit(unit, doc, toolchains, assumptions, boundaries)
-        reads = _READS.get()
-        assert reads is not None
-        return frozenset(reads | set(POLICY_DOCUMENTS))
-    finally:
-        _READS.reset(token)
-
-
-# ---------------------------------------------------------------------------
-# The theorem axis — ADR-MCPRE-059 §14.1, §14.3, §14.7
-# ---------------------------------------------------------------------------
-#
-# A theorem fingerprint is SEPARATE from the fingerprint of the units that support it, and
-# the separation is the whole mechanism §14.3 asks for:
-#
-#   * A theorem's supporting unit fingerprints are NOT components here. This digest is the
-#     claim surface the correction chain and the claim-surface gate are about. What the
-#     owner read the claim against — premises and the supporting units' SEMANTIC inputs —
-#     is the separate `review_digest` below, which leaves toolchain, lane and policy
-#     identity to the evidence axis.
-#   * Conversely a unit fingerprint carries no theorem component, so restating a claim
-#     leaves the prover green. That is exactly the situation the mutation test pins: the
-#     theorem moves from F1 to F2 while the review record still names F1, so specification
-#     review derives DIRTY with no legislative rule and no stored status string.
-#
-# Whether the two axes are BOTH fresh is a conjunction, computed in `_review`, and it is
-# the only place the word "established" is allowed to appear.
-
-#: Versioned independently of the unit encoding. Bumping one must not invalidate the other:
-#: they certify different things and are compared separately.
-THEOREM_ENCODING_VERSION = 1
-
-
-def _claim_digest(entry: dict) -> str:
-    """The canonical digest of the human claim — §14.1's `theorem_claim`.
-
-    Exactly `statement + security_consequence + scope`, as the ADR names them. `title` is
-    excluded because it is a label for humans, not part of the proposition; renaming a
-    theorem must not invalidate a review of what it says.
-    """
-    return canonical_digest(
-        {
-            "statement": entry["statement"],
-            "security_consequence": entry["security_consequence"],
-            "scope": entry["scope"],
-        }
+    reads = collect_reads(
+        lambda: fingerprint_unit(unit, doc, toolchains, assumptions, boundaries)
     )
-
-
-def _dependency_closure(theorem_id: str, by_id: dict[str, dict]) -> dict[str, str]:
-    """The transitive `depends_on` closure, each premise mapped to ITS claim digest.
-
-    Ids alone would let a premise be weakened — its statement narrowed, its scope widened —
-    without any dependent theorem moving, which is the composition-shaped version of the
-    same false green `trusted_assumptions` closes one layer down. The closure is transitive
-    because a claim rests on everything underneath it, not only its direct premises.
-
-    The registry's loader rejects cycles, so the walk terminates; `seen` is kept anyway, as
-    a fingerprint that could be made to hang by a malformed input is a denial of the gate.
-    """
-    out: dict[str, str] = {}
-    stack = list(by_id[theorem_id].get("depends_on", []))
-    seen: set[str] = {theorem_id}
-    while stack:
-        dep = stack.pop()
-        if dep in seen or dep not in by_id:
-            continue
-        seen.add(dep)
-        out[dep] = _claim_digest(by_id[dep])
-        stack.extend(by_id[dep].get("depends_on", []))
-    return out
-
-
-def fingerprint_theorem(entry: dict, theorems: dict) -> dict:
-    """Deterministic fingerprint over one theorem's specification.
-
-    `review_requirement` participates: an approval given under "Owner security-specification
-    review" is not an approval under a weaker requirement, so relaxing who must review is a
-    change to what the approval meant. Leaving it out would make the one edit that lowers
-    the review bar the one edit that dirties nothing.
-    """
-    by_id = {row["id"]: row for row in theorems.get("theorem", [])}
-    components = {
-        "encoding_version": THEOREM_ENCODING_VERSION,
-        "theorem_id": entry["id"],
-        "theorem_claim": _claim_digest(entry),
-        "theorem_dependencies": _dependency_closure(entry["id"], by_id),
-        "theorem_review_requirement": entry["review_requirement"],
-    }
-    return {
-        "theorem_id": entry["id"],
-        "fingerprint": canonical_digest(components),
-        "components": components,
-    }
-
-
-
-
-def theorem_premises(
-    theorems: dict, unit_fingerprints: dict[str, dict], assumptions: dict
-) -> dict[str, dict[str, str] | None]:
-    """Each theorem's premise closure: assumption id -> current `assumption_digest`.
-
-    A theorem rests on the premises its supporting units are scoped to. Two attachment
-    rules, by what the assumption's `scope` names (r12 defect D):
-
-      * an assumption that names UNITS attaches to exactly those units. Its `boundary://`
-        entries say which boundary it discharges for them (`boundary_class_violations`),
-        not that every other unit crossing the boundary rests on it too;
-      * an assumption that names ONLY boundaries attaches to every unit whose files cross
-        one of them (`governing_boundaries`), because nothing narrower was stated.
-
-    Spreading a unit-scoped premise to every crosser was over-inclusive — a theorem about a
-    window comparison carried the PKCS#11 and Redis premises of every other unit in the same
-    crate — and narrowing a scope changed no closure. The converse gap, a unit that CALLS
-    into a boundary from outside its files, is closed by DATA: the premise's scope names the
-    consuming unit.
-
-    A `model-registration` (r12 Ruling 39 §4) is dropped: its trust is attributed to the
-    premise that interprets it, which `registration_problems` requires to reach every unit
-    the registration does. A theorem with a supporting unit that has no fingerprint maps to
-    None: its closure is unknown, not empty.
-    """
-    registrations = {
-        entry["id"]
-        for entry in assumptions.get("assumption", [])
-        if is_model_registration(entry)
-    }
-    by_boundary: dict[str, dict[str, str]] = {}
-    for entry in assumptions.get("assumption", []):
-        scope = [str(target) for target in entry.get("scope", [])]
-        if entry["id"] in registrations or any(t.startswith("unit://") for t in scope):
-            continue
-        for target in scope:
-            if target.startswith("boundary://"):
-                by_boundary.setdefault(target.removeprefix("boundary://"), {})[
-                    entry["id"]
-                ] = assumption_digest(entry)
-    out: dict[str, dict[str, str] | None] = {}
-    for row in theorems.get("theorem", []):
-        closure: dict[str, str] | None = {}
-        for target in row.get("supported_by", []):
-            unit = str(target).removeprefix("unit://")
-            fingerprint = unit_fingerprints.get(unit)
-            if fingerprint is None:
-                closure = None
-                break
-            components = fingerprint["components"]
-            closure.update(
-                (asm_id, digest)
-                for asm_id, digest in components["trusted_assumptions"].items()
-                if asm_id not in registrations
-            )
-            for boundary in components["governing_boundaries"]:
-                closure.update(by_boundary.get(boundary, {}))
-        out[row["id"]] = dict(sorted(closure.items())) if closure is not None else None
-    return out
-
-
-# ---------------------------------------------------------------------------
-# The semantic review digest — Ruling 35 §3
-# ---------------------------------------------------------------------------
-#
-# Two questions about a theorem, answered by two digests:
-#
-#   REVIEW_CURRENT        is what the owner READ still what the tree says? The claim, its
-#                         premises, and the semantic inputs of the units that support it:
-#                         the code and specifications the claim is about, the tests and
-#                         probes the review relied on, the proved and extracted symbols.
-#   EVIDENCE_ESTABLISHED  does a successful run vouch for the tree AS IT STANDS? The full
-#                         unit fingerprint — the semantic inputs plus every lane's identity,
-#                         the toolchain, the generated model, the policy revisions — matched
-#                         by an attestation (`_graph.derive_unit_state`).
-#
-# A toolchain bump moves the second and not the first: the evidence must be re-run, and the
-# owner has nothing new to read. An edit to supporting source moves both. The partition
-# below is what decides which component is which, and it is CLOSED: a unit component that
-# appears in neither set is treated as semantic (`semantic_unit_components`), so a new
-# component can only cause extra review, never false currency, and the census in
-# `test_theorem_review` fails until someone places it.
-
-#: Unit components that determine WHAT A CLAIM IS ABOUT, and so participate in the review
-#: digest. Source and specification inputs, the selection of tests and probes the review
-#: relied on, the formal statement surface, the premises and the trust boundary they hang
-#: on.
-#:
-#: `proof_dependencies` is here, not on the evidence side: it is the SOURCE of the crates a
-#: formal unit's prover run quantifies over — the types and helpers a verified function's
-#: contract is stated in terms of. That over-approximates (an unrelated edit to such a crate
-#: asks for a re-read), which is the safe direction.
-SEMANTIC_UNIT_COMPONENTS = frozenset(
-    {
-        "unit_id",
-        "class",
-        "source_inputs",
-        "enabled_features",
-        "proof_dependencies",
-        "gate_controls",
-        "exported_contracts",
-        "consumed_contracts",
-        "proved_symbols",
-        "extracted_symbols",
-        "lean_theorems",
-        "lean_theorem_sources",
-        "test_evidence_definition",
-        "test_selection",
-        "test_sources",
-        "mutation_probes",
-        "structural_probes",
-        "measurements",
-        "trusted_assumptions",
-        "governing_boundaries",
-    }
-)
-
-#: Unit components that decide whether a RUN still vouches for the semantic inputs, and
-#: nothing about what is claimed: the encoding, the generated model (derived from source
-#: that is itself semantic), the build configuration, each lane's own instrument, the
-#: toolchain, and the policy revisions. A change here re-runs evidence; it does not ask the
-#: owner to re-read.
-EVIDENCE_UNIT_COMPONENTS = frozenset(
-    {
-        "encoding_version",
-        "generated_inputs",
-        "build_configuration",
-        "test_lane_identity",
-        "mutation_lane_identity",
-        "structural_lane_identity",
-        "measured_lane_identity",
-        "verus_lane_identity",
-        "lean_lane_identity",
-        "generated_model_lane_identity",
-        "toolchain_identity",
-        "formal_model_revision",
-        "threat_model_revision",
-        "review_policy_revision",
-    }
-)
-
-#: Versioned on its own: the review digest certifies something neither the unit nor the
-#: theorem encoding does, and bumping one must not silently re-mean the others.
-REVIEW_ENCODING_VERSION = 1
-
-
-def semantic_unit_components(unit_fingerprint: dict) -> dict[str, str]:
-    """One supporting unit's semantic inputs, each component mapped to its digest.
-
-    Everything not on the evidence side, including a component nobody has placed yet —
-    unplaced is semantic, so the failure mode of a forgotten classification is a re-read.
-    Digested per component so a stale review can name WHAT moved.
-    """
-    return {
-        name: canonical_digest(value)
-        for name, value in sorted(unit_fingerprint["components"].items())
-        if name not in EVIDENCE_UNIT_COMPONENTS
-    }
-
-
-def review_digest(
-    theorem_fingerprint: dict,
-    premises: dict[str, str] | None,
-    unit_fingerprints: dict[str, dict],
-    supported_by: list[str],
-) -> dict | None:
-    """The semantic evidence digest a specification review is current against.
-
-        review_digest = H(claim, dependency claims, review requirement, premises,
-                          semantic inputs of every supporting unit)
-
-    None when it cannot be computed — a supporting unit with no fingerprint, or an unknown
-    premise closure. None is not an empty digest: nothing can be current against it.
-    """
-    if premises is None:
-        return None
-    semantics: dict[str, dict[str, str]] = {}
-    for target in supported_by:
-        unit = str(target).removeprefix("unit://")
-        fingerprint = unit_fingerprints.get(unit)
-        if fingerprint is None:
-            return None
-        semantics[unit] = semantic_unit_components(fingerprint)
-    theorem = theorem_fingerprint["components"]
-    components = {
-        "encoding_version": REVIEW_ENCODING_VERSION,
-        "theorem_claim": theorem["theorem_claim"],
-        "theorem_dependencies": theorem["theorem_dependencies"],
-        "theorem_review_requirement": theorem["theorem_review_requirement"],
-        "premises": dict(sorted(premises.items())),
-        "supporting_semantics": semantics,
-    }
-    return {"fingerprint": canonical_digest(components), "components": components}
-
-
-def theorem_review_digests(
-    theorems: dict,
-    theorem_fingerprints: dict[str, dict],
-    premises: dict[str, dict[str, str] | None],
-    unit_fingerprints: dict[str, dict],
-) -> dict[str, dict | None]:
-    """`review_digest` for every declared theorem."""
-    return {
-        row["id"]: review_digest(
-            theorem_fingerprints[row["id"]],
-            premises.get(row["id"]),
-            unit_fingerprints,
-            list(row.get("supported_by", [])),
-        )
-        for row in theorems.get("theorem", [])
-    }
+    return frozenset(reads | set(POLICY_DOCUMENTS))

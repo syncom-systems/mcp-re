@@ -258,7 +258,7 @@ def item_at(lines: list[str], lineno: int, items: list[tuple[int, str]] | None =
     would move every key below it, and a registry that goes stale on formatting is one people
     regenerate without reading. The item's NAME is what the trust decision was about.
 
-    The qualifier matters as much as the name. `mcp-re-http-profile/src/block.rs` declares
+    The qualifier matters as much as the name. `mcp-re-http-profile/src/block/actor.rs` declares
     `actor_id` twice, in `impl ActorIdentity` and in `impl ResolvedActor`; an unqualified key
     would make them one site, and registering either would license both.
 

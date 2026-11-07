@@ -28,6 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import host_gate  # noqa: E402
+import host_gate_config  # noqa: E402
 import host_locks  # noqa: E402
 import job_liveness  # noqa: E402
 import vm_participant  # noqa: E402
@@ -51,15 +52,13 @@ def vm_workers_or_refuse():
     return probe
 
 
-def vm_readers() -> dict:
-    """Participation probes, or None when the VM cannot be reached at all."""
+def vm_readers() -> host_gate.VmProbes:
+    """Participation probes; `read_env=None` when the VM cannot be reached at all."""
     if not vm_participant.available():
-        return {"vm_read_env": None, "vm_check_exec": None, "vm_check_fresh": None,
-                "vm_stopped": vm_participant.stopped()}
-    return {"vm_read_env": lambda path: vm_participant.read_file(path),
-            "vm_check_exec": vm_participant.is_executable,
-            "vm_check_fresh": vm_participant.listener_loaded_env,
-            "vm_stopped": False}
+        return host_gate.VmProbes(stopped=vm_participant.stopped())
+    return host_gate.VmProbes(read_env=lambda path: vm_participant.read_file(path),
+                              check_exec=vm_participant.is_executable,
+                              check_fresh=vm_participant.listener_loaded_env)
 
 
 def cmd_job_started(paths, ident: JobIdentity) -> int:
@@ -80,13 +79,13 @@ def cmd_job_started(paths, ident: JobIdentity) -> int:
         host_gate.log(paths, "worker.unidentified", key=ident.key, watching=watch_pid)
 
     if not ident.is_slo:
-        host_gate.admit_job(paths, ident, watch_pid, worker=worker)
+        host_gate.admit_job(paths, ident, host_gate.Watch(watch_pid, worker))
         return EXIT_OK
 
     # Owner path. Participation first, BEFORE the host is closed: if a runner is not gating
     # itself, draining it proves nothing, and there is no reason to close the host to find
     # that out.
-    participation = host_gate.verify_participation(**vm_readers())
+    participation = host_gate.verify_participation(vm_readers())
     if not participation["all_participating"]:
         missing = [e for e in participation["runners"] if not e["participating"]]
         names = [e["name"] for e in missing]
@@ -110,7 +109,7 @@ def cmd_job_started(paths, ident: JobIdentity) -> int:
     # Reserve, then drain: the holder takes the gate lock (no new job anywhere from here),
     # the file reservation is written for the VM, and the host lock is granted once every
     # admitted macOS job has ended. The VM, which cannot share the locks, drains below.
-    holder = host_gate.admit_job(paths, ident, watch_pid, worker=worker)
+    holder = host_gate.admit_job(paths, ident, host_gate.Watch(watch_pid, worker))
     try:
         host_gate.await_drain(paths, ident, vm_workers_or_refuse())
     except ArbiterError:
@@ -174,7 +173,7 @@ def cmd_assert_exclusive(paths, ident: JobIdentity) -> int:
     if not own_holder:
         problems.append("this run has no lock holder record")
 
-    participation = host_gate.verify_participation(**vm_readers())
+    participation = host_gate.verify_participation(vm_readers())
     inhibited = (paths["root"] / "vm-inhibition.json").exists()
     if not participation["all_participating"] and not inhibited:
         names = [e["name"] for e in participation["runners"] if not e["participating"]]
@@ -236,13 +235,13 @@ def cmd_status(paths) -> int:
         "root": str(paths["root"]), "mirror": str(paths["mirror"]),
         "gate": host_gate.read_gate(paths),
         "active": host_gate.active_records(paths),
-        "heavy_runners": sorted(host_gate.HEAVY_RUNNERS),
+        "heavy_runners": sorted(host_gate_config.HEAVY_RUNNERS),
         "locks": host_locks.lock_state(paths["root"]),
         "holders": host_locks.holders(paths["root"]),
         "macos_runner_workers": host_gate.macos_workers(),
         "vm_unit_active": vm_participant.unit_active() if reachable else "unreachable",
         "vm_runner_workers": vm_participant.worker_count() if reachable else "unreachable",
-        "participation": host_gate.verify_participation(**vm_readers()),
+        "participation": host_gate.verify_participation(vm_readers()),
         "loadavg": os.getloadavg(), "ncpu": os.cpu_count(),
     }, indent=2, default=str))
     return EXIT_OK
@@ -286,7 +285,8 @@ def cmd_local_lease(paths, command: list[str]) -> int:
 
     if not host_locks.would_grant(paths["root"], "heavy", host_locks.EX):
         say_waiting()
-    holder = host_gate.admit_local(paths, key, me, record, on_wait=say_waiting)
+    holder = host_gate.admit_local(paths, host_gate.Lease(key, me, record),
+                                    on_wait=say_waiting)
     print(f"runner-arbiter: lease {key} admitted; running {' '.join(command)}",
           file=sys.stderr, flush=True)
 
