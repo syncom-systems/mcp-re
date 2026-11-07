@@ -37,6 +37,7 @@ from __future__ import annotations
 import re
 import sys
 from collections import deque
+from collections.abc import Iterator
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -85,6 +86,36 @@ CLAIMS: dict[str, tuple[str, str]] = {
 }
 
 
+def _command_word(segment: str) -> str | None:
+    """The word in command position: after leading assignments and interpreters."""
+    words = segment.strip().split()
+    while words and (ASSIGNMENT.match(words[0]) or words[0] in RUNNERS):
+        words.pop(0)
+    if not words:
+        return None
+    return words[0].lstrip("./") if words[0].startswith("./") else words[0]
+
+
+_COMMAND_SEPARATOR = re.compile(r"&&|\|\||[;|]")
+
+
+def _code_lines(text: str) -> Iterator[str]:
+    """The lines outside a comment, with backticked prose blanked out."""
+    for line in BACKTICK_COMMENT.sub(" ", text).splitlines():
+        if not line.lstrip().startswith("#"):
+            yield line
+
+
+def _command_words(text: str) -> Iterator[str]:
+    """The word in command position of every command segment outside a comment."""
+    words = (
+        _command_word(segment)
+        for line in _code_lines(text)
+        for segment in _COMMAND_SEPARATOR.split(line)
+    )
+    return (word for word in words if word)
+
+
 def invocations(text: str) -> set[str]:
     """The scripts this text actually CALLS — not the ones it mentions.
 
@@ -98,21 +129,8 @@ def invocations(text: str) -> set[str]:
     So a reference counts only in COMMAND POSITION: first word of a command, after any
     leading environment assignments and any interpreter that runs it.
     """
-    found: set[str] = set()
-    for line in BACKTICK_COMMENT.sub(" ", text).splitlines():
-        if line.lstrip().startswith("#"):
-            continue
-        for segment in re.split(r"&&|\|\||[;|]", line):
-            words = segment.strip().split()
-            while words and (ASSIGNMENT.match(words[0]) or words[0] in RUNNERS):
-                words.pop(0)
-            if not words:
-                continue
-            candidate = words[0].lstrip("./") if words[0].startswith("./") else words[0]
-            match = INVOCATION.fullmatch(" " + candidate)
-            if match:
-                found.add(match.group(1))
-    return found
+    matches = (INVOCATION.fullmatch(" " + word) for word in _command_words(text))
+    return {match.group(1) for match in matches if match}
 
 
 def closure(read: dict[str, str], entry: str) -> set[str]:
@@ -133,33 +151,41 @@ def closure(read: dict[str, str], entry: str) -> set[str]:
     return seen
 
 
+def _claim_finding(
+    document: str, claim: tuple[str, str], docs: dict[str, str], reachable: set[str]
+) -> str | None:
+    marker, required = claim
+    text = docs.get(document)
+    if text is None:
+        return f"{document}: registered here but the file does not exist"
+    if marker not in text:
+        return (
+            f"{document}: no longer contains the claim {marker!r}. "
+            "Remove this entry in the same change that removed the sentence — a check "
+            "about text nobody has is not a check."
+        )
+    if required not in reachable:
+        return (
+            f"{document} claims {marker!r}, but {required} is NOT reachable from "
+            f"{ENTRY}. The sentence is currently false."
+        )
+    return None
+
+
 def adjudicate(claims: dict[str, tuple[str, str]], docs: dict[str, str], reachable: set[str]) -> list[str]:
-    findings: list[str] = []
-    for document, (marker, required) in sorted(claims.items()):
-        text = docs.get(document)
-        if text is None:
-            findings.append(f"{document}: registered here but the file does not exist")
-            continue
-        if marker not in text:
-            findings.append(
-                f"{document}: no longer contains the claim {marker!r}. "
-                "Remove this entry in the same change that removed the sentence — a check "
-                "about text nobody has is not a check."
-            )
-            continue
-        if required not in reachable:
-            findings.append(
-                f"{document} claims {marker!r}, but {required} is NOT reachable from "
-                f"{ENTRY}. The sentence is currently false."
-            )
-    return findings
+    findings = (
+        _claim_finding(document, claim, docs, reachable)
+        for document, claim in sorted(claims.items())
+    )
+    return [finding for finding in findings if finding]
 
 
 def _read_repo() -> tuple[dict[str, str], dict[str, str]]:
-    scripts: dict[str, str] = {}
-    for pattern in CLOSURE_GLOBS:
-        for path in REPO.glob(pattern):
-            scripts[str(path.relative_to(REPO))] = path.read_text(encoding="utf-8", errors="replace")
+    scripts = {
+        str(path.relative_to(REPO)): path.read_text(encoding="utf-8", errors="replace")
+        for pattern in CLOSURE_GLOBS
+        for path in REPO.glob(pattern)
+    }
     docs = {
         name: (REPO / name).read_text(encoding="utf-8", errors="replace")
         for name in CLAIMS
