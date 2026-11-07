@@ -109,59 +109,74 @@ def _own_root(label: str, kind: str, attrs: dict, srcs: list[str]) -> str:
     files = [label_path(s) for s in srcs]
     if len(files) == 1:
         return files[0]
+    found = _conventional_root(label, kind, attrs, files)
+    if found is None:
+        raise TargetTableError(
+            f"{label}: no crate_root, several srcs and no conventional root file — rules_rust "
+            f"would refuse it too, and a root this table guessed would send the census down a "
+            f"module tree nothing compiles"
+        )
+    return found
+
+
+def _conventional_root(label: str, kind: str, attrs: dict, files: list[str]) -> str | None:
+    """The one source named like a crate root, or None if the names decide nothing."""
     conventional = "main.rs" if kind in ("rust_binary", "rust_test") else "lib.rs"
     crate_name = _string(attrs, "crate_name") or label.partition(":")[2].replace("-", "_")
     for candidate in (conventional, "lib.rs", f"{crate_name}.rs"):
         found = [f for f in files if f.rsplit("/", 1)[-1] == candidate]
         if len(found) == 1:
             return found[0]
-    raise TargetTableError(
-        f"{label}: no crate_root, several srcs and no conventional root file — rules_rust "
-        f"would refuse it too, and a root this table guessed would send the census down a "
-        f"module tree nothing compiles"
-    )
+    return None
 
 
-def rows_from_query(lines: list[str]) -> dict[str, dict]:
-    """The table's rows from `bazel query --output=streamed_jsonproto` output."""
+def _rules_by_label(lines: list[str]) -> dict[str, dict]:
     rules = {}
     for line in lines:
         if line.strip():
             rule = json.loads(line)["rule"]
             rules[rule["name"]] = rule
-    rows: dict[str, dict] = {}
-    pending: list[tuple[str, dict, str]] = []
-    for label, rule in sorted(rules.items()):
-        kind = rule["ruleClass"]
-        attrs = _attrs(rule)
-        srcs = _strings(attrs, "srcs")
-        crate = _string(attrs, "crate")
-        row = {
-            "kind": kind,
-            "package": label_package(label),
-            "root": "",
-            "srcs": sorted(label_path(s) for s in srcs),
-            "crate": crate,
-            "crate_name": _string(attrs, "crate_name") or label.partition(":")[2].replace("-", "_"),
-            "features": sorted(_strings(attrs, "crate_features") + _strings(attrs, "spec_features")),
-            "verus_deps": sorted(_strings(attrs, "verus_deps")),
-            "deps": sorted(d for d in _strings(attrs, "deps") if d.startswith("//")),
-            "manual": "manual" in _strings(attrs, "tags"),
-            "testonly": bool(attrs.get("testonly", {}).get("booleanValue", False)),
-        }
-        rows[label] = row
-        if crate:
-            pending.append((label, row, crate))
-        else:
-            row["root"] = _own_root(label, kind, attrs, srcs)
-    for label, row, crate in pending:
-        base = rows.get(crate)
-        if base is None or base["crate"]:
-            raise TargetTableError(f"{label}: crate {crate} is not a first-party library in the graph")
-        row["root"] = base["root"]
-        row["crate_name"] = base["crate_name"]
-        row["srcs"] = sorted(set(row["srcs"]) | set(base["srcs"]))
-        row["features"] = sorted(set(row["features"]) | set(base["features"]))
+    return rules
+
+
+def _row_of(label: str, rule: dict) -> dict:
+    """One target's row, before a `crate` it names lends it that crate's root."""
+    attrs = _attrs(rule)
+    srcs = _strings(attrs, "srcs")
+    crate = _string(attrs, "crate")
+    return {
+        "kind": rule["ruleClass"],
+        "package": label_package(label),
+        "root": "" if crate else _own_root(label, rule["ruleClass"], attrs, srcs),
+        "srcs": sorted(label_path(s) for s in srcs),
+        "crate": crate,
+        "crate_name": _string(attrs, "crate_name") or label.partition(":")[2].replace("-", "_"),
+        "features": sorted(_strings(attrs, "crate_features") + _strings(attrs, "spec_features")),
+        "verus_deps": sorted(_strings(attrs, "verus_deps")),
+        "deps": sorted(d for d in _strings(attrs, "deps") if d.startswith("//")),
+        "manual": "manual" in _strings(attrs, "tags"),
+        "testonly": bool(attrs.get("testonly", {}).get("booleanValue", False)),
+    }
+
+
+def _lend_crate(label: str, row: dict, rows: dict[str, dict]) -> None:
+    """Give a target built from a `crate` that crate's root, name, sources and features."""
+    crate = row["crate"]
+    base = rows.get(crate)
+    if base is None or base["crate"]:
+        raise TargetTableError(f"{label}: crate {crate} is not a first-party library in the graph")
+    row["root"] = base["root"]
+    row["crate_name"] = base["crate_name"]
+    row["srcs"] = sorted(set(row["srcs"]) | set(base["srcs"]))
+    row["features"] = sorted(set(row["features"]) | set(base["features"]))
+
+
+def rows_from_query(lines: list[str]) -> dict[str, dict]:
+    """The table's rows from `bazel query --output=streamed_jsonproto` output."""
+    rows = {label: _row_of(label, rule) for label, rule in sorted(_rules_by_label(lines).items())}
+    for label, row in rows.items():
+        if row["crate"]:
+            _lend_crate(label, row, rows)
     return rows
 
 
@@ -272,13 +287,18 @@ def crate_roots() -> dict[str, dict]:
         # another package may compile the same root — the Verus non-vacuity probe does — and
         # label order must not decide whose package the crate's controls are named under:
         # `//pkg/sub:x` sorts before `//pkg:y`, which re-homed every test of the crate.
-        if _holds(row["package"], row["root"]) and (
-            not _holds(entry["package"], row["root"]) or len(row["package"]) > len(entry["package"])
-        ):
+        if _is_closer_home(row, entry):
             entry["package"] = row["package"]
         entry["labels"].append(label)
         entry["kinds"].add(row["kind"])
     return out
+
+
+def _is_closer_home(row: dict, entry: dict) -> bool:
+    """Whether `row`'s package holds the root and is a better home for it than `entry`'s."""
+    if not _holds(row["package"], row["root"]):
+        return False
+    return not _holds(entry["package"], row["root"]) or len(row["package"]) > len(entry["package"])
 
 
 def _holds(package: str, path: str) -> bool:
@@ -290,6 +310,16 @@ def root_identity(root: str, package: str) -> str:
     """A crate root as its package states it: `src/lib.rs`, `tests/integration/main.rs`."""
     prefix = f"{package}/" if package else ""
     return root[len(prefix):] if root.startswith(prefix) else root
+
+
+def _library_deps(rows: dict[str, dict], package: str) -> list[str]:
+    """The packages `package`'s libraries depend on."""
+    return [
+        label_package(dep)
+        for row in rows.values()
+        if row["package"] == package and row["kind"] == "rust_library"
+        for dep in row["deps"]
+    ]
 
 
 def dependency_closure(package: str) -> set[str]:
@@ -304,10 +334,7 @@ def dependency_closure(package: str) -> set[str]:
     pending = [package]
     while pending:
         current = pending.pop()
-        if current in seen:
-            continue
-        seen.add(current)
-        for row in rows.values():
-            if row["package"] == current and row["kind"] == "rust_library":
-                pending.extend(label_package(dep) for dep in row["deps"])
+        if current not in seen:
+            seen.add(current)
+            pending.extend(_library_deps(rows, current))
     return seen
