@@ -2674,7 +2674,7 @@ correct statement about a system this one is deployed beside.
 | `config/ports.toml`, `docs/dev/port-registry.md` | the enclosing monorepo's service registry, which is where this project's port band is reserved |
 | `MODULE.bazel` | the enclosing monorepo's build-manifest registry |
 | `.github/workflows/cloud-kms-live.yml` | a LocalStack source file, quoted to say which upstream behaviour the KMS live lane works around |
-| `tools/slo/host_gate.py` | the retention script that runs on the verification host, which is administered outside this repository |
+| `tools/slo/host_gate_config.py` | the retention script that runs on the verification host, which is administered outside this repository |
 | `mcp-re-conformance/tests/security_traceability_guard_test.rs` | the manifest's path as the enclosing monorepo sees it |
 | `docs/dogfood-runbook.md` | the inner MCP server's own entry point (`intelli_code_mcp`), which the dogfood is run AGAINST and which is a separate project |
 
