@@ -16,325 +16,53 @@ does not execute the job, which is how admission is refused.
 from __future__ import annotations
 
 import argparse
-import json
-import os
-import signal
-import socket
-import subprocess
 import sys
-from dataclasses import asdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import host_gate  # noqa: E402
-import host_gate_config  # noqa: E402
-import host_locks  # noqa: E402
-import job_liveness  # noqa: E402
-import vm_participant  # noqa: E402
 from arbiter_error import ArbiterError  # noqa: E402
 from job_identity import JobIdentity  # noqa: E402
+from runner_arbiter_admission import cmd_job_started, cmd_quiesce  # noqa: E402
+from runner_arbiter_assertion import cmd_assert_exclusive  # noqa: E402
+from runner_arbiter_common import (  # noqa: E402
+    EXIT_INCONSISTENT,
+    EXIT_OK,
+    EXIT_REFUSED,
+    vm_readers,
+    vm_workers_or_refuse,
+)
+from runner_arbiter_lease import (  # noqa: E402
+    LEASE_ENV,
+    LEASE_PID_ENV,
+    cmd_local_lease,
+    describe_holders,
+)
+from runner_arbiter_operator import (  # noqa: E402
+    cmd_dump_env,
+    cmd_job_completed,
+    cmd_recover,
+    cmd_status,
+)
 
-EXIT_OK, EXIT_REFUSED, EXIT_INCONSISTENT = 0, 1, 3
+__all__ = [
+    "EXIT_INCONSISTENT", "EXIT_OK", "EXIT_REFUSED", "LEASE_ENV", "LEASE_PID_ENV",
+    "cmd_assert_exclusive", "cmd_job_started", "cmd_local_lease", "cmd_quiesce",
+    "cmd_recover", "cmd_status", "describe_holders", "main", "vm_readers",
+    "vm_workers_or_refuse",
+]
 
-
-def vm_workers_or_refuse():
-    """The drain loop's VM observation. An unreachable VM refuses; it never reads as idle."""
-    def probe() -> int:
-        if not vm_participant.available():
-            if vm_participant.stopped():
-                return 0  # Lima reports it Stopped: it runs nothing
-            raise ArbiterError(
-                "the colima VM hosting dev1-linux is unreachable, so its runner cannot be "
-                "observed. Refusing: an unobserved runner is not a quiet runner."
-            )
-        return vm_participant.worker_count()
-    return probe
-
-
-def vm_readers() -> host_gate.VmProbes:
-    """Participation probes; `read_env=None` when the VM cannot be reached at all."""
-    if not vm_participant.available():
-        return host_gate.VmProbes(stopped=vm_participant.stopped())
-    return host_gate.VmProbes(read_env=lambda path: vm_participant.read_file(path),
-                              check_exec=vm_participant.is_executable,
-                              check_fresh=vm_participant.listener_loaded_env)
-
-
-def cmd_job_started(paths, ident: JobIdentity) -> int:
-    # Capacity first, before ANY state is written. A job refused here leaves no active
-    # record and holds no reservation, so a full disk cannot also leave the gate dirty --
-    # the SLO path below would otherwise reserve the whole host and then refuse, closing
-    # every runner behind a job that never ran.
-    host_gate.refuse_if_disk_exhausted(paths, ident)
-
-    # The process whose exit ends this job's locks: the job's Runner.Worker, found by
-    # walking up from this hook. The runner starts the hook directly under the worker, so
-    # the fallback -- this hook's parent -- is normally the same process. If it is not, the
-    # holder lets go when that parent exits: the lock drops EARLY, which can let two heavy
-    # jobs overlap once, and can never leave a lock behind.
-    worker = job_liveness.own_worker()
-    watch_pid = worker["pid"] if worker else os.getppid()
-    if worker is None:
-        host_gate.log(paths, "worker.unidentified", key=ident.key, watching=watch_pid)
-
-    if not ident.is_slo:
-        host_gate.admit_job(paths, ident, host_gate.Watch(watch_pid, worker))
-        return EXIT_OK
-
-    # Owner path. Participation first, BEFORE the host is closed: if a runner is not gating
-    # itself, draining it proves nothing, and there is no reason to close the host to find
-    # that out.
-    participation = host_gate.verify_participation(vm_readers())
-    if not participation["all_participating"]:
-        missing = [e for e in participation["runners"] if not e["participating"]]
-        names = [e["name"] for e in missing]
-        # FALLBACK, not the normal mechanism: a participant that cannot gate itself is
-        # stopped instead, and only if it is already idle.
-        if names == ["dev1-linux"] and vm_participant.available():
-            host_gate.log(paths, "participation.fallback", runner="dev1-linux",
-                          detail=missing[0]["detail"])
-            proof = vm_participant.inhibit_fallback()
-            host_gate.write_atomic(paths["root"] / "vm-inhibition.json", proof)
-        else:
-            # The per-runner detail goes into the log, not only the names. A refusal that
-            # says WHICH runner but not WHY costs a diagnosis session, which it did.
-            host_gate.log(paths, "participation.refused", runners=participation["runners"])
-            detail = "; ".join(f"{e['name']}: {e['detail']}" for e in missing)
-            raise ArbiterError(
-                f"runner application(s) {names} are not participating in host admission "
-                f"({detail}). Refusing to measure: an unhooked runner is unobserved, not quiet."
-            )
-
-    # Reserve, then drain: the holder takes the gate lock (no new job anywhere from here),
-    # the file reservation is written for the VM, and the host lock is granted once every
-    # admitted macOS job has ended. The VM, which cannot share the locks, drains below.
-    holder = host_gate.admit_job(paths, ident, host_gate.Watch(watch_pid, worker))
-    try:
-        host_gate.await_drain(paths, ident, vm_workers_or_refuse())
-    except ArbiterError:
-        holder.terminate()
-        raise
-
-    # QUIESCENCE IS DELIBERATELY NOT MEASURED HERE.
-    #
-    # It used to be, and the ordering was wrong. This hook runs before any workflow step,
-    # so it precedes the run supervisor's reconciliation of a PREVIOUS run's leftovers --
-    # and a stale proxy or Redis fleet contributes real load. Measuring decay before
-    # removing them folds their load into the "quiet box" the run claims to have measured
-    # on, which is the exact false-quiet this whole mechanism exists to eliminate.
-    #
-    # The correct order is reserve -> drain -> reconcile -> clean -> QUIESCE, so the lane
-    # calls `runner-arbiter quiesce` once the supervisor has proven the plane empty.
-    # `assert-exclusive` refuses without an established record, so a lane that skips the
-    # step cannot measure anyway.
-    host_gate.activate(paths, ident, {"established": None, "deferred_to_lane": True})
-    return EXIT_OK
+#: Commands that need the paths and the job identity.
+_IDENTIFIED = {
+    "job-started": cmd_job_started,
+    "job-completed": cmd_job_completed,
+    "quiesce": cmd_quiesce,
+    "assert-exclusive": cmd_assert_exclusive,
+}
 
 
-def cmd_quiesce(paths, ident: JobIdentity) -> int:
-    """Wait for sustained host quiescence and record the samples that admitted it.
-
-    Called by the lane AFTER the measurement plane has been reconciled and proven clean,
-    so the decay being observed is the host settling -- not a previous run still running.
-    """
-    quiescence = host_gate.await_quiescence()
-    host_gate.write_atomic(paths["root"] / f"quiescence-{ident.key}.json", quiescence)
-    print(json.dumps(quiescence, indent=2, default=str))
-    if not quiescence["established"]:
-        raise ArbiterError(
-            "host did not become quiescent within the bounded wait; refusing to begin a "
-            "release-grade measurement on a busy machine. Report INCONCLUSIVE."
-        )
-    return EXIT_OK
-
-
-def cmd_assert_exclusive(paths, ident: JobIdentity) -> int:
-    """Every clause the closing claim rests on, evaluated and recorded together."""
-    problems: list[str] = []
-    gate = host_gate.read_gate(paths)
-
-    if gate.get("state") != host_gate.RESERVED:
-        problems.append(f"gate state is {gate.get('state')}, not {host_gate.RESERVED}")
-    if gate.get("owner", {}).get("key") != ident.key:
-        problems.append("this run does not own the reservation")
-
-    others = [r for r in host_gate.active_records(paths) if r.get("key") != ident.key]
-    if others:
-        problems.append(f"{len(others)} non-owner ACTIVE record(s) remain")
-
-    # The kernel's own answer: this run's holder must hold the gate and host locks
-    # exclusively. If either can be taken shared, the reservation is not in force.
-    locks = host_locks.lock_state(paths["root"])
-    for name in ("gate", "host"):
-        if locks[name] != "exclusive":
-            problems.append(f"the {name} lock is {locks[name]}, not held exclusively")
-    own_holder = [h for h in host_locks.holders(paths["root"]) if h.get("key") == ident.key]
-    if not own_holder:
-        problems.append("this run has no lock holder record")
-
-    participation = host_gate.verify_participation(vm_readers())
-    inhibited = (paths["root"] / "vm-inhibition.json").exists()
-    if not participation["all_participating"] and not inhibited:
-        names = [e["name"] for e in participation["runners"] if not e["participating"]]
-        problems.append(f"runner application(s) not participating: {names}")
-
-    macos = host_gate.macos_workers()
-    if len(macos) > 1:
-        problems.append(f"{len(macos)} macOS Runner.Worker processes observed")
-
-    # The claim is about the PHYSICAL host, so the VM must be observed directly. A macOS
-    # pgrep can never stand as proof here -- it cannot see the VM's kernel at all.
-    vm_workers = None
-    try:
-        if vm_participant.available():
-            vm_workers = vm_participant.worker_count()
-            if vm_workers:
-                problems.append(f"{vm_workers} Runner.Worker process(es) live in the VM")
-        elif vm_participant.stopped():
-            vm_workers = 0
-        else:
-            problems.append("the VM could not be observed")
-    except ArbiterError as exc:
-        problems.append(str(exc))
-
-    qpath = paths["root"] / f"quiescence-{ident.key}.json"
-    quiescence = json.loads(qpath.read_text()) if qpath.exists() else None
-    if not quiescence or not quiescence.get("established"):
-        problems.append("quiescence was not established for this reservation")
-
-    verdict = {
-        "schema": host_gate.SCHEMA,
-        "assertion": "physical-host-exclusive",
-        "host": socket.gethostname(),
-        "at": host_gate.now(),
-        "reservation_id": gate.get("reservation_id"),
-        "gate_state": gate.get("state"),
-        "reserved_at": gate.get("created_at"),
-        "activated_at": gate.get("activated_at"),
-        "owner_run_id": gate.get("owner", {}).get("run_id"),
-        "non_owner_active": len(others),
-        "locks": locks,
-        "participation": participation,
-        "vm_inhibition_fallback_applied": inhibited,
-        "macos_runner_workers": macos,
-        "vm_runner_workers": vm_workers,
-        "quiescence": quiescence,
-        "physical_host_exclusive": not problems,
-        "problems": problems,
-    }
-    host_gate.write_atomic(paths["root"] / f"assertion-{ident.key}.json", verdict)
-    print(json.dumps(verdict, indent=2, default=str))
-    return EXIT_OK if not problems else EXIT_INCONSISTENT
-
-
-def cmd_status(paths) -> int:
-    host_gate.repair_stale_gate(paths)
-    reachable = vm_participant.available()
-    print(json.dumps({
-        "root": str(paths["root"]), "mirror": str(paths["mirror"]),
-        "gate": host_gate.read_gate(paths),
-        "active": host_gate.active_records(paths),
-        "heavy_runners": sorted(host_gate_config.HEAVY_RUNNERS),
-        "locks": host_locks.lock_state(paths["root"]),
-        "holders": host_locks.holders(paths["root"]),
-        "macos_runner_workers": host_gate.macos_workers(),
-        "vm_unit_active": vm_participant.unit_active() if reachable else "unreachable",
-        "vm_runner_workers": vm_participant.worker_count() if reachable else "unreachable",
-        "participation": host_gate.verify_participation(vm_readers()),
-        "loadavg": os.getloadavg(), "ncpu": os.cpu_count(),
-    }, indent=2, default=str))
-    return EXIT_OK
-
-
-#: Set in a leased command's environment. A wrapper that finds it (with a live pid) is
-#: already inside a lease and must not take a second one -- that would wait on itself.
-LEASE_ENV, LEASE_PID_ENV = "RUNNER_ARBITER_LEASE", "RUNNER_ARBITER_LEASE_PID"
-
-
-def describe_holders(paths) -> str:
-    """Who holds or queues for the host's locks, from the holder records."""
-    out = []
-    for h in host_locks.holders(paths["root"]):
-        ident = h.get("identity") or {}
-        what = ident.get("workflow_ref") or " ".join(ident.get("command") or []) or "?"
-        out.append(f"{h.get('key')} [{h.get('plan')}] {what}")
-    return "; ".join(out) or "no holder recorded"
-
-
-def cmd_local_lease(paths, command: list[str]) -> int:
-    """Run `command` holding the heavy lock set a dev1 CI job holds; release on exit.
-
-    For heavy work started by hand on this host (a local `bazel test`), which otherwise
-    runs beside a CI job the arbiter believes has the machine to itself. Waits -- saying
-    for whom -- while a heavy job holds the slot, exactly as a queued CI job would.
-    """
-    if command and command[0] == "--":
-        command = command[1:]
-    if not command:
-        print("runner-arbiter local-lease: no command given", file=sys.stderr)
-        return 2
-    key = host_gate.local_lease_key()
-    me = os.getpid()
-    record = {"identity": {"runner": "local", "user": os.environ.get("USER", ""),
-                           "command": command, "cwd": os.getcwd()}}
-
-    def say_waiting() -> None:
-        print(f"runner-arbiter: waiting for the heavy slot; held/queued: "
-              f"{describe_holders(paths)}", file=sys.stderr, flush=True)
-
-    if not host_locks.would_grant(paths["root"], "heavy", host_locks.EX):
-        say_waiting()
-    holder = host_gate.admit_local(paths, host_gate.Lease(key, me, record),
-                                    on_wait=say_waiting)
-    print(f"runner-arbiter: lease {key} admitted; running {' '.join(command)}",
-          file=sys.stderr, flush=True)
-
-    env = dict(os.environ)
-    env[LEASE_ENV], env[LEASE_PID_ENV] = key, str(me)
-    child = subprocess.Popen(command, env=env)
-
-    # SIGTERM/SIGHUP are passed on, and the lease ends when the child does. SIGINT is
-    # not: from a terminal the child already received it, and a second copy turns a
-    # graceful Bazel interrupt into a forced one.
-    def forward(signum, _frame) -> None:
-        if child.poll() is None:
-            child.send_signal(signum)
-    signal.signal(signal.SIGTERM, forward)
-    signal.signal(signal.SIGHUP, forward)
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-
-    code = child.wait()
-    holder.terminate()  # immediate release; the holder would also go when this process does
-    return code if code >= 0 else 128 - code
-
-
-def cmd_recover(paths, args) -> int:
-    if not args.i_verified_no_owner_job_is_running:
-        print("refusing: a stale reservation is an operator condition, not a timer's to "
-              "clear. Confirm no owner job is live, then pass "
-              "--i-verified-no-owner-job-is-running.", file=sys.stderr)
-        return EXIT_REFUSED
-    live = host_gate.macos_workers()
-    if live:
-        print(f"refusing: {len(live)} Runner.Worker process(es) still running ({live}). "
-              "Clearing now would fail open.", file=sys.stderr)
-        return EXIT_REFUSED
-    if vm_participant.available() and vm_participant.worker_count() > 0:
-        print("refusing: the VM still has a live Runner.Worker.", file=sys.stderr)
-        return EXIT_REFUSED
-    if args.clear_reservation:
-        with host_gate.mutex(paths):
-            host_gate.commit(paths, {"schema": host_gate.SCHEMA, "state": host_gate.OPEN,
-                                     "recovered_at": host_gate.now()})
-        if (paths["root"] / "vm-inhibition.json").exists():
-            vm_participant.release_fallback()
-            (paths["root"] / "vm-inhibition.json").unlink(missing_ok=True)
-        host_gate.log(paths, "recover.reservation_cleared")
-    return EXIT_OK
-
-
-def main(argv: list[str] | None = None) -> int:
+def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="runner-arbiter", description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -356,53 +84,36 @@ def main(argv: list[str] | None = None) -> int:
     rec = sub.add_parser("recover", help="operator-only clearing of stale state")
     rec.add_argument("--clear-reservation", action="store_true")
     rec.add_argument("--i-verified-no-owner-job-is-running", action="store_true")
+    return parser
 
-    args = parser.parse_args(argv)
+
+def _dispatch(args, paths, ident: JobIdentity) -> int:
+    identified = _IDENTIFIED.get(args.cmd)
+    if identified is not None:
+        return identified(paths, ident)
+    if args.cmd == "status":
+        return cmd_status(paths)
+    if args.cmd == "dump-env":
+        return cmd_dump_env(ident)
+    if args.cmd == "recover":
+        return cmd_recover(paths, args)
+    if args.cmd == "local-lease":
+        return cmd_local_lease(paths, args.command)
+    return EXIT_OK
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
     paths = host_gate.paths(args.root, args.mirror)
     host_gate.ensure_layout(paths)
     ident = JobIdentity.from_env()
 
     try:
-        if args.cmd == "job-started":
-            return cmd_job_started(paths, ident)
-
-        if args.cmd == "job-completed":
-            result = host_gate.job_completed(paths, ident)
-            if result["released_reservation"] and (paths["root"] / "vm-inhibition.json").exists():
-                # Only release what we applied. A VM left stopped is a visible, safe
-                # condition; a VM left running during a measurement would not be.
-                vm_participant.release_fallback()
-                (paths["root"] / "vm-inhibition.json").unlink(missing_ok=True)
-            return EXIT_OK
-
-        if args.cmd == "quiesce":
-            return cmd_quiesce(paths, ident)
-
-        if args.cmd == "assert-exclusive":
-            return cmd_assert_exclusive(paths, ident)
-
-        if args.cmd == "status":
-            return cmd_status(paths)
-
-        if args.cmd == "dump-env":
-            keys = sorted(k for k in os.environ
-                          if k.startswith(("GITHUB_", "RUNNER_", "ACTIONS_")))
-            print(json.dumps({"env": {k: os.environ[k] for k in keys},
-                              "derived": asdict(ident), "is_slo": ident.is_slo}, indent=2))
-            return EXIT_OK
-
-        if args.cmd == "recover":
-            return cmd_recover(paths, args)
-
-        if args.cmd == "local-lease":
-            return cmd_local_lease(paths, args.command)
-
+        return _dispatch(args, paths, ident)
     except ArbiterError as exc:
         print(f"runner-arbiter REFUSED: {exc}", file=sys.stderr)
         host_gate.log(paths, "refused", cmd=args.cmd, reason=str(exc))
         return EXIT_REFUSED
-
-    return EXIT_OK
 
 
 if __name__ == "__main__":

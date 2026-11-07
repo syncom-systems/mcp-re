@@ -36,277 +36,105 @@ Stdlib only, like the rest of `tools/verification/`.
 
 from __future__ import annotations
 
-import re
-
 import _registries
 from _manifest import SCHEMA_VERSION, ManifestError
+from _theorem_closure import root_theorems, structurally_supported_theorems, unsupported_theorems
 from _record_rules import reject_unknown, require
-from _evidence_class import severity_problem
+from _theorem_rules import check_edge_directions, check_roots
+from _theorem_entries import TOP_KEYS, check_ids, check_list, check_text, deprecated_ids
 
 
-#: `THM-NNNN`, matching the established `ASM-NNNN` convention.
-_ID_RE = re.compile(r"^THM-\d{4}$")
-
-_TOP_KEYS = {"schema_version", "theorem", "root_theorems"}
-
-_THEOREM_KEYS = {
-    "id",
-    "title",
-    "statement",
-    "security_consequence",
-    "scope",
-    "owner",
-    "review_requirement",
-    "supported_by",
-    "depends_on",
-    "replaced_by",
-    # ADR-MCPRE-068 §10, S1. The CLOSED label beside the existing prose
-    # `security_consequence`, which stays: the prose says what an attacker cannot do if the
-    # claim holds, and the label says how much is lost if it does not. One is read by a
-    # person and the other by the gate, and neither can be derived from the other.
-    "direct_consequence_severity",
-}
-#: Everything but the deprecation link. A claim with no consequence or no scope is not a
-#: reviewable proposition, so none of these is optional.
-_REQUIRED_KEYS = _THEOREM_KEYS - {"replaced_by"}
-
-#: Fields whose facts already have an owner. They are rejected by name because the generic
-#: unknown-key message would send a reader looking for a typo when the real answer is
-#: "that fact is declared elsewhere, and declaring it twice is how the two disagree".
-_DUPLICATED_AUTHORITY = {
-    "paths": "verification.toml [[unit]].paths",
-    "features": "verification.toml [[unit]].features",
-    "evidence": "verification.toml [[unit]].evidence",
-    "proved_symbols": "verification.toml [[unit]].proved_symbols",
-    "tested_symbols": "verification.toml [[unit]].tested_symbols",
-    "exported_contracts": "verification.toml [[unit]].exported_contracts",
-    "consumed_contracts": "verification.toml [[edge]].contract — derived from the incoming CONTRACT_CONSUMES edges, never authored",
-    "assumptions": "assumptions.toml [[assumption]].scope — the one authoritative direction (§8)",
-    "required_evidence": "verification.toml [[unit]].evidence, as target-qualified URIs",
-    "review": "the review attestation, keyed by reviewed_fingerprint (§14.7)",
-    "review_status": "the review attestation, keyed by reviewed_fingerprint (§14.7)",
-    "reviewed": "the review attestation, keyed by reviewed_fingerprint (§14.7)",
-    "approved": "the review attestation, keyed by reviewed_fingerprint (§14.7)",
-    "status": "the review attestation, keyed by reviewed_fingerprint (§14.7)",
-    "root": "the top-level `root_theorems` set (§28.1) — root membership is declared once",
-    "is_root": "the top-level `root_theorems` set (§28.1) — root membership is declared once",
-    "root_claim": "the top-level `root_theorems` set (§28.1) — root membership is declared once",
-    "consumed_by": "derived — a reverse edge is never stored (§8.2)",
-    "dependents": "derived — a reverse edge is never stored (§8.2)",
-    "guarantees": "derived from supported_by — a reverse edge is never stored (§8.2)",
-    # ADR-MCPRE-068 N3 — both are DERIVED from the assurance graph and neither is ever
-    # stored. A recorded copy is a value that can disagree with the graph it was computed
-    # from, and the disagreement would be invisible: nothing re-derives a field that is
-    # simply present.
-    "severity": "the CLOSED label is `direct_consequence_severity` (§10, S1)",
-    "consequence_severity": "the CLOSED label is `direct_consequence_severity` (§10, S1)",
-    "effective_severity": "derived — max(direct, inherited), never stored (§9, N3)",
-    "inherited_severity": "derived — from the roots and theorems above it, never stored (§9, N3)",
-}
-
-_TEXT_KEYS = (
-    "title",
-    "statement",
-    "security_consequence",
-    "scope",
-    "owner",
-    "review_requirement",
-)
+def _check_owner(where: str, entry: dict, unit_ids: set[str]) -> None:
+    if entry["owner"] not in unit_ids:
+        raise ManifestError(
+            f"{where}: owner {entry['owner']!r} is not a [[unit]] declared in "
+            f"verification.toml. `owner` names the review unit that is the semantic "
+            f"authority for the claim, so an owner nothing resolves leaves the claim "
+            f"unowned while reading as governed."
+        )
 
 
-def _reject_duplicated_authority(where: str, entry: dict) -> None:
-    for key, owner in _DUPLICATED_AUTHORITY.items():
-        if key in entry:
+def _is_declared_unit(target: str, unit_ids: set[str]) -> bool:
+    return target.startswith("unit://") and target[7:] in unit_ids
+
+
+def _check_support(where: str, entry: dict, unit_ids: set[str]) -> None:
+    for target in check_list(where, entry, "supported_by"):
+        # Fail closed. A dangling support edge would otherwise contribute nothing to
+        # the closure, and a closure with nothing in it is satisfied vacuously — the
+        # theorem would read as supported by evidence that does not exist.
+        if not _is_declared_unit(target, unit_ids):
             raise ManifestError(
-                f"{where}: key {key!r} duplicates a fact owned by {owner}. One fact has "
-                f"one authority; a theorem resolves downward through `unit://` rather "
-                f"than restating what the unit already declares."
+                f"{where}: supported_by {target!r} does not resolve to a [[unit]] "
+                f"declared in verification.toml. An unresolvable support edge derives "
+                f"an empty closure, which is satisfied vacuously — so it fails here "
+                f"rather than passing there."
             )
 
 
-def _check_text(where: str, entry: dict) -> None:
-    for key in _TEXT_KEYS:
-        value = entry[key]
-        if not isinstance(value, str) or not value.strip():
-            raise ManifestError(
-                f"{where}: {key} must be a non-empty string. An empty claim reads as a "
-                f"registered theorem while stating nothing."
-            )
+def _depends_problem(entry: dict, target: str, declared: set[str], deprecated: set[str]) -> str | None:
+    """Why `target` is not a legal premise of `entry`, or None."""
+    if target == entry["id"]:
+        return "depends_on names itself"
+    if target not in declared:
+        return f"depends_on {target!r} is not a declared theorem"
+    if target in deprecated and entry["id"] not in deprecated:
+        return (f"depends_on {target!r}, which is deprecated. A live claim "
+                f"may not rest on a withdrawn one; depend on its replacement.")
+    return None
 
 
-def _check_list(where: str, entry: dict, key: str) -> list[str]:
-    value = entry[key]
-    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
-        raise ManifestError(f"{where}: {key} must be a list of strings")
-    return value
-
-
-def _check_ids(doc: dict) -> list[str]:
-    """Every declared id, in declaration order, after format and uniqueness checks."""
-    ids: list[str] = []
-    seen: set[str] = set()
-    for index, entry in enumerate(doc.get("theorem", [])):
-        where = f"theorems.toml [[theorem]] #{index}"
-        _reject_duplicated_authority(where, entry)
-        reject_unknown(where, entry, _THEOREM_KEYS)
-        require(where, entry, _REQUIRED_KEYS)
-        problem = severity_problem(where, entry)
+def _check_depends(where: str, entry: dict, declared: set[str], deprecated: set[str]) -> None:
+    for target in check_list(where, entry, "depends_on"):
+        problem = _depends_problem(entry, target, declared, deprecated)
         if problem is not None:
-            raise ManifestError(problem)
-        theorem_id = entry["id"]
-        if not isinstance(theorem_id, str) or not _ID_RE.match(theorem_id):
-            raise ManifestError(
-                f"{where}: id {theorem_id!r} is not of the form THM-NNNN. An identifier "
-                f"the tooling cannot resolve names no claim while reading as one."
-            )
-        if theorem_id in seen:
-            raise ManifestError(
-                f"{where}: duplicate theorem id {theorem_id!r}. Ids are never reused — a "
-                f"reused id makes two different security claims indistinguishable in the "
-                f"review history."
-            )
-        seen.add(theorem_id)
-        ids.append(theorem_id)
-    return ids
+            raise ManifestError(f"{where}: {problem}")
+
+
+def _check_replacement(where: str, entry: dict, declared: set[str], deprecated: set[str]) -> None:
+    replacement = entry.get("replaced_by")
+    if replacement is None:
+        return
+    if replacement == entry["id"] or replacement not in declared:
+        raise ManifestError(
+            f"{where}: replaced_by {replacement!r} is not another declared theorem. A "
+            f"deprecated theorem stays resolvable and links what replaced it."
+        )
+    if replacement in deprecated:
+        raise ManifestError(
+            f"{where}: replaced_by {replacement!r}, which is itself deprecated. The "
+            f"link must reach a live claim, or the reader follows it to nothing."
+        )
 
 
 def _check_edges(doc: dict, ids: list[str], unit_ids: set[str]) -> None:
     declared = set(ids)
-    deprecated = {
-        entry["id"] for entry in doc.get("theorem", []) if entry.get("replaced_by")
-    }
+    deprecated = deprecated_ids(doc)
     for index, entry in enumerate(doc.get("theorem", [])):
         where = f"theorems.toml [[theorem]] #{index} ({entry['id']})"
-        _check_text(where, entry)
-        if entry["owner"] not in unit_ids:
-            raise ManifestError(
-                f"{where}: owner {entry['owner']!r} is not a [[unit]] declared in "
-                f"verification.toml. `owner` names the review unit that is the semantic "
-                f"authority for the claim, so an owner nothing resolves leaves the claim "
-                f"unowned while reading as governed."
-            )
-        for target in _check_list(where, entry, "supported_by"):
-            # Fail closed. A dangling support edge would otherwise contribute nothing to
-            # the closure, and a closure with nothing in it is satisfied vacuously — the
-            # theorem would read as supported by evidence that does not exist.
-            if not target.startswith("unit://") or target[7:] not in unit_ids:
-                raise ManifestError(
-                    f"{where}: supported_by {target!r} does not resolve to a [[unit]] "
-                    f"declared in verification.toml. An unresolvable support edge derives "
-                    f"an empty closure, which is satisfied vacuously — so it fails here "
-                    f"rather than passing there."
-                )
-        for target in _check_list(where, entry, "depends_on"):
-            if target == entry["id"]:
-                raise ManifestError(f"{where}: depends_on names itself")
-            if target not in declared:
-                raise ManifestError(
-                    f"{where}: depends_on {target!r} is not a declared theorem"
-                )
-            if target in deprecated and entry["id"] not in deprecated:
-                raise ManifestError(
-                    f"{where}: depends_on {target!r}, which is deprecated. A live claim "
-                    f"may not rest on a withdrawn one; depend on its replacement."
-                )
-        replacement = entry.get("replaced_by")
-        if replacement is None:
-            continue
-        if replacement == entry["id"] or replacement not in declared:
-            raise ManifestError(
-                f"{where}: replaced_by {replacement!r} is not another declared theorem. A "
-                f"deprecated theorem stays resolvable and links what replaced it."
-            )
-        if replacement in deprecated:
-            raise ManifestError(
-                f"{where}: replaced_by {replacement!r}, which is itself deprecated. The "
-                f"link must reach a live claim, or the reader follows it to nothing."
-            )
+        check_text(where, entry)
+        _check_owner(where, entry, unit_ids)
+        _check_support(where, entry, unit_ids)
+        _check_depends(where, entry, declared, deprecated)
+        _check_replacement(where, entry, declared, deprecated)
 
 
-def _check_roots(doc: dict, ids: list[str]) -> None:
-    """The declared system roots — ADR-MCPRE-059 §28.1, §28.8.
+def _find_cycle(edges: dict[str, list[str]]) -> list[str] | None:
+    """The first `depends_on` cycle, as the nodes along it, or None."""
+    state: dict[str, int] = {}
 
-    `root_theorems` is the ONE authoritative statement of which claims are MCP-RE system
-    security promises, and it is the source from which proof-tree completeness is derived.
+    def walk(node: str, stack: list[str]) -> list[str] | None:
+        if state.get(node) == 2:
+            return None
+        if state.get(node) == 1:
+            return stack[stack.index(node):] + [node]
+        state[node] = 1
+        found = next((c for c in (walk(nxt, stack + [node]) for nxt in edges.get(node, []))
+                      if c is not None), None)
+        state[node] = 2
+        return found
 
-    It is not inferred. "A theorem with no dependents" is a different property: an isolated
-    local claim nobody has yet composed has no dependents and is emphatically not a system
-    promise, so inferring roots that way would silently declare the registry complete the
-    moment it was populated with leaves. Declaration is the only way a root becomes one.
-
-    Fail-closed in every direction: an unknown id, a duplicate, or a deprecated claim named
-    as a root would each leave the completeness derivation quantifying over something other
-    than what the reviewer ratified.
-    """
-    where = "theorems.toml root_theorems"
-    roots = doc["root_theorems"]
-    if not isinstance(roots, list) or any(not isinstance(item, str) for item in roots):
-        raise ManifestError(f"{where}: must be a list of THM-NNNN strings")
-    declared = set(ids)
-    deprecated = {
-        entry["id"] for entry in doc.get("theorem", []) if entry.get("replaced_by")
-    }
-    seen: set[str] = set()
-    for root in roots:
-        if root in seen:
-            raise ManifestError(
-                f"{where}: duplicate root {root!r}. A root is declared once; a repeated "
-                f"entry makes the completeness quantifier read over a multiset."
-            )
-        seen.add(root)
-        if root not in declared:
-            raise ManifestError(
-                f"{where}: {root!r} is not a declared theorem. A root naming nothing is a "
-                f"system promise the tooling cannot resolve, so completeness would be "
-                f"derived over a claim that does not exist."
-            )
-        if root in deprecated:
-            raise ManifestError(
-                f"{where}: {root!r} is deprecated. A withdrawn claim cannot carry a system "
-                f"promise; declare its replacement as the root."
-            )
-
-
-def root_theorems(doc: dict) -> list[str]:
-    """The declared system roots, in declaration order. Never inferred (§28.1)."""
-    return list(doc.get("root_theorems", []))
-
-
-def _check_edge_directions(doc: dict, proof_edges: list[dict]) -> None:
-    """A theorem's `depends_on` may not contradict a unit-level `PROOF_DEPENDENCY`.
-
-    The two are not a duplicated authority, and they do not mean the same thing: the unit
-    edge is about how evidence dirtiness propagates between units, the theorem edge about
-    which claim is a logical premise of which (§28.4). A unit-level edge is therefore
-    neither a reason to write a theorem edge nor a substitute for one. But where both
-    exist over the same pair of owners they are two statements of one relation, and they
-    may not disagree.
-
-    `verification.toml` writes the edge producer-first: dirtiness flows along the arrow, so
-    `from` is the LOWER unit and `to` consumes it. A theorem owned by `from` that depends on
-    a theorem owned by `to` therefore inverts the declared direction, which is exactly the
-    error this catches — a reviewer drafting from the prose reads "unbypassability
-    establishes that the check runs; the contract establishes what it guarantees" and
-    reasonably gets the arrow backwards.
-    """
-    if not proof_edges:
-        return
-    owner_of = {entry["id"]: entry["owner"] for entry in doc.get("theorem", [])}
-    # `depends_on` runs consumer -> premise, and the unit edge runs premise -> consumer.
-    # So the legal owner pair for a theorem edge is (edge.to, edge.from); the pair
-    # (edge.from, edge.to) is a claim owned by the premise unit resting on a claim owned by
-    # its consumer, which is the inversion.
-    inverted = {(edge["from"], edge["to"]) for edge in proof_edges}
-    for index, entry in enumerate(doc.get("theorem", [])):
-        for target in entry.get("depends_on", []):
-            pair = (owner_of[entry["id"]], owner_of.get(target))
-            if pair in inverted:
-                raise ManifestError(
-                    f"theorems.toml [[theorem]] #{index} ({entry['id']}): depends_on "
-                    f"{target!r} runs against the declared PROOF_DEPENDENCY. "
-                    f"verification.toml declares {pair[0]} -> {pair[1]}, so a claim owned "
-                    f"by {pair[0]} is the premise; {entry['id']} states the reverse."
-                )
+    return next((c for c in (walk(node, []) for node in edges) if c is not None), None)
 
 
 def _check_acyclic(doc: dict) -> None:
@@ -315,28 +143,15 @@ def _check_acyclic(doc: dict) -> None:
     The gate covers registry-declared edges only. It does not claim to see a cycle formed
     below the registry, through units or contracts — those have their own owners.
     """
-    edges = {
+    cycle = _find_cycle({
         entry["id"]: list(entry.get("depends_on", []))
         for entry in doc.get("theorem", [])
-    }
-    state: dict[str, int] = {}
-
-    def walk(node: str, stack: list[str]) -> None:
-        if state.get(node) == 2:
-            return
-        if state.get(node) == 1:
-            cycle = " -> ".join(stack[stack.index(node) :] + [node])
-            raise ManifestError(
-                f"theorems.toml: cycle in depends_on: {cycle}. A claim that transitively "
-                f"depends on itself is established by nothing."
-            )
-        state[node] = 1
-        for nxt in edges.get(node, []):
-            walk(nxt, stack + [node])
-        state[node] = 2
-
-    for node in edges:
-        walk(node, [])
+    })
+    if cycle is not None:
+        raise ManifestError(
+            f"theorems.toml: cycle in depends_on: {' -> '.join(cycle)}. A claim that "
+            f"transitively depends on itself is established by nothing."
+        )
 
 
 def validate_theorems(
@@ -344,7 +159,7 @@ def validate_theorems(
 ) -> dict:
     """Validate a parsed theorem registry against the declared review units."""
     where = "theorems.toml"
-    reject_unknown(where, doc, _TOP_KEYS)
+    reject_unknown(where, doc, TOP_KEYS)
     require(where, doc, {"schema_version", "root_theorems"})
     if doc["schema_version"] != SCHEMA_VERSION:
         raise ManifestError(
@@ -352,61 +167,12 @@ def validate_theorems(
             f"{SCHEMA_VERSION}. A schema change alters what a claim means, so it must be "
             f"handled, not tolerated."
         )
-    ids = _check_ids(doc)
-    _check_roots(doc, ids)
+    ids = check_ids(doc)
+    check_roots(doc, ids)
     _check_edges(doc, ids, unit_ids)
-    _check_edge_directions(doc, proof_edges or [])
+    check_edge_directions(doc, proof_edges or [])
     _check_acyclic(doc)
     return doc
-
-
-def structurally_supported_theorems(doc: dict) -> set[str]:
-    """The theorems whose support closure RESOLVES, by the declared edges alone.
-
-    A theorem is structurally supported only if some review unit supports it AND every
-    theorem it depends on is structurally supported. A theorem with no supporting unit is
-    therefore not structurally supported — it is a stated claim awaiting evidence, and the
-    difference is the whole reason the layer exists. A deprecated theorem supports nothing:
-    it is retained so historical evidence stays resolvable, not so it can carry a live
-    closure.
-
-    This is a structural property and it is named as one. It says the closure resolves to
-    real units and real premises; it says NOTHING about whether their evidence ran, is
-    fresh, is BLOCKED, or rests on an assumption whose review has gone dirty. A unit that
-    merely exists satisfies this function.
-
-    `established` is deliberately not the word, and is reserved for the later conjunction —
-    structural support AND fresh unit evidence AND established dependencies AND fresh
-    specification review AND fresh assumption review — which T2 makes derivable and T3
-    displays. A name that claims assurance this layer cannot see is exactly the over-read
-    ADR-MCPRE-059 exists to prevent, and it would be read as proof the moment it reached a
-    generated human view.
-    """
-    entries = {entry["id"]: entry for entry in doc.get("theorem", [])}
-    supported = {
-        tid
-        for tid, entry in entries.items()
-        if entry.get("supported_by") and not entry.get("replaced_by")
-    }
-    changed = True
-    while changed:
-        changed = False
-        for tid in sorted(supported):
-            deps = entries[tid].get("depends_on", [])
-            if any(dep not in supported for dep in deps):
-                supported.discard(tid)
-                changed = True
-    return supported
-
-
-def unsupported_theorems(doc: dict) -> list[str]:
-    """Declared, live theorems whose support closure does not resolve."""
-    supported = structurally_supported_theorems(doc)
-    return sorted(
-        entry["id"]
-        for entry in doc.get("theorem", [])
-        if entry["id"] not in supported and not entry.get("replaced_by")
-    )
 
 
 def load_theorems(unit_ids: set[str], proof_edges: list[dict] | None = None) -> dict:
