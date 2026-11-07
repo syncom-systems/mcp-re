@@ -46,6 +46,7 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _persist import atomic_write_lines  # noqa: E402
@@ -90,6 +91,15 @@ def _tree_key(tree: str) -> str:
     return hashlib.sha1(tree.encode()).hexdigest()[:12]
 
 
+@dataclass(frozen=True)
+class RunIdentity:
+    """What produced an output: the tree it was asked about, the command line, and the log."""
+
+    tree: str = ""
+    cmd: str = ""
+    log: str = ""
+
+
 def run_bazel(tree: str, flags: list, log_path: str) -> dict:
     """Run the gate ONCE and capture its full output before reading anything.
 
@@ -102,43 +112,57 @@ def run_bazel(tree: str, flags: list, log_path: str) -> dict:
         proc = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, text=True)
     with open(log_path, encoding="utf-8") as fh:
         output = fh.read()
-    return parse_output(output, exit_code=proc.returncode, tree=tree,
-                        cmd=" ".join(cmd), log=log_path)
+    return parse_output(output, exit_code=proc.returncode,
+                        run=RunIdentity(tree=tree, cmd=" ".join(cmd), log=log_path))
 
 
-def parse_output(output: str, *, exit_code: int, tree: str = "", cmd: str = "",
-                 log: str = "") -> dict:
-    """Extract the per-target identity sets. Pure, so it is unit-testable."""
+def _status_sets(output: str) -> dict:
+    """Every label bazel gave a status line, by status."""
     by_status: dict = {}
     for line in output.splitlines():
         m = STATUS_RE.match(line.strip())
         if m:
             by_status.setdefault(m.group(2), set()).add(m.group(1))
+    return by_status
 
+
+def _executed_counts(output: str) -> tuple:
+    """`(executed, total)` from the last summary line, or `(None, None)` if bazel printed none."""
     executed = total = None
     for m in EXECUTED_RE.finditer(output):
         executed, total = int(m.group(1)), int(m.group(2))
+    return executed, total
 
-    infra = sorted({line.strip()[:200] for line in output.splitlines()
-                    if line.startswith("ERROR:") and INFRA_RE.search(line)})
 
-    # Targets whose ANALYSIS failed. These never produce a status line, so they
-    # are invisible to STATUS_RE and must be collected separately or the gate
-    # under-reports the failing set.
+def _failing_sets(by_status: dict, output: str) -> tuple:
+    """`(failing, analysis_failed, passing, dual)` for one output.
+
+    Targets whose ANALYSIS failed never produce a status line, so they are invisible to
+    STATUS_RE and are collected separately or the gate under-reports the failing set. A
+    label can appear in BOTH sets: bazel reports toolchain resolution per CONFIGURATION, so
+    `//x:test` can fail analysis in a linux variant while the default-config target runs and
+    passes. A demonstrated PASS outranks an analysis warning — but the overlap is recorded
+    rather than dropped, because "this target is broken in some configuration" is real
+    information.
+    """
     analysis_failed = set(ANALYSIS_FAILED_RE.findall(output))
     analysis_failed |= set(TOOLCHAIN_FAILED_RE.findall(output))
-
     passing = by_status.get("PASSED", set())
     failing = set()
-    for s in FAILING_STATUSES:
-        failing |= by_status.get(s, set())
-    # A label can appear in BOTH sets: bazel reports toolchain resolution per
-    # CONFIGURATION, so `//x:test` can fail analysis in a linux variant while the
-    # default-config target runs and passes. A demonstrated PASS outranks an
-    # analysis warning — but the overlap is recorded rather than dropped, because
-    # "this target is broken in some configuration" is real information.
+    for status in FAILING_STATUSES:
+        failing |= by_status.get(status, set())
     dual = sorted(analysis_failed & passing)
     failing |= (analysis_failed - passing)
+    return failing, analysis_failed, passing, dual
+
+
+def parse_output(output: str, *, exit_code: int, run: RunIdentity = RunIdentity()) -> dict:
+    """Extract the per-target identity sets. Pure, so it is unit-testable."""
+    by_status = _status_sets(output)
+    executed, total = _executed_counts(output)
+    infra = sorted({line.strip()[:200] for line in output.splitlines()
+                    if line.startswith("ERROR:") and INFRA_RE.search(line)})
+    failing, analysis_failed, passing, dual = _failing_sets(by_status, output)
 
     # `executed == 0` on a warm cache means "all results reused", NOT "nothing
     # ran" — CLAUDE.md's cached-target trap. Distinguish None (bazel never got
@@ -150,7 +174,7 @@ def parse_output(output: str, *, exit_code: int, tree: str = "", cmd: str = "",
     no_results = not tests_ran and exit_code != 0
 
     return {
-        "tree": tree, "cmd": cmd, "log": log, "exit_code": exit_code,
+        "tree": run.tree, "cmd": run.cmd, "log": run.log, "exit_code": exit_code,
         "targets": {k: sorted(v) for k, v in sorted(by_status.items())},
         "failing": sorted(failing),
         "analysis_failed": sorted(analysis_failed),
