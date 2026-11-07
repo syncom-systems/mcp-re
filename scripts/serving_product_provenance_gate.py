@@ -72,36 +72,25 @@ def signature_re(name: str) -> re.Pattern:
     return re.compile(r"fn\s+" + name + r"\s*\((?P<params>.*?)\)\s*->[^{]*\{", re.S)
 
 
+def brace_block(text: str, start: int) -> str | None:
+    """The `{ ... }` block opening at `text[start]` with its braces balanced, or None when it
+    never closes."""
+    depth = 0
+    for offset, char in enumerate(text[start:], start):
+        depth += (char == "{") - (char == "}")
+        if char == "}" and depth == 0:
+            return text[start : offset + 1]
+    return None
+
+
 def body_of(text: str, name: str) -> str | None:
     match = signature_re(name).search(text)
-    if match is None:
-        return None
-    depth = 0
-    start = match.end() - 1
-    for offset in range(start, len(text)):
-        if text[offset] == "{":
-            depth += 1
-        elif text[offset] == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : offset + 1]
-    return None
+    return None if match is None else brace_block(text, match.end() - 1)
 
 
 def struct_body(text: str, name: str) -> str | None:
     match = re.search(r"\bstruct\s+" + name + r"\b[^{;]*\{", text)
-    if match is None:
-        return None
-    depth = 0
-    start = match.end() - 1
-    for offset in range(start, len(text)):
-        if text[offset] == "{":
-            depth += 1
-        elif text[offset] == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : offset + 1]
-    return None
+    return None if match is None else brace_block(text, match.end() - 1)
 
 
 def test_only_modules(crate_roots: list[Path]) -> set[Path]:
@@ -169,26 +158,30 @@ def read_subtree(sources: dict[str, str], prefix: str) -> str:
     return "\n".join(t for p, t in sources.items() if p.startswith(prefix))
 
 
-def check_serving(serving: str) -> list[str]:
-    """(1), (2), (3), (5)."""
-    problems: list[str] = []
-    handle = body_of(serving, "handle")
+def _handle_problems(handle: str | None) -> list[str]:
+    """(1) — the assembly verifies once and builds one carrier."""
     if handle is None:
-        problems.append(f"{SERVING}: `handle` not found. The assembly is where the regions are ordered.")
-    else:
-        verified = len(re.findall(r"\b" + STAGE + r"\s*\(", handle))
-        if verified != 1:
-            problems.append(
-                f"{SERVING}: `handle` calls `{STAGE}` {verified} time(s); expected exactly 1. "
-                f"Two verifications put two products in scope, and which one the dispatch "
-                f"holds becomes a question about source order."
-            )
-        carriers = len(re.findall(r"\b" + CARRIER + r"\s*\{", handle))
-        if carriers != 1:
-            problems.append(
-                f"{SERVING}: `handle` builds {carriers} `{CARRIER}`; expected exactly 1. The "
-                f"exchange is what carries the product to every stage after verification."
-            )
+        return [f"{SERVING}: `handle` not found. The assembly is where the regions are ordered."]
+    problems: list[str] = []
+    verified = len(re.findall(r"\b" + STAGE + r"\s*\(", handle))
+    if verified != 1:
+        problems.append(
+            f"{SERVING}: `handle` calls `{STAGE}` {verified} time(s); expected exactly 1. "
+            f"Two verifications put two products in scope, and which one the dispatch "
+            f"holds becomes a question about source order."
+        )
+    carriers = len(re.findall(r"\b" + CARRIER + r"\s*\{", handle))
+    if carriers != 1:
+        problems.append(
+            f"{SERVING}: `handle` builds {carriers} `{CARRIER}`; expected exactly 1. The "
+            f"exchange is what carries the product to every stage after verification."
+        )
+    return problems
+
+
+def _stage_problems(serving: str) -> list[str]:
+    """(2), (3) — one verification stage, and it hands its product to the machine."""
+    problems: list[str] = []
     named = len(re.findall(r"\b" + STAGE + r"\s*\(", serving))
     if named != 2:
         problems.append(
@@ -205,17 +198,27 @@ def check_serving(serving: str) -> list[str]:
             f"machine learns verification ran by the value being CONSUMED; a stage that "
             f"returned the product plainly would let the pipeline advance without it."
         )
+    return problems
+
+
+def _carrier_problems(serving: str, handle: str | None) -> list[str]:
+    """(5), (6) — the carrier has no public field and holds the product read-only."""
     fields = struct_body(serving, CARRIER)
     if fields is None:
-        problems.append(f"{SERVING}: `{CARRIER}` not found.")
-    elif re.search(r"^\s*pub(\s|\()", fields, re.M):
+        return [f"{SERVING}: `{CARRIER}` not found."]
+    problems: list[str] = []
+    if re.search(r"^\s*pub(\s|\()", fields, re.M):
         problems.append(
             f"{SERVING}: `{CARRIER}` has a `pub` field. The carrier holds borrowed products; "
             f"a public field lets a consumer be handed one assembled from parts."
         )
-    if fields is not None:
-        problems += check_read_only(handle, fields)
-    return problems
+    return problems + check_read_only(handle, fields)
+
+
+def check_serving(serving: str) -> list[str]:
+    """(1), (2), (3), (5)."""
+    handle = body_of(serving, "handle")
+    return _handle_problems(handle) + _stage_problems(serving) + _carrier_problems(serving, handle)
 
 
 def check_read_only(handle: str | None, fields: str) -> list[str]:
@@ -272,11 +275,9 @@ def check(repo: Path) -> tuple[list[str], int]:
 # Selftest: every claim, undone, must be caught.
 # --------------------------------------------------------------------------------------
 
-def selftest() -> int:
-    sources = production_sources(REPO / PROXY)
-    serving = read_subtree(sources, SERVING)
-    failures = 0
-    cases = [
+def _selftest_cases(sources: dict[str, str], serving: str) -> list[tuple]:
+    """Each claim, undone: (name, check, mutated input, expected problem count)."""
+    return [
         (
             "a second verification in the assembly",
             check_serving,
@@ -331,14 +332,23 @@ def selftest() -> int:
             1,
         ),
     ]
-    for name, fn, argument, expected in cases:
-        found = fn(argument)
-        ok = len(found) == expected
-        failures += 0 if ok else 1
-        print(f"  {'ok ' if ok else 'FAIL'} {name}: {len(found)} problem(s), expected {expected}")
-        if not ok:
-            for problem in found:
-                print(f"        {problem}")
+
+
+def _run_case(name: str, fn, argument, expected: int) -> int:
+    """1 when the check found a different number of problems than the case expects."""
+    found = fn(argument)
+    ok = len(found) == expected
+    print(f"  {'ok ' if ok else 'FAIL'} {name}: {len(found)} problem(s), expected {expected}")
+    if not ok:
+        for problem in found:
+            print(f"        {problem}")
+    return 0 if ok else 1
+
+
+def selftest() -> int:
+    sources = production_sources(REPO / PROXY)
+    cases = _selftest_cases(sources, read_subtree(sources, SERVING))
+    failures = sum(_run_case(*case) for case in cases)
     failures += _selftest_test_only()
     print()
     if failures:

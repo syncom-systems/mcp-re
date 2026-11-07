@@ -194,12 +194,13 @@ def write_surface(tmp: Path, environment: dict) -> Path:
 
 def digest_under(surface: Path, klass: str = "probe-class") -> str:
     import slo_evidence_identity
-    original = slo_evidence_identity.SURFACE_TOML
+    from _slo_evidence import config
+    original = config.SURFACE_TOML
     try:
-        slo_evidence_identity.SURFACE_TOML = surface
+        config.SURFACE_TOML = surface
         return slo_evidence_identity.class_environment_digest(klass)
     finally:
-        slo_evidence_identity.SURFACE_TOML = original
+        config.SURFACE_TOML = original
 
 
 def test_environment_is_part_of_the_identity() -> None:

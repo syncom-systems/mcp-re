@@ -2973,8 +2973,8 @@ pub fn hostile() -> ResponseAuthority {
 }
 """
 note = """
-Injected into `startup_plan`, the module that declares `response_authority` and holds the
-signing plan's private constructor: the nearest neighbour, and still refused.
+Injected into `startup_plan`, the module that declares `response_authority` and the signing
+plan whose constructor is `pub(super)` to it: the nearest neighbour, and still refused.
 """
 [probe.producer_paths]
 module-tree-visibility = "both fields are bare-private to `startup_plan::response_authority`, and `startup_plan` re-exports the type without them; the probe is injected into `startup_plan` itself, the parent, which is outside the defining module"

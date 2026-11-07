@@ -8,212 +8,42 @@
 //!      verifies a client certificate, extracts its identity, and serves one
 //!      request; a missing or untrusted client certificate fails closed.
 
-use std::io::Read;
-use std::io::Write;
-use std::net::TcpListener;
-use std::net::TcpStream;
-use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
+mod pki;
+mod serving;
+mod signers;
 
-use mcp_re_proxy::config_state::ClientCredentialWindow;
+use std::sync::Arc;
+
 use mcp_re_proxy::extract_identity;
-use mcp_re_proxy::serve_once;
-use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::transport::IdentityPolicy;
 use mcp_re_proxy::transport::IdentitySource;
-use mcp_re_proxy::ServerOptions;
 
-use rcgen::BasicConstraints;
-use rcgen::CertificateParams;
-use rcgen::CertificateRevocationListParams;
-use rcgen::DnType;
-use rcgen::ExtendedKeyUsagePurpose;
-use rcgen::IsCa;
-use rcgen::KeyIdMethod;
-use rcgen::KeyPair;
-use rcgen::KeyUsagePurpose;
-use rcgen::RevocationReason;
-use rcgen::RevokedCertParams;
 use rcgen::SanType;
-use rcgen::SerialNumber;
 
-use rustls::crypto::ring;
-use rustls::ClientConfig;
-use rustls::ClientConnection;
-use rustls::RootCertStore;
-use rustls::StreamOwned;
-use rustls_pki_types::CertificateDer;
-use rustls_pki_types::CertificateRevocationListDer;
-use rustls_pki_types::PrivateKeyDer;
-use rustls_pki_types::PrivatePkcs8KeyDer;
-use rustls_pki_types::ServerName;
-
-// ---------------------------------------------------------------------------
-// Test certificate authority + leaves (rcgen).
-// ---------------------------------------------------------------------------
-
-/// The credential window every served test deployment states.
-fn window() -> ClientCredentialWindow {
-    ClientCredentialWindow::new(Duration::from_secs(3600), Duration::from_secs(300))
-        .expect("a legal credential window")
-}
-
-/// Validity `[now - 60s, now + 1800s]`: inside the window, so a served request finds the
-/// leaf current.
-fn short_lived(params: &mut CertificateParams) {
-    params.not_before = (std::time::SystemTime::now() - Duration::from_secs(60)).into();
-    params.not_after = (std::time::SystemTime::now() + Duration::from_secs(1800)).into();
-}
-
-struct Ca {
-    cert: rcgen::Certificate,
-    key: KeyPair,
-    /// Retained so an `Issuer` can be borrowed per signature: rcgen derives the
-    /// issuer DN, key-identifier method and key usages from these, not from `cert`.
-    params: CertificateParams,
-}
-
-impl Ca {
-    /// The issuing state that minted `cert`, paired with the signing key.
-    fn issuer(&self) -> rcgen::Issuer<'_, &KeyPair> {
-        rcgen::Issuer::from_params(&self.params, &self.key)
-    }
-}
-
-fn make_ca() -> Ca {
-    let key = KeyPair::generate().expect("ca key");
-    let mut params = CertificateParams::new(Vec::new()).expect("ca params");
-    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-    params
-        .distinguished_name
-        .push(DnType::CommonName, "mcp-re-test-ca");
-    let cert = params.self_signed(&key).expect("ca self-signed");
-    Ca { cert, key, params }
-}
-
-/// A leaf signed by `ca`, with the given SANs / CN and (client or server) EKU.
-fn make_leaf(
-    ca: &Ca,
-    sans: Vec<SanType>,
-    common_name: Option<&str>,
-    client_auth: bool,
-) -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
-    let key = KeyPair::generate().expect("leaf key");
-    let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
-    params.subject_alt_names = sans;
-    if let Some(cn) = common_name {
-        params.distinguished_name.push(DnType::CommonName, cn);
-    }
-    params.extended_key_usages = vec![if client_auth {
-        ExtendedKeyUsagePurpose::ClientAuth
-    } else {
-        ExtendedKeyUsagePurpose::ServerAuth
-    }];
-    if client_auth {
-        short_lived(&mut params);
-    }
-    let cert = params
-        .signed_by(&key, &ca.issuer())
-        .expect("leaf signed by ca");
-    let der = cert.der().clone();
-    let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
-    (der, key_der)
-}
-
-/// A leaf with an explicit validity window (day granularity, via `date_time_ymd`)
-/// so its lifetime is deterministic for max-lifetime enforcement tests.
-fn make_leaf_with_validity(
-    ca: &Ca,
-    sans: Vec<SanType>,
-    client_auth: bool,
-    not_before: (i32, u8, u8),
-    not_after: (i32, u8, u8),
-) -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
-    let key = KeyPair::generate().expect("leaf key");
-    let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
-    params.subject_alt_names = sans;
-    params.not_before = rcgen::date_time_ymd(not_before.0, not_before.1, not_before.2);
-    params.not_after = rcgen::date_time_ymd(not_after.0, not_after.1, not_after.2);
-    params.extended_key_usages = vec![if client_auth {
-        ExtendedKeyUsagePurpose::ClientAuth
-    } else {
-        ExtendedKeyUsagePurpose::ServerAuth
-    }];
-    let cert = params.signed_by(&key, &ca.issuer()).expect("leaf signed");
-    let der = cert.der().clone();
-    let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
-    (der, key_der)
-}
-
-/// A client leaf signed by `ca` with an EXPLICIT serial number, so a CRL can be
-/// minted that revokes exactly this certificate (#3839).
-fn make_client_leaf_with_serial(
-    ca: &Ca,
-    san: &str,
-    serial: u64,
-) -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
-    let key = KeyPair::generate().expect("leaf key");
-    let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
-    params.subject_alt_names = vec![uri(san)];
-    params.serial_number = Some(SerialNumber::from(serial));
-    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
-    short_lived(&mut params);
-    let cert = params.signed_by(&key, &ca.issuer()).expect("leaf signed");
-    let der = cert.der().clone();
-    let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
-    (der, key_der)
-}
-
-/// Mint a CRL signed by `ca` that revokes the certificates with the given serials
-/// (#3839). The CA carries `CrlSign` key usage (see `make_ca`), which rcgen
-/// requires of a CRL issuer. Returns the CRL in the DER form rustls consumes.
-fn make_crl(ca: &Ca, revoked_serials: &[u64]) -> CertificateRevocationListDer<'static> {
-    // A far-future nextUpdate (2999): well-formed and never stale, so the existing
-    // revocation tests exercise the revoked-vs-not path independently of the
-    // ADR-MCPS-023 §A1 (MCPS-58) nextUpdate-expiration enforcement.
-    make_crl_full(ca, revoked_serials, (2024, 1, 1), (2999, 1, 1))
-}
-
-/// Mint a CRL signed by `ca` with explicit `thisUpdate` / `nextUpdate` dates, so a
-/// STALE CRL (nextUpdate in the past) can be constructed to exercise the
-/// ADR-MCPS-023 §A1 (MCPS-58) fail-closed-on-stale enforcement.
-fn make_crl_full(
-    ca: &Ca,
-    revoked_serials: &[u64],
-    this_update_ymd: (i32, u8, u8),
-    next_update_ymd: (i32, u8, u8),
-) -> CertificateRevocationListDer<'static> {
-    let this_update = rcgen::date_time_ymd(this_update_ymd.0, this_update_ymd.1, this_update_ymd.2);
-    let next_update = rcgen::date_time_ymd(next_update_ymd.0, next_update_ymd.1, next_update_ymd.2);
-    let revoked_certs = revoked_serials
-        .iter()
-        .map(|serial| RevokedCertParams {
-            serial_number: SerialNumber::from(*serial),
-            revocation_time: this_update,
-            reason_code: Some(RevocationReason::KeyCompromise),
-            invalidity_date: None,
-        })
-        .collect();
-    let params = CertificateRevocationListParams {
-        this_update,
-        next_update,
-        crl_number: SerialNumber::from(1u64),
-        issuing_distribution_point: None,
-        revoked_certs,
-        key_identifier_method: KeyIdMethod::Sha256,
-    };
-    let crl = params.signed_by(&ca.issuer()).expect("crl signed by ca");
-    crl.der().clone()
-}
-
-fn uri(value: &str) -> SanType {
-    SanType::URI(value.try_into().expect("ia5 uri"))
-}
-fn dns(value: &str) -> SanType {
-    SanType::DnsName(value.try_into().expect("ia5 dns"))
-}
+use pki::dns;
+use pki::make_ca;
+use pki::make_client_leaf_valid_between;
+use pki::make_client_leaf_with_serial;
+use pki::make_crl;
+use pki::make_crl_full;
+use pki::make_leaf;
+use pki::uri;
+use pki::Validity;
+use serving::agent_credential;
+use serving::delegated_config;
+use serving::dial;
+use serving::expect_jsonrpc_answer_ok;
+use serving::server_config_for;
+use serving::server_config_trusting;
+use serving::spawn_ok_server;
+use serving::spawn_server;
+use serving::AGENT_1;
+use serving::JSONRPC_BODY;
+use serving::OK_BODY;
+use signers::make_ecdsa_server_leaf;
+use signers::make_ed25519_server_leaf;
+use signers::CorruptingEd25519Tls;
+use signers::LocalEd25519Tls;
 
 // ---------------------------------------------------------------------------
 // 1. Policy-selected identity extraction (NO implicit fallback).
@@ -460,152 +290,24 @@ fn no_san_fails_closed_for_every_san_policy() {
 // 2. mTLS round-trip.
 // ---------------------------------------------------------------------------
 
-/// A client-side verifier that accepts any server certificate — the test server
-/// is self-presented and the client is only exercising mTLS client-auth.
-/// A client config that FULLY validates the server: rustls's stock WebPKI server
-/// verifier anchored at `server_root` performs real chain building, validity,
-/// hostname (SAN), AND `CertificateVerify` signature verification — nothing is
-/// asserted. A handshake completes only if the server cert chains to `server_root`,
-/// matches `localhost`, AND the signature over the transcript is cryptographically
-/// valid; the delegated-TLS tests rely on this so a bogus delegated signature (or an
-/// untrusted/mismatched cert) FAILS the handshake.
-fn client_config(
-    server_root: &CertificateDer<'static>,
-    client_auth: Option<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)>,
-) -> ClientConfig {
-    let mut roots = RootCertStore::empty();
-    roots.add(server_root.clone()).expect("add server CA root");
-    let provider = Arc::new(ring::default_provider());
-    let builder = ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .expect("client protocol versions")
-        .with_root_certificates(roots);
-    match client_auth {
-        Some((chain, key)) => builder
-            .with_client_auth_cert(chain, key)
-            .expect("client auth cert"),
-        None => builder.with_no_client_auth(),
-    }
-}
-
-/// Connect as a TLS client, send one HTTP POST with `body`, return the response
-/// body. Returns Err if the TLS handshake or IO fails (e.g. rejected client cert).
-fn client_round_trip(
-    addr: std::net::SocketAddr,
-    config: ClientConfig,
-    body: &[u8],
-) -> std::io::Result<Vec<u8>> {
-    let tcp = TcpStream::connect(addr)?;
-    let server_name = ServerName::try_from("localhost").expect("server name");
-    let conn = ClientConnection::new(Arc::new(config), server_name)
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
-    let mut stream = StreamOwned::new(conn, tcp);
-
-    let request = format!(
-        "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    stream.write_all(request.as_bytes())?;
-    stream.write_all(body)?;
-    stream.flush()?;
-
-    let mut response = Vec::new();
-    // A peer that closes without close_notify surfaces as UnexpectedEof; tolerate
-    // it and use what was read.
-    match stream.read_to_end(&mut response) {
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {}
-        Err(e) => return Err(e),
-    }
-    // Return the body (after the header terminator).
-    let split = b"\r\n\r\n";
-    let pos = response
-        .windows(split.len())
-        .position(|w| w == split)
-        .map(|p| p + split.len())
-        .unwrap_or(0);
-    Ok(response[pos..].to_vec())
-}
-
-/// The server configuration plus the DER of the CA that issued its leaf, which
-/// clients anchor their server verification at.
-fn server_config_for(ca: &Ca) -> (Arc<rustls::ServerConfig>, CertificateDer<'static>) {
-    // Server presents its own leaf; the CLIENT-CA root is `ca` (the issuer of the
-    // client certs we mint below).
-    let server_ca = make_ca();
-    let (server_cert, server_key) =
-        make_leaf(&server_ca, vec![dns("localhost")], Some("localhost"), false);
-    let config = TlsListenerSecurityState::new(
-        vec![ca.cert.der().clone()],
-        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
-    )
-    .build_exported_key_config(vec![server_cert], server_key, Vec::new())
-    .expect("server config");
-    (Arc::new(config), server_ca.cert.der().clone())
-}
-
-/// As [`server_config_for`], but with offline CRL revocation enabled (#3839):
-/// the verifier checks presented client certs against `crls`, denying unknown
-/// status by default (fail closed).
-fn server_config_with_crls_for(
-    ca: &Ca,
-    crls: Vec<CertificateRevocationListDer<'static>>,
-) -> (Arc<rustls::ServerConfig>, CertificateDer<'static>) {
-    let server_ca = make_ca();
-    let (server_cert, server_key) =
-        make_leaf(&server_ca, vec![dns("localhost")], Some("localhost"), false);
-    let config = TlsListenerSecurityState::new(
-        vec![ca.cert.der().clone()],
-        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
-    )
-    .build_exported_key_config(vec![server_cert], server_key, crls)
-    .expect("server config with crls");
-    (Arc::new(config), server_ca.cert.der().clone())
-}
-
 #[test]
 fn mtls_round_trip_extracts_client_identity_and_serves_request() {
     let client_ca = make_ca();
     let (config, server_root) = server_config_for(&client_ca);
-    let (client_cert, client_key) = make_leaf(
-        &client_ca,
-        vec![uri("spiffe://example.org/agent-1")],
-        None,
-        true,
-    );
+    let (addr, server) = spawn_server(config, expect_jsonrpc_answer_ok);
 
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-
-    let server = thread::spawn(move || {
-        serve_once(
-            &listener,
-            config,
-            &ServerOptions::new(
-                window(),
-                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
-                    .expect("an absolute target"),
-            ),
-            |request, identity| {
-                // Echo the request body back; the identity is asserted via the join.
-                assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
-                let _ = identity;
-                b"{\"ok\":true}".to_vec()
-            },
-        )
-    });
-
-    let response = client_round_trip(
+    let response = dial(
         addr,
-        client_config(&server_root, Some((vec![client_cert], client_key))),
-        b"{\"jsonrpc\":\"2.0\"}",
+        &server_root,
+        Some(agent_credential(&client_ca)),
+        JSONRPC_BODY,
     )
     .expect("client round trip");
-    assert_eq!(response, b"{\"ok\":true}");
+    assert_eq!(response, OK_BODY);
 
     let identity = server.join().expect("join").expect("serve ok");
     let identity = identity.expect("a verified client identity");
-    assert_eq!(identity.identity().as_str(), "spiffe://example.org/agent-1");
+    assert_eq!(identity.identity().as_str(), AGENT_1);
     assert_eq!(
         identity.identity_source(),
         mcp_re_proxy::communication_assurance::CertificateIdentitySource::UriSan
@@ -620,77 +322,6 @@ fn mtls_round_trip_extracts_client_identity_and_serves_request() {
 // wire-correct (rustls verifies it against the server's Ed25519 certificate).
 // ---------------------------------------------------------------------------
 
-/// A delegated signer backed by a LOCAL Ed25519 key (stand-in for device/KMS):
-/// signs the raw handshake transcript exactly as a KMS RAW `Sign` would.
-#[derive(Debug)]
-struct LocalEd25519Tls(mcp_re_core::SigningKey);
-impl mcp_re_proxy::RawEd25519TlsSigner for LocalEd25519Tls {
-    fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, mcp_re_proxy::KeyError> {
-        Ok(mcp_re_core::b64url_decode(&self.0.sign(message)).expect("local sig is valid b64url"))
-    }
-    fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, mcp_re_proxy::KeyError> {
-        Ok(ed25519_spki_from_raw(&self.0.public_key().to_bytes()))
-    }
-}
-
-/// The fixed 12-byte RFC 8410 Ed25519 `SubjectPublicKeyInfo` prefix, the same one
-/// the production SPKI parser anchors on. Building an SPKI from a raw point here
-/// (mirroring what AWS/GCP KMS return) keeps the test signer's exported public key
-/// in the exact wire form the validated build path parses.
-const ED25519_TEST_SPKI_PREFIX: [u8; 12] = [
-    0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
-];
-
-fn ed25519_spki_from_raw(raw: &[u8; 32]) -> Vec<u8> {
-    let mut der = ED25519_TEST_SPKI_PREFIX.to_vec();
-    der.extend_from_slice(raw);
-    der
-}
-
-/// Mint an Ed25519 server leaf signed by `ca`, returning the cert plus the local
-/// delegated signer whose key is the cert's key (seed extracted from the rcgen
-/// PKCS#8: a fixed 16-byte prefix `... 04 22 04 20` then the 32-byte seed).
-fn make_ed25519_server_leaf(ca: &Ca) -> (CertificateDer<'static>, LocalEd25519Tls) {
-    let key = KeyPair::generate_for(&rcgen::PKCS_ED25519).expect("ed25519 key");
-    let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
-    params.subject_alt_names = vec![dns("localhost")];
-    params
-        .distinguished_name
-        .push(DnType::CommonName, "localhost");
-    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-    let cert = params
-        .signed_by(&key, &ca.issuer())
-        .expect("ed25519 leaf signed");
-    let der = cert.der().clone();
-    let pkcs8 = key.serialize_der();
-    // RFC 8410 PKCS#8 Ed25519: the 32-byte seed sits at bytes [16..48], immediately
-    // after the Ed25519 AlgorithmIdentifier + OCTET-STRING headers. The outer
-    // SEQUENCE length and version vary (rcgen emits the v2 form WITH the public key
-    // appended, ~83 bytes), but bytes [5..16] — `30 05 06 03 2b 65 70 04 22 04 20`
-    // (Ed25519 OID, then the `04 22` private-key wrapper and `04 20` inner OCTET
-    // STRING) — are invariant and directly precede the seed. Anchor on that so a
-    // future rcgen encoding change fails closed with a clear error rather than
-    // silently slicing the wrong bytes.
-    const ED25519_SEED_HEADER: [u8; 11] = [
-        0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
-    ];
-    assert!(
-        pkcs8.len() >= 48,
-        "expected an Ed25519 PKCS#8 key of at least 48 bytes, got {}",
-        pkcs8.len()
-    );
-    assert_eq!(
-        &pkcs8[5..16],
-        &ED25519_SEED_HEADER,
-        "unexpected Ed25519 PKCS#8 header; rcgen encoding may have changed"
-    );
-    let seed: [u8; 32] = pkcs8[16..48].try_into().expect("ed25519 pkcs8 seed");
-    (
-        der,
-        LocalEd25519Tls(mcp_re_core::SigningKey::from_seed_bytes(&seed)),
-    )
-}
-
 #[test]
 fn delegated_ed25519_tls_handshake_round_trip() {
     let client_ca = make_ca();
@@ -703,57 +334,23 @@ fn delegated_ed25519_tls_handshake_round_trip() {
     // credential (ADR-MCPRE-063 Slice 3: the certificate and the delegated signer must
     // present the same public key) AND binds the resolver to this listener's own signing
     // budget — the fourth of the four things THM-0048 says are established together.
-    let config = std::sync::Arc::new(
-        TlsListenerSecurityState::new(
-            vec![client_ca.cert.der().clone()],
-            mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
-        )
-        .build_delegated_config(
-            vec![server_cert],
-            std::sync::Arc::new(delegated_signer),
-            Vec::new(),
-        )
-        .expect("delegated server config"),
-    );
-
-    let (client_cert, client_key) = make_leaf(
-        &client_ca,
-        vec![uri("spiffe://example.org/agent-1")],
-        None,
-        true,
-    );
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    let server = thread::spawn(move || {
-        serve_once(
-            &listener,
-            config,
-            &ServerOptions::new(
-                window(),
-                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
-                    .expect("an absolute target"),
-            ),
-            |request, identity| {
-                assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
-                let _ = identity;
-                b"{\"ok\":true}".to_vec()
-            },
-        )
-    });
+    let config = delegated_config(&client_ca, server_cert, delegated_signer)
+        .expect("delegated server config");
+    let (addr, server) = spawn_server(Arc::new(config), expect_jsonrpc_answer_ok);
 
     // Use a client that FULLY validates the server (chain to the test CA, hostname,
     // AND CertificateVerify signature): the handshake completes only if the delegated
     // signer produced a cryptographically valid Ed25519 CertificateVerify over the
     // transcript. Nothing is asserted/bypassed, so this proves delegated-signing
     // correctness end to end.
-    let response = client_round_trip(
+    let response = dial(
         addr,
-        client_config(server_ca.cert.der(), Some((vec![client_cert], client_key))),
-        b"{\"jsonrpc\":\"2.0\"}",
+        &server_ca.der(),
+        Some(agent_credential(&client_ca)),
+        JSONRPC_BODY,
     )
     .expect("client round trip over a delegated-signed handshake");
-    assert_eq!(response, b"{\"ok\":true}");
+    assert_eq!(response, OK_BODY);
 
     let identity = server.join().expect("join").expect("serve ok");
     assert_eq!(
@@ -761,7 +358,7 @@ fn delegated_ed25519_tls_handshake_round_trip() {
             .expect("verified client identity")
             .identity()
             .as_str(),
-        "spiffe://example.org/agent-1"
+        AGENT_1
     );
 }
 
@@ -772,36 +369,6 @@ fn delegated_ed25519_tls_handshake_round_trip() {
 // signer's public key must match the leaf certificate's public key.
 // ---------------------------------------------------------------------------
 
-/// A delegated signer whose public key is INDEPENDENT of (and so cannot match) any
-/// given leaf certificate — used to drive the cert↔signer mismatch fail-closed
-/// path. Backed by a distinct local Ed25519 key.
-#[derive(Debug)]
-struct MismatchedEd25519Tls(mcp_re_core::SigningKey);
-impl mcp_re_proxy::RawEd25519TlsSigner for MismatchedEd25519Tls {
-    fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, mcp_re_proxy::KeyError> {
-        Ok(mcp_re_core::b64url_decode(&self.0.sign(message)).expect("local sig is valid b64url"))
-    }
-    fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, mcp_re_proxy::KeyError> {
-        Ok(ed25519_spki_from_raw(&self.0.public_key().to_bytes()))
-    }
-}
-
-/// Mint an ECDSA (NIST P-256) server leaf signed by `ca` — a NON-Ed25519 leaf used
-/// to drive the Ed25519-only fail-closed path of the validated delegated builder.
-fn make_ecdsa_server_leaf(ca: &Ca) -> CertificateDer<'static> {
-    let key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).expect("ecdsa key");
-    let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
-    params.subject_alt_names = vec![dns("localhost")];
-    params
-        .distinguished_name
-        .push(DnType::CommonName, "localhost");
-    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-    let cert = params
-        .signed_by(&key, &ca.issuer())
-        .expect("ecdsa leaf signed");
-    cert.der().clone()
-}
-
 #[test]
 fn validated_delegated_build_round_trip_and_corrupted_sig_fails() {
     // (b) The validated builder accepts a signer whose pubkey MATCHES the leaf cert,
@@ -811,116 +378,35 @@ fn validated_delegated_build_round_trip_and_corrupted_sig_fails() {
     let client_ca = make_ca();
     let server_ca = make_ca();
     let (server_cert, delegated_signer) = make_ed25519_server_leaf(&server_ca);
+    let config = delegated_config(&client_ca, server_cert, delegated_signer)
+        .expect("validated delegated server config (matching key) must build");
+    let (addr, server) = spawn_server(Arc::new(config), expect_jsonrpc_answer_ok);
 
-    let config = std::sync::Arc::new(
-        TlsListenerSecurityState::new(
-            vec![client_ca.cert.der().clone()],
-            mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
-        )
-        .build_delegated_config(
-            vec![server_cert],
-            std::sync::Arc::new(delegated_signer),
-            Vec::new(),
-        )
-        .expect("validated delegated server config (matching key) must build"),
-    );
-
-    let (client_cert, client_key) = make_leaf(
-        &client_ca,
-        vec![uri("spiffe://example.org/agent-1")],
-        None,
-        true,
-    );
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    let server = thread::spawn(move || {
-        serve_once(
-            &listener,
-            config,
-            &ServerOptions::new(
-                window(),
-                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
-                    .expect("an absolute target"),
-            ),
-            |request, _identity| {
-                assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
-                b"{\"ok\":true}".to_vec()
-            },
-        )
-    });
-
-    let response = client_round_trip(
+    let response = dial(
         addr,
-        client_config(server_ca.cert.der(), Some((vec![client_cert], client_key))),
-        b"{\"jsonrpc\":\"2.0\"}",
+        &server_ca.der(),
+        Some(agent_credential(&client_ca)),
+        JSONRPC_BODY,
     )
     .expect("client round trip over the validated delegated handshake");
-    assert_eq!(response, b"{\"ok\":true}");
+    assert_eq!(response, OK_BODY);
     let _ = server.join().expect("join").expect("serve ok");
 
     // Corrupting the delegated signature must break the handshake (the validating
     // client verifies CertificateVerify). A signer that flips a bit of every raw
     // signature drives this.
-    #[derive(Debug)]
-    struct CorruptingEd25519Tls(LocalEd25519Tls);
-    impl mcp_re_proxy::RawEd25519TlsSigner for CorruptingEd25519Tls {
-        fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, mcp_re_proxy::KeyError> {
-            let mut sig = self.0.sign_tls_ed25519(message)?;
-            sig[0] ^= 0x01; // corrupt one bit — the signature no longer verifies
-            Ok(sig)
-        }
-        fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, mcp_re_proxy::KeyError> {
-            // Same public key as the honest signer: the cert↔signer check still
-            // passes, so the build succeeds and the BREAK is at the handshake.
-            self.0.tls_public_key_spki_der()
-        }
-    }
-
     let client_ca2 = make_ca();
     let server_ca2 = make_ca();
     let (server_cert2, honest_signer) = make_ed25519_server_leaf(&server_ca2);
     let corrupting = CorruptingEd25519Tls(honest_signer);
-    let config2 = std::sync::Arc::new(
-        TlsListenerSecurityState::new(
-            vec![client_ca2.cert.der().clone()],
-            mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
-        )
-        .build_delegated_config(
-            vec![server_cert2],
-            std::sync::Arc::new(corrupting),
-            Vec::new(),
-        )
-        .expect("build still succeeds: the public key matches; the BREAK is the bad signature"),
-    );
-
-    let (client_cert2, client_key2) = make_leaf(
-        &client_ca2,
-        vec![uri("spiffe://example.org/agent-1")],
-        None,
-        true,
-    );
-    let listener2 = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr2 = listener2.local_addr().expect("addr");
-    let server2 = thread::spawn(move || {
-        serve_once(
-            &listener2,
-            config2,
-            &ServerOptions::new(
-                window(),
-                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
-                    .expect("an absolute target"),
-            ),
-            |_req, _id| b"{\"ok\":true}".to_vec(),
-        )
-    });
-    let result = client_round_trip(
+    let config2 = delegated_config(&client_ca2, server_cert2, corrupting)
+        .expect("build still succeeds: the public key matches; the BREAK is the bad signature");
+    let (addr2, server2) = spawn_ok_server(Arc::new(config2));
+    let result = dial(
         addr2,
-        client_config(
-            server_ca2.cert.der(),
-            Some((vec![client_cert2], client_key2)),
-        ),
-        b"{\"jsonrpc\":\"2.0\"}",
+        &server_ca2.der(),
+        Some(agent_credential(&client_ca2)),
+        JSONRPC_BODY,
     );
     assert!(
         result.is_err(),
@@ -938,18 +424,10 @@ fn validated_delegated_build_rejects_cert_signer_key_mismatch() {
     let (server_cert, _matching_signer) = make_ed25519_server_leaf(&server_ca);
     // A signer with an unrelated key (seed 0xAA..) — its pubkey cannot equal the
     // leaf's.
-    let mismatched = MismatchedEd25519Tls(mcp_re_core::SigningKey::from_seed_bytes(&[0xAAu8; 32]));
+    let mismatched = LocalEd25519Tls::from_repeated_seed_byte(0xAA);
 
-    let err = TlsListenerSecurityState::new(
-        vec![client_ca.cert.der().clone()],
-        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
-    )
-    .build_delegated_config(
-        vec![server_cert],
-        std::sync::Arc::new(mismatched),
-        Vec::new(),
-    )
-    .expect_err("a cert↔signer key mismatch must fail closed at config construction");
+    let err = delegated_config(&client_ca, server_cert, mismatched)
+        .expect_err("a cert↔signer key mismatch must fail closed at config construction");
     assert!(
         matches!(err, mcp_re_proxy::TlsError::DelegatedKeyMismatch(_)),
         "expected DelegatedKeyMismatch, got {err:?}"
@@ -964,14 +442,10 @@ fn validated_delegated_build_rejects_non_ed25519_leaf() {
     let client_ca = make_ca();
     let server_ca = make_ca();
     let ecdsa_leaf = make_ecdsa_server_leaf(&server_ca);
-    let signer = LocalEd25519Tls(mcp_re_core::SigningKey::from_seed_bytes(&[3u8; 32]));
+    let signer = LocalEd25519Tls::from_repeated_seed_byte(3);
 
-    let err = TlsListenerSecurityState::new(
-        vec![client_ca.cert.der().clone()],
-        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
-    )
-    .build_delegated_config(vec![ecdsa_leaf], std::sync::Arc::new(signer), Vec::new())
-    .expect_err("a non-Ed25519 leaf must fail closed under delegated mode");
+    let err = delegated_config(&client_ca, ecdsa_leaf, signer)
+        .expect_err("a non-Ed25519 leaf must fail closed under delegated mode");
     assert!(
         matches!(err, mcp_re_proxy::TlsError::DelegatedKeyMismatch(_)),
         "expected DelegatedKeyMismatch (Ed25519-only), got {err:?}"
@@ -982,25 +456,10 @@ fn validated_delegated_build_rejects_non_ed25519_leaf() {
 fn missing_client_certificate_is_rejected() {
     let client_ca = make_ca();
     let (config, server_root) = server_config_for(&client_ca);
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-
-    let server = thread::spawn(move || {
-        serve_once(
-            &listener,
-            config,
-            &ServerOptions::new(
-                window(),
-                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
-                    .expect("an absolute target"),
-            ),
-            |_req, _id| b"{\"ok\":true}".to_vec(),
-        )
-    });
+    let (addr, server) = spawn_ok_server(config);
 
     // Client presents NO certificate; the server requires one → fail closed.
-    let _ = client_round_trip(addr, client_config(&server_root, None), b"{}");
+    let _ = dial(addr, &server_root, None, b"{}");
     let result = server.join().expect("join");
     assert!(
         result.is_err(),
@@ -1017,26 +476,12 @@ fn untrusted_client_certificate_is_rejected() {
     let rogue_ca = make_ca();
     let (rogue_cert, rogue_key) =
         make_leaf(&rogue_ca, vec![uri("spiffe://evil/agent")], None, true);
+    let (addr, server) = spawn_ok_server(config);
 
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-
-    let server = thread::spawn(move || {
-        serve_once(
-            &listener,
-            config,
-            &ServerOptions::new(
-                window(),
-                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
-                    .expect("an absolute target"),
-            ),
-            |_req, _id| b"{\"ok\":true}".to_vec(),
-        )
-    });
-
-    let _ = client_round_trip(
+    let _ = dial(
         addr,
-        client_config(&server_root, Some((vec![rogue_cert], rogue_key))),
+        &server_root,
+        Some((vec![rogue_cert], rogue_key)),
         b"{}",
     );
     let result = server.join().expect("join");
@@ -1060,29 +505,21 @@ fn over_long_client_cert_is_rejected() {
     let client_ca = make_ca();
     let (config, server_root) = server_config_for(&client_ca);
     // Currently-valid but long-lived (2020..2035 ≈ 15y) cert.
-    let (client_cert, client_key) = make_leaf_with_validity(
+    let credential = make_client_leaf_valid_between(
         &client_ca,
-        vec![uri("spiffe://example.org/agent-1")],
-        true,
-        (2020, 1, 1),
-        (2035, 1, 1),
+        vec![uri(AGENT_1)],
+        &Validity {
+            not_before: (2020, 1, 1),
+            not_after: (2035, 1, 1),
+        },
     );
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    let options = ServerOptions::new(
-        window(),
-        mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
-            .expect("an absolute target"),
-    );
-
-    let server = thread::spawn(move || {
-        serve_once(&listener, config, &options, |_req, _id| {
-            b"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}".to_vec()
-        })
+    let (addr, server) = spawn_server(config, |_req, _id| {
+        b"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}".to_vec()
     });
-    let body = client_round_trip(
+    let body = dial(
         addr,
-        client_config(&server_root, Some((vec![client_cert], client_key))),
+        &server_root,
+        Some((vec![credential.0], credential.1)),
         b"{\"jsonrpc\":\"2.0\",\"id\":1}",
     )
     .expect("handshake succeeds; app-level rejection");
@@ -1099,36 +536,16 @@ fn within_limit_client_cert_is_served() {
     let client_ca = make_ca();
     let (config, server_root) = server_config_for(&client_ca);
     // A now-relative 1860s cert, well inside the 1h ceiling → served.
-    let (client_cert, client_key) = make_leaf(
-        &client_ca,
-        vec![uri("spiffe://example.org/agent-1")],
-        None,
-        true,
-    );
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    let options = ServerOptions::new(
-        window(),
-        mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
-            .expect("an absolute target"),
-    );
-
-    let server = thread::spawn(move || {
-        serve_once(&listener, config, &options, |_req, _id| {
-            b"{\"ok\":true}".to_vec()
-        })
-    });
-    let body = client_round_trip(
+    let (addr, server) = spawn_ok_server(config);
+    let body = dial(
         addr,
-        client_config(&server_root, Some((vec![client_cert], client_key))),
+        &server_root,
+        Some(agent_credential(&client_ca)),
         b"{\"jsonrpc\":\"2.0\",\"id\":1}",
     )
     .expect("round trip");
     let _ = server.join();
-    assert_eq!(
-        body, b"{\"ok\":true}",
-        "a cert within the max lifetime is served"
-    );
+    assert_eq!(body, OK_BODY, "a cert within the max lifetime is served");
 }
 
 // ---------------------------------------------------------------------------
@@ -1147,37 +564,20 @@ fn non_revoked_client_cert_completes_handshake_with_crl_configured() {
     let client_ca = make_ca();
     // The CRL revokes serial 0xBADBAD; this client uses a DIFFERENT serial.
     let crl = make_crl(&client_ca, &[0x00BA_DBAD]);
-    let (config, server_root) = server_config_with_crls_for(&client_ca, vec![crl]);
-    let (client_cert, client_key) =
+    let (config, server_root) = server_config_trusting(&[&client_ca], vec![crl]);
+    let credential =
         make_client_leaf_with_serial(&client_ca, "spiffe://example.org/agent-good", 0x0000_0042);
 
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-
-    let server = thread::spawn(move || {
-        serve_once(
-            &listener,
-            config,
-            &ServerOptions::new(
-                window(),
-                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
-                    .expect("an absolute target"),
-            ),
-            |request, _id| {
-                assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
-                b"{\"ok\":true}".to_vec()
-            },
-        )
-    });
-
-    let response = client_round_trip(
+    let (addr, server) = spawn_server(config, expect_jsonrpc_answer_ok);
+    let response = dial(
         addr,
-        client_config(&server_root, Some((vec![client_cert], client_key))),
-        b"{\"jsonrpc\":\"2.0\"}",
+        &server_root,
+        Some((vec![credential.0], credential.1)),
+        JSONRPC_BODY,
     )
     .expect("non-revoked client round trip");
     assert_eq!(
-        response, b"{\"ok\":true}",
+        response, OK_BODY,
         "a non-revoked client cert from the same CA must still complete the mTLS round-trip"
     );
     server.join().expect("join").expect("serve ok");
@@ -1188,36 +588,22 @@ fn revoked_client_cert_handshake_is_rejected() {
     let client_ca = make_ca();
     let revoked_serial = 0x0000_0099;
     // The client cert and the CRL share the SAME serial → this cert is revoked.
-    let (client_cert, client_key) = make_client_leaf_with_serial(
+    let credential = make_client_leaf_with_serial(
         &client_ca,
         "spiffe://example.org/agent-revoked",
         revoked_serial,
     );
     let crl = make_crl(&client_ca, &[revoked_serial]);
-    let (config, server_root) = server_config_with_crls_for(&client_ca, vec![crl]);
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-
-    let server = thread::spawn(move || {
-        serve_once(
-            &listener,
-            config,
-            &ServerOptions::new(
-                window(),
-                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
-                    .expect("an absolute target"),
-            ),
-            |_req, _id| b"{\"ok\":true}".to_vec(),
-        )
-    });
+    let (config, server_root) = server_config_trusting(&[&client_ca], vec![crl]);
+    let (addr, server) = spawn_ok_server(config);
 
     // The handshake must fail closed: a revoked client cert is rejected by the
     // verifier, so serve_once surfaces an error (the inner is never reached).
-    let _ = client_round_trip(
+    let _ = dial(
         addr,
-        client_config(&server_root, Some((vec![client_cert], client_key))),
-        b"{\"jsonrpc\":\"2.0\"}",
+        &server_root,
+        Some((vec![credential.0], credential.1)),
+        JSONRPC_BODY,
     );
     let result = server.join().expect("join");
     assert!(
@@ -1236,32 +622,18 @@ fn revoked_client_cert_handshake_is_rejected() {
 fn stale_crl_fails_client_handshake_closed() {
     let client_ca = make_ca();
     // A non-revoked client (serial 0x42; the CRL lists a different serial).
-    let (client_cert, client_key) =
+    let credential =
         make_client_leaf_with_serial(&client_ca, "spiffe://example.org/agent-good", 0x0000_0042);
     // Stale: thisUpdate 2020-01-01, nextUpdate 2020-06-01 — long in the past.
     let stale_crl = make_crl_full(&client_ca, &[0x00BA_DBAD], (2020, 1, 1), (2020, 6, 1));
-    let (config, server_root) = server_config_with_crls_for(&client_ca, vec![stale_crl]);
+    let (config, server_root) = server_config_trusting(&[&client_ca], vec![stale_crl]);
+    let (addr, server) = spawn_ok_server(config);
 
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-
-    let server = thread::spawn(move || {
-        serve_once(
-            &listener,
-            config,
-            &ServerOptions::new(
-                window(),
-                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
-                    .expect("an absolute target"),
-            ),
-            |_req, _id| b"{\"ok\":true}".to_vec(),
-        )
-    });
-
-    let _ = client_round_trip(
+    let _ = dial(
         addr,
-        client_config(&server_root, Some((vec![client_cert], client_key))),
-        b"{\"jsonrpc\":\"2.0\"}",
+        &server_root,
+        Some((vec![credential.0], credential.1)),
+        JSONRPC_BODY,
     );
     let result = server.join().expect("join");
     assert!(
@@ -1292,47 +664,21 @@ fn a_client_whose_revocation_status_cannot_be_determined_is_denied() {
     // switch revocation checking ON, so the second CA's leaf reaches the unknown-status
     // decision rather than the no-CRLs-configured path where no check runs at all.
     let crl = make_crl(&covered_ca, &[0x00BA_DBAD]);
-    let server_ca = make_ca();
-    let (server_cert, server_key) =
-        make_leaf(&server_ca, vec![dns("localhost")], Some("localhost"), false);
-    let config = TlsListenerSecurityState::new(
-        vec![
-            covered_ca.cert.der().clone(),
-            uncovered_ca.cert.der().clone(),
-        ],
-        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
-    )
-    .build_exported_key_config(vec![server_cert], server_key, vec![crl])
-    .expect("server config trusting both client CAs");
-    let config = Arc::new(config);
-    let server_root = server_ca.cert.der().clone();
+    let (config, server_root) = server_config_trusting(&[&covered_ca, &uncovered_ca], vec![crl]);
 
     // The client is issued by the CA no CRL covers, and is not revoked by anything.
-    let (client_cert, client_key) = make_client_leaf_with_serial(
+    let credential = make_client_leaf_with_serial(
         &uncovered_ca,
         "spiffe://example.org/agent-uncovered",
         0x0000_0077,
     );
+    let (addr, server) = spawn_ok_server(config);
 
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    let server = thread::spawn(move || {
-        serve_once(
-            &listener,
-            config,
-            &ServerOptions::new(
-                window(),
-                mcp_re_proxy::config_state::RequestTarget::new("https://localhost/")
-                    .expect("an absolute target"),
-            ),
-            |_req, _id| b"{\"ok\":true}".to_vec(),
-        )
-    });
-
-    let _ = client_round_trip(
+    let _ = dial(
         addr,
-        client_config(&server_root, Some((vec![client_cert], client_key))),
-        b"{\"jsonrpc\":\"2.0\"}",
+        &server_root,
+        Some((vec![credential.0], credential.1)),
+        JSONRPC_BODY,
     );
     let result = server.join().expect("join");
     assert!(

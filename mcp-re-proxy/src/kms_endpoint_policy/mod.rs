@@ -38,6 +38,9 @@ use crate::deployment_request::RedactedLocator;
 mod authority;
 use authority::split_authority;
 
+mod host;
+use host::{check_host, check_port};
+
 // The endpoint as a VALUE, and the credential egress it grants — the half of this rule
 // that key sources hold rather than call. Gated with the two backends that make such a
 // request; a build with neither has no credential to send.
@@ -77,46 +80,8 @@ pub(crate) use endpoint::KmsEndpoint;
 /// reaches key-source construction without meeting a parser.
 pub(crate) fn kms_endpoint_authority(value: &str) -> Result<String, String> {
     let locator = RedactedLocator::of(value);
-    let (plaintext, rest) = if let Some(rest) = value.strip_prefix("https://") {
-        (false, rest)
-    } else if let Some(rest) = value.strip_prefix("http://") {
-        (true, rest)
-    } else {
-        return Err(format!(
-            "must be an absolute https:// URL (got {locator}); this endpoint carries the \
-             root-key trust bootstrap and, on GCP, a live bearer token"
-        ));
-    };
-    // RFC 3986: the authority ends at the first `/`, `?` or `#`. A URL parser may end it
-    // EARLIER (a `\` is a path separator for http(s) URLs, and tab/CR/LF are stripped
-    // before parsing), never later — so the host it picks is always inside this span, and
-    // rejecting the span's contents rejects the parser's host too.
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    if authority.is_empty() {
-        return Err(format!("has no host: {locator}"));
-    }
-    // A query or fragment is not part of an endpoint, and it does not survive the way the
-    // GCP client builds its URLs: `{base}/v1/{name}:asymmetricSign` on a base carrying `?`
-    // puts the whole operation path inside the query string. A trailing PATH is allowed —
-    // an emulator legitimately serves the API under one.
-    if let Some(bad) = rest.chars().find(|c| matches!(c, '?' | '#')) {
-        return Err(format!(
-            "must be a bare scheme://host[:port][/path] endpoint; {bad:?} in {locator} is a \
-             query or fragment, which is not part of an authority and is not carried through \
-             the per-operation URLs built from it"
-        ));
-    }
-    // The one refusal that fires PRECISELY when a password is present, so it may name
-    // neither the authority nor the value. The fact an operator needs is the EFFECTIVE
-    // host — the text after the '@', where the request would actually go — and that the
-    // userinfo was there at all. The projection reports exactly those two.
-    if authority.contains('@') {
-        return Err(format!(
-            "carries userinfo, and a URL parser reads the host as the text AFTER the '@': \
-             the request would reach {locator} rather than the endpoint this value appears \
-             to name, sending the root-key bootstrap and, on GCP, a live bearer token there"
-        ));
-    }
+    let (plaintext, rest) = split_scheme(value, &locator)?;
+    let authority = bare_authority(rest, &locator)?;
     let (host, port) = split_host_port(authority, &locator)?;
     if plaintext && !names_this_machine(host) {
         return Err(format!(
@@ -127,11 +92,62 @@ pub(crate) fn kms_endpoint_authority(value: &str) -> Result<String, String> {
              key"
         ));
     }
-    if let Some(port) = port {
-        Ok(format!("{host}:{port}"))
+    Ok(match port {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_string(),
+    })
+}
+
+/// The scheme's plaintext-ness and the text after it.
+fn split_scheme<'a>(value: &'a str, locator: &RedactedLocator) -> Result<(bool, &'a str), String> {
+    if let Some(rest) = value.strip_prefix("https://") {
+        Ok((false, rest))
+    } else if let Some(rest) = value.strip_prefix("http://") {
+        Ok((true, rest))
     } else {
-        Ok(host.to_string())
+        Err(format!(
+            "must be an absolute https:// URL (got {locator}); this endpoint carries the \
+             root-key trust bootstrap and, on GCP, a live bearer token"
+        ))
     }
+}
+
+/// The authority of `rest` — or why `rest` carries more than a bare `host[:port]`.
+///
+/// RFC 3986: the authority ends at the first `/`, `?` or `#`. A URL parser may end it
+/// EARLIER (a `\` is a path separator for http(s) URLs, and tab/CR/LF are stripped
+/// before parsing), never later — so the host it picks is always inside this span, and
+/// rejecting the span's contents rejects the parser's host too.
+///
+/// A query or fragment is not part of an endpoint, and it does not survive the way the
+/// GCP client builds its URLs: `{base}/v1/{name}:asymmetricSign` on a base carrying `?`
+/// puts the whole operation path inside the query string. A trailing PATH is allowed —
+/// an emulator legitimately serves the API under one.
+///
+/// The userinfo refusal fires PRECISELY when a password is present, so it may name
+/// neither the authority nor the value. The fact an operator needs is the EFFECTIVE
+/// host — the text after the '@', where the request would actually go — and that the
+/// userinfo was there at all. The projection reports exactly those two.
+fn bare_authority<'a>(rest: &'a str, locator: &RedactedLocator) -> Result<&'a str, String> {
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() {
+        return Err(format!("has no host: {locator}"));
+    }
+    if let Some(bad) = rest.chars().find(|c| matches!(c, '?' | '#')) {
+        return Err(format!(
+            "must be a bare scheme://host[:port][/path] endpoint; {bad:?} in {locator} is a \
+             query or fragment, which is not part of an authority and is not carried through \
+             the per-operation URLs built from it"
+        ));
+    }
+    if authority.contains('@') {
+        return Err(format!(
+            "carries userinfo, and a URL parser reads the host as the text AFTER the '@': \
+             the request would reach {locator} rather than the endpoint this value appears \
+             to name, sending the root-key bootstrap and, on GCP, a live bearer token there"
+        ));
+    }
+    Ok(authority)
 }
 
 /// Does `host` provably name THIS machine, so a plaintext credential sent to it cannot
@@ -171,97 +187,6 @@ fn split_host_port<'a>(
     Ok((host, port))
 }
 
-/// Whether the host names the machine a reader thinks it names.
-///
-/// A bracketed host's contents must parse as an address — `[foo-bar]` and `[gggg::1]` are
-/// bracket-shaped but are not IPv6 literals, and a URL parser refuses both. Admitting
-/// them here would only move the failure to the first request.
-///
-/// The unbracketed host is held to letters, digits, `.`, `-` and `_`. That is every
-/// character a URL parser reads back as the text itself AND that a resolver can answer
-/// for: `_` is admitted because internal DNS names carry it and `url` reads it verbatim.
-/// The remaining printable ASCII that `url` also reads verbatim — ``! " $ & ' ( ) * + , ; =
-/// ` { } ~`` — is refused as defence in depth: none of it can appear in a name
-/// `getaddrinfo` will resolve, so refusing it costs no reachable endpoint. Everything else
-/// is refused because a parser does NOT read it as written: `# / ? @ \` move the host,
-/// and `% : < > [ ] ^ |` make `url` fail outright.
-fn check_host(host: &str, locator: &RedactedLocator) -> Result<(), String> {
-    if let Some(literal) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
-        if std::net::Ipv6Addr::from_str(literal).is_err() {
-            return Err(format!(
-                "host {host:?} is bracket-shaped but is not an IPv6 address, which a URL parser \
-                 refuses outright: {locator}"
-            ));
-        }
-        return Ok(());
-    }
-    if host.is_empty() {
-        return Err(format!("has no host: {locator}"));
-    }
-    if let Some(bad) = host
-        .chars()
-        .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')))
-    {
-        return Err(format!(
-            "host {host:?} is not a literal name or IP address ({bad:?} is percent-, IDNA- \
-             or separator-encoding, which a URL parser resolves to a DIFFERENT host than \
-             the text reads, or a character no resolver can answer for): {locator}"
-        ));
-    }
-    // A URL parser reads a host whose LAST label is a NUMBER as an IPv4 address rather
-    // than a name, and then rewrites it: `0x7f.1`, `127.1` and `2130706433` all resolve
-    // to 127.0.0.1, and `1.1` to 1.0.0.1. Character-legal, but the address reached is
-    // not the text. So a host of that shape is admitted only when it already IS a plain
-    // dotted quad, where the two agree. No DNS name is affected — a top-level label
-    // cannot be all-numeric, and `url` errors on one that is.
-    let last_label = host
-        .rsplit('.')
-        .find(|label| !label.is_empty())
-        .unwrap_or("");
-    let read_as_an_address = last_label.chars().all(|c| c.is_ascii_digit())
-        || last_label.starts_with("0x")
-        || last_label.starts_with("0X");
-    if read_as_an_address && std::net::Ipv4Addr::from_str(host).is_err() {
-        return Err(format!(
-            "host {host:?} ends in a number, so a URL parser reads it as an IPv4 ADDRESS \
-             and rewrites it (0x7f.1 and 127.1 both become 127.0.0.1); write the dotted \
-             quad the request will actually reach: {locator}"
-        ));
-    }
-    Ok(())
-}
-
-/// Whether the port reached is the port written.
-///
-/// A TCP port is a u16. "all digits" is not the same rule: `:65536` and `:99999999` are
-/// all digits, and `url::Url::parse` refuses both — so admitting them would be a genuine
-/// disagreement about whether the endpoint is usable at all. A leading zero is refused for
-/// the narrower reason that `:0443` parses to 443, making the text and the port reached
-/// differ.
-fn check_port(port: &str, locator: &RedactedLocator) -> Result<(), String> {
-    // Digits ONLY, checked before parsing: `u16::from_str` accepts a leading `+`, so
-    // `:+443` would parse to 443 while `url::Url::parse` refuses it outright.
-    if port.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) {
-        return Err(format!(
-            "port {port:?} is not a number, and a URL parser refuses it outright: \
-             {locator}"
-        ));
-    }
-    if port.len() > 1 && port.starts_with('0') {
-        return Err(format!(
-            "port {port:?} has a leading zero, so the text and the port a URL parser \
-             reads differ: {locator}"
-        ));
-    }
-    if port.parse::<u16>().is_err() {
-        return Err(format!(
-            "port {port:?} is not a TCP port number (0-65535), and a URL parser refuses \
-             it outright: {locator}"
-        ));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     /// LOAD-BEARING: the userinfo refusal fires PRECISELY when a password is present, so
@@ -275,21 +200,12 @@ mod tests {
     /// DEFAULT lane.
     #[test]
     fn the_userinfo_refusal_names_the_effective_host_and_not_the_credential() {
-        const CONFIGURED: &str = "https://cloudkms.googleapis.com:ops@evil.example.com:8443";
-        let message = super::kms_endpoint_authority(CONFIGURED)
-            .expect_err("an endpoint carrying userinfo must be refused");
-        assert!(
-            !message.contains("ops@") && !message.contains("cloudkms.googleapis.com"),
-            "the configured credential reached the refusal: {message}"
-        );
-        assert!(
-            !message.contains(CONFIGURED),
-            "the complete configured endpoint was echoed: {message}"
-        );
-        assert!(
-            message.contains("evil.example.com:8443") && message.contains("userinfo removed"),
-            "an operator must learn where the request would actually go: {message}"
-        );
+        assert_refusal_hides_the_configured_value(Refusal {
+            configured: "https://cloudkms.googleapis.com:ops@evil.example.com:8443",
+            leaked: &["ops@", "cloudkms.googleapis.com"],
+            reported: ("evil.example.com:8443", "userinfo removed"),
+            why: "an endpoint carrying userinfo must be refused",
+        });
     }
 
     /// The second branch, and the one that proves the substitution is not local to the
@@ -297,21 +213,12 @@ mod tests {
     /// clause must not print the token the query carries either.
     #[test]
     fn the_query_refusal_names_neither_the_token_nor_the_configured_endpoint() {
-        const CONFIGURED: &str = "https://kms.example.com:8443/?access_token=hunter2";
-        let message = super::kms_endpoint_authority(CONFIGURED)
-            .expect_err("an endpoint carrying a query must be refused");
-        assert!(
-            !message.contains("hunter2") && !message.contains("access_token"),
-            "the configured token reached the refusal: {message}"
-        );
-        assert!(
-            !message.contains(CONFIGURED),
-            "the complete configured endpoint was echoed: {message}"
-        );
-        assert!(
-            message.contains("kms.example.com:8443") && message.contains("query removed"),
-            "an operator must still learn which endpoint and which component: {message}"
-        );
+        assert_refusal_hides_the_configured_value(Refusal {
+            configured: "https://kms.example.com:8443/?access_token=hunter2",
+            leaked: &["hunter2", "access_token"],
+            reported: ("kms.example.com:8443", "query removed"),
+            why: "an endpoint carrying a query must be refused",
+        });
     }
 
     /// POSITIVE CONTROL for both: the rendering changed, not which endpoints are usable.
@@ -573,99 +480,120 @@ mod tests {
     #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
     #[test]
     fn every_admitted_endpoint_is_read_identically_by_the_client_url_parser() {
+        let admitted: Vec<String> = admission_corpus()
+            .into_iter()
+            .filter(|endpoint| super::kms_endpoint_authority(endpoint).is_ok())
+            .collect();
+        assert!(
+            !admitted.is_empty(),
+            "the corpus admitted nothing; the probe measured nothing"
+        );
+        for endpoint in &admitted {
+            assert_client_reads_the_authority_named(endpoint);
+        }
+        assert_probe_sees_the_client_rewrite_the_text();
+        assert_userinfo_demotes_the_recognisable_half();
+    }
+
+    #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
+    const ADMISSION_CORPUS: [&str; 35] = [
+        "https://kms.us-east-1.amazonaws.com:8443",
+        "https://kms.us-east-1.amazonaws.com",
+        "https://kms.us-east-1.amazonaws.com/",
+        "https://kms.example.com",
+        "https://kms.example.com:65535",
+        "https://kms.example.com:443",
+        "https://kms.example.com:8443",
+        "https://kms.example.com:65536",
+        "https://kms.example.com:0443",
+        "https://kms_internal.example:8443",
+        "http://kms_local:4566",
+        "https://[2001:db8::1]",
+        "https://[2001:db8::1]:8443",
+        "https://[::ffff:192.168.0.1]",
+        "http://[::1]",
+        "http://[::1]:4566",
+        "http://[0:0:0:0:0:0:0:1]:4566",
+        "http://[0:0:0:0:0:0:0:1]",
+        "https://10.0.0.5:8443",
+        "https://192.168.0.1",
+        "http://127.0.0.1:4566",
+        "http://127.0.0.2:4566",
+        "http://127.255.255.254",
+        "http://localhost:4566/",
+        "http://LOCALHOST:4566",
+        "http://128.0.0.1",
+        "http://10.0.0.5:8443",
+        "http://[fe80::1]",
+        "http://localhost.attacker.example",
+        "https://vpce-0abc123-xy1z.kms.us-east-1.vpce.amazonaws.com",
+        "https://kms-2.example.com",
+        "https://KMS.Example.COM:443",
+        "https://kms.example.com.",
+        "http://localhost:80@evil.example.com",
+        "https://kms/internal.example",
+    ];
+
+    /// The punctuation a URL parser reads verbatim, moves the host over, or refuses.
+    #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
+    const HOSTILE_HOST_CHARS: [char; 26] = [
+        '!', '"', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=', '`', '{', '}', '~', '#', '/',
+        '?', '@', '\\', '%', '<', '>', '^', '|',
+    ];
+
+    #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
+    fn admission_corpus() -> Vec<String> {
+        let mut corpus: Vec<String> = ADMISSION_CORPUS.iter().map(|e| (*e).to_owned()).collect();
+        corpus.extend(
+            HOSTILE_HOST_CHARS
+                .iter()
+                .map(|c| format!("https://kms{c}internal.example")),
+        );
+        corpus
+    }
+
+    /// The client reads the same host and port the admitted authority names.
+    #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
+    fn assert_client_reads_the_authority_named(endpoint: &str) {
         use std::net::Ipv6Addr;
         use std::str::FromStr;
 
-        let mut corpus: Vec<String> = [
-            "https://kms.us-east-1.amazonaws.com:8443",
-            "https://kms.us-east-1.amazonaws.com",
-            "https://kms.us-east-1.amazonaws.com/",
-            "https://kms.example.com",
-            "https://kms.example.com:65535",
-            "https://kms.example.com:443",
-            "https://kms.example.com:8443",
-            "https://kms.example.com:65536",
-            "https://kms.example.com:0443",
-            "https://kms_internal.example:8443",
-            "http://kms_local:4566",
-            "https://[2001:db8::1]",
-            "https://[2001:db8::1]:8443",
-            "https://[::ffff:192.168.0.1]",
-            "http://[::1]",
-            "http://[::1]:4566",
-            "http://[0:0:0:0:0:0:0:1]:4566",
-            "http://[0:0:0:0:0:0:0:1]",
-            "https://10.0.0.5:8443",
-            "https://192.168.0.1",
-            "http://127.0.0.1:4566",
-            "http://127.0.0.2:4566",
-            "http://127.255.255.254",
-            "http://localhost:4566/",
-            "http://LOCALHOST:4566",
-            "http://128.0.0.1",
-            "http://10.0.0.5:8443",
-            "http://[fe80::1]",
-            "http://localhost.attacker.example",
-            "https://vpce-0abc123-xy1z.kms.us-east-1.vpce.amazonaws.com",
-            "https://kms-2.example.com",
-            "https://KMS.Example.COM:443",
-            "https://kms.example.com.",
-            "http://localhost:80@evil.example.com",
-            "https://kms/internal.example",
-        ]
-        .iter()
-        .map(|e| (*e).to_owned())
-        .collect();
-        for c in [
-            '!', '"', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=', '`', '{', '}', '~', '#',
-            '/', '?', '@', '\\', '%', '<', '>', '^', '|',
-        ] {
-            corpus.push(format!("https://kms{c}internal.example"));
-        }
-
-        let mut admitted = 0_usize;
-        for endpoint in &corpus {
-            let Ok(authority) = super::kms_endpoint_authority(endpoint) else {
-                continue;
-            };
-            admitted += 1;
-            let (read_host, read_port) = client_reads(endpoint)
-                .unwrap_or_else(|| panic!("{endpoint} is admitted but the client refuses it"));
-            let (host, port) = super::split_authority(&authority, &locator())
-                .unwrap_or_else(|e| panic!("{endpoint}: {e}"));
-            if let Some(inner) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
-                let read = read_host.trim_matches(|c| c == '[' || c == ']');
-                assert_eq!(
-                    Ipv6Addr::from_str(inner).ok(),
-                    Ipv6Addr::from_str(read).ok(),
-                    "{endpoint}: the client reads a different IPv6 host"
-                );
-            } else {
-                assert_eq!(
-                    read_host.to_ascii_lowercase(),
-                    host.to_ascii_lowercase(),
-                    "{endpoint}: the client reads a different host"
-                );
-            }
-            let written = match port {
-                Some(p) => p.parse::<u16>().ok(),
-                None if endpoint.starts_with("https://") => Some(443),
-                None => Some(80),
-            };
+        let authority = super::kms_endpoint_authority(endpoint).expect("admitted");
+        let (read_host, read_port) = client_reads(endpoint)
+            .unwrap_or_else(|| panic!("{endpoint} is admitted but the client refuses it"));
+        let (host, port) = super::split_authority(&authority, &locator())
+            .unwrap_or_else(|e| panic!("{endpoint}: {e}"));
+        if let Some(inner) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+            let read = read_host.trim_matches(|c| c == '[' || c == ']');
             assert_eq!(
-                Some(read_port),
-                written,
-                "{endpoint}: the client reads a different port"
+                Ipv6Addr::from_str(inner).ok(),
+                Ipv6Addr::from_str(read).ok(),
+                "{endpoint}: the client reads a different IPv6 host"
+            );
+        } else {
+            assert_eq!(
+                read_host.to_ascii_lowercase(),
+                host.to_ascii_lowercase(),
+                "{endpoint}: the client reads a different host"
             );
         }
-        assert!(
-            admitted > 0,
-            "the corpus admitted nothing; the probe measured nothing"
+        let written = match port {
+            Some(p) => p.parse::<u16>().ok(),
+            None if endpoint.starts_with("https://") => Some(443),
+            None => Some(80),
+        };
+        assert_eq!(
+            Some(read_port),
+            written,
+            "{endpoint}: the client reads a different port"
         );
+    }
 
-        // POSITIVE CONTROL: the probe sees a disagreement when one exists. The client reads
-        // each of these as a host or port other than the literal text, and the rule refuses
-        // each.
+    /// POSITIVE CONTROL: the probe sees a disagreement when one exists. The client reads
+    /// each of these as a host or port other than the literal text, and the rule refuses
+    /// each.
+    #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
+    fn assert_probe_sees_the_client_rewrite_the_text() {
         for (endpoint, text_host, text_port) in [
             ("https://127.1", "127.1", None),
             ("https://0x7f.1", "0x7f.1", None),
@@ -696,9 +624,12 @@ mod tests {
                 "{endpoint} is read differently by the client and must be refused"
             );
         }
+    }
 
-        // Userinfo demotes the recognisable half: the client connects to the host after the
-        // `@`, which is why the rule refuses every authority carrying one.
+    /// Userinfo demotes the recognisable half: the client connects to the host after the
+    /// `@`, which is why the rule refuses every authority carrying one.
+    #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
+    fn assert_userinfo_demotes_the_recognisable_half() {
         for endpoint in [
             "https://cloudkms.googleapis.com@evil.example.com",
             "https://kms.us-east-1.amazonaws.com@evil.example.com/",
@@ -753,6 +684,34 @@ mod tests {
             .is_some_and(|addr| addr.ip().to_string() != text)
     }
 
+    /// One credential-bearing endpoint, what must not reach its refusal, and what the
+    /// operator must still learn from it.
+    struct Refusal<'a> {
+        configured: &'a str,
+        leaked: &'a [&'a str],
+        reported: (&'a str, &'a str),
+        why: &'a str,
+    }
+
+    fn assert_refusal_hides_the_configured_value(case: Refusal<'_>) {
+        let message = super::kms_endpoint_authority(case.configured).expect_err(case.why);
+        for secret in case.leaked {
+            assert!(
+                !message.contains(secret),
+                "the configured credential reached the refusal: {message}"
+            );
+        }
+        assert!(
+            !message.contains(case.configured),
+            "the complete configured endpoint was echoed: {message}"
+        );
+        let (named, component) = case.reported;
+        assert!(
+            message.contains(named) && message.contains(component),
+            "an operator must still learn where the request goes and which component: {message}"
+        );
+    }
+
     /// A stand-in for the projected whole the predicates below carry into their refusals.
     /// Each predicate is being asked about its OWN argument here; the rendered whole is a
     /// constant for every case, so one is shared rather than restated per call.
@@ -795,35 +754,5 @@ mod tests {
     fn split_authority_refuses_a_bracket_that_does_not_close_or_is_followed_by_junk() {
         assert!(super::split_authority("[::1", &locator()).is_err());
         assert!(super::split_authority("[::1]x443", &locator()).is_err());
-    }
-
-    #[test]
-    fn check_host_refuses_a_bracket_shaped_host_that_is_not_an_address() {
-        assert!(super::check_host("[::1]", &locator()).is_ok());
-        assert!(super::check_host("[foo-bar]", &locator()).is_err());
-        assert!(super::check_host("[gggg::1]", &locator()).is_err());
-    }
-
-    #[test]
-    fn check_host_refuses_a_host_a_parser_would_rewrite_to_a_different_address() {
-        // The `127.1` half of the module invariant: character-legal, but the address
-        // reached is not the text. A plain dotted quad is admitted because there the two
-        // agree, and a name is admitted because a parser does not rewrite it.
-        assert!(super::check_host("127.0.0.1", &locator()).is_ok());
-        assert!(super::check_host("kms.example.internal", &locator()).is_ok());
-        assert!(super::check_host("127.1", &locator()).is_err());
-        assert!(super::check_host("0x7f.1", &locator()).is_err());
-        assert!(super::check_host("2130706433", &locator()).is_err());
-    }
-
-    #[test]
-    fn check_port_refuses_a_port_whose_text_and_value_differ() {
-        // The `:0443` half of the same invariant.
-        assert!(super::check_port("443", &locator()).is_ok());
-        assert!(super::check_port("0", &locator()).is_ok());
-        assert!(super::check_port("0443", &locator()).is_err());
-        assert!(super::check_port("+443", &locator()).is_err());
-        assert!(super::check_port("65536", &locator()).is_err());
-        assert!(super::check_port("", &locator()).is_err());
     }
 }
