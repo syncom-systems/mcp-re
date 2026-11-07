@@ -71,7 +71,7 @@ pub(super) const SOURCE_ENVS: &[(&str, &str)] = &[
     // ADR-MCPS-047: stateless cross-replica MRT continuation — open-on-A/answer-on-B
     // + fail-closed splice/one-shot binding.
     (
-        "mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test.rs",
+        "mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test/binding_cases.rs",
         "MCP_RE_SRC_MRT_CONTINUATION",
     ),
     // MCPS-72 (#252): the KMS-lifecycle offline negatives are in-crate

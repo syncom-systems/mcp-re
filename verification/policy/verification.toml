@@ -4452,8 +4452,8 @@ tested_symbols = [
   "//mcp-re-proxy:integration_test#exchange_transition_ownership_test::every_exchange_event_reaches_the_machine_by_exactly_one_route",
   "//mcp-re-proxy:integration_test#exchange_transition_ownership_test::the_refusal_terminal_is_entered_only_by_refuse_from_the_disposition",
   "//mcp-re-proxy:integration_test#exchange_transition_ownership_test::the_refusal_rule_would_catch_an_unauthorized_entry",
-  "//mcp-re-proxy:integration_async_test#mrt_continuation_serving_test::a_notification_the_inner_plane_never_delivered_is_not_acknowledged",
-  "//mcp-re-proxy:integration_async_test#mrt_continuation_serving_test::a_delivered_notification_is_still_acknowledged_with_a_202",
+  "//mcp-re-proxy:integration_async_test#mrt_continuation_serving_test::notification_cases::a_notification_the_inner_plane_never_delivered_is_not_acknowledged",
+  "//mcp-re-proxy:integration_async_test#mrt_continuation_serving_test::notification_cases::a_delivered_notification_is_still_acknowledged_with_a_202",
 ]
 
 [[unit]]
