@@ -5838,7 +5838,7 @@ id = "M215-proxy-a-host-a-parser-would-rewrite-is-refused"
 unit = "proxy.kms_endpoint_authority"
 theorem = "THM-0089"
 conjunct = "a host whose last label is a number is admitted only when it already IS the address it resolves to"
-path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"
+path = "mcp-re-proxy/src/kms_endpoint_policy/host.rs"
 anchor = """
     if read_as_an_address && std::net::Ipv4Addr::from_str(host).is_err() {
 """
@@ -5846,7 +5846,7 @@ weakening = """
     if false {
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::check_host_refuses_a_host_a_parser_would_rewrite_to_a_different_address",
+  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::host::tests::check_host_refuses_a_host_a_parser_would_rewrite_to_a_different_address",
   "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::a_host_that_ends_in_a_number_must_already_be_the_address_it_resolves_to",
 ]
 note = """
@@ -5866,7 +5866,7 @@ id = "M216-proxy-the-host-allowlist-is-what-a-resolver-can-answer-for"
 unit = "proxy.kms_endpoint_authority"
 theorem = "THM-0089"
 conjunct = "a host carrying percent-, IDNA- or separator-encoding is refused rather than resolved to a different host than the text reads"
-path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"
+path = "mcp-re-proxy/src/kms_endpoint_policy/host.rs"
 anchor = """
         .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')))
 """
@@ -5895,7 +5895,7 @@ id = "M217-proxy-a-port-whose-text-and-value-differ-is-refused"
 unit = "proxy.kms_endpoint_authority"
 theorem = "THM-0089"
 conjunct = "a port whose text and the value a URL parser reads differ is refused"
-path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"
+path = "mcp-re-proxy/src/kms_endpoint_policy/host.rs"
 anchor = """
     if port.len() > 1 && port.starts_with('0') {
 """
@@ -5903,7 +5903,7 @@ weakening = """
     if false {
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::check_port_refuses_a_port_whose_text_and_value_differ",
+  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::host::tests::check_port_refuses_a_port_whose_text_and_value_differ",
 ]
 note = """
 THE LEADING-ZERO REFUSAL IS SOLE for its own shape, and separate from the digits-only check
@@ -8901,7 +8901,7 @@ id = "M312-proxy-the-credential-is-minted-under-the-planned-issuer"
 unit = "proxy.startup_plan_provenance"
 theorem = "THM-0077"
 conjunct = "the issuer kid in the minted credential is the one that was PLANNED, not one the signing plan re-derived from configuration"
-path = "mcp-re-proxy/src/startup_plan/mod.rs"
+path = "mcp-re-proxy/src/startup_plan/signing_plan.rs"
 anchor = "                issuer_kid: authority.kid().to_string(),\n"
 weakening = "                issuer_kid: {\n                    let _ = &authority;\n                    config.state().delegated_signing().issuer_kid().to_string()\n                },\n"
 expect_red = [
@@ -8926,7 +8926,7 @@ id = "M313-proxy-the-trust-epoch-build-refusal-is-stated-once"
 unit = "proxy.startup_plan_legality"
 theorem = "THM-0077"
 conjunct = "a networked trust-epoch source in a build that cannot carry one REFUSES, once, naming both consequences"
-path = "mcp-re-proxy/src/startup_plan/mod.rs"
+path = "mcp-re-proxy/src/startup_plan/trust_epoch_plan.rs"
 anchor = "            TrustEpochPlan::Redis { .. } if cfg!(feature = \"redis_replay\") => None,\n"
 weakening = "            TrustEpochPlan::Redis { .. } if true => None,\n"
 expect_red = [

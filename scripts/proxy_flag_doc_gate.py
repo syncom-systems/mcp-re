@@ -38,419 +38,45 @@ Run:  python3 scripts/proxy_flag_doc_gate.py
 
 from __future__ import annotations
 
-import re
 import sys
-import tempfile
 from pathlib import Path
-from typing import NamedTuple
 
-REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-CLI_MODULE = "mcp-re-proxy/src/cli.rs"
-
-# Flag literals also live in `cli.rs`'s own child modules: a family parsed behind one
-# delegating arm states its spellings there, and a gate reading only `cli.rs` would report
-# every one of those flags as non-existent. The set is the parser, wherever the parser is.
-CLI_MODULE_DIR = "mcp-re-proxy/src/cli"
-
-AUDITOR_MODULE = "mcp-re-proxy/src/transparency/auditor/invocation/mod.rs"
-
-# Documentation roots. `docs/archive/` is history by definition and records the surface as
-# it was; `docs/security/round-*/` holds captured gate logs, not instructions.
-#
-# Repo-root markdown is in scope too: README.md and CONTRIBUTING.md are the first
-# documents an operator reads, and a scan that stops at `docs/` would never see a command
-# line in either.
-DOC_ROOTS = ("docs", "deploy")
-SKIP_PARTS = ("archive", "grilling-seed")
-SKIP_PATTERNS = (re.compile(r"docs/security/round-"),)
-
-# Floors on what the scan actually selected. A gate whose document set collapses to zero
-# reports the same green as one that examined everything, so the size of the set is part
-# of what has to hold. Each tool's `min_launch_docs` is the load-bearing one: markdown
-# files exist in quantity, documents that actually LAUNCH a tool are the population under
-# test.
-MIN_SCANNED_DOCS = 40
-
-# A fenced block: ```[lang]\n ... \n```
-FENCE = re.compile(r"```[^\n]*\n(.*?)```", re.S)
-
-# The proxy is being LAUNCHED, as opposed to merely named. Two spellings reach it: the
-# Bazel target / built binary `mcp_re_proxy_cli`, and the installed `mcp-re-proxy` binary
-# at the head of a command. Everything after that token — past an optional `--` separator
-# — is the proxy's own argv. Anchoring on the invocation rather than on the block keeps
-# `helm --set`, `kubectl`, `gcloud` and `cargo test -- --nocapture` out, all of which
-# appear in blocks that also mention the proxy.
-def launches(target: str, binary: str) -> re.Pattern[str]:
-    return re.compile(
-        r"(?:"
-        # The Bazel target or the built CLI, wherever it appears in the command.
-        rf"[\w./${{}}-]*{re.escape(target)}"
-        # The installed binary, only as the command being run. Anywhere else it is a crate
-        # name (`cargo test -p mcp-re-proxy`), a chart name (`helm upgrade mcp-re-proxy`)
-        # or a directory, and the flags around it are some other tool's.
-        rf"|^\s*(?:\$\s+)?(?:[A-Z_][A-Z0-9_]*=\S+\s+)*(?:\./|/\S*/)?{re.escape(binary)}"
-        r")(?:\s+--(?=\s)|)(?=\s)"
-    )
-
-
-class Tool(NamedTuple):
-    """One executable, its parser, and the floor its documentation must clear."""
-
-    binary: str
-    target: str
-    #: Files whose `"--flag"` literals ARE this tool's accepted set.
-    sources: tuple[str, ...]
-    #: Directories every `*.rs` of which is also part of the parser.
-    source_dirs: tuple[str, ...]
-    #: Below this many literals the gate is no longer reading the parser it thinks it is.
-    min_flags: int
-    #: A tool nothing documents is a tool whose guide silently left the scan.
-    min_launch_docs: int
-
-    def launch_pattern(self) -> re.Pattern[str]:
-        return launches(self.target, self.binary)
-
-
-TOOLS = (
-    Tool("mcp-re-proxy", "mcp_re_proxy_cli", (CLI_MODULE,), (CLI_MODULE_DIR,), 20, 2),
-    # The auditor's parser is one file and its surface is deliberately small: nine flags,
-    # every one required except the audit instant. The floor is set below that so a flag
-    # being removed is a gate failure rather than a floor failure.
-    Tool("mcp-re-auditor", "mcp_re_auditor_cli", (AUDITOR_MODULE,), (), 8, 1),
+from _proxy_flag_doc.check import check  # noqa: E402,F401
+from _proxy_flag_doc.cli import verdict  # noqa: E402
+from _proxy_flag_doc.config import (  # noqa: E402,F401
+    AUDITOR_MODULE,
+    CLI_FLAG_LITERAL,
+    CLI_MODULE,
+    CLI_MODULE_DIR,
+    DOC_ROOTS,
+    FENCE,
+    FLAG,
+    LAUNCHER_FLAGS,
+    MIN_SCANNED_DOCS,
+    REPO,
+    SKIP_PARTS,
+    SKIP_PATTERNS,
+    SUPERSEDED,
+    SUPERSEDED_DOCS,
+    TOOLS,
+    Tool,
+    launches,
 )
-
-# `--flag` but not `--` alone and not a `--flag=` fragment inside a URL.
-FLAG = re.compile(r"(?<![\w=/-])(--[a-z0-9][a-z0-9-]*)")
-
-# Every `"--flag"` string literal in cli.rs. The parser matches on these, so their
-# presence is exactly the question "does this flag exist".
-CLI_FLAG_LITERAL = re.compile(r'"(--[a-z0-9][a-z0-9-]*)"')
-
-# `bazel run //target:mcp_re_proxy_cli --features x -- --bind y` puts the launcher's own
-# flags AFTER the target name and before the `--`, so anchoring on the invocation is not
-# enough to exclude them. Kept to flags Bazel and Cargo actually take in that position —
-# every entry here is a hole in the check, so speculative ones do not belong.
-LAUNCHER_FLAGS = frozenset(
-    {
-        "--features",
-        "--release",
-        "--config",
-        "--compilation_mode",
-        "--test_output",
-    }
+from _proxy_flag_doc.scan import (  # noqa: E402,F401
+    doc_files,
+    documented_flags,
+    is_superseded,
+    known_flags,
 )
-
-
-def known_flags(repo: Path, tool: Tool) -> set[str]:
-    """Every `"--flag"` literal in `tool`'s parser."""
-    source = ""
-    for rel in tool.sources:
-        path = repo / rel
-        if path.exists():
-            source += path.read_text(encoding="utf-8")
-    for rel in tool.source_dirs:
-        for child in sorted((repo / rel).glob("*.rs")):
-            source += child.read_text(encoding="utf-8")
-    return set(CLI_FLAG_LITERAL.findall(source))
-
-
-def documented_flags(markdown: str, launch: re.Pattern[str]) -> set[str]:
-    """Every flag on a command line that launches one tool.
-
-    Shell continuations are joined first, so a multi-line invocation is one command. Only
-    the argv AFTER the binary counts: `bazel run //t:mcp_re_proxy_cli --features x --
-    --bind y` gives `--bind`, not `--features`.
-    """
-    found: set[str] = set()
-    for block in FENCE.findall(markdown):
-        for command in re.sub(r"\\\n\s*", " ", block).splitlines():
-            match = launch.search(command)
-            if not match:
-                continue
-            argv = command[match.end() :]
-            found |= {f for f in FLAG.findall(argv) if f not in LAUNCHER_FLAGS}
-    return found
-
-
-# A document that opens by declaring itself superseded is describing a surface that is
-# gone ON PURPOSE, and its command lines are the evidence for that claim.
-#
-# The banner alone does not grant the exemption. A check a document can opt out of by
-# writing one line about itself is a check any live operator guide can silence, so the
-# exemption is held HERE, by path, and the banner and the entry must agree:
-#
-#   listed + banner   -> skipped, and reported
-#   banner, unlisted  -> FAIL; the document is claiming an exemption the gate did not give
-#   listed, no banner -> FAIL; the entry outlived the document's own claim about itself
-SUPERSEDED = re.compile(r"^>\s*\*\*[⚠!]?\s*Superseded", re.M)
-
-SUPERSEDED_DOCS = frozenset(
-    {
-        "docs/dogfood-runbook.md",
-        "docs/spec/v0.3-claim-matrix.md",
-    }
-)
-
-
-def is_superseded(markdown: str) -> bool:
-    return bool(SUPERSEDED.search(markdown[:4000]))
-
-
-def doc_files(repo: Path) -> list[Path]:
-    files: list[Path] = sorted(repo.glob("*.md"))
-    for root in DOC_ROOTS:
-        for path in sorted((repo / root).rglob("*.md")):
-            rel = path.relative_to(repo).as_posix()
-            if any(part in SKIP_PARTS for part in path.parts):
-                continue
-            if any(p.search(rel) for p in SKIP_PATTERNS):
-                continue
-            files.append(path)
-    return files
-
-
-def check(repo: Path, skipped: list[str] | None = None, floors: bool = True) -> list[str]:
-    """Every problem in `repo`.
-
-    `floors` is off only for the selftest's single-document fixtures, which are about the
-    per-document logic rather than the size of the real corpus; the floor itself has its
-    own case.
-    """
-    skipped = skipped if skipped is not None else []
-    known: dict[str, set[str]] = {}
-    for tool in TOOLS:
-        flags = known_flags(repo, tool)
-        if len(flags) < tool.min_flags:
-            return [
-                f"{tool.binary}: found only {len(flags)} flag literals in "
-                f"{', '.join(tool.sources)} — the parser's shape changed and this gate is "
-                f"no longer reading it. Fix the gate, do not skip it."
-            ]
-        known[tool.binary] = flags
-    problems: list[str] = []
-    files = doc_files(repo)
-    launch_docs: dict[str, int] = {tool.binary: 0 for tool in TOOLS}
-    for path in files:
-        rel = path.relative_to(repo).as_posix()
-        text = path.read_text(encoding="utf-8")
-        banner, listed = is_superseded(text), rel in SUPERSEDED_DOCS
-        if banner and listed:
-            skipped.append(rel)
-            continue
-        if banner:
-            problems.append(
-                f"{rel}: carries a `> **Superseded` banner but is not in this gate's "
-                f"SUPERSEDED_DOCS. A document does not exempt itself from the check its "
-                f"command lines exist to pass; add it here if the exemption is intended."
-            )
-            continue
-        if listed:
-            problems.append(
-                f"{rel}: is in SUPERSEDED_DOCS but no longer declares itself superseded. "
-                f"Remove the entry so the document is scanned again."
-            )
-        for tool in TOOLS:
-            flags = documented_flags(text, tool.launch_pattern())
-            if flags:
-                launch_docs[tool.binary] += 1
-            for flag in sorted(flags - known[tool.binary]):
-                problems.append(
-                    f"{rel}: `{flag}` is used in a {tool.binary} command line but "
-                    f"{', '.join(tool.sources)} does not parse it. Remove it, or say in "
-                    f"the surrounding prose that it was removed (prose is not scanned; "
-                    f"command lines are)."
-                )
-    if floors and len(files) < MIN_SCANNED_DOCS:
-        problems.append(
-            f"the scan selected only {len(files)} documents (floor {MIN_SCANNED_DOCS}) — "
-            f"the document set collapsed, so a green here measured nothing. Fix the "
-            f"selection, do not lower the floor."
-        )
-    for tool in TOOLS:
-        if floors and launch_docs[tool.binary] < tool.min_launch_docs:
-            problems.append(
-                f"only {launch_docs[tool.binary]} scanned document launches "
-                f"{tool.binary} (floor {tool.min_launch_docs}) — either the invocation "
-                f"pattern stopped matching or the guides moved out of scope. Fix the "
-                f"selection, do not lower the floor."
-            )
-    return problems
-
-
-SELFTEST_CLI = "\n".join(f'    "{f}" => x,' for f in [f"--flag{i}" for i in range(25)])
-SELFTEST_CLI += '\n    "--bind" => x,\n    "--trust" => x,\n'
-
-SELFTEST_AUDITOR = "\n".join(
-    f'    "{f}" => x,'
-    for f in [f"--aud-flag{i}" for i in range(8)] + ["--retained-evidence-dir", "--hop"]
-)
-
-
-def _write_parsers(repo: Path) -> None:
-    """Every tool's parser source, so a case exercises the tool it names and not a gate
-    that fell back to reading one file for both."""
-    for rel, text in ((CLI_MODULE, SELFTEST_CLI), (AUDITOR_MODULE, SELFTEST_AUDITOR)):
-        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
-        (repo / rel).write_text(text, encoding="utf-8")
-
-
-def selftest() -> int:
-    """The gate must catch a removed flag, must not cry wolf, and must not report a
-    green over a document set that collapsed or exempted itself."""
-    cases: list[tuple[str, str, bool] | tuple[str, str, bool, str]] = [
-        (
-            "a proxy block using a known flag passes",
-            "```sh\nmcp_re_proxy_cli --bind 127.0.0.1:8600\n```\n",
-            True,
-        ),
-        (
-            "a proxy block using an unknown flag fails",
-            "```sh\nmcp_re_proxy_cli --bind 127.0.0.1:8600 --gone-flag x\n```\n",
-            False,
-        ),
-        (
-            "prose naming a removed flag is not scanned",
-            "The `--gone-flag` option was removed in v0.13.\n",
-            True,
-        ),
-        (
-            "a block that does not invoke the proxy is not scanned",
-            "```sh\ngcloud container clusters create c --num-nodes 3 --gone-flag x\n```\n",
-            True,
-        ),
-        (
-            "launcher flags before the `--` separator are not the proxy's",
-            "```sh\nbazel run //mcp-re-proxy:mcp_re_proxy_cli --features x -- --bind y\n```\n",
-            True,
-        ),
-        (
-            "an UNLISTED document cannot exempt itself with a Superseded banner",
-            "> **⚠ Superseded serving model.**\n\n"
-            "```sh\nmcp_re_proxy_cli --gone-flag x\n```\n",
-            False,
-        ),
-        (
-            "the crate name in a cargo command is not an invocation",
-            "```sh\ncargo test -p mcp-re-proxy --gone-flag x\n```\n",
-            True,
-        ),
-        (
-            "repo-root markdown is scanned",
-            "```sh\nmcp_re_proxy_cli --gone-flag x\n```\n",
-            False,
-            "README.md",
-        ),
-        (
-            "an auditor block using a known auditor flag passes",
-            "```sh\nmcp-re-auditor --retained-evidence-dir /archive --hop abc\n```\n",
-            True,
-        ),
-        (
-            "an auditor block using an unknown flag fails",
-            "```sh\nmcp-re-auditor --retained-evidence-dir /archive --gone-flag x\n```\n",
-            False,
-        ),
-        # The point of checking each tool against its OWN parser: `--bind` exists, and
-        # the auditor does not take it. A gate that pooled the two vocabularies would
-        # report this command line — which does not run — as green.
-        (
-            "a proxy flag in an auditor command line fails",
-            "```sh\nmcp-re-auditor --bind 127.0.0.1:8600\n```\n",
-            False,
-        ),
-        (
-            "an auditor flag in a proxy command line fails",
-            "```sh\nmcp_re_proxy_cli --retained-evidence-dir /archive\n```\n",
-            False,
-        ),
-    ]
-    failures = 0
-    for case in cases:
-        name, markdown, should_pass = case[0], case[1], case[2]
-        where = case[3] if len(case) > 3 else "docs/case.md"
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp)
-            _write_parsers(repo)
-            (repo / "docs").mkdir()
-            (repo / "deploy").mkdir()
-            target = repo / where
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(markdown, encoding="utf-8")
-            problems = check(repo, floors=False)
-        passed = not problems
-        if passed != should_pass:
-            failures += 1
-            print(f"SELFTEST FAIL: {name}: got {problems or 'no problems'}")
-        else:
-            print(f"selftest ok: {name}")
-
-    # A LISTED document with the banner is skipped; the same document without the banner
-    # is scanned again and its stale entry reported.
-    listed = sorted(SUPERSEDED_DOCS)[0]
-    for name, markdown, should_pass in (
-        (
-            "a listed document declaring itself superseded is skipped",
-            "> **⚠ Superseded serving model.**\n\n"
-            "```sh\nmcp_re_proxy_cli --gone-flag x\n```\n",
-            True,
-        ),
-        (
-            "a listed document that dropped its banner is reported, not skipped",
-            "```sh\nmcp_re_proxy_cli --bind 127.0.0.1:8600\n```\n",
-            False,
-        ),
-    ):
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp)
-            _write_parsers(repo)
-            (repo / "docs").mkdir()
-            (repo / "deploy").mkdir()
-            target = repo / listed
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(markdown, encoding="utf-8")
-            problems = check(repo, floors=False)
-        passed = not problems
-        if passed != should_pass:
-            failures += 1
-            print(f"SELFTEST FAIL: {name}: got {problems or 'no problems'}")
-        else:
-            print(f"selftest ok: {name}")
-
-    # The floors: an empty corpus must not read as a pass.
-    with tempfile.TemporaryDirectory() as tmp:
-        repo = Path(tmp)
-        _write_parsers(repo)
-        (repo / "docs").mkdir()
-        (repo / "deploy").mkdir()
-        problems = check(repo)
-        if len(problems) != 1 + len(TOOLS) or not any("collapsed" in p for p in problems):
-            failures += 1
-            print(f"SELFTEST FAIL: an empty document set was not refused: {problems}")
-        else:
-            print("selftest ok: an empty document set is refused, not reported green")
-
-    return 1 if failures else 0
+from _proxy_flag_doc.selftest import selftest  # noqa: E402
 
 
 def main() -> int:
     if "--selftest" in sys.argv[1:]:
         return selftest()
-    skipped: list[str] = []
-    problems = check(REPO, skipped)
-    for rel in skipped:
-        print(f"skipped (declares itself superseded): {rel}")
-    if problems:
-        print("cli-flag documentation gate FAILED:", file=sys.stderr)
-        for p in problems:
-            print(f"  - {p}", file=sys.stderr)
-        return 1
-    print(
-        f"cli-flag documentation gate: every documented flag exists for the tool whose "
-        f"command line it is on ({', '.join(t.binary for t in TOOLS)}; "
-        f"{len(doc_files(REPO))} documents scanned, {len(skipped)} skipped)"
-    )
-    return 0
+    return verdict()
 
 
 if __name__ == "__main__":

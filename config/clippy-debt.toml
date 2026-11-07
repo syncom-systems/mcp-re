@@ -182,10 +182,11 @@ count = 0
 # and the deploy image ships the AWS/GCP KMS and Redis ones. MCPRE-176's zero held for the
 # default feature set only. The count is the measured one, pinned: it may only fall.
 # 32 -> 31: measured at e4faa23c, after the r12 fixes and the retired sync replay stores.
+# 31 -> 29: the ocsp split and the proxy decompositions before it removed sites; count measured by this gate.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "arithmetic_side_effects"
-count = 31
+count = 29
 
 # 72 -> 71: R11-014 replaced the enforcer's `.map(|_| ())` tail, which discarded the
 # verdict, with a match on its two arms. The nesting site went with the discarded value.
@@ -195,10 +196,11 @@ count = 31
 # skip branch inside its loop is gone.
 # 78 -> 77: #1205 (ADR-MCPRE-070 G2) — the reply tail moved into the one success exit;
 # count measured by this gate.
+# 77 -> 74: the ocsp split and the proxy decompositions before it removed sites; count measured by this gate.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 77
+count = 74
 
 # 0 -> 4: the same measurement correction as `arithmetic_side_effects` above; 1 -> 0 when
 # the trust-epoch reader's second, GET-based read path was folded into the one MGET read.
@@ -208,10 +210,11 @@ lint = "expect_used"
 count = 0
 
 # 0 -> 21: the same measurement correction as `arithmetic_side_effects` above.
+# 13 -> 11: the ocsp split and the proxy decompositions before it removed sites; count measured by this gate.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "indexing_slicing"
-count = 13
+count = 11
 
 # 0 -> 3: the same measurement correction as `arithmetic_side_effects` above.
 # 3 -> 2: MCPRE-196 — the admission owner projects its enforcer, so the capability no longer

@@ -133,7 +133,7 @@ def load_probes(registry: Path) -> list[dict]:
     return probes
 
 
-def _validate(where: str, probe: dict, seen: set[str]) -> None:
+def _validate_keys(where: str, probe: dict) -> None:
     kind = probe.get("kind")
     if kind not in KINDS:
         raise ManifestError(
@@ -148,6 +148,9 @@ def _validate(where: str, probe: dict, seen: set[str]) -> None:
     missing = allowed - _OPTIONAL - set(probe)
     if missing:
         raise ManifestError(f"{where}: missing required key(s) {sorted(missing)}")
+
+
+def _validate_identity(where: str, probe: dict, seen: set[str]) -> None:
     if probe["id"] in seen:
         raise ManifestError(f"{where}: duplicate probe id {probe['id']!r}")
     seen.add(probe["id"])
@@ -157,16 +160,42 @@ def _validate(where: str, probe: dict, seen: set[str]) -> None:
             f"exact invariant whose construction boundary is closed, so a probe that does "
             f"not state one cannot be said to attack the right boundary."
         )
-    _validate_producer_paths(where, probe)
+
+
+def _validate_error_code(where: str, probe: dict) -> None:
     if not str(probe["error_code"]).startswith("E"):
         raise ManifestError(
             f"{where}: `error_code` is {probe['error_code']!r}. The expected refusal is a "
             f"specific rustc error code, not merely 'does not compile' — the weak form is "
             f"satisfied by a typo, a missing import or a broken fixture."
         )
+
+
+def _validate(where: str, probe: dict, seen: set[str]) -> None:
+    _validate_keys(where, probe)
+    _validate_identity(where, probe, seen)
+    _validate_producer_paths(where, probe)
+    _validate_error_code(where, probe)
     _validate_marker(where, probe)
     _validate_site(where, probe)
     _validate_relaxation(where, probe)
+
+
+def _check_edit_names_owned_source(label: str, edit: dict, probe: dict, srcs: list[str]) -> None:
+    if str(edit["path"]) not in srcs:
+        raise ManifestError(
+            f"{label} names {edit['path']!r}, which "
+            f"{probe['crate']} does not compile. A relaxation that edits nothing the "
+            f"owner builds opens no boundary, and the construction would still be refused."
+        )
+
+
+def _check_edit(label: str, edit: object, probe: dict, srcs: list[str]) -> None:
+    if not isinstance(edit, dict) or set(edit) != _RELAXATION_KEYS:
+        raise ManifestError(f"{label} must have exactly {sorted(_RELAXATION_KEYS)}")
+    _check_edit_names_owned_source(label, edit, probe, srcs)
+    if not str(edit["old"]) or edit["old"] == edit["new"]:
+        raise ManifestError(f"{label} changes nothing")
 
 
 def _validate_relaxation(where: str, probe: dict) -> None:
@@ -186,18 +215,7 @@ def _validate_relaxation(where: str, probe: dict) -> None:
         raise ManifestError(f"{where}: `relaxation` must be a non-empty array of edits")
     row = _rust_targets.target(str(probe["crate"])) or {"srcs": []}
     for index, edit in enumerate(edits, 1):
-        if not isinstance(edit, dict) or set(edit) != _RELAXATION_KEYS:
-            raise ManifestError(
-                f"{where}: `relaxation` edit #{index} must have exactly {sorted(_RELAXATION_KEYS)}"
-            )
-        if str(edit["path"]) not in row["srcs"]:
-            raise ManifestError(
-                f"{where}: `relaxation` edit #{index} names {edit['path']!r}, which "
-                f"{probe['crate']} does not compile. A relaxation that edits nothing the "
-                f"owner builds opens no boundary, and the construction would still be refused."
-            )
-        if not str(edit["old"]) or edit["old"] == edit["new"]:
-            raise ManifestError(f"{where}: `relaxation` edit #{index} changes nothing")
+        _check_edit(f"{where}: `relaxation` edit #{index}", edit, probe, row["srcs"])
 
 
 def relax(text: str, path: str, edits: list[dict]) -> str:
@@ -244,6 +262,25 @@ def probe_module(probe: dict) -> str:
     return f"structural_probe_{str(probe['id']).lower()}"
 
 
+def _validate_boundary_site(where: str, probe: dict, row: dict) -> None:
+    path = Path(str(probe["insertion_path"]))
+    if path.parent.as_posix() != f"{row['package']}/{PROBE_PACKAGE}" or path.suffix != ".rs":
+        raise ManifestError(
+            f"{where}: a boundary probe's construction is its own crate at "
+            f"`{row['package']}/{PROBE_PACKAGE}/<name>.rs`, but `insertion_path` is "
+            f"{probe['insertion_path']!r}."
+        )
+
+
+def _validate_incrate_site(where: str, probe: dict, row: dict) -> None:
+    if str(probe["insertion_parent"]) not in row["srcs"]:
+        raise ManifestError(
+            f"{where}: `insertion_parent` {probe['insertion_parent']!r} is not a source "
+            f"{probe['crate']} compiles, so a construction written into it would be read by "
+            f"no compiler, and its silence would read as an open boundary."
+        )
+
+
 def _validate_site(where: str, probe: dict) -> None:
     """The placement decides which proposition the probe attacks, so it is checked.
 
@@ -259,23 +296,12 @@ def _validate_site(where: str, probe: dict) -> None:
             f"graph, so the probe names no owner to attack."
         )
     if probe["kind"] == "crate-boundary-compile-fail":
-        path = Path(str(probe["insertion_path"]))
-        if path.parent.as_posix() != f"{row['package']}/{PROBE_PACKAGE}" or path.suffix != ".rs":
-            raise ManifestError(
-                f"{where}: a boundary probe's construction is its own crate at "
-                f"`{row['package']}/{PROBE_PACKAGE}/<name>.rs`, but `insertion_path` is "
-                f"{probe['insertion_path']!r}."
-            )
-        return
-    if str(probe["insertion_parent"]) not in row["srcs"]:
-        raise ManifestError(
-            f"{where}: `insertion_parent` {probe['insertion_parent']!r} is not a source "
-            f"{probe['crate']} compiles, so a construction written into it would be read by "
-            f"no compiler, and its silence would read as an open boundary."
-        )
+        _validate_boundary_site(where, probe, row)
+    else:
+        _validate_incrate_site(where, probe, row)
 
 
-def _validate_producer_paths(where: str, probe: dict) -> None:
+def _producer_table(where: str, probe: dict) -> dict:
     table = probe["producer_paths"]
     if not isinstance(table, dict):
         raise ManifestError(
@@ -285,6 +311,11 @@ def _validate_producer_paths(where: str, probe: dict) -> None:
     unknown = set(table) - set(PRODUCER_PATHS)
     if unknown:
         raise ManifestError(f"{where}: `producer_paths` has unknown route(s) {sorted(unknown)}")
+    return table
+
+
+def _validate_producer_paths(where: str, probe: dict) -> None:
+    table = _producer_table(where, probe)
     missing = [route for route in PRODUCER_PATHS if not str(table.get(route, "")).strip()]
     if missing:
         raise ManifestError(
@@ -312,6 +343,20 @@ def marker_line(probe: dict) -> int | None:
     return hits[0] if len(hits) == 1 else None
 
 
+def _refuses_at(diagnostic: dict, relative_path: str, line: int) -> bool:
+    """Whether a diagnostic's primary span sits on `line` of `relative_path`."""
+    return any(
+        span.get("is_primary")
+        and span.get("file_name", "").endswith(relative_path)
+        and span.get("line_start") == line
+        for span in diagnostic.get("spans", [])
+    )
+
+
+def _code_of(diagnostic: dict) -> str | None:
+    return (diagnostic.get("code") or {}).get("code")
+
+
 def adjudicate(probe: dict, diagnostics: list[dict], relative_path: str, line: int) -> str | None:
     """Why this compiler output does not refuse the hostile construction, or None.
 
@@ -336,16 +381,9 @@ def adjudicate(probe: dict, diagnostics: list[dict], relative_path: str, line: i
             f"the value is not proof of the invariant."
         )
     wanted = str(probe["error_code"])
-    for diagnostic in errors:
-        code = (diagnostic.get("code") or {}).get("code")
-        if code != wanted:
-            continue
-        for span in diagnostic.get("spans", []):
-            if not span.get("is_primary"):
-                continue
-            if span.get("file_name", "").endswith(relative_path) and span.get("line_start") == line:
-                return None
-    codes = sorted({(d.get("code") or {}).get("code") or "<none>" for d in errors})
+    if any(_code_of(d) == wanted and _refuses_at(d, relative_path, line) for d in errors):
+        return None
+    codes = sorted({_code_of(d) or "<none>" for d in errors})
     return (
         f"the construction was refused, but not by the boundary this probe attacks: "
         f"expected {wanted} with its primary span on line {line} of {relative_path}, saw "
@@ -376,7 +414,10 @@ def provenance_problem(probe: dict, unit: dict, repo_root: Path) -> str | None:
     source = repo_root / str(probe["doc_path"])
     if not source.is_file():
         return f"`doc_path` {probe['doc_path']} does not exist"
-    text = source.read_text(encoding="utf-8")
+    return _doc_text_problem(probe, source.read_text(encoding="utf-8"))
+
+
+def _doc_text_problem(probe: dict, text: str) -> str | None:
     if "```compile_fail" not in text:
         return (
             f"`doc_path` {probe['doc_path']} holds no ```compile_fail doctest. The probe "

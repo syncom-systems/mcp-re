@@ -321,14 +321,14 @@ selftest = true
 [[script]]
 path = "scripts/prepare_node_matrix.sh"
 stages = []
-ci = ["verification.yml:host"]
+ci = ["mutation-probe.yml:probe", "verification.yml:host"]
 selftest = false
 selftest_exempt = "an installer that provisions the pinned Node interpreters on a runner; the pins it installs are checked by node_runtime_gate.py"
 
 [[script]]
 path = "scripts/prepare_python_matrix.sh"
 stages = []
-ci = ["verification.yml:host"]
+ci = ["mutation-probe.yml:probe", "verification.yml:host"]
 selftest = false
 selftest_exempt = "an installer that provisions the pinned Python interpreters on a runner; the pins it installs are checked by python_runtime_gate.py"
 
