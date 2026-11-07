@@ -263,7 +263,7 @@ nt_rust_test(
 # manifest at its rlocationpath.
 nt_rust_test(
     name = "http_profile_vectors_test",
-    srcs = ["tests/http_profile_vectors_test.rs"],
+    srcs = ["tests/http_profile_vectors_test.rs"] + glob(["tests/http_profile_vectors_test/*.rs"]),
     data = glob(["tests/vectors/http-profile/**"]),
     edition = "2021",
     env = {

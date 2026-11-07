@@ -540,7 +540,18 @@
    "package": "mcp-re-conformance",
    "root": "mcp-re-conformance/tests/http_profile_vectors_test.rs",
    "srcs": [
-    "mcp-re-conformance/tests/http_profile_vectors_test.rs"
+    "mcp-re-conformance/tests/http_profile_vectors_test.rs",
+    "mcp-re-conformance/tests/http_profile_vectors_test/admission_vectors.rs",
+    "mcp-re-conformance/tests/http_profile_vectors_test/binding_vectors.rs",
+    "mcp-re-conformance/tests/http_profile_vectors_test/bodyless_vectors.rs",
+    "mcp-re-conformance/tests/http_profile_vectors_test/chain_vectors.rs",
+    "mcp-re-conformance/tests/http_profile_vectors_test/delegated_202_vectors.rs",
+    "mcp-re-conformance/tests/http_profile_vectors_test/delegation.rs",
+    "mcp-re-conformance/tests/http_profile_vectors_test/material.rs",
+    "mcp-re-conformance/tests/http_profile_vectors_test/request_vectors.rs",
+    "mcp-re-conformance/tests/http_profile_vectors_test/schema.rs",
+    "mcp-re-conformance/tests/http_profile_vectors_test/transport_vectors.rs",
+    "mcp-re-conformance/tests/http_profile_vectors_test/verdicts.rs"
    ],
    "testonly": true,
    "verus_deps": []
