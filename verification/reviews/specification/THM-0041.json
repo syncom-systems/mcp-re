@@ -7,7 +7,7 @@
     "theorem_id": "THM-0041",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G1_G10.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read the six http_profile.scitt_* units. The one changed source is a test helper in scitt/mod.rs: a resolver_for(key, position) builder replaces four copies of the resolver closure, with the same service kid, StatementBytes leaf profile, and per-test key and ReceiptPositionProfile. Nothing in the verifier, receipt, statement, merkle or cose_key code changed. The claim, premises and dependencies are unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor, and every tested symbol the unit names still names a test function. The previous record named the owner as reviewer; it is replaced because its fingerprint no longer matched the tree, and it remains in git history. Owner ratification of this reading is the owner's act.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -29,7 +29,7 @@
         "mutation_probes": "sha256:b210982fb31ed757e0f5a9bd11df003207c0b61688cfb75e8c5da5aba9f97842",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:9e234ade39dc9a5b66203b33c9f87c888503f67369dc8d34d706eb9005f29715",
+        "source_inputs": "sha256:19b04c952e0d9a67a27f386f4d1076711a296696a957fdc33c0bd4589ac8cae0",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:ecf63b7f49d3dd0e0c56de73274acd9b1cc21aaa448997588fc8ef76f0f44fea",
         "test_selection": "sha256:88fab30c1e0095b14745f993647a376bb8d192b8f82ad7e2f7c4ef9a4d2d81ab",
@@ -49,7 +49,7 @@
         "mutation_probes": "sha256:6496abcfa63f0c0adcab6d0a199a2486f2e7ae1b4c678d2602977696b1791263",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:1eee03c464f87a54827c7bfbdd1863da53584afc40639e6e5aeba9c0d06ac1cf",
+        "source_inputs": "sha256:adcdab156b4a76cc811c49cc76bac75205897dec090613e2ddb8d8e43bdd9269",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:6f6b902c496b2716e7d346165ed284811cd6e3e07eea00597c85a72ad3091da3",
         "test_selection": "sha256:f6b3485afb248b00fb15605dc93b4efc6350895aa94ddad54111bda9964251e6",
@@ -69,7 +69,7 @@
         "mutation_probes": "sha256:ec140bb360fd4fb5106a28903c71a05af8a636142c890377211eb53bc9ba4758",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:ae1cbb82f56ad9dc423fd3f2ef05261f3b334fbc312f96526f22aed5300eb209",
+        "source_inputs": "sha256:1724f5d7113ceca4da6be8f420a245fc213324358d1c511d86765126ad307c7d",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:a0eece6dd05d93d05e71acd16e229d670dee01063ff5b35c09aa78e990f2fea5",
         "test_selection": "sha256:722e4e01f6ace58ef735b4eb091960f671c1c62a2130c1340f8b220485c82a2f",
@@ -89,7 +89,7 @@
         "mutation_probes": "sha256:1f9c76074043000cd88a0a2a98d24cb137a94093e8fb673e2de0bceeb389c9ee",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:e5e49624ed9d1b933965397fcc02e8d44a61b1fdddbad02e739531f93429d4bf",
+        "source_inputs": "sha256:f3237225d15542e6e4d1eddd29e0d9c92b5e19030da2c720a3355d469efe278c",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:86419b1d1cbc3434d586fac730bbf0789cc5f2ced2c1fb2ed47935546d0fb441",
         "test_selection": "sha256:f22cddb343d9b60c881634584e682777eed18258f7782ba296139917ea42b442",
@@ -109,7 +109,7 @@
         "mutation_probes": "sha256:be7652f0e48c66f0c184879b8c2464d4b6ad18bd0020e6fc37f538485a87344f",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:04118d00c83838df9cd9af2d5b21a2f77db5ca38d56a01a44553c13cb435df61",
+        "source_inputs": "sha256:852247e71ea7982ec80f3ca68850b1f13cefc0016d9c64ad29936c5aa7212c29",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:908ae6a978504babf5c27dc24148797daa007bfa09a7b6b51129f558f0c23046",
         "test_selection": "sha256:3bf89c1cfa4d29667c1f6b1bb867ef847d2d066ca15dd2d4f70cf0026a146e0c",
@@ -129,7 +129,7 @@
         "mutation_probes": "sha256:5b1e0f5276c8ec201f0595bbab02cbb0e230588561acf612e7ca5a86919779ad",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:99c3c197f43d9c066cb3651412d1ec4f41bcaf3e584cc99363f169a4b46baaa0",
+        "source_inputs": "sha256:da494fac90bf60283d649f9c0a0f800cd4a82ae05259e2870df6a83f4d522292",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:4e672d4a22ba82f4eb396191023fffb04862cbf11187ae8f899f8290dc21a4bb",
         "test_selection": "sha256:bb93c4df2d95def8557eeb35e0030777e7b302662ac1e41e7d22c9cbe5e05877",
@@ -142,8 +142,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:5eef10c7642b151e7b91f059f986e7c19df212e73966fd9f53f192d54c996592",
+  "review_digest": "sha256:3c97761126100c0ad04d0a5adcc24efd9a9ac840c75284a6ab54b549386ca817",
   "reviewed_fingerprint": "sha256:103bda2f87fb3de69c0b465b126161d0e37ddb7f39a10a810b7ba8b37541cca2",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0041"
 }

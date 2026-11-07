@@ -7,7 +7,7 @@
     "theorem_id": "THM-0042",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G1_G10.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read conformance.retained_corpus. scitt_retained_corpus_test.rs changed in two ways: the request signer takes RequestSignature fields with the same values, and corpus_dir's runfiles lookup moved into bazel_manifest_dir, which tries TEST_SRCDIR, RUNFILES_DIR then the path as given, takes the first that exists and panics otherwise, as before. The corpus files and the five cited tests are unchanged. The claim, premises and dependencies are unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor, and every tested symbol the unit names still names a test function. The previous record named the owner as reviewer; it is replaced because its fingerprint no longer matched the tree, and it remains in git history. Owner ratification of this reading is the owner's act.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -26,11 +26,11 @@
         "mutation_probes": "sha256:5f1472dd50dc7e7f127c6474122c0c0e7a7cdae78ec1e436a1ea56cca53affcb",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:5b7ee0e4515e84fb5e2c13008d599b1447af8b489fa4d6d79c7dd8e287e5b342",
+        "source_inputs": "sha256:9739a3d1e53acb801e45ef44d6f4d2e0307d40c735860c77e591aa95e0836711",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:54ec80387bd99b630446fa54d60abe64e164941f9317f20993281028f973513e",
         "test_selection": "sha256:21e17dab1edb4ef4ce92602a0fb58d8d190a3a976ebf7e2f73482d096df381cf",
-        "test_sources": "sha256:2271c2a0b5f166d13be53538f3fafa7e9e66a35770be38b3eb81935ccf2147bf",
+        "test_sources": "sha256:3879a3e48aa5cc043c29a079823588047b534b6661570efd378dfe429579e385",
         "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "unit_id": "sha256:8b560f4cfbaee87bbf4b9de34882ff6ba7ed5b8d1b711b66fc84c60f497c85f0"
       },
@@ -79,8 +79,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:f4c92f2693939c8ac5dc69b78a5bac6cd09cff51fc28954a565a780ede6f14f5",
+  "review_digest": "sha256:befb02f9952a87f9f71034dd13014fc0ece5d148c86fe299c74bb7841e98bf19",
   "reviewed_fingerprint": "sha256:9d769c2c98f65716b1a4706bb3cde2fe6d76e49fd989851fe802310b69d03c6f",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0042"
 }

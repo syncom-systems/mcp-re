@@ -7,7 +7,7 @@
     "theorem_id": "THM-0028",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G5.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read proxy.channel_associated_credential. The production module (mod.rs and rustls_adapter.rs) is unchanged since the last record; the only change is that the test mechanism harness moved from an inline module into channel_associated_credential/mechanism_harness/{authority,handshake,leaf,peers,tls_config,mod}.rs, each opening with #![cfg(test)]. The harness bodies are the same handshake drivers: a WebPkiClientVerifier over the anchors, a session store so a second connection can resume, and a client-side cache so the resumed path is a real resumption. The claim, premises and dependencies are unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor, and every tested symbol the unit names still names a test function. The previous record named the owner as reviewer; it is replaced because its fingerprint no longer matched the tree, and it remains in git history. Owner ratification of this reading is the owner's act.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -26,7 +26,7 @@
         "mutation_probes": "sha256:eedbc2455860ccf7c8981a83b8bb8d020c0255e352135e898fc816f1231db37a",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:b99a30bc23280769d56b0ec09d3d830e249609316bfd77d7dc8303a305219c15",
+        "source_inputs": "sha256:a23c4b93538670d6c4700c6043d04117d15739c515a4a81783e2053bc1a74645",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:e4550d8cef936c99bfd71932e38b0b0c253545c08466b9de4b957771d1c44833",
         "test_selection": "sha256:100e6d86a5a336d01b0bd08f5f6a9d8613aef8718409ea9386fc6f57bc1f2540",
@@ -39,8 +39,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:96c2316bfa7f0f87f12aba684ac6cc7ec276c5836fb98ce5f95ace663ac7625d",
+  "review_digest": "sha256:3b4e2dc987eb1bda8476ddcf71feebd4c839579b4a4248db85011f002322327d",
   "reviewed_fingerprint": "sha256:0630767e9d70422adf5702cc291183869b6c5badb0c566d15163bbee5d3a0514",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0028"
 }

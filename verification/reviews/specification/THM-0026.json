@@ -9,7 +9,7 @@
     "theorem_id": "THM-0026",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G5.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded. Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written. Read in verification/reviews/packets/epic-1201-assurance-closure-2026-10-21.md: verdict CLEAN, cause dependency change (boundary.tls_mechanism digest).  Evidence class as registered; V0 units are tested and probed, not machine-checked proofs.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read proxy.credential_key_correspondence and its sole-producer unit. credential_key_correspondence.rs changed one comment (the DER battery now lives in tls/delegated.rs). The battery moved with tls.rs becoming tls/{delegated,fault_accept_any,mod,options,peer,request_guard}.rs: every function and test name is kept, the production lines are the same, and the sides' refusals stay attributed to the side that failed. Other merged work changed ServerOptions to take a RequestTarget and ServerLimits to ServedLimits, which no claim here reads. The claim, premises and dependencies are unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor, and every tested symbol the unit names still names a test function.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -22,16 +22,16 @@
         "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "governing_boundaries": "sha256:d595a862ad949c91c134e5c1c3570b490fbe222847a081dba2473bd8c524ce79",
+        "governing_boundaries": "sha256:debd5bc26a49f61fbe52c145dcee73bf474aec9402739e7a04af1a6ddf774ace",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        "mutation_probes": "sha256:ee64b5e5aa6964dcd823323fa9af08d5b3d3f99b01adebb486ba69dcc942794f",
+        "mutation_probes": "sha256:4db24585f4a3e25d9f8d9b94a798f7db6475e2d3d428e67d1f0c497062053f71",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:d1fa18c5771b061aad206b16e8f48ef833b58be7167f9442e65238ac41390ff9",
+        "source_inputs": "sha256:1cd509260c4dc07cbe2890a8f1b49830360e764ad89f42f86010d4f6ff65d2f5",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:7d89158236974eae7153660c66e0809e34b2f790174a5c9af6a499fc8535f759",
-        "test_selection": "sha256:3dc89ef8ab9b43a5dddd1713c523a83ab0b6018b6ffa6e4a54423fe046b240fc",
+        "test_selection": "sha256:4122a785c2d84ffc2e550d209078f2f4c1fa8298085d065b532173833596c75e",
         "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "trusted_assumptions": "sha256:58e017356283317672e7fff943ab5bbe00390617c0945c538ad1826e1b25ad14",
         "unit_id": "sha256:867aba4a5493f73ad727c22a6074f3f0f79f4b7a7254ac92127d2234dc44774b"
@@ -48,7 +48,7 @@
         "mutation_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:be361b0bf890d5ab80d594c4209cb12d0711b4eaf2030d3698ed9ddd01213e81",
+        "source_inputs": "sha256:c11b96e243f27198f152197e0afd615fc3eb133506d99a01a464214793352ed5",
         "structural_probes": "sha256:2485a2d7293c21701b35d453c210e41a9b1537803fe67e844032f414e9843f32",
         "test_evidence_definition": "sha256:51796a08f8c20ba68987f676004bd3920c1c13e61cb3926f1df44a2a7d5c5a16",
         "test_selection": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
@@ -63,8 +63,8 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:dd12f58d691efd507a7352ad43e2935135707144c8f8415bcd2e099ce937926b",
+  "review_digest": "sha256:dff429749261bd17863b6e739e0d81cf4057818e1005d7aca0e410a4425fe5d9",
   "reviewed_fingerprint": "sha256:fc7c6804aca29d3e8a24b1dfd31ff1e19f7f0085420584b26ada532d5e160362",
-  "reviewer": "agent:claude-opus-5-5 (exec #1201; prepared for owner ratification, not an owner signature)",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0026"
 }
