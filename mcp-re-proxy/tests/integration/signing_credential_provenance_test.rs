@@ -55,9 +55,7 @@ const RIVAL_CONSTRUCTORS: &[&str] = &[
 const EAGER_ROLE_READS: &[&str] = &[WITNESS_EXIT, ".response_public_key()"];
 
 fn app_source() -> String {
-    let path = mcp_re_test_paths::resolve_runfile("MCP_RE_APP_SRC");
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
-    mcp_re_test_paths::rust_source::production_half(&text)
+    crate::composition_source::composition_production()
 }
 
 /// How many times `needle` appears outside a comment line.

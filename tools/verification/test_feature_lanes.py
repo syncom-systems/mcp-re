@@ -39,33 +39,43 @@ POLICY = REPO / "verification" / "policy"
 _RULE = re.compile(r"^(\w+)\(\s*$", re.M)
 
 
-def _rules(build: str) -> dict[str, dict]:
-    """Each rule in a BUILD file: name -> {kind, crate, features}. Features resolve list
-    literals, file-level list constants and their `+` sums."""
-    constants = {
+def _constants(build: str) -> dict[str, list[str]]:
+    """The file-level list constants: name -> the strings in the list."""
+    return {
         m.group(1): re.findall(r'"([^"]+)"', m.group(2))
         for m in re.finditer(r"^([A-Z_][A-Z0-9_]*) = \[(.*?)^\]", build, re.M | re.S)
     }
-    rules: dict[str, dict] = {}
+
+
+def _features(body: str, constants: dict[str, list[str]]) -> set[str]:
+    """The `crate_features` of one rule body: list literals, constants and their `+` sums."""
+    expr = re.search(r"^\s*crate_features = (.+?),?\s*$", body, re.M)
+    features: set[str] = set()
+    for term in (t.strip().rstrip(",") for t in expr.group(1).split("+")) if expr else ():
+        if term.startswith("["):
+            features.update(re.findall(r'"([^"]+)"', term))
+        elif term in constants:
+            features.update(constants[term])
+    return features
+
+
+def _rule(kind: str, body: str, constants: dict[str, list[str]]) -> tuple[str, dict] | None:
+    name = re.search(r'^\s*name = "([^"]+)"', body, re.M)
+    if not name:
+        return None
+    crate = re.search(r'^\s*crate = "([^"]+)"', body, re.M)
+    return name.group(1), {"kind": kind, "crate": crate and crate.group(1),
+                           "features": _features(body, constants)}
+
+
+def _rules(build: str) -> dict[str, dict]:
+    """Each rule in a BUILD file: name -> {kind, crate, features}. Features resolve list
+    literals, file-level list constants and their `+` sums."""
+    constants = _constants(build)
     starts = [(m.start(), m.group(1)) for m in _RULE.finditer(build)]
-    for index, (start, kind) in enumerate(starts):
-        end = starts[index + 1][0] if index + 1 < len(starts) else len(build)
-        body = build[start:end]
-        name = re.search(r'^\s*name = "([^"]+)"', body, re.M)
-        if not name:
-            continue
-        crate = re.search(r'^\s*crate = "([^"]+)"', body, re.M)
-        features: set[str] = set()
-        expr = re.search(r"^\s*crate_features = (.+?),?\s*$", body, re.M)
-        if expr:
-            for term in expr.group(1).split("+"):
-                term = term.strip().rstrip(",")
-                if term.startswith("["):
-                    features.update(re.findall(r'"([^"]+)"', term))
-                elif term in constants:
-                    features.update(constants[term])
-        rules[name.group(1)] = {"kind": kind, "crate": crate and crate.group(1), "features": features}
-    return rules
+    ends = [start for start, _ in starts[1:]] + [len(build)]
+    parsed = (_rule(kind, build[start:end], constants) for (start, kind), end in zip(starts, ends))
+    return dict(rule for rule in parsed if rule)
 
 
 @functools.cache
@@ -74,24 +84,24 @@ def _package_rules(package: str) -> dict[str, dict]:
     return _rules(build.read_text(encoding="utf-8")) if build.is_file() else {}
 
 
+def _attr_requirement(attr: str) -> list[frozenset[str]]:
+    """The alternatives one `cfg` attribute states; empty when it states none."""
+    if not attr.startswith("#[cfg(") or "not(" in attr:
+        return []
+    named = frozenset(re.findall(r'feature\s*=\s*"([^"]+)"', attr))
+    if not named:
+        return []
+    if "any(" not in attr:
+        return [frozenset({feature}) for feature in named]
+    names_test = re.search(r"\btest\b", re.sub(r'"[^"]*"', "", attr))
+    return [] if names_test else [named]
+
+
 def _requirement(attributes: list[str]) -> list[frozenset[str]]:
     """The feature requirements a declaration's `cfg` attributes state, as alternatives: each
     entry is a set of which at least one must hold. `not(...)` states no requirement, and
     neither does an `any(...)` naming `test`: every target this suite judges is a test build."""
-    required = []
-    for attr in attributes:
-        if not attr.startswith("#[cfg(") or "not(" in attr:
-            continue
-        named = frozenset(re.findall(r'feature\s*=\s*"([^"]+)"', attr))
-        if not named:
-            continue
-        if "any(" in attr:
-            if re.search(r"\btest\b", re.sub(r'"[^"]*"', "", attr)):
-                continue
-            required.append(named)
-        else:
-            required.extend(frozenset({feature}) for feature in named)
-    return required
+    return [need for attr in attributes for need in _attr_requirement(attr)]
 
 
 @functools.cache

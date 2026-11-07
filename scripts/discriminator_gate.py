@@ -67,23 +67,37 @@ FIXTURE_MARKERS = ("/tests/", "/test/", "/vectors/", "/fixtures/")
 LITERAL = '"input_required"'
 
 
+def _entries(directory: Path) -> list[Path]:
+    try:
+        return list(directory.iterdir())
+    except OSError:
+        return []
+
+
+def _pruned(name: str) -> bool:
+    return name in PRUNE_EXACT or name.startswith(PRUNE_PREFIX)
+
+
 def iter_sources(root: Path = REPO):
     stack = [root]
     while stack:
-        current = stack.pop()
-        try:
-            entries = list(current.iterdir())
-        except OSError:
-            continue
-        for entry in entries:
-            name = entry.name
-            if entry.is_dir():
-                if name in PRUNE_EXACT or name.startswith(PRUNE_PREFIX):
-                    continue
-                stack.append(entry)
-                continue
-            if entry.suffix in SOURCE_SUFFIXES:
-                yield entry
+        entries = _entries(stack.pop())
+        stack.extend(e for e in entries if e.is_dir() and not _pruned(e.name))
+        yield from (e for e in entries if not e.is_dir() and e.suffix in SOURCE_SUFFIXES)
+
+
+def _skipped_fixture(rel: str) -> bool:
+    """A test corpus or fixture carries the value as recorded data, unless it is the canonical
+    copy or declared data-only."""
+    is_fixture = any(marker in f"/{rel}" for marker in FIXTURE_MARKERS)
+    return is_fixture and rel != CANONICAL and rel not in DATA_ONLY
+
+
+def _carries_literal(path: Path) -> bool:
+    try:
+        return LITERAL in path.read_text(encoding="utf-8", errors="strict")
+    except (OSError, UnicodeDecodeError):
+        return False
 
 
 def scan(root: Path = REPO) -> tuple[bool, list[str]]:
@@ -93,14 +107,7 @@ def scan(root: Path = REPO) -> tuple[bool, list[str]]:
 
     for path in iter_sources(root):
         rel = path.relative_to(root).as_posix()
-        is_fixture = any(marker in f"/{rel}" for marker in FIXTURE_MARKERS)
-        if is_fixture and rel != CANONICAL and rel not in DATA_ONLY:
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="strict")
-        except (OSError, UnicodeDecodeError):
-            continue
-        if LITERAL not in text:
+        if _skipped_fixture(rel) or not _carries_literal(path):
             continue
         if rel == CANONICAL:
             found_canonical = True

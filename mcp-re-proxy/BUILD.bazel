@@ -552,7 +552,12 @@ _PROXY_LIB_SRCS = [
     "src/http_profile_serve/receipt/audit_event.rs",
     "src/http_profile_serve/receipt/artifact.rs",
     "src/app.rs",
+    "src/app/boot.rs",
+    "src/app/capabilities.rs",
     "src/app/entry.rs",
+    "src/app/planes.rs",
+    "src/app/serving.rs",
+    "src/app/transport.rs",
     # ADR-MCPRE-057 §9 / ADR-MCPRE-058 §14: the owner of a partly-built runtime —
     # lifecycle state cannot advance beyond the ownership it describes. Crate-internal.
     "src/materializing_runtime/mod.rs",

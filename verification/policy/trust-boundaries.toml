@@ -42,6 +42,7 @@ kind = "ffi"
 paths = [
   "mcp-re-proxy/src/async_fleet/**/*.rs",
   "mcp-re-proxy/src/app.rs",
+  "mcp-re-proxy/src/app/serving.rs",
   "mcp-re-proxy/src/main.rs",
   "mcp-re-client/src/startup.rs",
 ]
