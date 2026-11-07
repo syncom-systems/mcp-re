@@ -71,8 +71,8 @@ def _journal_fields(a) -> dict:
 def _gate_parts(post: _Post) -> list[dict]:
     a = post.a
     if a.file.endswith(".rs"):
-        return rust_gate.gate(a.file, post.related if a.tier != "local" else [], ids(a.it),
-                              a.work_dir, touched=post.touched)
+        edit = rust_gate.Edit(a.file, post.related if a.tier != "local" else [], post.touched)
+        return rust_gate.gate(edit, ids(a.it), a.work_dir)
     parts: list[dict] = []
     if a.tier != "local":
         parts.append(dict(pyright(a), gate="pyright"))

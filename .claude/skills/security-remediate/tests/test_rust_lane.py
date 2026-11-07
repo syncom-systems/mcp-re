@@ -45,6 +45,7 @@ SCRIPTS = os.path.join(os.path.dirname(HERE), "scripts")
 sys.path.insert(0, SCRIPTS)
 
 import rust_gate  # noqa: E402
+from _rust_gate_verdicts import RUNNING  # noqa: E402
 import check  # noqa: E402
 import finalize  # noqa: E402
 import ledger  # noqa: E402
@@ -165,7 +166,7 @@ def _gate(td: str, src: str, lint_out: str, lint_rc: int, log: str, test_rc: int
     try:
         os.chdir(root)
         os.makedirs("w", exist_ok=True)
-        return rust_gate.gate("alpha/src/keys.rs", [], [], "w", RustResolver("."))
+        return rust_gate.gate(rust_gate.Edit("alpha/src/keys.rs"), [], "w", RustResolver("."))
     finally:
         os.chdir(cwd)
         rust_gate.bazel = orig  # type: ignore[assignment]
@@ -239,8 +240,9 @@ def test_the_lint_covers_every_touched_files_targets() -> None:
     rust_gate._run = lambda cmd, log: (0, "")  # type: ignore[assignment]
     try:
         with tempfile.TemporaryDirectory() as td:
-            rust_gate.gate("alpha/src/keys.rs", [], [], td, RustResolver(td),
-                           touched=["beta/src/caller.rs", "verification/x.toml"])
+            rust_gate.gate(rust_gate.Edit("alpha/src/keys.rs",
+                                          touched=["beta/src/caller.rs", "verification/x.toml"]),
+                           [], td, RustResolver(td))
     finally:
         (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
          rust_gate._rustfmt, rust_gate._run) = saved
@@ -263,13 +265,13 @@ def test_the_pyo3_binding_is_gated_by_its_python_lane() -> None:
     rust_gate._test = lambda t, f, log: seen.setdefault("it", t) and {"verdict": "ok"}  # type: ignore[assignment]
     try:
         with tempfile.TemporaryDirectory() as td:
-            rust_gate.gate("sdk/python/src/trust.rs", [], [], td, RustResolver(td))
+            rust_gate.gate(rust_gate.Edit("sdk/python/src/trust.rs"), [], td, RustResolver(td))
     finally:
         (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
          rust_gate._rustfmt, rust_gate._run, rust_gate._test) = saved
     assert seen.get("it") == ["//sdk/python:core_lane_test"], seen
-    assert rust_gate._RUNNING.findall("Ran 4 tests in 0.010s\n") == ["4"]
-    assert rust_gate._RUNNING.findall("Ran 0 tests in 0.000s\n") == ["0"]
+    assert RUNNING.findall("Ran 4 tests in 0.010s\n") == ["4"]
+    assert RUNNING.findall("Ran 0 tests in 0.000s\n") == ["0"]
     print("  rust gate: the PyO3 binding runs its py_test lane, and unittest's count is read  OK")
 
 
