@@ -11608,6 +11608,15 @@ paths = [
   "mcp-re-proxy/src/pkcs11_keysource/token.rs",
   "mcp-re-proxy/src/pkcs11_native.rs",
   "mcp-re-proxy/src/pkcs11_native/custody.rs",
+  "mcp-re-proxy/src/pkcs11_native/closer.rs",
+  "mcp-re-proxy/src/pkcs11_native/ec_point.rs",
+  "mcp-re-proxy/src/pkcs11_native/find_objects.rs",
+  "mcp-re-proxy/src/pkcs11_native/sign.rs",
+  "mcp-re-proxy/src/pkcs11_native/error.rs",
+  "mcp-re-proxy/src/pkcs11_native/identity.rs",
+  "mcp-re-proxy/src/pkcs11_native/session.rs",
+  "mcp-re-proxy/src/pkcs11_native/session_ref.rs",
+  "mcp-re-proxy/src/pkcs11_native/template.rs",
   "mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs",
   # The Cryptoki fault injector this unit's e2e control drives lives in the SEPARATE Bazel
   # package `mcp-re-proxy/tests/mock-pkcs11`. It is deliberately NOT named here: a unit's
