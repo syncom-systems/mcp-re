@@ -71,10 +71,10 @@ def world() -> tuple[dict, dict, dict]:
     return doc, toolchains, {"assumption": []}
 
 
-def store_for(doc, toolchains, assumptions, *, omit=(), mutate=None) -> Path:
+def store_for(manifest: ManifestInputs, *, omit=(), mutate=None) -> Path:
     """A fresh evidence directory holding an acceptable record for every requirement."""
     root = Path(tempfile.mkdtemp(prefix="compose-store-"))
-    for requirement in requirements(doc, toolchains, assumptions):
+    for requirement in requirements(manifest.doc, manifest.toolchains, manifest.assumptions):
         if (requirement.lane, requirement.unit_id) in omit or requirement.lane in omit:
             continue
         record = EvidenceRecord(
@@ -96,10 +96,8 @@ def store_for(doc, toolchains, assumptions, *, omit=(), mutate=None) -> Path:
     return root
 
 
-def verdict(store: Path, doc, toolchains, assumptions, hygiene=None):
-    return compose(
-        store, ManifestInputs(doc, toolchains, assumptions), hygiene or {"assumptions": "PASS"}
-    )
+def verdict(store: Path, manifest: ManifestInputs, hygiene=None):
+    return compose(store, manifest, hygiene or {"assumptions": "PASS"})
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +107,7 @@ def verdict(store: Path, doc, toolchains, assumptions, hygiene=None):
 
 def test_a_complete_current_store_composes_to_PASS():
     doc, tc, asm = world()
-    aggregate, lanes, refusals = verdict(store_for(doc, tc, asm), doc, tc, asm)
+    aggregate, lanes, refusals = verdict(store_for(ManifestInputs(doc, tc, asm)), ManifestInputs(doc, tc, asm))
     assert aggregate == "PASS", (aggregate, refusals)
     assert lanes["lean"] == "PASS" and lanes["test"] == "PASS"
     assert refusals == []
@@ -231,8 +229,8 @@ def test_the_requirement_set_comes_from_the_manifest_not_from_the_store():
 
 def test_removing_the_lean_record_makes_the_aggregate_incomplete():
     doc, tc, asm = world()
-    store = store_for(doc, tc, asm, omit=("lean",))
-    aggregate, lanes, refusals = verdict(store, doc, tc, asm)
+    store = store_for(ManifestInputs(doc, tc, asm), omit=("lean",))
+    aggregate, lanes, refusals = verdict(store, ManifestInputs(doc, tc, asm))
     assert aggregate == "INCOMPLETE", (aggregate, refusals)
     assert lanes["lean"] == "UNAVAILABLE"
     assert any("lean/u.v2: no evidence record" in r for r in refusals), refusals
@@ -240,8 +238,8 @@ def test_removing_the_lean_record_makes_the_aggregate_incomplete():
 
 def test_removing_the_generated_model_record_makes_the_aggregate_incomplete():
     doc, tc, asm = world()
-    store = store_for(doc, tc, asm, omit=("generated-model",))
-    aggregate, lanes, refusals = verdict(store, doc, tc, asm)
+    store = store_for(ManifestInputs(doc, tc, asm), omit=("generated-model",))
+    aggregate, lanes, refusals = verdict(store, ManifestInputs(doc, tc, asm))
     assert aggregate == "INCOMPLETE", (aggregate, refusals)
     assert lanes["generated-model"] == "UNAVAILABLE"
 
@@ -257,7 +255,7 @@ def test_a_lean_record_at_another_fingerprint_is_refused_as_STALE():
             f"sha256:{'0' * 64}", record.detail, record.prover,
         )
 
-    aggregate, lanes, refusals = verdict(store_for(doc, tc, asm, mutate=stale), doc, tc, asm)
+    aggregate, lanes, refusals = verdict(store_for(ManifestInputs(doc, tc, asm), mutate=stale), ManifestInputs(doc, tc, asm))
     assert aggregate == "INCOMPLETE", (aggregate, refusals)
     assert lanes["lean"] == "UNAVAILABLE"
     assert any("STALE" in r for r in refusals), refusals
@@ -277,7 +275,7 @@ def test_a_record_from_a_different_extraction_artifact_is_refused():
         )
 
     aggregate, lanes, refusals = verdict(
-        store_for(doc, tc, asm, mutate=other_artifact), doc, tc, asm
+        store_for(ManifestInputs(doc, tc, asm), mutate=other_artifact), ManifestInputs(doc, tc, asm)
     )
     assert aggregate == "FAIL", (aggregate, refusals)
     assert any("different instrument" in r for r in refusals), refusals
@@ -294,7 +292,7 @@ def test_an_extraction_record_naming_no_artifact_is_refused():
         )
 
     aggregate, _lanes, refusals = verdict(
-        store_for(doc, tc, asm, mutate=anonymous), doc, tc, asm
+        store_for(ManifestInputs(doc, tc, asm), mutate=anonymous), ManifestInputs(doc, tc, asm)
     )
     assert aggregate == "FAIL", (aggregate, refusals)
     assert any("does not name the artifact" in r for r in refusals), refusals
@@ -304,11 +302,11 @@ def test_a_conflicting_duplicate_record_refuses_the_aggregate():
     """Two records about one unit is a store that cannot be read, and `load_records` keys
     by file stem — so the second would silently win or silently lose."""
     doc, tc, asm = world()
-    store = store_for(doc, tc, asm)
+    store = store_for(ManifestInputs(doc, tc, asm))
     original = json.loads((store / "lean" / "u.v2.json").read_text())
     conflicting = dict(original, result="fail", detail="a second, contradicting claim")
     (store / "lean" / "u.v2-copy.json").write_text(json.dumps(conflicting))
-    aggregate, _lanes, refusals = verdict(store, doc, tc, asm)
+    aggregate, _lanes, refusals = verdict(store, ManifestInputs(doc, tc, asm))
     assert aggregate == "FAIL", (aggregate, refusals)
     assert any("more than one record" in r for r in refusals), refusals
 
@@ -318,9 +316,9 @@ def test_a_malformed_record_refuses_rather_than_being_dropped():
     safe if somebody notices: a fresh directory containing an unreadable record means a
     lane wrote something this run that the composer cannot read, and unknown is dirty."""
     doc, tc, asm = world()
-    store = store_for(doc, tc, asm)
+    store = store_for(ManifestInputs(doc, tc, asm))
     (store / "lean" / "u.v2.json").write_text("{ not json")
-    aggregate, _lanes, refusals = verdict(store, doc, tc, asm)
+    aggregate, _lanes, refusals = verdict(store, ManifestInputs(doc, tc, asm))
     assert aggregate in {"FAIL", "INCOMPLETE"}, aggregate
     assert any("not a readable evidence record" in r for r in refusals), refusals
 
@@ -336,18 +334,18 @@ def test_a_recorded_failure_is_a_FAIL_not_a_missing_measurement():
             "the theorem did not stand", record.prover,
         )
 
-    aggregate, lanes, refusals = verdict(store_for(doc, tc, asm, mutate=failed), doc, tc, asm)
+    aggregate, lanes, refusals = verdict(store_for(ManifestInputs(doc, tc, asm), mutate=failed), ManifestInputs(doc, tc, asm))
     assert aggregate == "FAIL", (aggregate, refusals)
     assert lanes["lean"] == "FAIL"
 
 
 def test_a_record_filed_under_another_units_name_is_refused():
     doc, tc, asm = world()
-    store = store_for(doc, tc, asm)
+    store = store_for(ManifestInputs(doc, tc, asm))
     raw = json.loads((store / "lean" / "u.v2.json").read_text())
     raw["unit_id"] = "u.somewhere-else"
     (store / "lean" / "u.v2.json").write_text(json.dumps(raw))
-    aggregate, _lanes, refusals = verdict(store, doc, tc, asm)
+    aggregate, _lanes, refusals = verdict(store, ManifestInputs(doc, tc, asm))
     assert aggregate == "FAIL", (aggregate, refusals)
     assert any("names unit" in r for r in refusals), refusals
 
@@ -385,15 +383,15 @@ def test_a_phase_refuses_a_lane_that_declares_NOT_REQUIRED_for_a_required_lane()
 def test_a_hygiene_lane_cannot_carry_the_aggregate():
     """It can withhold a pass by failing; passing it says nothing about the code."""
     doc, tc, asm = world()
-    store = store_for(doc, tc, asm, omit=("lean", "generated-model", "test"))
-    aggregate, _lanes, _refusals = verdict(store, doc, tc, asm, {"assumptions": "PASS"})
+    store = store_for(ManifestInputs(doc, tc, asm), omit=("lean", "generated-model", "test"))
+    aggregate, _lanes, _refusals = verdict(store, ManifestInputs(doc, tc, asm), {"assumptions": "PASS"})
     assert aggregate == "INCOMPLETE", aggregate
 
 
 def test_a_failing_hygiene_lane_outranks_complete_evidence():
     doc, tc, asm = world()
     aggregate, _lanes, _refusals = verdict(
-        store_for(doc, tc, asm), doc, tc, asm, {"assumptions": "FAIL"}
+        store_for(ManifestInputs(doc, tc, asm)), ManifestInputs(doc, tc, asm), {"assumptions": "FAIL"}
     )
     assert aggregate == "FAIL", aggregate
 
