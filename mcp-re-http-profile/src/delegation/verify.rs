@@ -147,8 +147,7 @@ fn check_epoch_and_revocation(
 /// `delegated_kid`.
 fn cnf_is_self_consistent(claims: &DelegationClaims) -> bool {
     let jwk = &claims.cnf.jwk;
-    let key_type_matches = jwk.kty == JWK_KTY_OKP && jwk.crv == JWK_CRV_ED25519;
-    key_type_matches && jwk.kid == claims.delegated_kid
+    jwk.kty == JWK_KTY_OKP && jwk.crv == JWK_CRV_ED25519 && jwk.kid == claims.delegated_kid
 }
 
 /// The delegated key the credential attests, for the step-8 response-signature check.
