@@ -11,6 +11,7 @@ use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use crate::hpp_common;
+use mcp_re_http_profile::RequestSignature;
 
 /// The request evidence block. It requires at least one artifact binding; we bind an
 /// OAuth DPoP credential, whose bytes the verifier derives from the covered
@@ -59,10 +60,12 @@ pub fn signed_call(target: &str, now: i64, nonce: &str) -> HttpRequest {
         &mut request,
         &evidence_block(),
         &hpp_common::client_key(),
-        hpp_common::CLIENT_KEY_ID,
-        now,
-        now + 300,
-        nonce,
+        &RequestSignature {
+            key_id: hpp_common::CLIENT_KEY_ID,
+            created: now,
+            expires: now + 300,
+            nonce,
+        },
     )
     .expect("sign request");
     request

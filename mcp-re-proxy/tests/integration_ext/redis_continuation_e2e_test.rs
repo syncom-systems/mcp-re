@@ -27,6 +27,7 @@
 //! is the wiring in `app.rs`.
 #![cfg(feature = "redis_replay")]
 
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_proxy::continuation_store::AsyncContinuationStore;
 use mcp_re_proxy::continuation_store::Consumption;
 use mcp_re_proxy::continuation_store::ContinuationCapacity;
@@ -78,10 +79,12 @@ fn verified_as(subject: &str, keyid: &str) -> mcp_re_http_profile::VerifiedMcpRe
         &mut request,
         &block,
         &key,
-        keyid,
-        1_700_000_000,
-        1_700_000_300,
-        &mcp_re_test_paths::unique_test_nonce(),
+        &RequestSignature {
+            key_id: keyid,
+            created: 1_700_000_000,
+            expires: 1_700_000_300,
+            nonce: &mcp_re_test_paths::unique_test_nonce(),
+        },
     )
     .expect("the e2e request signs");
     let public = key.public_key();

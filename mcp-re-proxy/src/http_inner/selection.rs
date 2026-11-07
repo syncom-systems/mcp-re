@@ -41,50 +41,17 @@ impl HttpInnerPool {
         let start = self.rotating_start();
 
         // Pass 1: prefer a healthy (Closed) backend.
-        for (i, b) in self.scan_from(start) {
-            if b.state.load(Ordering::Acquire) == STATE_CLOSED {
-                return Some((i, false, b));
-            }
+        let healthy = self
+            .scan_from(start)
+            .find(|(_, b)| b.state.load(Ordering::Acquire) == STATE_CLOSED);
+        if let Some((i, b)) = healthy {
+            return Some((i, false, b));
         }
 
         // Pass 2: no Closed backend — try to claim a single recovery probe.
-        for (i, b) in self.scan_from(start) {
-            match b.state.load(Ordering::Acquire) {
-                STATE_OPEN => {
-                    if now_nanos >= b.reopen_at_nanos.load(Ordering::Acquire)
-                        && b.state
-                            .compare_exchange(
-                                STATE_OPEN,
-                                STATE_HALF_OPEN,
-                                Ordering::AcqRel,
-                                Ordering::Acquire,
-                            )
-                            .is_ok()
-                    {
-                        // The state transition does not itself own the trial; the slot
-                        // CAS does, so at most one probe per backend is in flight. A
-                        // scanner that took the slot through the HalfOpen arm first
-                        // keeps it, and this backend is skipped.
-                        if b.probe_inflight
-                            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                            .is_ok()
-                        {
-                            return Some((i, true, b));
-                        }
-                    }
-                }
-                STATE_HALF_OPEN
-                    if b.probe_inflight
-                        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                        .is_ok() =>
-                {
-                    return Some((i, true, b));
-                }
-                _ => {}
-            }
-        }
-
-        None
+        self.scan_from(start)
+            .find(|(_, b)| claim_recovery_probe(b, now_nanos))
+            .map(|(i, b)| (i, true, b))
     }
 
     /// Where this dispatch begins its round-robin scan: a pool index, always.
@@ -115,6 +82,42 @@ impl HttpInnerPool {
             .map(move |(k, b)| (start + k, b))
             .chain(head.iter().enumerate())
     }
+}
+
+/// Claim `backend`'s single recovery probe, when it has one to give.
+///
+/// An `Open` backend past its cooldown moves to `HalfOpen` and then takes the slot; a
+/// `HalfOpen` backend takes the slot directly. The state transition does not itself own
+/// the trial: the slot CAS does, so at most one probe per backend is in flight, and a
+/// scanner that took the slot first keeps it while this backend is skipped.
+fn claim_recovery_probe(backend: &Backend, now_nanos: u64) -> bool {
+    match backend.state.load(Ordering::Acquire) {
+        STATE_OPEN => reopen_for_probe(backend, now_nanos) && take_probe_slot(backend),
+        STATE_HALF_OPEN => take_probe_slot(backend),
+        _ => false,
+    }
+}
+
+/// Move an `Open` backend whose cooldown has elapsed to `HalfOpen`.
+fn reopen_for_probe(backend: &Backend, now_nanos: u64) -> bool {
+    now_nanos >= backend.reopen_at_nanos.load(Ordering::Acquire)
+        && backend
+            .state
+            .compare_exchange(
+                STATE_OPEN,
+                STATE_HALF_OPEN,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+}
+
+/// Take the backend's one in-flight probe slot.
+fn take_probe_slot(backend: &Backend) -> bool {
+    backend
+        .probe_inflight
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
 }
 
 #[cfg(test)]

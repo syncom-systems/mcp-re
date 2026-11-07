@@ -152,6 +152,7 @@ pub(crate) fn floor_request<R: Into<ResolverOutcome>>(
 
 #[cfg(test)]
 mod tests {
+    use crate::sign::RequestSignature;
     use std::cell::Cell;
 
     use mcp_re_core::SigningKey;
@@ -187,10 +188,12 @@ mod tests {
         sign_request(
             &mut r,
             &key(),
-            KEY_ID,
-            CREATED,
-            EXPIRES,
-            &mcp_re_test_paths::unique_test_nonce(),
+            &RequestSignature {
+                key_id: KEY_ID,
+                created: CREATED,
+                expires: EXPIRES,
+                nonce: &mcp_re_test_paths::unique_test_nonce(),
+            },
         )
         .expect("signing succeeds");
         r

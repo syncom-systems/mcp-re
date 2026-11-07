@@ -39,6 +39,7 @@ use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationHeader;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::PROFILE_TAG;
@@ -247,10 +248,12 @@ fn signed_call_with_headers(tool: &str, nonce: &str, extra: &[(&str, &str)]) -> 
         &mut req,
         &block,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        nonce,
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce,
+        },
     )
     .expect("signs");
     req

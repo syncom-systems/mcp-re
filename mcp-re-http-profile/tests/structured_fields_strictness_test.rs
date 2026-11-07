@@ -31,6 +31,7 @@ use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
@@ -73,10 +74,12 @@ fn signed_request() -> HttpRequest {
     sign_request(
         &mut req,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signing succeeds");
     req
@@ -282,10 +285,12 @@ fn a_string_parameter_that_rfc_8941_cannot_carry_is_never_signed() {
         let err = sign_request(
             &mut req,
             &client_key(),
-            "client-key-1",
-            CREATED,
-            EXPIRES,
-            bad,
+            &RequestSignature {
+                key_id: "client-key-1",
+                created: CREATED,
+                expires: EXPIRES,
+                nonce: bad,
+            },
         )
         .expect_err("signing must refuse a nonce RFC 8941 cannot carry verbatim");
         assert!(
@@ -410,10 +415,12 @@ fn ordinary_string_parameters_still_sign_and_verify() {
     sign_request(
         &mut req,
         &client_key(),
-        "client-key-1",
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("a base64url nonce signs");
     Verifier::new(&VerifierPolicy::default(), &resolver())

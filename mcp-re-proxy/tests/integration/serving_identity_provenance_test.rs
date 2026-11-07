@@ -41,7 +41,7 @@ const SERVING_PATHS: &[&str] = &["async_serve/", "blocking_mtls_harness/"];
 const RESOLVER: &str = "served_channel_peer";
 
 /// Where its signature lives.
-const DISPATCH_MODULE: &str = "tls.rs";
+const DISPATCH_MODULE: &str = "tls/peer.rs";
 
 /// The route this migration removed from production serving: certificate representation in,
 /// identity or a currency verdict out. Each name is one step of it.

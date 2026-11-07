@@ -9,6 +9,7 @@ use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::PROFILE_TAG;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
 
@@ -54,10 +55,12 @@ pub(super) fn evidence_call(
         &mut req,
         &block,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        nonce,
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce,
+        },
     )
     .expect("signs");
     req

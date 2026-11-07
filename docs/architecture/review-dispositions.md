@@ -630,7 +630,7 @@ instructed not to perform.
 
 ---
 
-## EX-004 — `mcp-re-proxy/src/tls.rs` — **census complete, disposition: decompose first**
+## EX-004 — `mcp-re-proxy/src/tls/` — **census complete, disposition: decompose first**
 
 **Status:** `reviewed-action-required`. **Remediation:** [#573](https://github.com/matssun/mcp-re/issues/573)
 (the listener-lifetime security-state owner) then
@@ -925,6 +925,15 @@ from 1068 to 1042. Five authorities plus the shared vocabulary remain; question 
 is still greater than one, and this record still declines a §14 exception.
 
 ---
+
+### Update — the remaining facade is a directory
+
+The authorities this record names as A, C, D and G left the file in earlier work. What was
+left, `ServerOptions` and `TlsError`, the channel-peer resolution, the per-request guards,
+the delegated-resolver facade and the fault-injection verifier, now sits in
+`mcp-re-proxy/src/tls/` as `options.rs`, `peer.rs`, `request_guard.rs`, `delegated.rs` and
+`fault_accept_any.rs` behind a `mod.rs` that re-exports the same paths. Every file is under
+the 200-production-line threshold, so the file left `config/module-size-debt.toml`.
 
 ## EX-005 — `mcp-re-proxy/src/tls_listener_state/mod.rs` — **reviewed exception**
 
@@ -1514,7 +1523,7 @@ ended (`tls.rs` was reported 679 and is 674; `response.rs` was reported 367 and 
 |---|---:|---|
 | `mcp-re-proxy` module `transport::ingress::v1` (**deleted**) | 334 | EX-005 — the file was deleted by RA3-002; the grant is spent and `config/module-size-debt.toml` no longer carries the entry. The row records a grant that was made, not a current file — which is why it names the module rather than a source path: a path token for a file this repository no longer has is exactly what `scripts/doc_path_gate.py` exists to refuse, and a historical record must not claim a live path to state a dead fact. |
 | `mcp-re-proxy/src/transport/ingress/v2.rs` | 673 | EX-005 |
-| `mcp-re-proxy/src/tls.rs` | 674 | EX-004 |
+| `mcp-re-proxy/src/tls/` | 674 | EX-004 |
 | `mcp-re-client-core/src/response.rs` | 362 | EX-010 |
 | `mcp-re-proxy/src/http_profile_serve/mod.rs` | 529 | EX-010 |
 | `mcp-re-proxy/src/key_source.rs` | 359 | EX-008 |

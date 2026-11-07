@@ -30,6 +30,7 @@ use mcp_re_http_profile::DispatchError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
@@ -144,10 +145,12 @@ fn signed_and_verified(nonce: &str) -> (HttpRequest, VerifiedMcpRequest) {
         &mut req,
         &block,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        nonce,
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce,
+        },
     )
     .expect("full sign");
     let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -293,10 +296,12 @@ fn http_profile_request_flows_verify_dispatch_serve_end_to_end() {
         &mut req,
         &block,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &mcp_re_test_paths::unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &mcp_re_test_paths::unique_test_nonce(),
+        },
     )
     .expect("sign request");
     let verified_request = Verifier::new(&VerifierPolicy::default(), &resolver())

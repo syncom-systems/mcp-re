@@ -8,6 +8,7 @@ use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RejectionReason;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 
@@ -87,10 +88,12 @@ fn signed_under(key_id: &str, window: (i64, i64), nonce: &str) -> HttpRequest {
     sign_request(
         &mut request,
         &client_key(),
-        key_id,
-        window.0,
-        window.1,
-        nonce,
+        &RequestSignature {
+            key_id,
+            created: window.0,
+            expires: window.1,
+            nonce,
+        },
     )
     .expect("signing succeeds");
     request

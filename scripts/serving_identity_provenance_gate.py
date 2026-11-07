@@ -71,7 +71,7 @@ BLOCKING_PATH = "mcp-re-proxy/src/blocking_mtls_harness/connection.rs"
 SERVING_PATHS = [ASYNC_PATH, BLOCKING_PATH]
 
 #: Where the strategy dispatch lives, and the one function both serving paths call.
-DISPATCH_MODULE = "mcp-re-proxy/src/tls.rs"
+DISPATCH_MODULE = "mcp-re-proxy/src/tls/peer.rs"
 
 #: Where the channel-peer product is CONSTRUCTED. The dispatch module reaches the currency
 #: authority through this owner rather than calling it directly, because the product's
