@@ -38,20 +38,20 @@ impl Line {
         }
     }
 
-/// A line that names a seam but whose STATE this harness does not recognize.
-///
-/// Unrecognized STATE is a hard failure, while an unrecognized LINE is dropped. The
-/// asymmetry is the whole point, and it is not fussiness — it is the difference between
-/// "I have nothing to say about this line" and "I am about to claim something I did not
-/// observe".
-///
-/// `AdmissionCurrency` had the permissive shape and it was actively wrong: it matched
-/// `"admission currency = "` and mapped anything that was not `REQUIRED` to `optional`. So
-/// the moment production learned to announce the gate being OFF, this harness would have
-/// reported *the admission-currency gate is running in optional mode* — a false ON,
-/// produced silently, in the exact test whose job is to characterize what the deployment
-/// enforces. A new posture state must never be able to enter a transcript as a weaker
-/// existing one.
+    /// A line that names a seam but whose STATE this harness does not recognize.
+    ///
+    /// Unrecognized STATE is a hard failure, while an unrecognized LINE is dropped. The
+    /// asymmetry is the whole point, and it is not fussiness — it is the difference between
+    /// "I have nothing to say about this line" and "I am about to claim something I did not
+    /// observe".
+    ///
+    /// `AdmissionCurrency` had the permissive shape and it was actively wrong: it matched
+    /// `"admission currency = "` and mapped anything that was not `REQUIRED` to `optional`. So
+    /// the moment production learned to announce the gate being OFF, this harness would have
+    /// reported *the admission-currency gate is running in optional mode* — a false ON,
+    /// produced silently, in the exact test whose job is to characterize what the deployment
+    /// enforces. A new posture state must never be able to enter a transcript as a weaker
+    /// existing one.
     fn unknown_state(&self, seam: &str) -> ! {
         let line = &self.0;
         panic!(
@@ -80,7 +80,8 @@ pub(super) fn read_replay_tier(l: &Line) -> StartupEvent {
 
 pub(super) fn read_crl_loaded(l: &Line) -> StartupEvent {
     StartupEvent::CrlLoaded {
-        files: l.word_after("enabled — ")
+        files: l
+            .word_after("enabled — ")
             .and_then(|w| w.parse().ok())
             .unwrap_or(0),
     }
@@ -88,7 +89,8 @@ pub(super) fn read_crl_loaded(l: &Line) -> StartupEvent {
 
 pub(super) fn read_revocation_posture(l: &Line) -> StartupEvent {
     StartupEvent::RevocationPosture {
-        mode: l.word_after("revocation_mode=")
+        mode: l
+            .word_after("revocation_mode=")
             .unwrap_or("connection")
             .to_string(),
     }
@@ -109,14 +111,18 @@ pub(super) fn read_mcp_transport_contract(l: &Line) -> StartupEvent {
 
 pub(super) fn read_freshness_gate(l: &Line) -> StartupEvent {
     StartupEvent::FreshnessGate {
-        skew_secs: l.after("created-")
+        skew_secs: l
+            .after("created-")
             .and_then(|r| r.split('s').next()?.parse().ok())
             .unwrap_or(0),
     }
 }
 
 pub(super) fn read_evidence_retention(l: &Line) -> StartupEvent {
-    let known = [("evidence retention = ON", true), ("evidence retention = OFF", false)];
+    let known = [
+        ("evidence retention = ON", true),
+        ("evidence retention = OFF", false),
+    ];
     StartupEvent::EvidenceRetention {
         enabled: l.state_of("evidence retention", &known),
     }
@@ -163,7 +169,10 @@ pub(super) fn read_audit_posture(l: &Line) -> StartupEvent {
     let delivery = if l.contains("delivery = BEST-EFFORT") {
         "best-effort".to_string()
     } else if let Some(rest) = l.after("delivery = REQUIRED via provider ") {
-        let tier = rest.split_once(", tier ").map(|(_, tier)| tier).and_then(|t| t.split(' ').next());
+        let tier = rest
+            .split_once(", tier ")
+            .map(|(_, tier)| tier)
+            .and_then(|t| t.split(' ').next());
         match tier {
             Some(tier) if mode == "stderr" => format!("required:{tier}"),
             _ => l.unknown_state("security audit record"),

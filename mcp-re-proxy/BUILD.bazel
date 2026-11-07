@@ -1851,7 +1851,7 @@ nt_rust_test(
 rust_shared_library(
     name = "mock_pkcs11",
     testonly = True,
-    srcs = ["tests/mock-pkcs11/src/lib.rs"],
+    srcs = glob(["tests/mock-pkcs11/src/**/*.rs"]),
     crate_name = "mock_pkcs11",
     edition = "2021",
     deps = [

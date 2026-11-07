@@ -22,7 +22,6 @@
 //! `app::run` in-process, so it witnesses the system across the restructuring without
 //! being coupled to any internal seam the restructuring introduces.
 
-
 #![allow(dead_code)] // each test binary uses a subset
 
 mod capture;

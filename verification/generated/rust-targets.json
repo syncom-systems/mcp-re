@@ -8034,7 +8034,14 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/tests/mock-pkcs11/src/lib.rs",
    "srcs": [
-    "mcp-re-proxy/tests/mock-pkcs11/src/lib.rs"
+    "mcp-re-proxy/tests/mock-pkcs11/src/attributes.rs",
+    "mcp-re-proxy/tests/mock-pkcs11/src/find.rs",
+    "mcp-re-proxy/tests/mock-pkcs11/src/function_list.rs",
+    "mcp-re-proxy/tests/mock-pkcs11/src/lib.rs",
+    "mcp-re-proxy/tests/mock-pkcs11/src/session.rs",
+    "mcp-re-proxy/tests/mock-pkcs11/src/sign.rs",
+    "mcp-re-proxy/tests/mock-pkcs11/src/state.rs",
+    "mcp-re-proxy/tests/mock-pkcs11/src/token.rs"
    ],
    "testonly": true,
    "verus_deps": []
