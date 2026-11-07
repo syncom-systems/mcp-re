@@ -2240,7 +2240,7 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::continuation::tests::from_handles_over_role_labeled_digests_is_wire_identical_to_build",
 ]
 proved_symbols = [
-  "mcp_re_http_profile::block::HttpContinuation::verify",
+  "mcp_re_http_profile::block::continuation::HttpContinuation::verify",
   "mcp_re_http_profile::evidence::digest::RequestEvidenceDigest::same_handle",
 ]
 features = ["verify"]
