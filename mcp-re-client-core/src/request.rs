@@ -25,6 +25,7 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::RequestRoleEvidence;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::PROFILE_TAG;
 use serde_json::json;
 use serde_json::Map;
@@ -151,10 +152,12 @@ pub fn build_signed_message(
             request,
             block,
             signing_key,
-            &inputs.key_id,
-            inputs.created,
-            inputs.expires,
-            &inputs.nonce,
+            &RequestSignature {
+                key_id: &inputs.key_id,
+                created: inputs.created,
+                expires: inputs.expires,
+                nonce: &inputs.nonce,
+            },
         )
     })
 }
@@ -174,10 +177,12 @@ pub fn build_signed_message_with_signer(
             request,
             block,
             sign_base,
-            &inputs.key_id,
-            inputs.created,
-            inputs.expires,
-            &inputs.nonce,
+            &RequestSignature {
+                key_id: &inputs.key_id,
+                created: inputs.created,
+                expires: inputs.expires,
+                nonce: &inputs.nonce,
+            },
         )
     })
 }

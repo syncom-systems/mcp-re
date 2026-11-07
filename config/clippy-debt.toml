@@ -200,11 +200,12 @@ count = 29
 # 77 -> 74: the ocsp split and the proxy decompositions before it removed sites; count measured by this gate.
 # 71 -> 70: the blocking-mtls `Content-Length` scan became an iterator pipeline; 70 -> 69: the
 # stray-value refusal's flag table and the CRL issuer match became separate functions; count
-# measured by this gate.
+# measured by this gate; 66 -> 65 measured by this
+# gate after the key-source and signature-verifier changes.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 69
+count = 65
 
 # 0 -> 4: the same measurement correction as `arithmetic_side_effects` above; 1 -> 0 when
 # the trust-epoch reader's second, GET-based read path was folded into the one MGET read.

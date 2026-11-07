@@ -90,9 +90,9 @@ exception, and **`scripts/clippy_ratchet_gate.py` enforces its shape**:
 - **No `arithmetic-side-effects-allowed*` type exemption** in any clippy config. It is
   global and unbounded.
 
-The worked example is `mcp-re-proxy/src/app.rs::run_validated`: it states what the function
-owns, what most recently left it and why, the three pieces of compensating evidence, and
-why the allowance sits on the function rather than the module.
+The worked example is `mcp-re-core/src/time/format.rs::civil_from_days`: it names the
+invariant that bounds every operation, says where that bound comes from, names the test that
+pins both ends of it, and sits on the function rather than the module.
 
 Two limits on what visibility buys, both measured — see
 [`docs/dev/sealed-owners.md`](docs/dev/sealed-owners.md):
@@ -271,10 +271,9 @@ for one frozen error token.
 
 **Review granularity equals exception granularity.** A function-level exception does not
 make its file a reviewed exception. `parse_args` is a reviewed exception; `cli.rs` is not.
-`run_validated` is a reviewed exception; `app.rs` is `reviewed-action-required` — its
-file-level census is complete and *declined* to grant one, because the audit-drain teardown
-authority is separable and has an owner next door. §14 records a decision to keep something
-whole; it is not a place to park work.
+`run_validated` was a function-level exception until it was decomposed into stages under
+`app/`; it is now a sequence of named calls, and `app.rs` has left the register. §14 records
+a decision to keep something whole; it is not a place to park work.
 
 ### Testing Requirements
 

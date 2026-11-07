@@ -189,7 +189,10 @@ _PROXY_LIB_SRCS = [
     "src/config_state/topology.rs",
     "src/config_state/transport.rs",
     "src/config_state/trust_document.rs",
-    "src/config_state/trust_revocation.rs",
+    "src/config_state/trust_revocation/classify.rs",
+    "src/config_state/trust_revocation/epoch_source.rs",
+    "src/config_state/trust_revocation/mod.rs",
+    "src/config_state/trust_revocation/validate.rs",
     # Layer A's boundary: assembly, report-all, and the refusal-precedence contract.
     "src/config_state/validation/mod.rs",
     "src/config_state/validation/recognition.rs",
@@ -551,7 +554,12 @@ _PROXY_LIB_SRCS = [
     "src/http_profile_serve/receipt/audit_event.rs",
     "src/http_profile_serve/receipt/artifact.rs",
     "src/app.rs",
+    "src/app/boot.rs",
+    "src/app/capabilities.rs",
     "src/app/entry.rs",
+    "src/app/planes.rs",
+    "src/app/serving.rs",
+    "src/app/transport.rs",
     # ADR-MCPRE-057 §9 / ADR-MCPRE-058 §14: the owner of a partly-built runtime —
     # lifecycle state cannot advance beyond the ownership it describes. Crate-internal.
     "src/materializing_runtime/mod.rs",
@@ -677,7 +685,12 @@ _PROXY_LIB_SRCS = [
     # Issue #3837: shared, server-side-atomic replay cache (backend-agnostic core +
     # in-memory reference store). Always compiled; default-build, Bazel-tested.
     "src/shared_replay.rs",
-    "src/tls.rs",
+    "src/tls/delegated.rs",
+    "src/tls/fault_accept_any.rs",
+    "src/tls/mod.rs",
+    "src/tls/options.rs",
+    "src/tls/peer.rs",
+    "src/tls/request_guard.rs",
     # ADR-MCPRE-051 (MCPRE-118): the async serving path is UNCONDITIONAL — it is the
     # PEP's sole serving path, so every flavor compiles it and links the async stack
     # (the `async_serve` feature is a vestigial no-op; no code gates on it). This

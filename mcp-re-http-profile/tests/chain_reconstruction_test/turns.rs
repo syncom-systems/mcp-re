@@ -13,6 +13,7 @@ use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::HttpResponseEvidenceBlock;
 use mcp_re_http_profile::RequestRoleEvidence;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResponseRoleEvidence;
 use mcp_re_http_profile::RetainedHop;
 use mcp_re_http_profile::Verifier;
@@ -73,10 +74,12 @@ pub fn hop_at(
         &mut request,
         &block(continuation),
         &client_key(),
-        CLIENT_KEY_ID,
-        created,
-        expires,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created,
+            expires,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("request signs");
 
@@ -115,10 +118,12 @@ pub fn hop_with_bad_window(created: i64, expires: i64) -> RetainedHop {
         &mut request,
         &block(None),
         &client_key(),
-        CLIENT_KEY_ID,
-        created,
-        expires,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created,
+            expires,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("signing does not police the window; verification does");
     let response = signed_response(&request, DONE, created, expires);
@@ -141,10 +146,12 @@ pub fn hop_with_block(blk: &HttpRequestEvidenceBlock, body: &str) -> RetainedHop
         &mut request,
         blk,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce: &unique_test_nonce(),
+        },
     )
     .expect("request signs");
     RetainedHop {

@@ -1181,8 +1181,8 @@ weakening = """
     }
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#tls::delegated_credential_key_correspondence_tests::a_signing_key_that_is_not_the_credential_key_is_refused",
-  "//mcp-re-proxy:proxy_unit_test#tls::delegated_credential_key_correspondence_tests::every_characterized_failure_is_a_distinct_typed_refusal",
+  "//mcp-re-proxy:proxy_unit_test#tls::delegated::delegated_credential_key_correspondence_tests::a_signing_key_that_is_not_the_credential_key_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#tls::delegated::delegated_credential_key_correspondence_tests::every_characterized_failure_is_a_distinct_typed_refusal",
 ]
 
 [[probe]]
@@ -1245,7 +1245,7 @@ weakening = """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_key_correspondence::tests::a_credential_side_failure_is_attributed_to_the_credential_side",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_key_correspondence::tests::an_absent_credential_is_reported_on_the_credential_side",
-  "//mcp-re-proxy:proxy_unit_test#tls::delegated_credential_key_correspondence_tests::every_characterized_failure_is_a_distinct_typed_refusal",
+  "//mcp-re-proxy:proxy_unit_test#tls::delegated::delegated_credential_key_correspondence_tests::every_characterized_failure_is_a_distinct_typed_refusal",
 ]
 
 [[probe]]
@@ -1264,7 +1264,7 @@ weakening = """
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::signing_key_evidence::tests::a_signer_that_exported_nothing_is_not_a_signer_that_exported_rubbish",
-  "//mcp-re-proxy:proxy_unit_test#tls::delegated_credential_key_correspondence_tests::every_characterized_failure_is_a_distinct_typed_refusal",
+  "//mcp-re-proxy:proxy_unit_test#tls::delegated::delegated_credential_key_correspondence_tests::every_characterized_failure_is_a_distinct_typed_refusal",
 ]
 
 [[probe]]
@@ -1290,8 +1290,8 @@ weakening = """
             .and_then(|point| <[u8; ED25519_PUBLIC_KEY_LEN]>::try_from(point).ok());
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#tls::delegated_credential_key_correspondence_tests::a_signing_key_of_another_algorithm_carrying_the_credential_point_is_refused",
-  "//mcp-re-proxy:proxy_unit_test#tls::delegated_credential_key_correspondence_tests::every_characterized_failure_is_a_distinct_typed_refusal",
+  "//mcp-re-proxy:proxy_unit_test#tls::delegated::delegated_credential_key_correspondence_tests::a_signing_key_of_another_algorithm_carrying_the_credential_point_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#tls::delegated::delegated_credential_key_correspondence_tests::every_characterized_failure_is_a_distinct_typed_refusal",
 ]
 
 # ---------------------------------------------------------------------------
@@ -1998,7 +1998,7 @@ conjunct = "a successfully classified state carries the witnesses its own state 
 # A zero cadence names no legal state: `Halt::sleep(0)` sets a deadline already in the past,
 # so `--trust` is re-read and the signer directory rebuilt continuously on a spinning
 # thread. The CRL machine refused it; this one had to be taught to.
-path = "mcp-re-proxy/src/config_state/trust_revocation.rs"
+path = "mcp-re-proxy/src/config_state/trust_revocation/validate.rs"
 anchor = """
     if secs == 0 {
 """
@@ -2018,7 +2018,7 @@ conjunct = "each state holds its cadence to the revocation window it claims"
 # The witness that makes a tier's claim true rather than advertised: a key removed from
 # `--trust` keeps resolving until the file is re-read, so a cadence longer than the declared
 # window is a deployment stating a revocation latency it cannot keep.
-path = "mcp-re-proxy/src/config_state/trust_revocation.rs"
+path = "mcp-re-proxy/src/config_state/trust_revocation/validate.rs"
 anchor = """
     if secs > ceiling {
 """
@@ -2037,7 +2037,7 @@ conjunct = "a networked trust-epoch source is handed over as a paired locator an
 # Classifying every push deployment as networked is the "or not at all" half deleted: a
 # deployment with no epoch source would be handed a locator it never named. The pairing is
 # what stops one deployment's store being read under another's key.
-path = "mcp-re-proxy/src/config_state/trust_revocation.rs"
+path = "mcp-re-proxy/src/config_state/trust_revocation/classify.rs"
 anchor = """
             if epoch.source.is_some() {
                 RequestedState::PushNetworked { t_secs: *t_secs }
@@ -3779,10 +3779,10 @@ path = "mcp-re-transport/src/request.rs"
 # LITERAL strings: the anchor contains Rust byte escapes (b'\r'), and a TOML basic string
 # would turn them into the control characters themselves before the lane ever saw the text.
 anchor = '''
-            .any(|b| b == b'\r' || b == b'\n' || b == 0 || (b < 0x20 && b != b'\t') || b == 0x7F)
+    (b < 0x20 && b != b'\t') || b == 0x7F
 '''
 weakening = '''
-            .any(|_b| false)
+    b == 0x7F
 '''
 expect_red = [
   "//mcp-re-transport:mcp_re_transport_test#request::tests::a_crlf_in_a_header_value_is_rejected_not_sanitised",
@@ -4749,13 +4749,15 @@ id = "M172-composition-root-raw-read"
 unit = "proxy.trust_composition_root"
 theorem = "THM-0067"
 conjunct = "every DeploymentRequest field the composition root reads directly is a pinned ordinary validated parameter"
-path = "mcp-re-proxy/src/app.rs"
+path = "mcp-re-proxy/src/app/boot.rs"
 anchor = """
     let values = config.config();
+    let admitted_key_files = admit_key_files(
 """
 weakening = """
     let values = config.config();
     let _unowned_decision: i64 = values.max_clock_skew;
+    let admitted_key_files = admit_key_files(
 """
 expect_red = [
   "//mcp-re-proxy:integration_test#composition_raw_read_test::the_composition_root_reads_only_ordinary_validated_parameters",
@@ -5781,12 +5783,12 @@ nothing about the code LOOKS wrong once the keyword is gone.
 id = "M213-typescript-the-aggregate-read-is-bounded"
 unit = "sdk_typescript.bounded_read"
 conjunct = "the response read is bounded by the aggregate wall clock rather than by socket inactivity alone"
-path = "sdk/typescript/src/mtls.ts"
+path = "sdk/typescript/src/mtls_exchange.ts"
 anchor = """
-              }, timeoutMs);
+  }, timeoutMs);
 """
 weakening = """
-              }, 24 * 60 * 60 * 1000);
+  }, 24 * 60 * 60 * 1000);
 """
 expect_red = [
   "vitest#test/mtls.test.ts > the mTLS connect helper > bounds the TOTAL response read, not only socket inactivity",
@@ -7021,7 +7023,7 @@ id = "M253-proxy-no-production-path-installs-a-node-local-continuation-tier"
 unit = "proxy.continuation_installation"
 theorem = "THM-0096"
 conjunct = "no production path installs a node-local continuation tier — a deployment that selected nothing installs NO store"
-path = "mcp-re-proxy/src/app.rs"
+path = "mcp-re-proxy/src/app/capabilities.rs"
 anchor = """
     if let Some(store) = continuation_store {
 """
@@ -7050,21 +7052,15 @@ id = "M254-proxy-the-signing-plane-comes-from-the-materialized-source"
 unit = "proxy.signing_credential_provenance"
 theorem = "THM-0082"
 conjunct = "the signing plane is installed from the key source the materializer opened, not from one the root named itself"
-path = "mcp-re-proxy/src/app.rs"
+path = "mcp-re-proxy/src/app/planes.rs"
 anchor = """
-    building.install_signing(crate::signing_plane::SigningPlane::materialize(
-        &signing_plan,
-        roots,
-        &startup_reading,
-    )?)?;
+    let signing =
+        crate::signing_plane::SigningPlane::materialize(&start.plans.signing, roots, reading)?;
 """
 weakening = """
     let rival = roots;
-    building.install_signing(crate::signing_plane::SigningPlane::materialize(
-        &signing_plan,
-        rival,
-        &startup_reading,
-    )?)?;
+    let signing =
+        crate::signing_plane::SigningPlane::materialize(&start.plans.signing, rival, reading)?;
 """
 expect_red = [
   "//mcp-re-proxy:integration_test#signing_credential_provenance_test::the_signing_plane_is_materialized_from_the_materialized_source",
@@ -9562,7 +9558,7 @@ id = "M330-proxy-currency-policy-is-a-total-selector"
 unit = "proxy.currency_policy_classification"
 theorem = "THM-0032"
 conjunct = "The policy is a TOTAL classification of deployment state with no `Option` and four variants, so *evaluating with nothing configured* cannot be written"
-path = "mcp-re-proxy/src/tls.rs"
+path = "mcp-re-proxy/src/tls/peer.rs"
 anchor = """
         Some(index) => CredentialCurrencyPolicy::CeilingAndRevocation(ceiling, index),
 """
@@ -9570,7 +9566,7 @@ weakening = """
         Some(_index) => CredentialCurrencyPolicy::Ceiling(ceiling),
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#tls::currency_policy_tests::every_deployment_classifies_to_exactly_one_policy",
+  "//mcp-re-proxy:proxy_unit_test#tls::peer::currency_policy_tests::every_deployment_classifies_to_exactly_one_policy",
 ]
 note = """
 THE TOTALITY IS THE CLAIM, AND A MATCH ARM IS WHERE IT IS SPENT. Under the weakening a
@@ -10121,7 +10117,7 @@ id = "M341-proxy-the-resolver-reads-a-field-the-deployment-did-not-configure"
 unit = "proxy.channel_peer_resolution"
 theorem = "THM-0031"
 conjunct = "the resolved identity and source are what interpreting the accepted credential's leaf under THE CONFIGURED policy returned"
-path = "mcp-re-proxy/src/tls.rs"
+path = "mcp-re-proxy/src/tls/peer.rs"
 anchor = """        PeerIdentityProvenance::ChannelCredential => {
             authenticate_relationship_peer(accepted?.clone(), options.identity_policy.into()).ok()
         }
@@ -10135,10 +10131,10 @@ weakening = """        PeerIdentityProvenance::ChannelCredential => {
         }
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#tls::channel_peer_resolution_tests::direct_tls_resolves_the_identity_the_relationship_authenticated_as",
-  "//mcp-re-proxy:proxy_unit_test#tls::channel_peer_resolution_tests::an_issuer_in_the_accepted_chain_never_becomes_the_transport_identity",
-  "//mcp-re-proxy:proxy_unit_test#tls::channel_peer_resolution_tests::each_relationship_resolves_its_own_peers_identity",
-  "//mcp-re-proxy:proxy_unit_test#tls::channel_peer_resolution_tests::a_leaf_without_the_configured_field_resolves_no_identity",
+  "//mcp-re-proxy:proxy_unit_test#tls::peer::channel_peer_resolution_tests::direct_tls_resolves_the_identity_the_relationship_authenticated_as",
+  "//mcp-re-proxy:proxy_unit_test#tls::peer::channel_peer_resolution_tests::an_issuer_in_the_accepted_chain_never_becomes_the_transport_identity",
+  "//mcp-re-proxy:proxy_unit_test#tls::peer::channel_peer_resolution_tests::each_relationship_resolves_its_own_peers_identity",
+  "//mcp-re-proxy:proxy_unit_test#tls::peer::channel_peer_resolution_tests::a_leaf_without_the_configured_field_resolves_no_identity",
 ]
 note = """
 THE DEPLOYMENT'S POLICY STOPS REACHING THE INTERPRETER, and nothing else changes. The

@@ -79,9 +79,7 @@ fn crate_production() -> Vec<(String, String)> {
 }
 
 fn app_production() -> String {
-    let path = mcp_re_test_paths::resolve_runfile("MCP_RE_APP_SRC");
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
-    production_half(&text)
+    crate::composition_source::composition_production()
 }
 
 /// The store is attached ONLY from what the seam established, and only when it established
@@ -98,7 +96,7 @@ fn the_root_installs_only_the_store_the_seam_established() {
     assert_eq!(
         app.matches("with_continuation_store(").count(),
         1,
-        "app.rs attaches the continuation store from more than one site: a second site is \
+        "the composition root attaches the continuation store from more than one site: a second site is \
          a second authority over what this deployment holds, and the posture line declared \
          below describes only one of them"
     );
@@ -123,12 +121,12 @@ fn the_root_installs_only_the_store_the_seam_established() {
     assert_eq!(
         app.matches("mrtr_continuation_store(").count(),
         1,
-        "the capability is established from more than one site in app.rs"
+        "the capability is established from more than one site in the composition root"
     );
     assert_eq!(
         app.matches("Seam::MrtrContinuationStore").count(),
         1,
-        "the seam is declared other than exactly once in app.rs — `assert_complete` \
+        "the seam is declared other than exactly once in the composition root — `assert_complete` \
          refuses that at runtime, and no hermetic lane reaches it"
     );
 }
@@ -169,7 +167,7 @@ fn the_rules_would_catch_each_regression() {
     let app = app_production();
     assert!(
         app.len() > 5_000,
-        "app.rs production half is {} bytes — the rules above are searching almost nothing",
+        "the composition root production half is {} bytes — the rules above are searching almost nothing",
         app.len()
     );
 

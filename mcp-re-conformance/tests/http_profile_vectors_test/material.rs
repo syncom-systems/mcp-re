@@ -6,6 +6,7 @@ use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::RequestRoleEvidence;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 
@@ -82,10 +83,12 @@ pub(super) fn sign_as_client(request: &mut HttpRequest, nonce: &str) -> RequestR
     sign_request(
         request,
         &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        nonce,
+        &RequestSignature {
+            key_id: CLIENT_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+            nonce,
+        },
     )
     .expect("signing succeeds")
 }

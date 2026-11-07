@@ -196,13 +196,13 @@ listener lifetime the production composition does not have.
 | Store-level epoch binding (ADR-055 threat, retained by ADR-062) | `src/tls_listener_state/resumption_acceptance.rs` | `//mcp-re-proxy:proxy_unit_test` | resumption refused after epoch change — a claim about the STORE |
 | Listener-scoped resumption (ADR-062) | `src/tls_listener_state/mod.rs` tests, probes T01–T04 | `//mcp-re-proxy:proxy_unit_test`; `tools/verification/verify-mutations` | a different anchor set gets its own empty store; each probe turns a declared control red |
 | Certificate identity: the no-fallback law, through real DER | `tests/integration/certificate_identity_no_fallback_test.rs` | `//mcp-re-proxy:integration_test` | **every negative mints a decoy** — the selected field is absent or its first value malformed while another field, or a later value of the same field, is valid and unusable |
-| Delegated credential/key correspondence, over real certificates and a real signer seam | `src/tls.rs` `delegated_credential_key_correspondence_tests` | `//mcp-re-proxy:proxy_unit_test` | **the algorithm-confusion vector** — a signing key declaring another algorithm whose trailing bytes ARE the credential's public point; only the profile rule can refuse it |
+| Delegated credential/key correspondence, over real certificates and a real signer seam | `src/tls/delegated.rs` `delegated_credential_key_correspondence_tests` | `//mcp-re-proxy:proxy_unit_test` | **the algorithm-confusion vector** — a signing key declaring another algorithm whose trailing bytes ARE the credential's public point; only the profile rule can refuse it |
 | Correspondence gates delegated resolver construction | `src/delegated_tls/resolver.rs` `correspondence_gate` | `//mcp-re-proxy:proxy_unit_test` | **mismatched material cannot produce a resolver at all** — asserted on construction, never on a later handshake failure |
 | Certificate identity: the pure selector and its refusal algebra | `src/communication_assurance/` module tests, probes M25–M29 | `//mcp-re-proxy:proxy_unit_test`; `tools/verification/verify-mutations` | four refusals stay distinguishable; each probe turns a declared control red |
 | Channel binding to transport identity | `tests/integration/mtls_transport_binding_test.rs` | `//mcp-re-proxy:integration_test` | binding mismatch refused |
 | Client leg end to end | `tests/integration_async/mtls_client_leg_e2e_test.rs` | `async_serve`; `//mcp-re-proxy:integration_async_test` | — |
 | Per-request revocation | `tests/integration_async/per_request_revocation_test.rs` | `async_serve` | revoked client refused |
-| CRL freshness / posture | unit tests in `mcp-re-proxy/src/tls.rs` | `//mcp-re-proxy:proxy_unit_test` | stale CRL refused |
+| CRL freshness / posture | unit tests in `mcp-re-proxy/src/tls/peer.rs` | `//mcp-re-proxy:proxy_unit_test` | stale CRL refused |
 | OCSP responder end to end | `tests/integration_ext/ocsp_e2e_test.rs` | `_PROXY_EXT_FEATURES`; `//mcp-re-proxy:integration_ext_test` | — |
 | Deliberate client-verification break is detected | `tests/fault_injection_test.rs` | `fault_accept_any_client`; `//mcp-re-proxy:fault_injection_test` | **this is the negative control for the whole component** — never enabled in the default `bazel test //...` |
 | Throughput of the real listener | `tests/tls_load_harness_bench.rs` | `#![cfg(feature = "redis_replay")]` — run via `scripts/local_slo_lane.sh` **only** | `scripts/slo_invocation_gate.py` fails the build if the `-- --ignored` form returns |
@@ -228,7 +228,7 @@ Re-measured by the ADR-061 §5.1 rule after MCPRE-138 (`scripts/module_size_gate
 
 | file | prod | current role | target role |
 |---|---:|---|---|
-| `mcp-re-proxy/src/tls.rs` | 1068 | the six authorities EX-004's re-census names | TLS authority facade over a private subtree |
+| `mcp-re-proxy/src/tls/` (`mod.rs`, `options.rs`, `peer.rs`, `request_guard.rs`, `delegated.rs`, `fault_accept_any.rs`) | 6 files | the six authorities EX-004's re-census names | TLS authority facade over a private subtree |
 | `mcp-re-proxy/src/blocking_mtls_harness/` | 525 | the blocking mTLS + HTTP/1 harness, four modules, all under the threshold | as-is — a consumer of the authority, not part of it |
 | `mcp-re-proxy/src/tls_listener_state/auth_epoch.rs` | 270 | `TlsAuthEpoch`, `SharedTlsAuthEpoch`, `EpochBoundSessionStore` | private subordinate of the listener-lifetime state — pre-existing debt, still unreviewed |
 | ~~`mcp-re-proxy/src/tls_plane.rs`~~ | ~~623~~ | **gone** — became the `tls_plane/` subtree in MCPRE-175 (`mod.rs`, `client_revocation_posture.rs`, `crl_reload_worker.rs`) | as-is |

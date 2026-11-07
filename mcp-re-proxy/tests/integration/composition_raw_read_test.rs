@@ -2,7 +2,7 @@
 //! The composition root reads only ORDINARY validated parameters from the request.
 //!
 //! "The composition root" is every production file that reads the request through
-//! `ValidatedDeployment::config()` — `app.rs` and `startup_plan/` today — found by scanning
+//! `ValidatedDeployment::config()` — `app/` and `startup_plan/` today — found by scanning
 //! the source tree rather than listed, so a new composition file is measured when it starts
 //! reading.
 //!
@@ -220,7 +220,9 @@ fn the_composition_root_reads_only_ordinary_validated_parameters() {
     let sources = composition_sources();
     let paths: Vec<&std::path::Path> = sources.iter().map(|(path, _)| path.as_path()).collect();
     for expected in [
-        "app.rs",
+        "app/boot.rs",
+        "app/planes.rs",
+        "app/transport.rs",
         "startup_plan/signing_plan.rs",
         "startup_plan/channel_establishment_plan.rs",
     ] {

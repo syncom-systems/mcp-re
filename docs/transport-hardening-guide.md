@@ -35,7 +35,7 @@ as a substitute for another.
 
 ## mTLS via `RustlsDirectProvider`
 
-Source: [`tls.rs`](../mcp-re-proxy/src/tls.rs).
+Source: [`tls/`](../mcp-re-proxy/src/tls/mod.rs).
 
 The proxy terminates TLS **itself** with `rustls` (the `ring` crypto provider,
 installed explicitly — no process-global default). It REQUIRES and verifies a
@@ -193,7 +193,7 @@ parse but are refused as deployment states.
 
 ## Certificate revocation — three planes, and the short-lived-cert baseline
 
-Source: `ServerOptions::max_client_cert_lifetime` in [`tls.rs`](../mcp-re-proxy/src/tls.rs).
+Source: `ServerOptions::max_client_cert_lifetime` in [`tls/`](../mcp-re-proxy/src/tls/mod.rs).
 
 Revocation lives on three separate planes; do not conflate them:
 

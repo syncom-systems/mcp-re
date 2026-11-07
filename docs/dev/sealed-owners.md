@@ -56,7 +56,7 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `AdmissionState` | `config_state/admission/` | `enforced() -> Option<EnforcedAdmission<'_>>`, `is_enforced()`; the view's `budgets(MaxClockSkew)` |
 | `RetentionState` | `config_state/evidence.rs` | `directory() -> Option<&str>`, `is_on()` |
 | `McpTransportContractState` | `config_state/mcp_transport_contract.rs` | `versions() -> &[String]` (non-empty: `classify_and_validate` produces no state for a refused set) |
-| `TrustRevocationState` | `config_state/trust_revocation.rs` | `epoch_source() -> Option<EpochSource<'_>>`, `reload_cadence()`, `tier()`, `declared_window_secs()`, `push_channel_is_inert()`, `has_networked_epoch()` |
+| `TrustRevocationState` | `config_state/trust_revocation/mod.rs` | `epoch_source() -> Option<EpochSource<'_>>`, `reload_cadence()`, `tier()`, `declared_window_secs()`, `push_channel_is_inert()`, `has_networked_epoch()` |
 | `CrlRevocationState` | `config_state/transport.rs` | `client_revocation_plan()`, `paths()`, `reload_cadence_secs()`, `is_enforced()` |
 | `ClientRevocationPlan` | `config_state/transport.rs` | `paths()`, `reload_cadence_secs()`, `is_enforced()` |
 | `ChannelCredentialCustodyState` | `config_state/channel_credential_custody.rs` | `exposure()`, `material()` |
@@ -749,7 +749,7 @@ the fabrication rather than deprecate it.
 
 ```text
 cargo test -p mcp-re-proxy --lib -- …credential_key_correspondence:: …credential_public_key_evidence:: \
-                                    …signing_key_evidence:: tls::delegated_credential_key_correspondence_tests::
+                                    …signing_key_evidence:: tls::delegated::delegated_credential_key_correspondence_tests::
     test result: ok. 22 passed; 0 failed       # with all three fields opened to pub(crate)
 
 verify-structural --probe S09 --probe S10 --probe S11

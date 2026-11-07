@@ -1688,7 +1688,7 @@ mod tests {
     /// The other half of the coexistence question — that a leg opened by an answer leg
     /// remains ANSWERABLE — is deliberately not testable here. Answerability lives in the
     /// shared continuation store, which this type does not model; it is proved end to end by
-    /// `mrt_continuation_serving_test::a_leg_opened_by_an_answer_leg_is_itself_answerable`.
+    /// `mrt_continuation_serving_test::open_leg_cases::a_leg_opened_by_an_answer_leg_is_itself_answerable`.
     #[test]
     fn nothing_observed_after_an_approval_is_spent_makes_it_look_unspent() {
         for observed in CONTINUATIONS {

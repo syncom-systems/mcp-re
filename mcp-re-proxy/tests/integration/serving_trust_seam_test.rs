@@ -41,8 +41,7 @@ const PER_REQUEST_TIER: &str = "request_trust.resolve(";
 const FROZEN_CAPTURE: &str = "HashMap";
 
 fn app_source() -> String {
-    let path = mcp_re_test_paths::resolve_runfile("MCP_RE_APP_SRC");
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"))
+    crate::composition_source::composition_production()
 }
 
 /// Everything outside a `#[cfg(test)]`-family region, by brace depth from the attribute.

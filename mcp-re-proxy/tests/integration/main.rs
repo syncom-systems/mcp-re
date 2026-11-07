@@ -33,6 +33,7 @@ mod app_startup_characterization_test;
 mod certificate_identity_no_fallback_test;
 mod client_verifier_posture_test;
 mod composition_raw_read_test;
+mod composition_source;
 mod config_legality_characterization_test;
 mod config_refusal_precedence_test;
 mod continuation_installation_test;

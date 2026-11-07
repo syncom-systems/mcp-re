@@ -141,6 +141,7 @@ mod serving_path {
     use mcp_re_core::TrustResolver;
     use mcp_re_core::TrustResolverError;
     use mcp_re_core::VerificationKey;
+    use mcp_re_http_profile::RequestSignature;
 
     use super::server_identity;
     use mcp_re_http_profile::custody::DelegatedKeyWindow;
@@ -341,10 +342,12 @@ mod serving_path {
             &mut req,
             &block,
             &client_key(),
-            CLIENT_KEY_ID,
-            now - 60,
-            now + 240,
-            nonce,
+            &RequestSignature {
+                key_id: CLIENT_KEY_ID,
+                created: now - 60,
+                expires: now + 240,
+                nonce,
+            },
         )
         .expect("client signs the RFC 9421 request");
         req

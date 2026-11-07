@@ -22,7 +22,7 @@ use std::net::SocketAddr;
 use rustls_pki_types::ServerName;
 
 use super::limits::ClientLimits;
-use super::request::build_request_head;
+use super::request::{build_request_head, RequestHead};
 use super::response::HttpResponseParts;
 use super::tls_config::ClientTlsConfig;
 use super::TransportError;
@@ -121,7 +121,13 @@ impl MtlsClient {
         // Build (and validate) the request bytes BEFORE opening the connection: a
         // caller header that cannot be emitted safely is a local programming error,
         // not something to discover with a socket already open.
-        let request_head = build_request_head(method, path, &self.host, headers, body.len())?;
+        let head = RequestHead {
+            method,
+            path,
+            host: &self.host,
+            body_len: body.len(),
+        };
+        let request_head = build_request_head(&head, headers)?;
         self.exchange(addr, request_head.as_bytes(), body)
     }
 }

@@ -307,6 +307,7 @@ pub fn signature_base(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sign::RequestSignature;
 
     fn request() -> HttpRequest {
         HttpRequest {
@@ -468,10 +469,12 @@ mod tests {
             crate::sign::sign_request(
                 &mut bodied,
                 &mcp_re_core::SigningKey::from_seed_bytes(&[9u8; 32]),
-                "k",
-                1_700_000_000,
-                1_700_000_300,
-                &oversized,
+                &RequestSignature {
+                    key_id: "k",
+                    created: 1_700_000_000,
+                    expires: 1_700_000_300,
+                    nonce: &oversized
+                }
             )
             .unwrap_err(),
             HttpProfileError::MalformedEvidence(
@@ -537,10 +540,12 @@ mod tests {
             crate::sign::sign_request(
                 &mut request(),
                 &mcp_re_core::SigningKey::from_seed_bytes(&[9u8; 32]),
-                "k\"x",
-                1_700_000_000,
-                1_700_000_300,
-                &mcp_re_test_paths::unique_test_nonce(),
+                &RequestSignature {
+                    key_id: "k\"x",
+                    created: 1_700_000_000,
+                    expires: 1_700_000_300,
+                    nonce: &mcp_re_test_paths::unique_test_nonce()
+                }
             )
             .unwrap_err(),
             HttpProfileError::MalformedEvidence("keyid signature parameter"),

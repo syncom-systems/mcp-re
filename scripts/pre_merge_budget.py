@@ -85,20 +85,25 @@ def target_warning(started: str | None, now: datetime.datetime, target: int) -> 
     return None
 
 
+def _job_row(job: dict) -> tuple[float, float | None, str, str | None]:
+    """`(ran seconds or -1, queued seconds or None, name, conclusion)` for one job."""
+    created, started, completed = (_when(job.get(k)) for k in ("created_at", "started_at", "completed_at"))
+    queued = (started - created).total_seconds() if created and started else None
+    ran = (completed - started).total_seconds() if started and completed else None
+    return ran if ran is not None else -1.0, queued, job.get("name", "?"), job.get("conclusion")
+
+
+def _job_line(row: tuple[float, float | None, str, str | None]) -> str:
+    ran, queued, name, conclusion = row
+    q = f"{queued:5.0f}s" if queued is not None else "    -"
+    r = f"{ran:5.0f}s" if ran >= 0 else "  ..."
+    return f"  queued {q}  ran {r}  {name}  [{conclusion or 'in progress'}]"
+
+
 def job_lines(jobs: list[dict]) -> list[str]:
     """`queued  ran  name` per job of the attempt, slowest first, for the run's record."""
-    rows = []
-    for job in jobs:
-        created, started, completed = (_when(job.get(k)) for k in ("created_at", "started_at", "completed_at"))
-        queued = (started - created).total_seconds() if created and started else None
-        ran = (completed - started).total_seconds() if started and completed else None
-        rows.append((ran if ran is not None else -1.0, queued, job.get("name", "?"), job.get("conclusion")))
-    out = []
-    for ran, queued, name, conclusion in sorted(rows, key=lambda r: r[0], reverse=True):
-        q = f"{queued:5.0f}s" if queued is not None else "    -"
-        r = f"{ran:5.0f}s" if ran >= 0 else "  ..."
-        out.append(f"  queued {q}  ran {r}  {name}  [{conclusion or 'in progress'}]")
-    return out
+    rows = [_job_row(job) for job in jobs]
+    return [_job_line(row) for row in sorted(rows, key=lambda r: r[0], reverse=True)]
 
 
 def _api(path: str) -> dict:
@@ -110,6 +115,34 @@ def _api(path: str) -> dict:
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.load(response)
+
+
+def _read_run(repo: str | None, run: str | None, attempt: str | None) -> tuple[str | None, list[dict]]:
+    """The attempt's `run_started_at` and jobs; unmeasured (None, []) when the API fails."""
+    started, jobs = None, []
+    try:
+        started = _api(f"/repos/{repo}/actions/runs/{run}/attempts/{attempt}").get("run_started_at")
+        jobs = _api(f"/repos/{repo}/actions/runs/{run}/attempts/{attempt}/jobs?per_page=100").get("jobs", [])
+    except Exception as exc:  # noqa: BLE001 — any failure to measure is the same answer
+        print(f"pre-merge budget: could not read run {run} attempt {attempt}: {exc}", file=sys.stderr)
+    return started, jobs
+
+
+def _write_summary(report: list[str]) -> None:
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as out:
+            out.write("```\n" + "\n".join(report) + "\n```\n")
+
+
+def _verdict(problems: list[str]) -> int:
+    if problems:
+        print(f"pre-merge budget: FAIL — {len(problems)} problem(s)", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+    print("pre-merge budget: OK")
+    return 0
 
 
 def main(argv: list[str]) -> int:
@@ -126,12 +159,7 @@ def main(argv: list[str]) -> int:
 
     problems = shard_problems(json.loads(os.environ.get("NEEDS_JSON") or "{}"))
     repo, run, attempt = (os.environ.get(k) for k in ("GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"))
-    started, jobs = None, []
-    try:
-        started = _api(f"/repos/{repo}/actions/runs/{run}/attempts/{attempt}").get("run_started_at")
-        jobs = _api(f"/repos/{repo}/actions/runs/{run}/attempts/{attempt}/jobs?per_page=100").get("jobs", [])
-    except Exception as exc:  # noqa: BLE001 — any failure to measure is the same answer
-        print(f"pre-merge budget: could not read run {run} attempt {attempt}: {exc}", file=sys.stderr)
+    started, jobs = _read_run(repo, run, attempt)
     now = datetime.datetime.now(datetime.timezone.utc)
     if (over := budget_problem(started, now, args.budget_seconds)) is not None:
         problems.append(over)
@@ -143,20 +171,11 @@ def main(argv: list[str]) -> int:
         *job_lines(jobs),
     ]
     print("\n".join(report))
-    summary = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary:
-        with open(summary, "a", encoding="utf-8") as out:
-            out.write("```\n" + "\n".join(report) + "\n```\n")
+    _write_summary(report)
     missed = target_warning(started, now, args.target_seconds)
     if missed is not None:
         print(f"::warning title=pre-merge target missed ({args.check})::{missed}")
-    if problems:
-        print(f"pre-merge budget: FAIL — {len(problems)} problem(s)", file=sys.stderr)
-        for problem in problems:
-            print(f"  - {problem}", file=sys.stderr)
-        return 1
-    print("pre-merge budget: OK")
-    return 0
+    return _verdict(problems)
 
 
 def selftest() -> int:

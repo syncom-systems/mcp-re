@@ -12,7 +12,7 @@
 //! file is impossible, because there is no check in this file to delete: that is what
 //! distinguishes a facade from the second implementation it replaced.
 //!
-//! Their creditors are `transport/identity.rs`'s `extract_identity` and `tls.rs`'s
+//! Their creditors are `transport/identity.rs`'s `extract_identity` and `tls/peer.rs`'s
 //! `authenticate_relationship_peer` call, and while those speak the configuration
 //! vocabulary this module is the one place the two spellings are reconciled.
 
