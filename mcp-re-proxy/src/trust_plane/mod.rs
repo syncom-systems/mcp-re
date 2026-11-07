@@ -866,18 +866,8 @@ mod handle_lifetime_tests {
         assert_eq!(signers.signer_for("unknown-kid"), None);
     }
 
-    /// The same contract, on a plane built by [`TrustPlane::materialize`] from a
-    /// configuration that set NO `--trust-reload-secs`.
-    ///
-    /// The tests above go through `for_teardown_test`, which constructs the plane's
-    /// resolver directly. That fixture cannot see which resolver `materialize` decides to
-    /// hand out, and `materialize` used to install the staleness guard only when a reload
-    /// cadence was configured — so on the default tier, which validation accepts with no
-    /// cadence, the latch `Drop` sets was read by nothing and a surviving resolver kept
-    /// answering from the frozen snapshot. This drives the production constructor in
-    /// exactly that shape.
-    #[test]
-    fn a_plane_materialized_without_a_reload_cadence_still_fails_closed_after_drop() {
+    /// A trust file enrolling the test signer under `KID`, in the temp directory.
+    fn write_enrolled_trust_file() -> std::path::PathBuf {
         let key = mcp_re_core::SigningKey::from_seed_bytes(&[4u8; 32]).public_key();
         let path = std::env::temp_dir().join(format!(
             "mcp_re_trust_plane_no_cadence_{}.json",
@@ -891,8 +881,13 @@ mod handle_lifetime_tests {
             ),
         )
         .expect("write trust file");
+        path
+    }
 
-        let argv: Vec<String> = [
+    /// The flags of a default-tier deployment that sets NO `--trust-reload-secs`, trusting
+    /// the signers in `trust_path`.
+    fn no_cadence_argv(trust_path: &str) -> Vec<String> {
+        let flags = [
             "--bind",
             "127.0.0.1:0",
             "--audience",
@@ -924,11 +919,25 @@ mod handle_lifetime_tests {
             "--inner-http-url",
             "http://127.0.0.1:9/mcp",
             "--trust",
-        ]
-        .iter()
-        .map(|s| (*s).to_string())
-        .chain(std::iter::once(path.to_string_lossy().into_owned()))
-        .collect();
+            trust_path,
+        ];
+        flags.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    /// The same contract, on a plane built by [`TrustPlane::materialize`] from a
+    /// configuration that set NO `--trust-reload-secs`.
+    ///
+    /// The tests above go through `for_teardown_test`, which constructs the plane's
+    /// resolver directly. That fixture cannot see which resolver `materialize` decides to
+    /// hand out, and `materialize` used to install the staleness guard only when a reload
+    /// cadence was configured — so on the default tier, which validation accepts with no
+    /// cadence, the latch `Drop` sets was read by nothing and a surviving resolver kept
+    /// answering from the frozen snapshot. This drives the production constructor in
+    /// exactly that shape.
+    #[test]
+    fn a_plane_materialized_without_a_reload_cadence_still_fails_closed_after_drop() {
+        let path = write_enrolled_trust_file();
+        let argv = no_cadence_argv(&path.to_string_lossy());
 
         let config = crate::cli::parse_args(&argv).expect("args parse");
         assert!(

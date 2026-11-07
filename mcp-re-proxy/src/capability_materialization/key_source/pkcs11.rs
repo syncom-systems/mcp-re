@@ -44,10 +44,12 @@ pub(super) fn open(
     // `open` builds the delegated handshake signer and the proxy never reads an exported
     // key from disk — a custody the request cannot even state alongside this one.
     Ok(Box::new(crate::pkcs11_keysource::Pkcs11KeySource::open(
-        token.module,
-        pin.expose(),
-        token.token_label,
-        token.key_label,
+        crate::pkcs11_keysource::TokenAccess {
+            module_path: token.module,
+            pin: pin.expose(),
+            token_label: token.token_label,
+            key_label: token.key_label,
+        },
         tls,
         channel.pkcs11_key_label(),
     )?))

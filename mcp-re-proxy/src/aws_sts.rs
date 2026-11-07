@@ -316,6 +316,11 @@ impl WebIdentityConfig {
 /// `--aws-kms-endpoint` and `--gcp-kms-endpoint` flags meet at parse, applied again at
 /// [`WebIdentityConfig::from_env`] because that is where an endpoint reaches this module.
 pub(crate) fn validate_region(region: &str) -> Result<(), KeyError> {
+    /// The characters an AWS region label is made of: `[a-z0-9-]`.
+    fn is_region_label_char(c: char) -> bool {
+        c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'
+    }
+
     if region.is_empty() {
         return Err(KeyError::Malformed(
             "aws-kms: --aws-kms-region is empty, so the default AWS endpoints would resolve \
@@ -323,10 +328,7 @@ pub(crate) fn validate_region(region: &str) -> Result<(), KeyError> {
                 .to_string(),
         ));
     }
-    if let Some(bad) = region
-        .chars()
-        .find(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-'))
-    {
+    if let Some(bad) = region.chars().find(|c| !is_region_label_char(*c)) {
         return Err(KeyError::Malformed(format!(
             "aws-kms: --aws-kms-region {region:?} is not an AWS region label \
              ([a-z0-9-]); it is interpolated into the default STS and KMS endpoints, so a \

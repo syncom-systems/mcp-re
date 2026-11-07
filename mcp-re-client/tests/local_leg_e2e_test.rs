@@ -318,24 +318,15 @@ fn start_sidecar(scratch: &Scratch, default_route: Option<&str>) -> Sidecar {
     )
 }
 
-fn start_sidecar_with_backend(
-    scratch: &Scratch,
-    default_route: Option<&str>,
-    backend_reply: &'static str,
-) -> Sidecar {
-    publish_manifest(&scratch.join("manifest.json"), 1, false);
-    let trust = trust_config(scratch);
-    let mut loader = AnchorLoader::new(&trust).expect("loader");
-    let loaded = loader.load(NOW).expect("startup manifest loads");
-    let snapshot = Arc::new(AnchorSnapshot::new(loaded.issuers));
-
+/// The one route the sidecar serves, verifying replies against `snapshot`'s anchors.
+fn delegated_route(snapshot: &Arc<AnchorSnapshot>) -> Route {
     let policy = DelegationPolicy::new(
         vec![AUD.to_string()],
         AUD,
         vec![EPOCH.to_string()],
         mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
     );
-    let route = Route {
+    Route {
         route_id: "r1".into(),
         target_uri: TARGET.into(),
         audience: AudienceTuple {
@@ -349,9 +340,13 @@ fn start_sidecar_with_backend(
         )],
         extra_headers: vec![("Authorization".into(), "Bearer access-token-xyz".into())],
         expected_server_keyid: None,
-        verification: ClientVerification::DelegatedAnchored(policy, Arc::clone(&snapshot)),
-    };
+        verification: ClientVerification::DelegatedAnchored(policy, Arc::clone(snapshot)),
+    }
+}
 
+/// A client proxy over `route` whose transport is an in-process server answering
+/// `backend_reply`.
+fn in_process_proxy(route: Route, backend_reply: &'static str) -> ClientProxy {
     let transport = InProcessServer {
         server: Arc::new(build_server(backend_reply)),
         rt: tokio::runtime::Builder::new_multi_thread()
@@ -361,14 +356,16 @@ fn start_sidecar_with_backend(
             .expect("runtime"),
         now: NOW,
     };
-    let proxy = ClientProxy::new(
+    ClientProxy::new(
         RouteRegistry::new().register(route),
         client_key(),
         CLIENT_KEY_ID,
         Box::new(transport),
-    );
+    )
+}
 
-    let context = Arc::new(ServeContext {
+fn serve_context(proxy: ClientProxy, default_route: Option<&str>) -> Arc<ServeContext> {
+    Arc::new(ServeContext {
         proxy,
         default_route: default_route.map(str::to_owned),
         request_lifetime_secs: 300,
@@ -378,7 +375,23 @@ fn start_sidecar_with_backend(
         // out of the way of what is being measured.
         clock: Box::new(|| NOW),
         nonce: Box::new(mcp_re_client::next_nonce),
-    });
+    })
+}
+
+fn start_sidecar_with_backend(
+    scratch: &Scratch,
+    default_route: Option<&str>,
+    backend_reply: &'static str,
+) -> Sidecar {
+    publish_manifest(&scratch.join("manifest.json"), 1, false);
+    let trust = trust_config(scratch);
+    let mut loader = AnchorLoader::new(&trust).expect("loader");
+    let loaded = loader.load(NOW).expect("startup manifest loads");
+    let snapshot = Arc::new(AnchorSnapshot::new(loaded.issuers));
+
+    let route = delegated_route(&snapshot);
+    let proxy = in_process_proxy(route, backend_reply);
+    let context = serve_context(proxy, default_route);
 
     let listener = mcp_re_client::serve::bind(
         mcp_re_client::config::BindScope::decide("127.0.0.1:0".parse().expect("addr"), false)
@@ -644,6 +657,15 @@ fn a_verified_rejection_carries_its_execution_contract_to_the_local_client() {
     );
 }
 
+/// A POST of `CALL` to the route, carrying the header lines in `headers` (each ending in
+/// CRLF) and its own `Content-Length`.
+fn call_with(headers: &str) -> String {
+    format!(
+        "POST /route/r1 HTTP/1.1\r\n{headers}Content-Length: {}\r\n\r\n{CALL}",
+        CALL.len()
+    )
+}
+
 /// The listener's HTTP surface is deliberately small, and each refusal is a refusal.
 /// A lenient path here would let one local caller's body be read as another's.
 #[test]
@@ -651,101 +673,62 @@ fn the_local_http_surface_refuses_everything_it_does_not_implement() {
     let scratch = Scratch::new("surface");
     let sidecar = start_sidecar(&scratch, None);
 
-    assert_eq!(
-        send(
-            sidecar.addr,
-            "GET /route/r1 HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n"
-        )
-        .status,
-        405,
-        "only POST"
-    );
-    assert_eq!(
-        send(
-            sidecar.addr,
-            "POST /route/r1 HTTP/1.1\r\nHost: localhost\r\n\r\n"
-        )
-        .status,
-        411,
-        "a body with no declared length has no boundary"
-    );
-    assert_eq!(
-        send(
-            sidecar.addr,
+    let refusals: Vec<(String, u16, &str)> = vec![
+        (
+            "GET /route/r1 HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n".into(),
+            405,
+            "only POST",
+        ),
+        (
+            "POST /route/r1 HTTP/1.1\r\nHost: localhost\r\n\r\n".into(),
+            411,
+            "a body with no declared length has no boundary",
+        ),
+        (
             "POST /route/r1 HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
-        )
-        .status,
-        411,
-        "chunked is refused rather than parsed"
-    );
-    assert_eq!(
-        send(
-            sidecar.addr,
+                .into(),
+            411,
+            "chunked is refused rather than parsed",
+        ),
+        (
             "POST /route/r1 HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\nContent-Length: 7\r\n\r\nhello"
-        )
-        .status,
-        400,
-        "two lengths let a reader and a writer disagree about where the message ends"
-    );
+                .into(),
+            400,
+            "two lengths let a reader and a writer disagree about where the message ends",
+        ),
+        // The browser guards. Each of these is a request a web page can make to
+        // 127.0.0.1 and a local MCP client never makes.
+        (
+            call_with(
+                "Host: 127.0.0.1\r\nOrigin: https://evil.example\r\n\
+                 Content-Type: application/json\r\n",
+            ),
+            403,
+            "a cross-origin page must not get a tool call signed under this client's identity",
+        ),
+        (
+            call_with("Host: rebound.evil.example\r\nContent-Type: application/json\r\n"),
+            421,
+            "a DNS-rebound name is same-origin to the browser, so Host is what refuses it",
+        ),
+        (
+            call_with("Host: localhost\r\nContent-Type: text/plain\r\n"),
+            415,
+            "a CORS-simple content type is the shape that needs no preflight",
+        ),
+        (
+            call_with("Host: localhost\r\n"),
+            415,
+            "an absent content type is not a JSON one",
+        ),
+    ];
+    for (request, status, why) in &refusals {
+        assert_eq!(send(sidecar.addr, request).status, *status, "{why}");
+    }
+    let malformed = post(sidecar.addr, "/route/r1", "{ not json");
     assert_eq!(
-        post(sidecar.addr, "/route/r1", "{ not json").status,
-        400,
+        malformed.status, 400,
         "a malformed local body never reaches the signer"
-    );
-
-    // The browser guards. Each of these is a request a web page can make to
-    // 127.0.0.1 and a local MCP client never makes.
-    let body = CALL;
-    assert_eq!(
-        send(
-            sidecar.addr,
-            &format!(
-                "POST /route/r1 HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: https://evil.example\r\n\
-                 Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-                body.len()
-            )
-        )
-        .status,
-        403,
-        "a cross-origin page must not get a tool call signed under this client's identity"
-    );
-    assert_eq!(
-        send(
-            sidecar.addr,
-            &format!(
-                "POST /route/r1 HTTP/1.1\r\nHost: rebound.evil.example\r\n\
-                 Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-                body.len()
-            )
-        )
-        .status,
-        421,
-        "a DNS-rebound name is same-origin to the browser, so Host is what refuses it"
-    );
-    assert_eq!(
-        send(
-            sidecar.addr,
-            &format!(
-                "POST /route/r1 HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\n\
-                 Content-Length: {}\r\n\r\n{body}",
-                body.len()
-            )
-        )
-        .status,
-        415,
-        "a CORS-simple content type is the shape that needs no preflight"
-    );
-    assert_eq!(
-        send(
-            sidecar.addr,
-            &format!(
-                "POST /route/r1 HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{body}",
-                body.len()
-            )
-        )
-        .status,
-        415,
-        "an absent content type is not a JSON one"
     );
 }
 

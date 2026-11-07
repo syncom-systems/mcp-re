@@ -38,6 +38,7 @@ use mcp_re_core::verify_ed25519_with;
 use mcp_re_core::McpReError;
 
 use mcp_re_proxy::config_state::ClientCredentialWindow;
+use mcp_re_proxy::pkcs11_keysource::TokenAccess;
 use mcp_re_proxy::serve_once;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::FileKeySource;
@@ -171,10 +172,12 @@ fn pkcs11_sign_verifies_against_token_public_key() {
     token.keygen_ed25519("mcp-re-response-signing", "01");
 
     let source = Pkcs11KeySource::open(
-        &module,
-        &token.pin,
-        &token.token_label,
-        "mcp-re-response-signing",
+        TokenAccess {
+            module_path: &module,
+            pin: &token.pin,
+            token_label: &token.token_label,
+            key_label: "mcp-re-response-signing",
+        },
         placeholder_tls(),
         None,
     )
@@ -223,10 +226,12 @@ fn pkcs11_sign_response_refuses_a_token_signature_that_does_not_verify() {
     token.keygen("ed25519-misbound", "mcp-re-response-signing", "01");
 
     let source = Pkcs11KeySource::open(
-        &module,
-        &token.pin,
-        &token.token_label,
-        "mcp-re-response-signing",
+        TokenAccess {
+            module_path: &module,
+            pin: &token.pin,
+            token_label: &token.token_label,
+            key_label: "mcp-re-response-signing",
+        },
         placeholder_tls(),
         None,
     )
@@ -253,10 +258,12 @@ fn pkcs11_tls_signer_refuses_a_token_signature_that_does_not_verify() {
     token.keygen("ed25519-misbound", "mcp-re-tls", "02");
 
     let source = Pkcs11KeySource::open(
-        &module,
-        &token.pin,
-        &token.token_label,
-        "mcp-re-response-signing",
+        TokenAccess {
+            module_path: &module,
+            pin: &token.pin,
+            token_label: &token.token_label,
+            key_label: "mcp-re-response-signing",
+        },
         placeholder_tls(),
         Some("mcp-re-tls"),
     )
@@ -283,10 +290,12 @@ fn pkcs11_tls_label_equal_to_response_label_is_refused() {
     token.keygen_ed25519("mcp-re-sign", "01");
 
     let result = Pkcs11KeySource::open(
-        &module,
-        &token.pin,
-        &token.token_label,
-        "mcp-re-sign",
+        TokenAccess {
+            module_path: &module,
+            pin: &token.pin,
+            token_label: &token.token_label,
+            key_label: "mcp-re-sign",
+        },
         placeholder_tls(),
         Some("mcp-re-sign"),
     );
@@ -306,10 +315,12 @@ fn pkcs11_a_response_key_the_token_would_export_is_refused() {
     token.keygen("ed25519-extractable", "mcp-re-sign", "01");
 
     let result = Pkcs11KeySource::open(
-        &module,
-        &token.pin,
-        &token.token_label,
-        "mcp-re-sign",
+        TokenAccess {
+            module_path: &module,
+            pin: &token.pin,
+            token_label: &token.token_label,
+            key_label: "mcp-re-sign",
+        },
         placeholder_tls(),
         None,
     );
@@ -333,10 +344,12 @@ fn pkcs11_a_tls_key_the_token_would_export_is_refused() {
     token.keygen("ed25519-extractable", "mcp-re-tls", "02");
 
     let result = Pkcs11KeySource::open(
-        &module,
-        &token.pin,
-        &token.token_label,
-        "mcp-re-sign",
+        TokenAccess {
+            module_path: &module,
+            pin: &token.pin,
+            token_label: &token.token_label,
+            key_label: "mcp-re-sign",
+        },
         placeholder_tls(),
         Some("mcp-re-tls"),
     );
@@ -546,10 +559,12 @@ fn pkcs11_tls_delegated_signer_none_then_some() {
     // PKCS#11 allows a single `C_Initialize` per module per process.
     {
         let no_label = Pkcs11KeySource::open(
-            &module,
-            &token.pin,
-            &token.token_label,
-            "mcp-re-sign",
+            TokenAccess {
+                module_path: &module,
+                pin: &token.pin,
+                token_label: &token.token_label,
+                key_label: "mcp-re-sign",
+            },
             placeholder_tls(),
             None,
         )
@@ -563,10 +578,12 @@ fn pkcs11_tls_delegated_signer_none_then_some() {
     // TLS label → Some; the exported SPKI is well-formed and matches the cert minted
     // from the same key (proves it is the token object's public key).
     let with_label = Pkcs11KeySource::open(
-        &module,
-        &token.pin,
-        &token.token_label,
-        "mcp-re-sign",
+        TokenAccess {
+            module_path: &module,
+            pin: &token.pin,
+            token_label: &token.token_label,
+            key_label: "mcp-re-sign",
+        },
         placeholder_tls(),
         Some("mcp-re-tls"),
     )
@@ -604,10 +621,12 @@ fn pkcs11_tls_cert_signer_mismatch_fails_closed() {
     token.keygen_ed25519("mcp-re-tls", "02");
 
     let source = Pkcs11KeySource::open(
-        &module,
-        &token.pin,
-        &token.token_label,
-        "mcp-re-sign",
+        TokenAccess {
+            module_path: &module,
+            pin: &token.pin,
+            token_label: &token.token_label,
+            key_label: "mcp-re-sign",
+        },
         placeholder_tls(),
         Some("mcp-re-tls"),
     )
@@ -642,10 +661,12 @@ fn pkcs11_tls_non_ed25519_fails_closed() {
     token.keygen("EC:prime256v1", "mcp-re-tls", "02");
 
     let result = Pkcs11KeySource::open(
-        &module,
-        &token.pin,
-        &token.token_label,
-        "mcp-re-sign",
+        TokenAccess {
+            module_path: &module,
+            pin: &token.pin,
+            token_label: &token.token_label,
+            key_label: "mcp-re-sign",
+        },
         placeholder_tls(),
         Some("mcp-re-tls"),
     );
@@ -668,10 +689,12 @@ fn pkcs11_tls_multiple_objects_fails_closed() {
     token.keygen_ed25519("mcp-re-tls", "03");
 
     let result = Pkcs11KeySource::open(
-        &module,
-        &token.pin,
-        &token.token_label,
-        "mcp-re-sign",
+        TokenAccess {
+            module_path: &module,
+            pin: &token.pin,
+            token_label: &token.token_label,
+            key_label: "mcp-re-sign",
+        },
         placeholder_tls(),
         Some("mcp-re-tls"),
     );
@@ -698,10 +721,12 @@ fn pkcs11_tls_full_mtls_handshake_token_resident_no_disk_read() {
     let client_ca = make_ca();
 
     let source = Pkcs11KeySource::open(
-        &module,
-        &token.pin,
-        &token.token_label,
-        "mcp-re-sign",
+        TokenAccess {
+            module_path: &module,
+            pin: &token.pin,
+            token_label: &token.token_label,
+            key_label: "mcp-re-sign",
+        },
         placeholder_tls(),
         Some("mcp-re-tls"),
     )

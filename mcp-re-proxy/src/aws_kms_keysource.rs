@@ -1223,30 +1223,63 @@ mod tests {
         assert!(seen[1].contains("Credential=AKIDSECOND/"), "{}", seen[1]);
     }
 
+    /// A credential source that hands out `AKIDFIRST` until it is told that key was refused,
+    /// then `AKIDSECOND`.
+    struct RefusedThenFresh(AtomicBool);
+
+    impl AwsCredentialSource for RefusedThenFresh {
+        fn credentials(&self) -> Result<crate::aws_sigv4::AwsCredentials, KeyError> {
+            let akid = if self.0.load(Ordering::SeqCst) {
+                "AKIDSECOND"
+            } else {
+                "AKIDFIRST"
+            };
+            Ok(crate::aws_sigv4::AwsCredentials {
+                access_key_id: akid.to_string(),
+                secret_access_key: zeroize::Zeroizing::new("secret".to_string()),
+                session_token: None,
+            })
+        }
+        fn invalidate(&self, refused: &str) -> bool {
+            refused == "AKIDFIRST" && !self.0.swap(true, Ordering::SeqCst)
+        }
+        fn describe(&self) -> String {
+            "test-refused-then-fresh".to_string()
+        }
+    }
+
+    /// The `content-length` a request head declares, or 0.
+    fn declared_length(head: &str) -> usize {
+        head.lines()
+            .find_map(|l| {
+                l.to_ascii_lowercase()
+                    .strip_prefix("content-length:")
+                    .and_then(|v| v.trim().parse::<usize>().ok())
+            })
+            .unwrap_or(0)
+    }
+
+    /// Read one whole HTTP request (head and declared body) from `conn`.
+    fn read_whole_request(conn: &mut std::net::TcpStream) -> String {
+        use std::io::Read;
+        let mut raw = Vec::new();
+        let mut chunk = [0u8; 1024];
+        loop {
+            let n = conn.read(&mut chunk).unwrap();
+            raw.extend_from_slice(&chunk[..n]);
+            let text = String::from_utf8_lossy(&raw).to_string();
+            if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                if body.len() >= declared_length(head) {
+                    return text;
+                }
+            }
+            assert!(n > 0, "connection closed before the request completed");
+        }
+    }
+
     #[test]
     fn a_kms_refusal_of_the_session_credential_re_signs_once_with_a_fresh_one() {
         use std::io::Write;
-        struct RefusedThenFresh(AtomicBool);
-        impl AwsCredentialSource for RefusedThenFresh {
-            fn credentials(&self) -> Result<crate::aws_sigv4::AwsCredentials, KeyError> {
-                let akid = if self.0.load(Ordering::SeqCst) {
-                    "AKIDSECOND"
-                } else {
-                    "AKIDFIRST"
-                };
-                Ok(crate::aws_sigv4::AwsCredentials {
-                    access_key_id: akid.to_string(),
-                    secret_access_key: zeroize::Zeroizing::new("secret".to_string()),
-                    session_token: None,
-                })
-            }
-            fn invalidate(&self, refused: &str) -> bool {
-                refused == "AKIDFIRST" && !self.0.swap(true, Ordering::SeqCst)
-            }
-            fn describe(&self) -> String {
-                "test-refused-then-fresh".to_string()
-            }
-        }
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let server = std::thread::spawn(move || {
@@ -1256,28 +1289,7 @@ mod tests {
                 &b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{}"[..],
             ] {
                 let (mut conn, _) = listener.accept().unwrap();
-                let mut raw = Vec::new();
-                let mut chunk = [0u8; 1024];
-                loop {
-                    let n = conn.read(&mut chunk).unwrap();
-                    raw.extend_from_slice(&chunk[..n]);
-                    let text = String::from_utf8_lossy(&raw).to_string();
-                    if let Some((head, body)) = text.split_once("\r\n\r\n") {
-                        let len = head
-                            .lines()
-                            .find_map(|l| {
-                                l.to_ascii_lowercase()
-                                    .strip_prefix("content-length:")
-                                    .and_then(|v| v.trim().parse::<usize>().ok())
-                            })
-                            .unwrap_or(0);
-                        if body.len() >= len {
-                            break;
-                        }
-                    }
-                    assert!(n > 0, "connection closed before the request completed");
-                }
-                seen.push(String::from_utf8_lossy(&raw).to_string());
+                seen.push(read_whole_request(&mut conn));
                 conn.write_all(answer).unwrap();
             }
             seen

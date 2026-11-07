@@ -216,12 +216,24 @@ pub(super) fn build_server_over(
         .expect("the first delegated key is published")
         .delegated_kid()
         .to_owned();
+    let proxy = delegated_server(&config, inner, sig_ttl_secs, Arc::clone(&wiring.signer));
+    (proxy, issued_kid.to_owned())
+}
+
+/// The delegated-required server for `config`, over `inner`, signing responses valid for
+/// `sig_ttl_secs` off `signer`'s published key.
+fn delegated_server(
+    config: &mcp_re_proxy::deployment_request::DeploymentRequest,
+    inner: Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer>,
+    sig_ttl_secs: i64,
+    signer: Arc<mcp_re_proxy::DelegatedServerSigner>,
+) -> HttpProfileProxy {
     let expected_audience = AudienceTuple {
         audience_id: config.audience.clone(),
         target_uri: config.target_uri.clone(),
         route: config.route.clone(),
     };
-    let proxy = HttpProfileProxy::new_delegated(
+    HttpProfileProxy::new_delegated(
         server_resolver(),
         expected_audience,
         ReplayAdmission::new(
@@ -233,9 +245,8 @@ pub(super) fn build_server_over(
         ),
         inner,
         sig_ttl_secs,
-        Arc::clone(&wiring.signer),
-    );
-    (proxy, issued_kid.to_owned())
+        signer,
+    )
 }
 
 // ---- the in-process "network" ---------------------------------------------
@@ -697,24 +708,7 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
         .expect("published")
         .delegated_kid()
         .to_owned();
-    let server = HttpProfileProxy::new_delegated(
-        server_resolver(),
-        AudienceTuple {
-            audience_id: config.audience.clone(),
-            target_uri: config.target_uri.clone(),
-            route: config.route.clone(),
-        },
-        ReplayAdmission::new(
-            AsyncReplayTier::new(
-                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
-            ),
-            ReplayPosture::SingleProcess,
-        ),
-        canned_inner(),
-        300,
-        Arc::clone(&wiring.signer),
-    );
+    let server = delegated_server(&config, canned_inner(), 300, Arc::clone(&wiring.signer));
 
     let (signed_a, response_a) =
         one_exchange(&server, &rt, &mcp_re_test_paths::unique_test_nonce(), NOW);

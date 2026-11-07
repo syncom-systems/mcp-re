@@ -127,6 +127,19 @@ impl CachedOutcome {
     }
 }
 
+/// How long an answer is kept: `ttl` seconds from `now`.
+#[derive(Clone, Copy)]
+struct CacheWindow {
+    now: i64,
+    ttl: i64,
+}
+
+impl CacheWindow {
+    fn new(now: i64, ttl: i64) -> Self {
+        Self { now, ttl }
+    }
+}
+
 /// One cache entry: a classified outcome plus the absolute Unix instant at which
 /// it expires (`resolved_at + ttl`).
 ///
@@ -273,7 +286,8 @@ impl BoundedTrustCache {
     /// cached life, never push the deadline out. An expiry that is not representable
     /// (`now + ttl` overflows) or that has already passed is not stored at all: the
     /// binding resolves live next time.
-    fn store(&self, key: String, outcome: CachedOutcome, now: i64, ttl: i64) {
+    fn store(&self, key: String, outcome: CachedOutcome, window: CacheWindow) {
+        let CacheWindow { now, ttl } = window;
         let mut cache = recover(self.cache.lock());
         // Opportunistic sweep. Correctness never depended on eviction — an expired
         // entry is ignored on read — but memory did, and nothing called `prune`.
@@ -402,18 +416,23 @@ impl TrustResolver for BoundedTrustCache {
             Ok(verification_key) => self.store(
                 key,
                 CachedOutcome::Active(verification_key.clone()),
-                now,
-                self.t_secs,
+                CacheWindow::new(now, self.t_secs),
             ),
-            Err(TrustResolverError::Revoked) => {
-                self.store(key, CachedOutcome::Revoked, now, self.t_secs)
-            }
-            Err(TrustResolverError::NotFound) => {
-                self.store(key, CachedOutcome::NotFound, now, self.negative_ttl_secs)
-            }
-            Err(TrustResolverError::MalformedKey) => {
-                self.store(key, CachedOutcome::Malformed, now, self.negative_ttl_secs)
-            }
+            Err(TrustResolverError::Revoked) => self.store(
+                key,
+                CachedOutcome::Revoked,
+                CacheWindow::new(now, self.t_secs),
+            ),
+            Err(TrustResolverError::NotFound) => self.store(
+                key,
+                CachedOutcome::NotFound,
+                CacheWindow::new(now, self.negative_ttl_secs),
+            ),
+            Err(TrustResolverError::MalformedKey) => self.store(
+                key,
+                CachedOutcome::Malformed,
+                CacheWindow::new(now, self.negative_ttl_secs),
+            ),
             // Unavailable is an operational failure: NEVER cached, always fail closed.
             Err(TrustResolverError::Unavailable { .. }) => {}
         }
