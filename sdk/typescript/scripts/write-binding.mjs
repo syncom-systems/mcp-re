@@ -5,14 +5,19 @@
 //
 //   node scripts/write-binding.mjs <type-defs dir> [<output dir>]
 //
-// The rendering is the pinned @napi-rs/cli's own — `generateTypeDef` and `writeJsBinding`,
-// called with what its `build --platform --js binding.js --dts binding.d.ts` passes — so
-// the output is byte-for-byte what that build wrote. Only the compile step moved to Bazel.
+// The declarations are the pinned @napi-rs/cli's own — `generateTypeDef`, called with what
+// its `build --platform --dts binding.d.ts` passes — so they are byte-for-byte what that
+// build wrote. The loader entry is rendered by render-binding.mjs over the hand-written
+// native/loader/ modules, not by the CLI's `writeJsBinding`: its single `requireNative`
+// is a 487-line branch per platform that nothing could review or test. Only the compile
+// step moved to Bazel.
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { generateTypeDef, readNapiConfig, writeJsBinding } from '@napi-rs/cli'
+import { generateTypeDef, readNapiConfig } from '@napi-rs/cli'
+
+import { renderBinding } from './render-binding.mjs'
 
 const BINDING_TARGET_EXPORT = '__napiBindingTarget'
 
@@ -48,14 +53,14 @@ if (declareBindingTarget(exports) && exports.includes(BINDING_TARGET_EXPORT)) {
 
 await mkdir(outputDir, { recursive: true })
 await writeFile(join(outputDir, 'binding.d.ts'), dts, 'utf-8')
-await writeJsBinding({
-  platform: true,
-  idents: exports,
-  jsBinding: 'binding.js',
-  binaryName: config.binaryName,
-  packageName: config.packageName,
-  version: config.packageJson.version,
-  outputDir,
-  wasiFlavors: [],
-})
+await writeFile(
+  join(outputDir, 'binding.js'),
+  renderBinding({
+    binaryName: config.binaryName,
+    packageName: config.packageName,
+    version: config.packageJson.version,
+    idents: exports,
+  }),
+  'utf-8',
+)
 console.log(`write-binding: ${exports.length} export(s) -> ${outputDir}/binding.{js,d.ts}`)
