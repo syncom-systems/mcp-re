@@ -23,7 +23,6 @@ Mirrors ``sdk/typescript/test/mtls.test.ts`` — same generated material, same a
 import contextlib
 import http.client
 import http.server
-import ssl
 import sys
 import threading
 import time
