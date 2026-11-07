@@ -196,14 +196,6 @@ reason_family = "ND-001"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "ND-001-014"
-decision = "not-evidence"
-scope = "carrier"
-carrier = "tools/verification/test_measured_inputs.py"
-reason_family = "ND-001"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "ND-001-015"
 decision = "not-evidence"
 scope = "carrier"
