@@ -10331,7 +10331,12 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/examples/saturation_loadgen.rs",
    "srcs": [
-    "mcp-re-proxy/examples/saturation_loadgen.rs"
+    "mcp-re-proxy/examples/saturation_loadgen.rs",
+    "mcp-re-proxy/examples/saturation_loadgen/args.rs",
+    "mcp-re-proxy/examples/saturation_loadgen/client.rs",
+    "mcp-re-proxy/examples/saturation_loadgen/corpus.rs",
+    "mcp-re-proxy/examples/saturation_loadgen/report.rs",
+    "mcp-re-proxy/examples/saturation_loadgen/response.rs"
    ],
    "testonly": false,
    "verus_deps": []

@@ -1945,7 +1945,7 @@ nt_rust_binary(
 
 nt_rust_binary(
     name = "saturation_loadgen",
-    srcs = ["examples/saturation_loadgen.rs"],
+    srcs = ["examples/saturation_loadgen.rs"] + glob(["examples/saturation_loadgen/*.rs"]),
     crate_features = ["async_serve"],
     edition = "2021",
     visibility = ["//visibility:public"],
