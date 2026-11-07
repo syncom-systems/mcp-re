@@ -16,6 +16,17 @@ impl PeerIdentityFlags {
     /// visible. The audience is checked for PRESENCE only; whether it names anything is the
     /// configuration boundary's, because an assembled request can still carry an empty one.
     pub(super) fn stray_value_refusal(&self) -> Result<(), String> {
+        if let Some((flag, form)) = self.first_stray() {
+            return Err(format!(
+                "{flag} has no effect without --transport-binding {form}"
+            ));
+        }
+        self.pinned_channel_acknowledgement_refusal()
+    }
+
+    /// The first flag, in command-line order, that belongs to a form other than the one
+    /// named, with that form's name.
+    fn first_stray(&self) -> Option<(&'static str, &'static str)> {
         let lb = matches!(self.form, Form::IngressAssertion);
         let attested = matches!(self.form, Form::AttestedIngress);
         let stray: [(bool, &str); 6] = [
@@ -44,17 +55,14 @@ impl PeerIdentityFlags {
                 "--ingress-pinned-mtls|attested-ingress",
             ),
         ];
-        for (is_stray, case) in stray {
-            if is_stray {
-                let (flag, form) = case.split_once('|').unwrap_or((case, "exact"));
-                return Err(format!(
-                    "{flag} has no effect without --transport-binding {form}"
-                ));
-            }
-        }
-        // The acknowledgement is what the attested form is built from, so its absence is a
-        // command line that cannot name the form at all.
-        if attested && !self.pinned_channel {
+        let (_, case) = stray.into_iter().find(|(is_stray, _)| *is_stray)?;
+        Some(case.split_once('|').unwrap_or((case, "exact")))
+    }
+
+    /// The acknowledgement is what the attested form is built from, so its absence is a
+    /// command line that cannot name the form at all.
+    fn pinned_channel_acknowledgement_refusal(&self) -> Result<(), String> {
+        if matches!(self.form, Form::AttestedIngress) && !self.pinned_channel {
             return Err(
                 "--transport-binding attested-ingress requires --ingress-pinned-mtls: the \
                  attestor→node hop MUST be a pinned mTLS channel (ADR-MCPS-023 §C2); \

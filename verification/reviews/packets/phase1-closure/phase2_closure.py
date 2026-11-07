@@ -28,13 +28,30 @@ def claims_mutation(unit: dict) -> bool:
     return any(str(e).startswith("mutation://") for e in unit.get("evidence", []))
 
 
-def main() -> int:
-    probes_by_unit: dict[str, list[dict]] = collections.defaultdict(list)
-    for probe in PROBES:
-        probes_by_unit[probe["unit"]].append(probe)
+RANK = {"none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 
+
+def owes_falsifier(unit: dict) -> bool:
+    """Whether a `tested` proposition sits at effective Medium or above, and so owes one."""
+    effective = max(
+        (unit.get("direct_consequence_severity", "none"), unit.get("inherited", "none")),
+        key=lambda s: RANK.get(s, 0),
+    )
+    return unit.get("evidence_class") == "tested" and RANK.get(effective, 0) >= 2
+
+
+def ecosystem(probe: dict) -> str:
+    path = probe["path"]
+    if path.startswith("sdk/python"):
+        return "python"
+    if path.startswith("sdk/typescript"):
+        return "typescript"
+    return "vector" if "/vectors/" in path else "cargo"
+
+
+def main() -> int:
+    attacked = {probe["unit"] for probe in PROBES}
     claiming = {unit["id"] for unit in UNITS if claims_mutation(unit)}
-    attacked = set(probes_by_unit)
 
     print(f"units                      {len(UNITS)}")
     print(f"probes                     {len(PROBES)}")
@@ -45,20 +62,7 @@ def main() -> int:
 
     # The N1 population, re-derived rather than read off the registry: every `tested`
     # proposition at effective Medium or above owes a falsifier.
-    rank = {"none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
-    owing = [
-        unit
-        for unit in UNITS
-        if unit.get("evidence_class") == "tested"
-        and rank.get(
-            max(
-                (unit.get("direct_consequence_severity", "none"), unit.get("inherited", "none")),
-                key=lambda s: rank.get(s, 0),
-            ),
-            0,
-        )
-        >= 2
-    ]
+    owing = [unit for unit in UNITS if owes_falsifier(unit)]
     undischarged = [unit["id"] for unit in owing if unit["id"] not in attacked]
     print(f"tested units at >= medium  {len(owing)}")
     print(f"  of those, no falsifier   {len(undischarged)} {sorted(undischarged)}")
@@ -70,24 +74,12 @@ def main() -> int:
     print(f"compound probes            {len(compound)} {[p['id'] for p in compound]}")
 
     # A probe's theorem must be one the unit it names actually supports.
-    mismatched = [
-        p["id"]
-        for p in PROBES
-        if p["unit"] not in BY_ID
-    ]
+    mismatched = [p["id"] for p in PROBES if p["unit"] not in BY_ID]
     print(f"probes naming no unit      {len(mismatched)} {mismatched}")
 
     by_class = collections.Counter(u.get("evidence_class") for u in UNITS)
     print(f"evidence classes           {dict(by_class)}")
-
-    ecosystems = collections.Counter(
-        "python" if p["path"].startswith("sdk/python")
-        else "typescript" if p["path"].startswith("sdk/typescript")
-        else "vector" if "/vectors/" in p["path"]
-        else "cargo"
-        for p in PROBES
-    )
-    print(f"probes by ecosystem        {dict(ecosystems)}")
+    print(f"probes by ecosystem        {dict(collections.Counter(map(ecosystem, PROBES)))}")
 
     ok = not (claiming - attacked) and not (attacked - claiming) and not undischarged and not rows
     print()

@@ -1,25 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The AWS KMS key source (ADR-MCPS-028 §B). The response-signing key never leaves KMS.
 
-use super::ChannelMaterial;
-use crate::capability_materialization::key_file_custody::AdmittedKeyFiles;
-#[cfg(feature = "aws_kms_keysource")]
+use super::Opening;
 use crate::config_state::AwsCredentialMode;
-use crate::config_state::ChannelKeyMaterial;
 use crate::key_source::{KeyError, KeySource};
+
+/// The KMS key the custody names, how to reach it, and the one credential posture this
+/// deployment chose.
+///
+/// Read only by the build that has the backend; the default build refuses before looking.
+#[cfg_attr(not(feature = "aws_kms_keysource"), allow(dead_code))]
+pub(super) struct Key<'a> {
+    pub(super) region: &'a str,
+    pub(super) key_id: &'a str,
+    pub(super) endpoint: Option<&'a str>,
+    pub(super) credentials: &'a AwsCredentialMode,
+}
 
 /// Open a source whose signing key is a KMS key, with channel material from files.
 #[cfg(feature = "aws_kms_keysource")]
 pub(super) fn open(
-    admitted: &mut AdmittedKeyFiles<'_>,
-    region: &str,
-    key_id: &str,
-    endpoint: Option<&str>,
-    credentials: &AwsCredentialMode,
-    channel: ChannelKeyMaterial<'_>,
-    material: ChannelMaterial<'_>,
+    opening: Opening<'_, '_>,
+    key: Key<'_>,
 ) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
-    let signing = backend(region, key_id, endpoint, credentials)?;
+    let Opening {
+        admitted,
+        channel,
+        material,
+    } = opening;
+    let signing = backend(key.key_id, &key)?;
     let tls_key = super::exported_tls_key(admitted, material)?;
     let tls =
         crate::key_source::FileKeySource::tls_only(material.cert, tls_key, material.client_ca)?;
@@ -33,7 +42,7 @@ pub(super) fn open(
             tls,
         )));
     };
-    let channel_signer = backend(region, channel_key_id, endpoint, credentials)?;
+    let channel_signer = backend(channel_key_id, &key)?;
     Ok(Box::new(
         crate::kms_keysource::KmsKeySource::new_with_delegated_tls(
             Box::new(signing),
@@ -43,7 +52,7 @@ pub(super) fn open(
     ))
 }
 
-/// One KMS backend, under the one credential posture this deployment chose.
+/// One KMS backend for `key_id`, under the one credential posture this deployment chose.
 ///
 /// IRSA or the static env pair — never both, never a fallback between them. A deployment
 /// that asked for web identity and cannot mint through it must fail, not quietly sign with
@@ -51,17 +60,15 @@ pub(super) fn open(
 /// no pair of flags here to combine wrongly.
 #[cfg(feature = "aws_kms_keysource")]
 fn backend(
-    region: &str,
     key_id: &str,
-    endpoint: Option<&str>,
-    credentials: &AwsCredentialMode,
+    key: &Key<'_>,
 ) -> Result<crate::aws_kms_keysource::AwsKmsEd25519Backend, KeyError> {
     let config = crate::aws_kms_keysource::AwsKmsConfig {
-        region: region.to_string(),
+        region: key.region.to_string(),
         key_id: key_id.to_string(),
-        endpoint: endpoint.map(str::to_string),
+        endpoint: key.endpoint.map(str::to_string),
     };
-    Ok(match credentials {
+    Ok(match key.credentials {
         AwsCredentialMode::WebIdentity { sts_endpoint } => {
             crate::aws_kms_keysource::AwsKmsEd25519Backend::from_web_identity(
                 &config,
@@ -78,13 +85,8 @@ fn backend(
 /// the pkcs11 gate). The flag still PARSES.
 #[cfg(not(feature = "aws_kms_keysource"))]
 pub(super) fn open(
-    _admitted: &mut AdmittedKeyFiles<'_>,
-    _region: &str,
-    _key_id: &str,
-    _endpoint: Option<&str>,
-    _credentials: &crate::config_state::AwsCredentialMode,
-    _channel: ChannelKeyMaterial<'_>,
-    _material: ChannelMaterial<'_>,
+    _opening: Opening<'_, '_>,
+    _key: Key<'_>,
 ) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
     Err(KeyError::NotFound(
         "aws-kms key source requires the aws_kms_keysource feature (build with \

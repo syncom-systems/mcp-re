@@ -85,8 +85,7 @@ anchor = """
     let sig = signature_value_b64url(&request.headers, "signature", REQUEST_LABEL)?;
     verify_under(
         algorithm,
-        &base,
-        &sig,
+        SignatureOver::new(&base, &sig),
         &resolved_actor.verification_key,
         SignedMessage::Request,
     )?;
@@ -95,8 +94,7 @@ weakening = """
     let sig = signature_value_b64url(&request.headers, "signature", REQUEST_LABEL)?;
     let _ = verify_under(
         algorithm,
-        &base,
-        &sig,
+        SignatureOver::new(&base, &sig),
         &resolved_actor.verification_key,
         SignedMessage::Request,
     );
@@ -265,8 +263,7 @@ anchor = """
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
     verify_under(
         algorithm,
-        &base,
-        &sig,
+        SignatureOver::new(&base, &sig),
         &resolved_server_actor.verification_key,
         SignedMessage::Response,
     )?;
@@ -276,8 +273,7 @@ weakening = """
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
     let _ = verify_under(
         algorithm,
-        &base,
-        &sig,
+        SignatureOver::new(&base, &sig),
         &resolved_server_actor.verification_key,
         SignedMessage::Response,
     );
@@ -437,8 +433,7 @@ anchor = """
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
     verify_under(
         algorithm,
-        &base,
-        &sig,
+        SignatureOver::new(&base, &sig),
         &resolved_server_actor.verification_key,
         SignedMessage::Response,
     )?;
@@ -448,8 +443,7 @@ weakening = """
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
     let _ = verify_under(
         algorithm,
-        &base,
-        &sig,
+        SignatureOver::new(&base, &sig),
         &resolved_server_actor.verification_key,
         SignedMessage::Response,
     );
@@ -601,8 +595,7 @@ path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
 anchor = """
     verify_under(
         algorithm,
-        &base,
-        &sig,
+        SignatureOver::new(&base, &sig),
         &verified.delegated_key,
         SignedMessage::Response,
     )
@@ -613,8 +606,7 @@ anchor = """
 weakening = """
     let _ = verify_under(
         algorithm,
-        &base,
-        &sig,
+        SignatureOver::new(&base, &sig),
         &verified.delegated_key,
         SignedMessage::Response,
     );
@@ -766,8 +758,7 @@ path = "mcp-re-http-profile/src/verify/full/delegated/unbound.rs"
 anchor = """
     verify_under(
         algorithm,
-        &base,
-        &sig,
+        SignatureOver::new(&base, &sig),
         &verified.delegated_key,
         SignedMessage::Response,
     )
@@ -778,8 +769,7 @@ anchor = """
 weakening = """
     let _ = verify_under(
         algorithm,
-        &base,
-        &sig,
+        SignatureOver::new(&base, &sig),
         &verified.delegated_key,
         SignedMessage::Response,
     );

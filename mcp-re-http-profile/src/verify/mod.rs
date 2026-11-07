@@ -49,6 +49,7 @@ pub use full::DelegationExpectations;
 pub(crate) use floor::floor_bound_response;
 pub(crate) use floor::floor_request;
 pub(crate) use floor::floor_unbound_response;
+pub(crate) use floor::BoundExchange;
 pub(crate) use full::delegated_bound_response;
 pub(crate) use full::delegated_unbound_response;
 pub(crate) use full::enforce_full_profile_bindings;

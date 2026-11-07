@@ -144,8 +144,7 @@ pub fn verify_pre_052_root_signed_202_for_negative_test<R: Into<ResolverOutcome>
     let sig = signature_value_b64url(&response.headers, "signature", RESPONSE_LABEL)?;
     verify_under(
         algorithm,
-        &base,
-        &sig,
+        SignatureOver::new(&base, &sig),
         &actor.verification_key,
         SignedMessage::Response,
     )?;

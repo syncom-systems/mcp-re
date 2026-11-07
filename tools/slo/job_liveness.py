@@ -28,19 +28,28 @@ def etime_seconds(text: str) -> int:
         value * scale for value, scale in zip(reversed(units), (1, 60, 3600)))
 
 
+def _is_ps_row(parts: list) -> bool:
+    """Whether a split `ps` line has pid, ppid, etime and command, with numeric pids."""
+    return len(parts) == 4 and parts[0].isdigit() and parts[1].isdigit()
+
+
+def _ps_row(line: str) -> Optional[Tuple[int, Tuple[int, int, str]]]:
+    """One `ps` row as (pid, (ppid, elapsed seconds, command)), or None when it is not one."""
+    parts = line.split(None, 3)
+    if not _is_ps_row(parts):
+        return None
+    try:
+        return int(parts[0]), (int(parts[1]), etime_seconds(parts[2]), parts[3])
+    except ValueError:
+        return None
+
+
 def process_table() -> ProcessTable:
     """Every process on this kernel. Raises OSError when `ps` cannot be run."""
     out = subprocess.run(["ps", "-axww", "-o", "pid=,ppid=,etime=,command="],
                          capture_output=True, text=True, check=True).stdout
-    table: ProcessTable = {}
-    for line in out.splitlines():
-        parts = line.split(None, 3)
-        if len(parts) == 4 and parts[0].isdigit() and parts[1].isdigit():
-            try:
-                table[int(parts[0])] = (int(parts[1]), etime_seconds(parts[2]), parts[3])
-            except ValueError:
-                continue
-    return table
+    rows = (_ps_row(line) for line in out.splitlines())
+    return {pid: entry for pid, entry in filter(None, rows)}
 
 
 def own_worker(table_fn: Callable[[], ProcessTable] = process_table,

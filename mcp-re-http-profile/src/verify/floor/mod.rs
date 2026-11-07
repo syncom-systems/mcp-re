@@ -53,3 +53,4 @@ pub(crate) mod trust_slot;
 pub(crate) use request::floor_request;
 pub(crate) use response::floor_bound_response;
 pub(crate) use response::floor_unbound_response;
+pub(crate) use response::BoundExchange;

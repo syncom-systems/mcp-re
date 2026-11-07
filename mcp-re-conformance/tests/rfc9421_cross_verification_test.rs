@@ -33,25 +33,29 @@ struct ExternalKat {
     signature_b64url: String,
 }
 
+/// The directory holding the manifest `rel` names, looked up under each runfiles root the
+/// test runner exports and then as a plain path.
+fn manifest_dir(rel: &str) -> Option<std::path::PathBuf> {
+    let runfiles_roots = ["TEST_SRCDIR", "RUNFILES_DIR"]
+        .into_iter()
+        .filter_map(|key| std::env::var(key).ok());
+    runfiles_roots
+        .map(|root| std::path::Path::new(&root).join(rel))
+        .chain(std::iter::once(std::path::PathBuf::from(rel)))
+        .find(|candidate| candidate.exists())
+        .map(|candidate| candidate.parent().expect("parent").to_path_buf())
+}
+
 fn corpus_dir() -> std::path::PathBuf {
-    if let Ok(rel) = std::env::var("MCP_RE_HTTP_PROFILE_VECTORS_MANIFEST") {
-        for key in ["TEST_SRCDIR", "RUNFILES_DIR"] {
-            if let Ok(root) = std::env::var(key) {
-                let candidate = std::path::Path::new(&root).join(&rel);
-                if candidate.exists() {
-                    return candidate.parent().expect("parent").to_path_buf();
-                }
-            }
-        }
-        let candidate = std::path::PathBuf::from(&rel);
-        if candidate.exists() {
-            return candidate.parent().expect("parent").to_path_buf();
-        }
-    }
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("vectors")
-        .join("http-profile")
+    std::env::var("MCP_RE_HTTP_PROFILE_VECTORS_MANIFEST")
+        .ok()
+        .and_then(|rel| manifest_dir(&rel))
+        .unwrap_or_else(|| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests")
+                .join("vectors")
+                .join("http-profile")
+        })
 }
 
 fn load() -> ExternalKat {
