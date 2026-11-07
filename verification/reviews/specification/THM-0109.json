@@ -7,7 +7,7 @@
     "theorem_id": "THM-0109",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G11.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written. Read in verification/reviews/packets/epic-1201-assurance-closure-2026-10-21.md: verdict CLEAN-NOTE, cause dependency change (boundary).  Evidence class as registered; V0 units are tested and probed, not machine-checked proofs.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read client.transport_server_identity: tls_config.rs and lib.rs have no diff; client.rs builds the request head through RequestHead, which is the message-hygiene unit's seam. The three cited rejection tests (untrusted CA, wrong identity, expired certificate) now share assert_server_cert_is_rejected, which asserts the same two things (the handshake aborts with TransportError::Handshake and the server handler is never reached); ServerOptions::new in the test server takes a RequestTarget. The other two cited tests are identical. The claim holds. Every cited Rust test still exists by name; I compared each one's body with its body at the last record's commit and name the ones that differ. Helper functions that unchanged test bodies call were not all diffed. The mutation lane was not run. Evidence class as registered.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -26,11 +26,11 @@
         "mutation_probes": "sha256:df11a4410cc01f6695c0c822c1fc9792548520d345e0f2d982fb03945788e980",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:84349f3f6c8775badcac515e5c6c0f9dff616ed51e5beaf94d1afb95c4f51486",
+        "source_inputs": "sha256:b6be94c6de289c6622bea249c6bb9bd98f56ad1b545ff0cb9c8e4306c8ad645f",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:51a9ccf4a022a029bfe6896b9c130c15c3a3df62486079b4468edbdcf56d6eb1",
         "test_selection": "sha256:c83d40332fece9b7e91275e4a49abf8c610e5555b06452b7814f6e747430abc4",
-        "test_sources": "sha256:e2eaa56e35656d558f5eecacdf7e577b03ca57ff16a4d9af5de8f19b9a789fc0",
+        "test_sources": "sha256:3d1eb01fdba632291a8ab9fd4082aa3d2e10835263df5ab5478caa8083881189",
         "trusted_assumptions": "sha256:4de2c9473dc6c219bfb17001fcd86d37c319d3979552eca6cf7ed6ed2c4d6f08",
         "unit_id": "sha256:6a02c0dad4e20580d913e75a8eae3e0d7a945fbe84cfe3e66c67be51d195a2ae"
       }
@@ -39,8 +39,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:358677587bcc3da55f27b7cd4245acc4bea64ff6e06507702607919ff47c700b",
+  "review_digest": "sha256:0a3a425a662d283cbff110fdaa4024d803e78d62501e9fa564e67a5927ae5eb9",
   "reviewed_fingerprint": "sha256:6b80104b3451c66b895d9ec9d87c236ffde93df69c511477a7905047e03f7bbd",
-  "reviewer": "agent:claude-opus-5-5 (exec #1201; prepared for owner ratification, not an owner signature)",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0109"
 }

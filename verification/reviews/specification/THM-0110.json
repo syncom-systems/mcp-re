@@ -7,7 +7,7 @@
     "theorem_id": "THM-0110",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G11.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. It replaces a record naming the owner as reviewer, because that record's fingerprint no longer matched; that record stays in git history. Read client.transport_message_hygiene: remote.rs, limits.rs, io_errors.rs and exchange.rs have no diff. request.rs: build_request_head now takes a RequestHead and runs check_method, check_target, check_host and then check_header per header, in the old order with the old refusals; the forbidden-value predicate (control bytes below 0x20 other than HTAB, and 0x7F) covers CR, LF and NUL exactly as the old disjunction did. response.rs: the header block is parsed by parse_header_line, which rejects an obs-fold, a bare CR or LF, a missing colon, a non-token name and a control byte in the old order, and collect stops at the first error as the loop did. The seven request tests that differ were rewritten around RequestHead and assert_refused with the same inputs; the 27 others, including every response and bound test, are identical. The claim holds. Every cited Rust test still exists by name; I compared each one's body with its body at the last record's commit and name the ones that differ. Helper functions that unchanged test bodies call were not all diffed. The mutation lane was not run. Evidence class as registered.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -21,10 +21,10 @@
         "governing_boundaries": "sha256:b4b2ccf7f64d252fcb15ec0ef82e484ef05f15f450ef723be86e35ce318fb2b6",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        "mutation_probes": "sha256:e591a7c6ea60f596b556c75028c82ce3f5c605d8336ab5430374eb1c623d8fff",
+        "mutation_probes": "sha256:d7ddfd294cc64cbce6485eb2a010386017ef1ded8140bc93682dc19991bd727d",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:29855e836ee4227ffc19ccf704f0e8f6315eb6790ee9adb266d1a550646ac116",
+        "source_inputs": "sha256:361bbc42c515fbd19f6399c48bb5077a973f72bae353ec7476aa6d1374008d22",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:10687af42c229efcaea80716e6f3c16ccdc8894713820884c6894d7cb0a8b4bf",
         "test_selection": "sha256:28755413b908fecd59398342af0ddd718afaa2c216bb0d2c6c5a089c8a915b14",
@@ -37,8 +37,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:01aed90114da86094e89fcf6991c246c4b97505a7a8a10eee02f775117fe1c9c",
+  "review_digest": "sha256:6f9e905c2f9abb2bc3058760f4e336d06767df85af33355e77be4cdae97c9abf",
   "reviewed_fingerprint": "sha256:0c668ba037f4ac15712ae3f03b2795bb867c941b8f606fe3fc26568f6adde615",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0110"
 }

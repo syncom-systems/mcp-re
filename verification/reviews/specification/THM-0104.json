@@ -7,7 +7,7 @@
     "theorem_id": "THM-0104",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G8.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 4f9eb062 after the CodeQL remediation (work/security-audit-2026-09-22-r12/CODEQL-REREVIEW.md): test sources only; the accept-any-server TLS test verifier was replaced by verification against the test's server CA, no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.\n\nAgent re-review for the tokio 1.54.1 / Rust 1.99.1 modernization (work/modernization-2026-10-22/security-triage.md), recorded at the clippy-lint commit 'fix(proxy): clear the clippy 1.99 lints behind the toolchain bump'. This record is NOT an owner signature: it attests the agent's substantive reading only, and owner adoption is a ledger line the owner appends. Reading: the unit's source_inputs moved through async_serve/request.rs (and inbound.rs) only: the refusal type change does not touch admission, the drain bound or what the drain leaves behind; async_drain_test passes on the new toolchain. Claim, premises and dependencies are unchanged; the semantic input moved, and the tests the unit selects pass at this revision (40/40 Bazel tests, rustfmt and lint lanes clean on Rust 1.99.1). Evidence class as registered.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read proxy.serving_drain: accept.rs and connection/activity.rs have no diff; connection.rs, core_admission.rs and open_connection.rs change only in test constructors (ServerOptions::new takes a RequestTarget). async_serve/mod.rs: target_uri_mismatch takes a RequestTarget whose origin form the RequestTarget owner holds (#1253) and the empty-target test was removed with it; none of that is the drain; request.rs reads clock::now_unix and options.target. The drain, the admission stop and the bounded wait are unchanged. All 14 cited tests have identical bodies. The claim text is unchanged, so the owner signature recorded on it (owner-signature:thm-0104-step-7-round-5) still names this text. The claim holds. Every cited Rust test still exists by name; I compared each one's body with its body at the last record's commit and name the ones that differ. Helper functions that unchanged test bodies call were not all diffed. The mutation lane was not run. Evidence class as registered.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -24,11 +24,11 @@
         "mutation_probes": "sha256:69c36d6b876fbe15e50bcea4c33eb2461ffe25421aea65aa8386e0e5acb6192f",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:4d487772c8c235aa453d1ae509794cde207fc29c9cab36a8870d81baec3a6cee",
+        "source_inputs": "sha256:2b057c92bfbc0435f272d00458ea5267d2ab9d38e01c93d3713d083d7c589674",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:24877e9fe5fb919cb31b21ded26245741502e3ab3519dc1f5205135b9dc13dc6",
         "test_selection": "sha256:6375893052226251427d8dd0efc8502e5b0e55f5f6afff3047e3b2ee82b12752",
-        "test_sources": "sha256:7524ff3879d25cc9d7a49e0eaf264265646c71dc7480b2323f07ced1b9337e24",
+        "test_sources": "sha256:1b8626a81005404bf77a975dbe95df5aa91b1951fb02b90d77695c99d3dc5985",
         "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "unit_id": "sha256:a57081cc7804bd194f6a381548dfc681680da52223f2639f8933e207dcc1d90a"
       }
@@ -37,8 +37,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:03acccb1d6183610e7b1838c5c5d63f7399c8f542fb5bdf378cae292e70e5fe2",
+  "review_digest": "sha256:95a241e718fd8cb6b3ef15ef23f8ad65355e6b2b2380b3c65e11c73960ab3404",
   "reviewed_fingerprint": "sha256:a5cf8723f0329c9b75aa40bf99317a02f6c03c22d2b471048121ab199d21fcee",
-  "reviewer": "agent:claude-sonnet-5-5 (modernization 2026-10-22; prepared for owner ratification, not an owner signature)",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0104"
 }
