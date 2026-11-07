@@ -17,42 +17,39 @@
 //!   HPP_TARGET=http://127.0.0.1:8601/mcp \
 //!   bazel run //mcp-re-proxy:http_profile_client
 
-use std::io::Read;
-
-use serde_json::json;
-use serde_json::Value;
-
-use mcp_re_core::McpReError;
-use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::ArtifactBinding;
-use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::DelegationExpectations;
-use mcp_re_http_profile::HttpRequest;
-use mcp_re_http_profile::HttpRequestEvidenceBlock;
-use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::Verifier;
-use mcp_re_http_profile::VerifierPolicy;
-use mcp_re_http_profile::PROFILE_TAG;
 
 // Shared demo material; each example uses a different subset, so allow dead code.
 #[allow(dead_code)]
 #[path = "hpp_common/mod.rs"]
 mod hpp_common;
 
+#[path = "http_profile_client/body.rs"]
+mod body;
+#[path = "http_profile_client/legs.rs"]
+mod legs;
+#[path = "http_profile_client/request.rs"]
+mod request;
+#[path = "http_profile_client/wire.rs"]
+mod wire;
+
+use legs::Verification;
+
+/// The two addresses the legs are POSTed to. Both sign over the SAME canonical
+/// @target-uri (HPP_TARGET) — the logical service URI a load balancer fronts —
+/// so ONE signed request is valid at ANY replica. HPP_POST_A/B point the two
+/// legs at distinct replica addresses to prove CROSS-replica replay detection;
+/// unset, both default to the canonical target (single-replica mode).
+fn leg_addresses(target: &str) -> (String, String) {
+    let post_a = std::env::var("HPP_POST_A").unwrap_or_else(|_| target.to_owned());
+    let post_b = std::env::var("HPP_POST_B").unwrap_or_else(|_| post_a.clone());
+    (post_a, post_b)
+}
+
 fn main() {
     let target = hpp_common::target();
-    // Where each leg is actually POSTed. Both sign over the SAME canonical
-    // @target-uri (HPP_TARGET) — the logical service URI a load balancer fronts —
-    // so ONE signed request is valid at ANY replica. HPP_POST_A/B point the two
-    // legs at distinct replica addresses to prove CROSS-replica replay detection;
-    // unset, both default to the canonical target (single-replica mode).
-    let post_a = std::env::var("HPP_POST_A").unwrap_or_else(|_| target.clone());
-    let post_b = std::env::var("HPP_POST_B").unwrap_or_else(|_| post_a.clone());
-    let agent = ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .proxy(None)
-        .build()
-        .new_agent();
+    let (post_a, post_b) = leg_addresses(&target);
+    let agent = wire::agent();
     let now = hpp_common::now_unix();
     let resolver = hpp_common::resolver();
     // ADR-MCPRE-052: the client enrols ONLY the root; the credential the response carries
@@ -66,98 +63,18 @@ fn main() {
         accepted_epochs: &accepted_epochs,
         max_clock_skew: mcp_re_core::MaxClockSkew::new(60).expect("inside the bound"),
     };
-    // No delegated key is revoked in the proof; a real client resolves this from its
-    // revocation source.
-    let is_revoked = |_kid: &str| false;
 
-    // A plain MCP tools/call (add(2,40)) — the payload the backend actually runs.
-    let call = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": { "name": "add", "arguments": { "a": 2, "b": 40 } }
-    });
-
-    // Compose the request evidence block. It requires at least one artifact
-    // binding; we bind an OAuth DPoP credential, whose bytes the verifier derives
-    // from the covered `Authorization: Bearer` header. `sign_request_full` inserts
-    // the block, then emits Content-Digest + Signature-Input + Signature (covering
-    // the Authorization header because it is present).
-    let block = HttpRequestEvidenceBlock {
-        profile: PROFILE_TAG.into(),
-        audience: hpp_common::audience(),
-        artifact_bindings: vec![ArtifactBinding::opaque_digest(
-            ArtifactType::OauthDpop,
-            hpp_common::ACCESS_TOKEN.as_bytes(),
-        )],
-        continuation: None,
-        admission: None,
-        admission_assertion: None,
-        authorization_decision: None,
-    };
     let nonce = format!("nonce-{now}");
-    let mut request = HttpRequest {
-        method: "POST".into(),
-        target_uri: target.clone(),
-        headers: vec![
-            ("Content-Type".into(), "application/json".into()),
-            (
-                "Authorization".into(),
-                format!("Bearer {}", hpp_common::ACCESS_TOKEN),
-            ),
-        ],
-        body: serde_json::to_vec(&call).expect("serialize call"),
+    let request = request::signed_call(&target, now, &nonce);
+    let verification = Verification {
+        resolver: &resolver,
+        request: &request,
+        expect: &expect,
     };
-    // The delegated verifier binds the response to THIS request's evidence handle, so
-    // keep what signing produced rather than recomputing it.
-    let _request_evidence = sign_request_full(
-        &mut request,
-        &block,
-        &hpp_common::client_key(),
-        hpp_common::CLIENT_KEY_ID,
-        now,
-        now + 300,
-        &nonce,
-    )
-    .expect("sign request");
 
     // --- Leg 1: happy path -------------------------------------------------
     eprintln!("leg 1  POST {post_a}  (nonce={nonce})");
-    let resp = post(&agent, &post_a, &request);
-    // Verify the RESPONSE against CURRENT time: its `created`/`expires` freshness is
-    // stamped by the server when it replies, which is necessarily after the `now` we
-    // captured for signing — reusing the stale `now` would spuriously reject a
-    // response created "in the future" relative to it.
-    match Verifier::new(&VerifierPolicy::default(), &resolver).verify_delegated_bound_response(
-        &resp,
-        &request,
-        &expect,
-        &is_revoked,
-        hpp_common::now_unix(),
-    ) {
-        // A signed rejection ALSO verifies as a bound response, so distinguish a
-        // success (`result`) from a fail-closed receipt (`error`) on the trusted body.
-        Ok(_) if is_error_body(&resp.body) => {
-            println!(
-                "leg 1  UNEXPECTED signed rejection  status={}  wire_code={}",
-                resp.status,
-                body_wire_code(&resp.body).unwrap_or_default()
-            );
-            std::process::exit(1);
-        }
-        Ok(verified) => {
-            println!(
-                "leg 1  ACCEPTED  server_signer={}  status={}  fastmcp_result={}",
-                verified.signature_facts().accepted_signer.identity.subject,
-                resp.status,
-                mcp_result(&resp.body)
-            );
-        }
-        Err(e) => {
-            println!("leg 1  UNEXPECTED verify failure: {}", e.wire_code());
-            std::process::exit(1);
-        }
-    }
+    verification.accept_happy_path(&wire::post(&agent, &post_a, &request));
 
     // --- Leg 2: replay (same signed request, possibly a DIFFERENT replica) --
     let cross = if post_b == post_a {
@@ -166,108 +83,7 @@ fn main() {
         "  [CROSS-REPLICA]"
     };
     eprintln!("leg 2  POST {post_b}  (SAME nonce -> replay){cross}");
-    let resp2 = post(&agent, &post_b, &request);
-    // A DELEGATED rejection receipt is verified through the SAME delegated path as an
-    // answer — it is signed by the delegated key and carries the same credential, so the
-    // refusal is as verifiable as an acceptance.
-    //
-    // Verifying only proves the receipt is authentic and bound to THIS request; whether
-    // it is an acceptance is then read from the trusted body.
-    match Verifier::new(&VerifierPolicy::default(), &resolver).verify_delegated_bound_response(
-        &resp2,
-        &request,
-        &expect,
-        &is_revoked,
-        hpp_common::now_unix(),
-    ) {
-        Ok(_) if is_error_body(&resp2.body) => {
-            let wire_code = body_wire_code(&resp2.body).unwrap_or_default();
-            println!(
-                "leg 2  REJECTED  delegated rejection verified  status={}  wire_code={}",
-                resp2.status, wire_code
-            );
-            if wire_code != McpReError::ReplayDetected.wire_code() {
-                println!("leg 2  WARNING: expected mcp-re.replay_detected");
-                std::process::exit(1);
-            }
-        }
-        Ok(_) => {
-            println!("leg 2  UNEXPECTED: replay was ACCEPTED");
-            std::process::exit(1);
-        }
-        Err(e) => {
-            println!(
-                "leg 2  UNEXPECTED: rejection did not verify: {}",
-                e.wire_code()
-            );
-            std::process::exit(1);
-        }
-    }
+    verification.reject_replay(&wire::post(&agent, &post_b, &request));
 
     println!("OK  HTTP-profile round trip + replay rejection both proven");
-}
-
-/// POST the signed request, returning the response as an `HttpResponse` for BOTH
-/// success and error statuses (a rejection is a 4xx/5xx the profile still signs).
-fn post(agent: &ureq::Agent, url: &str, request: &HttpRequest) -> HttpResponse {
-    let mut r = agent.post(url);
-    for (k, v) in &request.headers {
-        r = r.header(k, v);
-    }
-    match r.send(&request.body[..]) {
-        Ok(resp) => read_response(resp),
-        Err(e) => panic!("transport error to {url}: {e}"),
-    }
-}
-
-/// Reconstruct the profile `HttpResponse` from a ureq response. Header names +
-/// values are read BEFORE consuming the body reader.
-fn read_response(resp: ureq::http::Response<ureq::Body>) -> HttpResponse {
-    let status = resp.status().as_u16();
-    let headers: Vec<(String, String)> = resp
-        .headers()
-        .iter()
-        .filter_map(|(name, v)| v.to_str().ok().map(|v| (name.to_string(), v.to_owned())))
-        .collect();
-    let mut body = Vec::new();
-    resp.into_body()
-        .into_reader()
-        .take(1024 * 1024)
-        .read_to_end(&mut body)
-        .expect("read response body");
-    HttpResponse {
-        status,
-        headers,
-        body,
-    }
-}
-
-/// `true` when the verified body is a JSON-RPC error (a signed rejection receipt),
-/// not a success `result`.
-fn is_error_body(body: &[u8]) -> bool {
-    serde_json::from_slice::<Value>(body)
-        .ok()
-        .and_then(|v| v.get("error").cloned())
-        .is_some()
-}
-
-/// The frozen `mcp-re.*` wire code from an error body, if present.
-fn body_wire_code(body: &[u8]) -> Option<String> {
-    serde_json::from_slice::<Value>(body)
-        .ok()?
-        .pointer("/error/data/mcp_re_error/wire_code")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-}
-
-/// Strip the proxy-owned top-level `_meta` (response evidence block) from a
-/// verified body and render the MCP `result` for display.
-fn mcp_result(body: &[u8]) -> String {
-    match serde_json::from_slice::<Value>(body) {
-        Ok(v) => v
-            .get("result")
-            .map(|r| r.to_string())
-            .unwrap_or_else(|| v.to_string()),
-        Err(_) => String::from_utf8_lossy(body).into_owned(),
-    }
 }

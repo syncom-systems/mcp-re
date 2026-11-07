@@ -189,18 +189,26 @@ fn verify_and_check(
     check_admission(authenticated, authoritative, policy, NOW).map(|_| ())
 }
 
-#[test]
-fn a_bound_current_admitted_call_passes() {
+/// A call bound at generation 5, checked against an authority now at `authoritative_generation`.
+fn bound_call_checked_at(authoritative_generation: u64) -> Result<(), HttpProfileError> {
     let claims = admission_claims(5, AdmissionStatus::Admitted);
     let req = signed_request_with_admission(Some(&claims));
-    let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
+    let auth = AuthoritativeAdmission::new(
+        "workload-7".to_owned(),
+        authoritative_generation,
+        AdmissionStatus::Admitted,
+    );
     verify_and_check(
         &req,
         &issue(&claims),
         Some(&auth),
         &AdmissionPolicy::default(),
     )
-    .expect("a current admitted workload is served");
+}
+
+#[test]
+fn a_bound_current_admitted_call_passes() {
+    bound_call_checked_at(5).expect("a current admitted workload is served");
 }
 
 /// THE case. The admission binding is signed into the request, the assertion is
@@ -208,17 +216,8 @@ fn a_bound_current_admitted_call_passes() {
 /// does not confer currency, so the call is refused.
 #[test]
 fn a_bound_but_stale_generation_is_refused() {
-    let claims = admission_claims(5, AdmissionStatus::Admitted);
-    let req = signed_request_with_admission(Some(&claims));
-    let auth = AuthoritativeAdmission::new("workload-7".to_owned(), 6, AdmissionStatus::Admitted);
     assert_eq!(
-        verify_and_check(
-            &req,
-            &issue(&claims),
-            Some(&auth),
-            &AdmissionPolicy::default()
-        )
-        .unwrap_err(),
+        bound_call_checked_at(6).unwrap_err(),
         HttpProfileError::AdmissionNotCurrent,
     );
 }

@@ -747,7 +747,11 @@
    "package": "mcp-re-conformance",
    "root": "mcp-re-conformance/tests/security_traceability_guard_test.rs",
    "srcs": [
-    "mcp-re-conformance/tests/security_traceability_guard_test.rs"
+    "mcp-re-conformance/tests/security_traceability_guard_test.rs",
+    "mcp-re-conformance/tests/security_traceability_guard_test/build_files.rs",
+    "mcp-re-conformance/tests/security_traceability_guard_test/claim_matrix.rs",
+    "mcp-re-conformance/tests/security_traceability_guard_test/manifest.rs",
+    "mcp-re-conformance/tests/security_traceability_guard_test/runfiles.rs"
    ],
    "testonly": true,
    "verus_deps": []
@@ -2453,7 +2457,9 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/tests/admission_propagation_measure_test.rs",
    "srcs": [
-    "mcp-re-proxy/tests/admission_propagation_measure_test.rs"
+    "mcp-re-proxy/tests/admission_propagation_measure_test.rs",
+    "mcp-re-proxy/tests/admission_propagation_measure_test/fixtures.rs",
+    "mcp-re-proxy/tests/admission_propagation_measure_test/fleet.rs"
    ],
    "testonly": true,
    "verus_deps": []
@@ -2558,7 +2564,11 @@
    "root": "mcp-re-proxy/examples/http_profile_client.rs",
    "srcs": [
     "mcp-re-proxy/examples/hpp_common/mod.rs",
-    "mcp-re-proxy/examples/http_profile_client.rs"
+    "mcp-re-proxy/examples/http_profile_client.rs",
+    "mcp-re-proxy/examples/http_profile_client/body.rs",
+    "mcp-re-proxy/examples/http_profile_client/legs.rs",
+    "mcp-re-proxy/examples/http_profile_client/request.rs",
+    "mcp-re-proxy/examples/http_profile_client/wire.rs"
    ],
    "testonly": false,
    "verus_deps": []
@@ -2649,6 +2659,7 @@
     "mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test/stores.rs",
     "mcp-re-proxy/tests/integration_async/mtls_client_leg_e2e_test.rs",
     "mcp-re-proxy/tests/integration_async/outcome_before_success_test.rs",
+    "mcp-re-proxy/tests/integration_async/outcome_before_success_test/required_lane.rs",
     "mcp-re-proxy/tests/integration_async/pdp_authorization_serving_test.rs",
     "mcp-re-proxy/tests/integration_async/per_request_revocation_test.rs",
     "mcp-re-proxy/tests/integration_async/replay_race_harness_test.rs",
@@ -2728,6 +2739,7 @@
     "mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test/stores.rs",
     "mcp-re-proxy/tests/integration_async/mtls_client_leg_e2e_test.rs",
     "mcp-re-proxy/tests/integration_async/outcome_before_success_test.rs",
+    "mcp-re-proxy/tests/integration_async/outcome_before_success_test/required_lane.rs",
     "mcp-re-proxy/tests/integration_async/pdp_authorization_serving_test.rs",
     "mcp-re-proxy/tests/integration_async/per_request_revocation_test.rs",
     "mcp-re-proxy/tests/integration_async/replay_race_harness_test.rs",
@@ -2784,6 +2796,8 @@
     "mcp-re-proxy/tests/integration_ext/ocsp_e2e_test.rs",
     "mcp-re-proxy/tests/integration_ext/redis_continuation_e2e_test.rs",
     "mcp-re-proxy/tests/integration_ext/redis_replay_e2e_test.rs",
+    "mcp-re-proxy/tests/integration_ext/redis_replay_e2e_test/harness.rs",
+    "mcp-re-proxy/tests/integration_ext/redis_replay_e2e_test/topology.rs",
     "mcp-re-proxy/tests/integration_ext/redis_trust_epoch_e2e_test.rs"
    ],
    "testonly": true,
@@ -2823,6 +2837,8 @@
     "mcp-re-proxy/tests/integration/continuation_installation_test.rs",
     "mcp-re-proxy/tests/integration/documented_cli_test.rs",
     "mcp-re-proxy/tests/integration/exchange_transition_ownership_test.rs",
+    "mcp-re-proxy/tests/integration/exchange_transition_ownership_test/event_scan.rs",
+    "mcp-re-proxy/tests/integration/exchange_transition_ownership_test/source_tree.rs",
     "mcp-re-proxy/tests/integration/http_profile_dispatch_test.rs",
     "mcp-re-proxy/tests/integration/main.rs",
     "mcp-re-proxy/tests/integration/mtls_transport_binding_test.rs",
@@ -2887,6 +2903,8 @@
     "mcp-re-proxy/tests/integration_live/delegated_required_lane/judge.rs",
     "mcp-re-proxy/tests/integration_live/delegated_required_lane/mod.rs",
     "mcp-re-proxy/tests/integration_live/delegated_required_lane/serving.rs",
+    "mcp-re-proxy/tests/integration_live/delegated_signing_lane/fixtures.rs",
+    "mcp-re-proxy/tests/integration_live/delegated_signing_lane/mod.rs",
     "mcp-re-proxy/tests/integration_live/gcp_kms_delegated_required_live_test.rs",
     "mcp-re-proxy/tests/integration_live/gcp_kms_delegated_signing_live_test.rs",
     "mcp-re-proxy/tests/integration_live/gcp_kms_delegated_tls_live_test.rs",
@@ -2925,6 +2943,8 @@
     "mcp-re-proxy/tests/integration/continuation_installation_test.rs",
     "mcp-re-proxy/tests/integration/documented_cli_test.rs",
     "mcp-re-proxy/tests/integration/exchange_transition_ownership_test.rs",
+    "mcp-re-proxy/tests/integration/exchange_transition_ownership_test/event_scan.rs",
+    "mcp-re-proxy/tests/integration/exchange_transition_ownership_test/source_tree.rs",
     "mcp-re-proxy/tests/integration/http_profile_dispatch_test.rs",
     "mcp-re-proxy/tests/integration/main.rs",
     "mcp-re-proxy/tests/integration/mtls_transport_binding_test.rs",

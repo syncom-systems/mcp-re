@@ -34,6 +34,14 @@
 
 use std::collections::BTreeSet;
 
+mod event_scan;
+mod source_tree;
+
+use event_scan::{route_defects, Source};
+use source_tree::{
+    crate_source_outside_the_machine, production_half, production_of, serving_source,
+};
+
 /// The transitions the assembly states itself, and why each is the assembly's fact.
 ///
 /// A stage establishes what its own work justifies. These are not any stage's: they are
@@ -94,248 +102,13 @@ const REFUSAL: &str = "Refused";
 /// The one serving-path function that enters the refusal terminal.
 const REFUSAL_ENTRY: &str = "disposition";
 
-/// Every `ExchangeEvent::` variant named inside the balanced argument list of each `call`.
-///
-/// Paren-matched rather than line-matched: rustfmt splits both forms across lines
-/// (`Established::new(\n    value,\n    ExchangeEvent::X,\n)`), and a line matcher would
-/// see neither the multi-line establishes nor the `advance(match class { .. })` terminal.
-fn events_named_in(source: &str, call: &str) -> BTreeSet<String> {
-    let mut found = BTreeSet::new();
-    for (index, _) in source.match_indices(call) {
-        let after = &source[index + call.len()..];
-        let mut depth = 1usize;
-        let mut end = after.len();
-        for (offset, ch) in after.char_indices() {
-            match ch {
-                '(' => depth += 1,
-                ')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end = offset;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        for (at, _) in after[..end].match_indices("ExchangeEvent::") {
-            let rest = &after[at + "ExchangeEvent::".len()..];
-            let variant: String = rest
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .collect();
-            if !variant.is_empty() {
-                found.insert(variant);
-            }
-        }
-    }
-    found
-}
-
-/// The serving path's production half. A fixture in a test module must not be able to make
-/// this gate pass or fail — and production below a test module must still be measured, so
-/// the region definition is [`mcp_re_test_paths::rust_source`]'s rather than a truncation.
-fn production_half(source: &str) -> String {
-    mcp_re_test_paths::rust_source::production_half(source)
-}
-
-/// Every production line of the serving path — the assembly and every region under it.
-///
-/// The property is about THE SERVING PATH, not about one file of it. When the pipeline
-/// became one module per region, a scan of `mod.rs` alone would have reported a clean pass
-/// over an assembly that no longer contains most of the pipeline, and a region that kept an
-/// `advance` beside a stage would simply have been out of scope. A gate's scope is part of
-/// its measurement.
-///
-/// The scope is the DIRECTORY the anchor file sits in, walked, rather than a list of region
-/// files: a list would have to learn about the next region, and the failure mode of a stale
-/// list is a clean pass over unmeasured code. Under Bazel the directory is the runfiles
-/// copy, which the target's `glob` populates; otherwise it is the source tree.
-fn serving_source() -> String {
-    let anchor = mcp_re_test_paths::resolve_runfile("MCP_RE_HTTP_PROFILE_SERVE_SRC");
-    let root = anchor
-        .parent()
-        .unwrap_or_else(|| panic!("{anchor:?} has no parent directory"))
-        .to_path_buf();
-    let mut files = Vec::new();
-    collect_rust_files(&root, &mut files);
-    files.sort();
-    assert!(
-        files.len() > 1,
-        "the serving path is one file at {root:?} — the walk found no regions, and every \
-         assertion below would then be about the assembly alone"
-    );
-    let mut whole = String::new();
-    for path in files {
-        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
-        // Each file's production half separately: concatenating first would let one file's
-        // unterminated test region swallow the next file's production code.
-        whole.push_str(&production_half(&text));
-        whole.push('\n');
-    }
-    whole
-}
-
-/// The crate's `src/` directory, reached from the serving anchor.
-fn crate_src() -> std::path::PathBuf {
-    let anchor = mcp_re_test_paths::resolve_runfile("MCP_RE_HTTP_PROFILE_SERVE_SRC");
-    anchor
-        .parent()
-        .and_then(|serve| serve.parent())
-        .map(std::path::Path::to_path_buf)
-        .unwrap_or_else(|| panic!("{anchor:?} is not under src/"))
-}
-
-/// The production half of one file under `src/`.
-fn production_of(relative: &str) -> String {
-    let path = crate_src().join(relative);
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
-    production_half(&text)
-}
-
-/// Every production line of the crate outside the exchange machine itself.
-///
-/// The refusal route is measured crate-wide, not over the serving directory: `refuse` is
-/// `pub(crate)`, so a refusal entered from outside `http_profile_serve/` would be outside a
-/// directory-scoped scan and report a clean pass.
-fn crate_source_outside_the_machine() -> String {
-    let src = crate_src();
-    let machine = src.join("exchange_state");
-    let mut files = Vec::new();
-    collect_rust_files(&src, &mut files);
-    files.retain(|p| !p.starts_with(&machine) && *p != src.join("exchange_state.rs"));
-    files.sort();
-    assert!(
-        files.len() > 50,
-        "the crate walk found {} files under {src:?}: the runfiles glob no longer carries \
-         src/, and the refusal route would be measured over nothing",
-        files.len()
-    );
-    let mut whole = String::new();
-    for path in files {
-        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
-        whole.push_str(&production_half(&text));
-        whole.push('\n');
-    }
-    whole
-}
-
-/// Every variant `ExchangeEvent` declares, from the production half of `exchange_state.rs`.
-fn declared_events(exchange_state: &str) -> BTreeSet<String> {
-    let start = exchange_state
-        .find("pub(crate) enum ExchangeEvent {")
-        .expect("ExchangeEvent is declared in exchange_state.rs");
-    let body = &exchange_state[start..];
-    let body = &body[body.find('{').map_or(0, |b| b + 1)..body.find("\n}").unwrap_or(body.len())];
-    body.lines()
-        .map(str::trim)
-        .filter(|l| !l.starts_with("//") && !l.starts_with('#'))
-        .filter_map(|l| l.strip_suffix(','))
-        .filter(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric()))
-        .map(str::to_owned)
-        .collect()
-}
-
-/// The events `ServedSuccess::tail` drives by name: the publication route.
-fn publication_tail(exchange_state: &str) -> BTreeSet<String> {
-    let start = exchange_state
-        .find("fn tail(&self)")
-        .expect("ServedSuccess::tail is declared in exchange_state.rs");
-    let body = &exchange_state[start..];
-    let body = &body[..body.find("\n    }\n").expect("tail closes")];
-    body.match_indices("E::")
-        .map(|(at, _)| {
-            body[at + 3..]
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric())
-                .collect::<String>()
-        })
-        .filter(|v| !v.is_empty())
-        .collect()
-}
-
-/// Each declared event that does not reach the machine by exactly one named route, and each
-/// route naming an event the machine does not declare.
-fn route_defects(declared: &BTreeSet<String>, routes: &[(&str, &BTreeSet<String>)]) -> Vec<String> {
-    let mut defects = Vec::new();
-    for event in declared {
-        let on: Vec<&str> = routes
-            .iter()
-            .filter(|(_, set)| set.contains(event))
-            .map(|(name, _)| *name)
-            .collect();
-        if on.len() != 1 {
-            defects.push(format!("{event} reaches the machine by {on:?}"));
-        }
-    }
-    for (name, set) in routes {
-        for unknown in set.difference(declared) {
-            defects.push(format!(
-                "route {name} names {unknown}, which ExchangeEvent lacks"
-            ));
-        }
-    }
-    defects
-}
-
-/// The function enclosing byte `at` of `source`: the identifier after the nearest `fn `.
-fn enclosing_fn(source: &str, at: usize) -> String {
-    let before = &source[..at];
-    let mut search = before.len();
-    while let Some(fn_at) = before[..search].rfind("fn ") {
-        let word_start = fn_at == 0
-            || !before[..fn_at]
-                .chars()
-                .next_back()
-                .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
-        if word_start {
-            return before[fn_at + 3..]
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .collect();
-        }
-        search = fn_at;
-    }
-    String::from("<no function>")
-}
-
-/// The enclosing function of every site in `source` that enters the refusal terminal: a
-/// `.refuse()` call, a path to `ExchangeProgress::refuse`, or any naming of the `Refused`
-/// event, so a direct `advance(ExchangeEvent::Refused)` is an entry too. Sorted, with
-/// repeats, so a second entry in the same function is a second entry.
-fn refusal_entries(source: &str) -> Vec<String> {
-    let mut sites: Vec<String> = [
-        ".refuse()",
-        "ExchangeProgress::refuse",
-        "ExchangeEvent::Refused",
-    ]
-    .iter()
-    .flat_map(|pattern| source.match_indices(pattern).map(|(at, _)| at))
-    .map(|at| enclosing_fn(source, at))
-    .collect();
-    sites.sort();
-    sites
-}
-
-fn collect_rust_files(dir: &std::path::Path, into: &mut Vec<std::path::PathBuf>) {
-    let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read dir {dir:?}: {e}"));
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_rust_files(&path, into);
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            into.push(path);
-        }
-    }
-}
-
 /// A stage's event is never also stated by the assembly.
 #[test]
 fn no_transition_a_stage_establishes_is_also_advanced_by_the_serving_path() {
     let production = serving_source();
     let production = production.as_str();
-    let by_stages = events_named_in(production, "Established::new(");
-    let by_assembly = events_named_in(production, ".advance(");
+    let by_stages = Source::new(production).events_named_in("Established::new(");
+    let by_assembly = Source::new(production).events_named_in(".advance(");
 
     assert!(
         !by_stages.is_empty(),
@@ -356,7 +129,7 @@ fn no_transition_a_stage_establishes_is_also_advanced_by_the_serving_path() {
 #[test]
 fn the_serving_path_states_only_the_assembly_s_own_transitions() {
     let declared: BTreeSet<String> = ASSEMBLY_OWNED.iter().map(|(e, _)| e.to_string()).collect();
-    let actual = events_named_in(&serving_source(), ".advance(");
+    let actual = Source::new(&serving_source()).events_named_in(".advance(");
 
     let undeclared: Vec<&String> = actual.difference(&declared).collect();
     assert!(
@@ -383,7 +156,7 @@ fn the_serving_path_states_only_the_assembly_s_own_transitions() {
 /// is asserted rather than left to the inventory's prose.
 #[test]
 fn no_terminal_the_owner_publishes_is_advanced_by_the_serving_path_again() {
-    let advanced = events_named_in(&serving_source(), ".advance(");
+    let advanced = Source::new(&serving_source()).events_named_in(".advance(");
     let back: Vec<&&str> = RELOCATED_TO_THE_OWNER
         .iter()
         .filter(|e| advanced.contains(**e))
@@ -403,7 +176,7 @@ fn no_terminal_the_owner_publishes_is_advanced_by_the_serving_path_again() {
 /// an order the compiler does not hold.
 #[test]
 fn the_202_terminal_is_entered_through_its_stage_s_carrier() {
-    let by_stages = events_named_in(&serving_source(), "Established::new(");
+    let by_stages = Source::new(&serving_source()).events_named_in("Established::new(");
     assert!(
         by_stages.contains("NotificationAcknowledged"),
         "no stage establishes `NotificationAcknowledged`: the 202 terminal no longer requires \
@@ -421,14 +194,14 @@ fn the_202_terminal_is_entered_through_its_stage_s_carrier() {
 #[test]
 fn every_exchange_event_reaches_the_machine_by_exactly_one_route() {
     let machine = production_of("exchange_state.rs");
-    let declared = declared_events(&machine);
+    let declared = Source::new(&machine).declared_events();
     assert!(
         declared.len() > 10 && declared.contains(REFUSAL),
         "the enum reader has stopped reading ExchangeEvent: {declared:?}"
     );
-    let stage = events_named_in(&serving_source(), "Established::new(");
+    let stage = Source::new(&serving_source()).events_named_in("Established::new(");
     let assembly: BTreeSet<String> = ASSEMBLY_OWNED.iter().map(|(e, _)| e.to_string()).collect();
-    let tail = publication_tail(&machine);
+    let tail = Source::new(&machine).publication_tail();
     let relocated: BTreeSet<String> = RELOCATED_TO_THE_OWNER
         .iter()
         .map(|e| e.to_string())
@@ -460,19 +233,24 @@ fn every_exchange_event_reaches_the_machine_by_exactly_one_route() {
 #[test]
 fn the_refusal_terminal_is_entered_only_by_refuse_from_the_disposition() {
     assert_eq!(
-        refusal_entries(&crate_source_outside_the_machine()),
+        Source::new(&crate_source_outside_the_machine()).refusal_entries(),
         vec![REFUSAL_ENTRY.to_owned()],
         "the crate enters the refusal terminal outside `{REFUSAL_ENTRY}`, or no longer from it"
     );
     let publication = production_of("exchange_state/publication.rs");
     assert_eq!(
-        events_named_in(&publication, ".advance("),
+        Source::new(&publication).events_named_in(".advance("),
         BTreeSet::from([REFUSAL.to_owned()]),
         "publication.rs advances a named event other than the refusal"
     );
-    assert_eq!(refusal_entries(&publication), vec!["refuse".to_owned()]);
+    assert_eq!(
+        Source::new(&publication).refusal_entries(),
+        vec!["refuse".to_owned()]
+    );
     assert!(
-        !events_named_in(&production_of("exchange_state.rs"), ".advance(").contains(REFUSAL),
+        !Source::new(&production_of("exchange_state.rs"))
+            .events_named_in(".advance(")
+            .contains(REFUSAL),
         "exchange_state.rs advances `Refused` by name beside `refuse`"
     );
 }
@@ -483,7 +261,7 @@ fn the_refusal_rule_would_catch_an_unauthorized_entry() {
     let authorized = "fn disposition(p: &mut ExchangeProgress) {\n    p.refuse();\n}\n\
                       fn other(&self) { self.responses.refuse(observer, point, refusal, owed); }";
     assert_eq!(
-        refusal_entries(authorized),
+        Source::new(authorized).refusal_entries(),
         vec![REFUSAL_ENTRY.to_owned()],
         "the authorized entry is seen, and the receipt's `refuse(..)` is not an entry"
     );
@@ -507,7 +285,7 @@ fn the_refusal_rule_would_catch_an_unauthorized_entry() {
     ] {
         let source = format!("{authorized}{unauthorized}");
         assert_ne!(
-            refusal_entries(&source),
+            Source::new(&source).refusal_entries(),
             vec![REFUSAL_ENTRY.to_owned()],
             "{case} was not detected"
         );
@@ -543,7 +321,7 @@ fn the_refusal_rule_would_catch_an_unauthorized_entry() {
     }
     let enum_text =
         "pub(crate) enum ExchangeEvent {\n    /// doc\n    A,\n    #[allow(x)]\n    B,\n}\n";
-    assert_eq!(declared_events(enum_text), set(&["A", "B"]));
+    assert_eq!(Source::new(enum_text).declared_events(), set(&["A", "B"]));
 }
 
 /// The rule detects what it claims to.
@@ -554,8 +332,8 @@ fn the_refusal_rule_would_catch_an_unauthorized_entry() {
 fn the_rule_would_catch_a_reintroduced_advance() {
     let regressed = "fn f() { let v = Established::new(x, ExchangeEvent::ReplayAdmitted); \
                      progress.advance(ExchangeEvent::ReplayAdmitted); }";
-    let by_stages = events_named_in(regressed, "Established::new(");
-    let by_assembly = events_named_in(regressed, ".advance(");
+    let by_stages = Source::new(regressed).events_named_in("Established::new(");
+    let by_assembly = Source::new(regressed).events_named_in(".advance(");
     assert!(
         by_stages.contains("ReplayAdmitted") && by_assembly.contains("ReplayAdmitted"),
         "the matcher must see both halves of the regression"
@@ -564,35 +342,35 @@ fn the_rule_would_catch_a_reintroduced_advance() {
     let split = "fn f() {\n    progress.advance(match class {\n        A => \
                  ExchangeEvent::TerminalResponseServed,\n        B => \
                  ExchangeEvent::OpenLegResponseServed,\n    });\n}";
-    let both = events_named_in(split, ".advance(");
+    let both = Source::new(split).events_named_in(".advance(");
     assert!(
         both.contains("TerminalResponseServed") && both.contains("OpenLegResponseServed"),
         "a multi-line advance names both of its events; a line matcher would see neither"
     );
 
+    let fixture_only = production_half(
+        "fn f() {}\n#[cfg(test)]\nmod tests { progress.advance(ExchangeEvent::ReplayAdmitted); }",
+    );
     assert!(
-        events_named_in(
-            &production_half("fn f() {}\n#[cfg(test)]\nmod tests { progress.advance(ExchangeEvent::ReplayAdmitted); }"),
-            ".advance(",
-        )
-        .is_empty(),
+        Source::new(&fixture_only)
+            .events_named_in(".advance(")
+            .is_empty(),
         "test code is out of scope, so a fixture cannot make the gate fail or pass"
     );
     // And the other direction: an advance reintroduced BELOW the test module is production
     // and must be seen. A truncating split reported a clean pass over every line after the
     // first `#[cfg(test)]`, which in this file is not the test module at all.
+    let below_tests = production_half(
+        "#[cfg(test)]\nmod tests {\n}\nfn late() { progress.advance(ExchangeEvent::ReplayAdmitted); }\n",
+    );
     assert!(
-        events_named_in(
-            &production_half("#[cfg(test)]\nmod tests {\n}\nfn late() { progress.advance(ExchangeEvent::ReplayAdmitted); }\n"),
-            ".advance(",
-        )
-        .contains("ReplayAdmitted"),
+        Source::new(&below_tests)
+            .events_named_in(".advance(")
+            .contains("ReplayAdmitted"),
         "an advance below the test module must still be seen"
     );
 }
 
-/// The inventory is not a bare list: every entry states why the transition is the
-/// assembly's rather than some stage's.
 /// The carrier's other half: a stage's product cannot be read past the machine.
 ///
 /// `Established<T>` is constructible anywhere in the crate, so what makes it a carrier
@@ -603,14 +381,7 @@ fn the_rule_would_catch_a_reintroduced_advance() {
 /// of `exchange_state.rs`, reached from the serving anchor's parent directory.
 #[test]
 fn the_carrier_has_no_reader_but_establish() {
-    let anchor = mcp_re_test_paths::resolve_runfile("MCP_RE_HTTP_PROFILE_SERVE_SRC");
-    let src = anchor
-        .parent()
-        .and_then(|serve| serve.parent())
-        .map(|src| src.join("exchange_state.rs"))
-        .unwrap_or_else(|| panic!("{anchor:?} is not under src/"));
-    let text = std::fs::read_to_string(&src).unwrap_or_else(|e| panic!("read {src:?}: {e}"));
-    let production = production_half(&text);
+    let production = production_of("exchange_state.rs");
 
     let struct_at = production
         .find("struct Established<T> {")
@@ -654,6 +425,8 @@ fn the_carrier_has_no_reader_but_establish() {
     );
 }
 
+/// The inventory is not a bare list: every entry states why the transition is the
+/// assembly's rather than some stage's.
 #[test]
 fn every_assembly_owned_transition_states_why_no_stage_carries_it() {
     for (event, reason) in ASSEMBLY_OWNED {

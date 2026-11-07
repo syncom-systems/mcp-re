@@ -74,32 +74,56 @@ fn node(url: &str) -> EtcdAsyncAtomicReplayStore {
     EtcdAsyncAtomicReplayStore::connect(url).expect("an http etcd endpoint is admitted")
 }
 
-/// Insert `(signer, AUD, nonce)` retained until `retain_until` through `store`.
+/// One replay exchange: the signer it is charged to and a nonce unique to this run.
+struct Exchange {
+    signer: &'static str,
+    nonce: String,
+}
+
+impl Exchange {
+    fn new(signer: &'static str) -> Self {
+        Self {
+            signer,
+            nonce: mcp_re_test_paths::unique_test_nonce(),
+        }
+    }
+
+    /// A per-exchange replay key: length-prefixed `(signer, audience, nonce)` then
+    /// `sha256_hash_id` (lowercase hex). The TTL probe reads the SAME etcd key the store
+    /// inserts.
+    fn key(&self) -> String {
+        let preimage = format!(
+            "{}:{}|{}:{}|{}:{}",
+            self.signer.len(),
+            self.signer,
+            AUD.len(),
+            AUD,
+            self.nonce.len(),
+            self.nonce,
+        );
+        mcp_re_core::sha256_hash_id(preimage.as_bytes())
+    }
+}
+
+/// Unix seconds `window_secs` from now: a future expiry gives the inserted key a real
+/// multi-second lease window that persists across the node calls.
+fn expiry_in(window_secs: i64) -> i64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock after epoch")
+        .as_secs() as i64;
+    now + window_secs
+}
+
+/// Insert `exchange` retained until `retain_until` through `store`.
 fn insert(
     rt: &tokio::runtime::Runtime,
     store: &EtcdAsyncAtomicReplayStore,
-    signer: &str,
-    nonce: &str,
+    exchange: &Exchange,
     retain_until: i64,
 ) -> Result<ReplayDecision, ReplayStoreError> {
-    let key = composite_key(signer, AUD, nonce);
+    let key = exchange.key();
     rt.block_on(store.atomic_insert_if_absent(ReplayInsert::new(&key, TEST_ACTOR, retain_until, 0)))
-}
-
-/// A per-exchange replay key: length-prefixed `(signer, audience, nonce)` then
-/// `sha256_hash_id` (lowercase hex). The TTL probe reads the SAME etcd key the store
-/// inserts.
-fn composite_key(signer: &str, audience: &str, nonce: &str) -> String {
-    let preimage = format!(
-        "{}:{}|{}:{}|{}:{}",
-        signer.len(),
-        signer,
-        audience.len(),
-        audience,
-        nonce.len(),
-        nonce,
-    );
-    mcp_re_core::sha256_hash_id(preimage.as_bytes())
 }
 
 /// The load-bearing cross-node proof: a nonce accepted on node A is rejected as a
@@ -116,29 +140,23 @@ fn cross_node_insert_via_a_is_replay_via_b() {
         return;
     };
 
-    // A future expiry so the inserted key carries a real multi-second lease window
-    // and persists across the two node calls. Test-name-derived signer/nonce so
-    // reruns target a distinct key space and never collide with a prior run's
-    // still-live entry.
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock after epoch")
-        .as_secs() as i64;
-    let expires_at = now + 600;
-    let signer = "did:example:host#cpstore_cross_node_insert_via_a_is_replay_via_b";
-    let nonce = &mcp_re_test_paths::unique_test_nonce();
+    // Test-name-derived signer and a unique nonce so reruns target a distinct key space
+    // and never collide with a prior run's still-live entry.
+    let expires_at = expiry_in(600);
+    let exchange =
+        Exchange::new("did:example:host#cpstore_cross_node_insert_via_a_is_replay_via_b");
 
     let rt = runtime();
     let node_a = node(&url);
     let node_b = node(&url);
 
     assert_eq!(
-        insert(&rt, &node_a, signer, nonce, expires_at),
+        insert(&rt, &node_a, &exchange, expires_at),
         Ok(ReplayDecision::Fresh),
         "first sight on node A must be Fresh"
     );
     assert_eq!(
-        insert(&rt, &node_b, signer, nonce, expires_at),
+        insert(&rt, &node_b, &exchange, expires_at),
         Ok(ReplayDecision::Replay),
         "node B must reject a nonce first seen on node A — shared etcd CP replay state"
     );
@@ -156,23 +174,18 @@ fn single_node_fresh_then_replay() {
         return;
     };
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock after epoch")
-        .as_secs() as i64;
-    let expires_at = now + 600;
-    let signer = "did:example:host#cpstore_single_node_fresh_then_replay";
-    let nonce = &mcp_re_test_paths::unique_test_nonce();
+    let expires_at = expiry_in(600);
+    let exchange = Exchange::new("did:example:host#cpstore_single_node_fresh_then_replay");
 
     let rt = runtime();
     let store = node(&url);
     assert_eq!(
-        insert(&rt, &store, signer, nonce, expires_at),
+        insert(&rt, &store, &exchange, expires_at),
         Ok(ReplayDecision::Fresh),
         "first sight is Fresh"
     );
     assert_eq!(
-        insert(&rt, &store, signer, nonce, expires_at),
+        insert(&rt, &store, &exchange, expires_at),
         Ok(ReplayDecision::Replay),
         "second sight on the same node is a Replay"
     );
@@ -198,26 +211,21 @@ fn live_lease_ttl_is_bounded_window_not_absolute_epoch() {
         return;
     };
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock after epoch")
-        .as_secs() as i64;
     let window_secs: i64 = 600;
-    let expires_at = now + window_secs;
-    let signer = "did:example:host#cpstore_live_lease_ttl_bounded_window";
-    let nonce = &mcp_re_test_paths::unique_test_nonce();
+    let expires_at = expiry_in(window_secs);
+    let exchange = Exchange::new("did:example:host#cpstore_live_lease_ttl_bounded_window");
 
     let rt = runtime();
     let store = node(&url);
     assert_eq!(
-        insert(&rt, &store, signer, nonce, expires_at),
+        insert(&rt, &store, &exchange, expires_at),
         Ok(ReplayDecision::Fresh),
         "first sight is Fresh"
     );
 
     // Read the key's lease id via kv/range, then its remaining TTL via
     // lease/timetolive — both over the same v3 JSON gateway.
-    let key_b64 = STANDARD.encode(composite_key(signer, AUD, nonce).as_bytes());
+    let key_b64 = STANDARD.encode(exchange.key().as_bytes());
     let range = post_json(&url, "v3/kv/txn", &json!({})); // ensure gateway reachable
     drop(range);
     let range_resp = post_json(&url, "v3/kv/range", &json!({ "key": key_b64 }));

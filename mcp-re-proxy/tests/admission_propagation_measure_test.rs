@@ -30,72 +30,12 @@
 //! `MCP_RE_REQUIRE_LIVE_INFRA`), mirroring `redis_trust_epoch_e2e_test.rs`.
 #![cfg(feature = "redis_replay")]
 
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
-use std::time::Instant;
+#[path = "admission_propagation_measure_test/fixtures.rs"]
+mod fixtures;
+#[path = "admission_propagation_measure_test/fleet.rs"]
+mod fleet;
 
-use mcp_re_core::b64url_decode;
-use mcp_re_core::b64url_encode;
-use mcp_re_core::SigningKey;
-use mcp_re_http_profile::authoritative_admission::record::issue_admission_state_record;
-use mcp_re_http_profile::authoritative_admission::record::AdmissionStateClaims;
-use mcp_re_http_profile::authoritative_admission::record::AdmissionStateCurrentness;
-use mcp_re_http_profile::custody::DelegatedKeyWindow;
-use mcp_re_http_profile::issue_admission_assertion;
-use mcp_re_http_profile::issue_delegation_credential;
-use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::ActorIdentity;
-use mcp_re_http_profile::AdmissionBinding;
-use mcp_re_http_profile::AdmissionClaims;
-use mcp_re_http_profile::AdmissionPolicy;
-use mcp_re_http_profile::AdmissionStatus;
-use mcp_re_http_profile::ArtifactBinding;
-use mcp_re_http_profile::ArtifactType;
-use mcp_re_http_profile::Audience;
-use mcp_re_http_profile::AudienceTuple;
-use mcp_re_http_profile::CustodyConfig;
-use mcp_re_http_profile::DelegatedSigningCustody;
-use mcp_re_http_profile::DelegationClaims;
-use mcp_re_http_profile::DelegationHeader;
-use mcp_re_http_profile::HttpProfileError;
-use mcp_re_http_profile::HttpRequest;
-use mcp_re_http_profile::HttpRequestEvidenceBlock;
-use mcp_re_http_profile::ResolvedActor;
-use mcp_re_http_profile::SignerSlot;
-use mcp_re_http_profile::PROFILE_TAG;
-
-use mcp_re_proxy::admission_enforcer::AdmissionEnforcement;
-use mcp_re_proxy::admission_source::AdmissionRecordVerifier;
-use mcp_re_proxy::admission_source::AsyncAdmissionSource;
-use mcp_re_proxy::async_inner::AsyncInnerServer;
-use mcp_re_proxy::async_replay::AsyncReplayTier;
-use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
-use mcp_re_proxy::async_serve::ServedHttpRequest;
-use mcp_re_proxy::http_profile_dispatch::{ReplayAdmission, ReplayPosture};
-use mcp_re_proxy::http_profile_serve::AdmissionAuthorityResolver;
-use mcp_re_proxy::redis_admission_source::RedisAdmissionSource;
-use mcp_re_proxy::ActorResolver;
-use mcp_re_proxy::DelegatedRotor;
-use mcp_re_proxy::DelegatedServerSigner;
-use mcp_re_proxy::HttpProfileProxy;
-
-use sha2::Digest;
-
-const CLIENT_SEED: [u8; 32] = [11u8; 32];
-const ROOT_SEED: [u8; 32] = [33u8; 32];
-const AUTHORITY_SEED: [u8; 32] = [44u8; 32];
-const NOW: i64 = 1_700_000_100;
-const CREATED: i64 = 1_700_000_000;
-const EXPIRES: i64 = 1_700_000_300;
-const TARGET: &str = "https://mcp.example.com/mcp?route=a";
-const CLIENT_KEY_ID: &str = "client-key-1";
-const ROOT_KID: &str = "root-kid";
-const AUTHORITY_KID: &str = "admission-root-1";
-
-const VERIFIER_AUD: &str = "verifier-1";
-const AUD_SCOPE: &str = "aud-scope-1";
-const EPOCH: &str = "epoch-1";
+use fleet::Fleet;
 
 /// The P bound this run is measured against, in milliseconds.
 ///
@@ -125,264 +65,6 @@ fn unique_workload() -> String {
     format!("workload-propagation-{now}")
 }
 
-fn client_key() -> SigningKey {
-    SigningKey::from_seed_bytes(&CLIENT_SEED)
-}
-fn root_key() -> SigningKey {
-    SigningKey::from_seed_bytes(&ROOT_SEED)
-}
-fn authority_key() -> SigningKey {
-    SigningKey::from_seed_bytes(&AUTHORITY_SEED)
-}
-
-fn audience() -> AudienceTuple {
-    AudienceTuple {
-        audience_id: VERIFIER_AUD.into(),
-        target_uri: TARGET.into(),
-        route: Some("a".into()),
-    }
-}
-
-/// The actor id the PEP's verifier resolves for the signing client — the value an
-/// assertion must name so it cannot be presented by anyone else.
-fn test_actor() -> String {
-    ActorIdentity {
-        role: "client".into(),
-        trust_domain: "example.com".into(),
-        subject: "did:example:host-a".into(),
-        keyid: CLIENT_KEY_ID.into(),
-    }
-    .actor_id()
-}
-
-fn actor_resolver() -> ActorResolver {
-    Box::new(move |key_id: &str, slot: SignerSlot| {
-        let (role, subject, key) = match (key_id, slot) {
-            (CLIENT_KEY_ID, SignerSlot::Request) => {
-                ("client", "did:example:host-a", client_key().public_key())
-            }
-            (ROOT_KID, SignerSlot::Response) => {
-                ("server", "did:example:server", root_key().public_key())
-            }
-            _ => return None::<ResolvedActor>.into(),
-        };
-        Some(ResolvedActor {
-            identity: ActorIdentity {
-                role: role.into(),
-                trust_domain: "example.com".into(),
-                subject: subject.into(),
-                keyid: key_id.into(),
-            },
-            verification_key: key,
-            slot,
-        })
-        .into()
-    })
-}
-
-fn authority_resolver() -> AdmissionAuthorityResolver {
-    Arc::new(|kid: &str| (kid == AUTHORITY_KID).then(|| authority_key().public_key()))
-}
-
-/// The deployment's declared currentness budget for an authoritative record.
-///
-/// Wide relative to `DECLARED_P_MS`: this battery measures how fast a NEW publication
-/// reaches a sibling replica, and a record expiring mid-poll would make it pass for the
-/// wrong reason. The budget's own boundary is measured where it is decided.
-const RECORD_MAX_AGE: i64 = 3_600;
-
-/// A verifier that trusts exactly the admission authority, the one a real deployment
-/// builds from its validated state.
-fn record_verifier() -> AdmissionRecordVerifier {
-    AdmissionRecordVerifier::new(
-        authority_resolver(),
-        PROFILE_TAG,
-        AdmissionStateCurrentness {
-            max_record_age: RECORD_MAX_AGE,
-            max_clock_skew: 30,
-        },
-    )
-}
-
-/// The AUTHORITY's signed statement about a workload.
-///
-/// Signing happens HERE, in the control-plane half of the harness, because that is where
-/// it happens in a deployment: the serving replicas below hold a verifier and no key.
-fn signed_state(workload: &str, generation: u64, revision: u64, status: AdmissionStatus) -> String {
-    issue_admission_state_record(
-        &AdmissionStateClaims {
-            iss: "did:example:admission".into(),
-            iat: NOW,
-            nbf: NOW,
-            exp: NOW + RECORD_MAX_AGE,
-            mcp_re_profile: PROFILE_TAG.into(),
-            mcp_re_admission_id: workload.into(),
-            mcp_re_admission_generation: generation,
-            mcp_re_admission_status: status,
-            mcp_re_state_revision: revision,
-            issuer_kid: AUTHORITY_KID.into(),
-        },
-        |input| {
-            b64url_decode(&authority_key().sign(input))
-                .map_err(|_| HttpProfileError::InvalidSignature)
-        },
-    )
-    .expect("the authority issues its own record")
-}
-
-fn admission_claims(workload: &str, generation: u64) -> AdmissionClaims {
-    AdmissionClaims {
-        iss: "did:example:admission".into(),
-        iat: CREATED,
-        nbf: CREATED,
-        exp: CREATED + 600,
-        jti: format!("adm#{generation}"),
-        aud: Audience::One(VERIFIER_AUD.into()),
-        mcp_re_profile: PROFILE_TAG.into(),
-        mcp_re_admission_id: workload.into(),
-        mcp_re_admitted_actor: test_actor(),
-        mcp_re_admission_generation: generation,
-        mcp_re_admitted_state_digest: b64url_encode(&sha2::Sha256::digest(b"admitted-state")),
-        mcp_re_admission_status: AdmissionStatus::Admitted,
-        issuer_kid: AUTHORITY_KID.into(),
-    }
-}
-
-/// A signed call under `claims`. The nonce must be fresh per call: the replay tier is
-/// real, and a measurement loop that replayed one nonce would measure the replay
-/// tier's refusal instead of the revocation's.
-fn signed_call(claims: &AdmissionClaims, nonce: &str) -> HttpRequest {
-    let mut req = HttpRequest {
-        method: "POST".into(),
-        target_uri: TARGET.into(),
-        headers: vec![
-            ("Content-Type".into(), "application/json".into()),
-            ("Authorization".into(), "Bearer tok".into()),
-        ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
-            .to_vec(),
-    };
-    let assertion = issue_admission_assertion(claims, |input| {
-        b64url_decode(&authority_key().sign(input)).map_err(|_| HttpProfileError::InvalidSignature)
-    })
-    .expect("issue");
-    let block = HttpRequestEvidenceBlock {
-        profile: PROFILE_TAG.into(),
-        audience: audience(),
-        artifact_bindings: vec![ArtifactBinding::opaque_digest(
-            ArtifactType::OauthDpop,
-            b"tok",
-        )],
-        continuation: None,
-        admission: Some(AdmissionBinding::opaque_from(claims)),
-        admission_assertion: Some(assertion),
-        authorization_decision: None,
-    };
-    sign_request_full(
-        &mut req,
-        &block,
-        &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        nonce,
-    )
-    .expect("signs");
-    req
-}
-
-fn inner(calls: Arc<AtomicUsize>) -> Box<dyn AsyncInnerServer> {
-    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
-        move |_forwarded: &[u8]| -> Vec<u8> {
-            calls.fetch_add(1, Ordering::SeqCst);
-            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
-        },
-        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
-    ))
-}
-
-fn custody_cfg() -> CustodyConfig {
-    CustodyConfig {
-        issuer_kid: ROOT_KID.into(),
-        iss: "did:example:server".into(),
-        profile: PROFILE_TAG.into(),
-        aud: VERIFIER_AUD.into(),
-        audience_hash: AUD_SCOPE.into(),
-        trust_epoch: EPOCH.parse().expect("epoch base"),
-        server_role: "server".into(),
-        server_trust_domain: "example.com".into(),
-        server_subject: "did:example:server".into(),
-        window: DelegatedKeyWindow::of(300, 60).expect("0 < overlap < ttl"),
-    }
-}
-
-fn ready_signer() -> Arc<DelegatedServerSigner> {
-    let root = root_key();
-    let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
-        Some(issue_delegation_credential(&root, h, c))
-    };
-    let mut n = 100u8;
-    let factory = move || {
-        n = n.wrapping_add(1);
-        SigningKey::from_seed_bytes(&[n; 32])
-    };
-    let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
-        custody_cfg(),
-        root_key().public_key(),
-        issue,
-        factory,
-    ));
-    let signer = rotor.signer();
-    rotor.rotate(NOW).expect("issue first delegated key");
-    std::mem::forget(rotor);
-    signer
-}
-
-/// One replica: its own signer, its own replay tier, its own connection to the shared
-/// source. Nothing is shared but the store — which is what makes the propagation
-/// claim about the store rather than about shared memory.
-fn replica(source: Arc<dyn AsyncAdmissionSource>, calls: Arc<AtomicUsize>) -> HttpProfileProxy {
-    HttpProfileProxy::new_delegated(
-        actor_resolver(),
-        audience(),
-        ReplayAdmission::new(
-            AsyncReplayTier::new(
-                Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-                mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
-            ),
-            ReplayPosture::SingleProcess,
-        ),
-        inner(calls),
-        300,
-        ready_signer(),
-    )
-    .with_admission(
-        source,
-        AdmissionPolicy {
-            max_assertion_age: 600,
-            max_clock_skew: 30,
-            // No degraded window: this measures propagation of a real revocation, and
-            // a degraded fallback would let a store hiccup look like continued
-            // admission and quietly inflate the measured delay.
-            degraded_propagation_bound: 0,
-            allow_degraded_mode: false,
-        },
-        AdmissionEnforcement::Required,
-        authority_resolver(),
-    )
-}
-
-fn served_of(req: &HttpRequest) -> ServedHttpRequest {
-    ServedHttpRequest {
-        method: req.method.clone(),
-        target_uri: req.target_uri.clone(),
-        headers: req.headers.clone(),
-        body: req.body.clone(),
-        peer: None,
-        assertion: None,
-    }
-}
-
 #[test]
 fn a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound() {
     let Some(url) = redis_url() else {
@@ -392,8 +74,6 @@ fn a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound() {
         );
         return;
     };
-    let workload = unique_workload();
-    let claims = admission_claims(&workload, 5);
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -401,111 +81,13 @@ fn a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound() {
         .expect("runtime");
 
     rt.block_on(async {
-        // Three independent connections: the authority that writes, and one per
-        // replica that reads. A single shared connection would measure a memory write.
-        let authority = RedisAdmissionSource::connect(&url, record_verifier())
-            .await
-            .expect("authority connects");
-        let source_a = Arc::new(
-            RedisAdmissionSource::connect(&url, record_verifier())
-                .await
-                .expect("A connects"),
-        );
-        let source_b = Arc::new(
-            RedisAdmissionSource::connect(&url, record_verifier())
-                .await
-                .expect("B connects"),
-        );
+        let fleet = Fleet::start(&url, unique_workload()).await;
+        fleet.assert_both_replicas_admit().await;
 
-        authority
-            .publish(
-                &signed_state(&workload, 5, 1, AdmissionStatus::Admitted),
-                &workload,
-                NOW,
-            )
-            .await
-            .expect("the store answers")
-            .expect("publish admitted");
-
-        let calls_a = Arc::new(AtomicUsize::new(0));
-        let calls_b = Arc::new(AtomicUsize::new(0));
-        let replica_a = replica(
-            Arc::clone(&source_a) as Arc<dyn AsyncAdmissionSource>,
-            Arc::clone(&calls_a),
-        );
-        let replica_b = replica(
-            Arc::clone(&source_b) as Arc<dyn AsyncAdmissionSource>,
-            Arc::clone(&calls_b),
-        );
-
-        // Baseline: BOTH replicas serve the workload. Without this the measurement
-        // below could not tell a working revocation from a replica that was never
-        // admitting the call in the first place.
-        let served = replica_a
-            .handle(
-                served_of(&signed_call(
-                    &claims,
-                    &mcp_re_test_paths::unique_test_nonce(),
-                )),
-                NOW,
-            )
+        let revoked_at = fleet.revoke().await;
+        let propagation = fleet
+            .poll_sibling_until_refused(revoked_at, DECLARED_P_MS)
             .await;
-        assert_eq!(
-            served.status, 200,
-            "replica A must admit before the revocation"
-        );
-        let served = replica_b
-            .handle(
-                served_of(&signed_call(
-                    &claims,
-                    &mcp_re_test_paths::unique_test_nonce(),
-                )),
-                NOW,
-            )
-            .await;
-        assert_eq!(
-            served.status, 200,
-            "replica B must admit before the revocation"
-        );
-        assert_eq!(calls_a.load(Ordering::SeqCst), 1);
-        assert_eq!(calls_b.load(Ordering::SeqCst), 1);
-
-        // The authority revokes. Nothing notifies either replica.
-        let revoked_at = Instant::now();
-        authority
-            .publish(
-                // The generation is UNCHANGED — revocation is not a rotation — and the
-                // publication sequence advances, which is what the two counters are for.
-                &signed_state(&workload, 5, 2, AdmissionStatus::Revoked),
-                &workload,
-                NOW,
-            )
-            .await
-            .expect("the store answers")
-            .expect("revoke");
-
-        // Poll replica B — which performed no revocation and shares nothing with the
-        // authority but the store — until it refuses. Each attempt carries a fresh
-        // nonce so the replay tier never answers instead of the admission gate.
-        let mut attempts = 0usize;
-        let observed = loop {
-            attempts += 1;
-            let nonce = format!("n-poll-{attempts}");
-            let served = replica_b
-                .handle(served_of(&signed_call(&claims, &nonce)), NOW)
-                .await;
-            if served.status != 200 {
-                break revoked_at.elapsed();
-            }
-            assert!(
-                revoked_at.elapsed().as_millis() < DECLARED_P_MS,
-                "replica B still served the workload {}ms after it was revoked \
-                 (declared P bound {}ms); propagation did NOT meet the budget",
-                revoked_at.elapsed().as_millis(),
-                DECLARED_P_MS,
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        };
 
         // The number this test exists to produce. Printed rather than only asserted:
         // the pass/fail says the mechanism met a declared budget, the value says what
@@ -517,33 +99,11 @@ fn a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound() {
              no cached copy, so this is store visibility + one round trip, measured \
              against a LOCAL Redis. A production fleet adds network RTT and \
              replication lag.",
-            observed.as_millis(),
-            attempts,
+            propagation.elapsed.as_millis(),
+            propagation.attempts,
             DECLARED_P_MS,
         );
 
-        // The refusal must be the admission gate's, not a side effect: the backend
-        // never ran for the revoked call.
-        assert_eq!(
-            calls_b.load(Ordering::SeqCst),
-            1,
-            "only the pre-revocation call reached the backend on replica B"
-        );
-
-        // And replica A, which served it happily a moment ago, now refuses too.
-        let served = replica_a
-            .handle(
-                served_of(&signed_call(
-                    &claims,
-                    &mcp_re_test_paths::unique_test_nonce(),
-                )),
-                NOW,
-            )
-            .await;
-        assert_ne!(
-            served.status, 200,
-            "replica A must honour the revocation as well"
-        );
-        assert_eq!(calls_a.load(Ordering::SeqCst), 1);
+        fleet.assert_the_revocation_holds_everywhere().await;
     });
 }

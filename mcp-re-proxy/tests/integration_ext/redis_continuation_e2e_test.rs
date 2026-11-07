@@ -333,6 +333,49 @@ fn capacity_database(url: &str) -> String {
     format!("{scheme}://{authority}/15")
 }
 
+type SharedStore = std::sync::Arc<RedisContinuationStore>;
+
+fn capacity_key(i: u32) -> ContinuationKey {
+    ContinuationKey::for_request(AUD, &actor_a(), format!("cap-{i}").as_bytes())
+}
+
+/// An admin connection to `url` after the database has been emptied.
+async fn emptied_database(url: &str) -> redis::aio::MultiplexedConnection {
+    let mut admin = redis::Client::open(url)
+        .expect("client")
+        .get_multiplexed_async_connection()
+        .await
+        .expect("admin connects");
+    let _: () = redis::cmd("FLUSHDB")
+        .query_async(&mut admin)
+        .await
+        .expect("database 15 emptied");
+    admin
+}
+
+/// Twelve open legs raced from two replicas: the indices stored, then the indices refused.
+async fn race_twelve_legs(a: &SharedStore, b: &SharedStore) -> (Vec<u32>, Vec<u32>) {
+    let mut legs = tokio::task::JoinSet::new();
+    for i in 0..12 {
+        let store = if i % 2 == 0 { a.clone() } else { b.clone() };
+        legs.spawn(async move { (i, store.create(&capacity_key(i), &bases("cap"), 300).await) });
+    }
+    let mut outcomes = Vec::new();
+    while let Some(joined) = legs.join_next().await {
+        outcomes.push(joined.expect("leg ran"));
+    }
+    let (stored, refused): (Vec<_>, Vec<_>) = outcomes
+        .into_iter()
+        .map(|outcome| match outcome {
+            (i, Ok(Creation::Stored)) => (i, true),
+            (i, Ok(Creation::AtCapacity)) => (i, false),
+            other => panic!("a fresh key is stored or refused for capacity, got {other:?}"),
+        })
+        .partition(|(_, was_stored)| *was_stored);
+    let indices = |legs: Vec<(u32, bool)>| legs.into_iter().map(|(i, _)| i).collect();
+    (indices(stored), indices(refused))
+}
+
 /// R27-3, live: the live set is a hard global bound across replicas.
 ///
 /// Sequential on purpose — one database, emptied first — so the counts below are this
@@ -346,43 +389,22 @@ async fn the_live_set_bounds_open_legs_across_replicas_and_frees_on_consume_and_
         return;
     };
     let url = capacity_database(&url);
-    let mut admin = redis::Client::open(url.as_str())
-        .expect("client")
-        .get_multiplexed_async_connection()
-        .await
-        .expect("admin connects");
-    let _: () = redis::cmd("FLUSHDB")
-        .query_async(&mut admin)
-        .await
-        .expect("database 15 emptied");
+    let mut admin = emptied_database(&url).await;
 
     let capacity = ContinuationCapacity::new(8).expect("in range");
-    let a = std::sync::Arc::new(
+    let a: SharedStore = std::sync::Arc::new(
         RedisContinuationStore::connect(&url, capacity)
             .await
             .expect("A"),
     );
-    let b = std::sync::Arc::new(
+    let b: SharedStore = std::sync::Arc::new(
         RedisContinuationStore::connect(&url, capacity)
             .await
             .expect("B"),
     );
-    let key = |i: u32| ContinuationKey::for_request(AUD, &actor_a(), format!("cap-{i}").as_bytes());
+    let key = capacity_key;
 
-    let mut legs = tokio::task::JoinSet::new();
-    for i in 0..12 {
-        let store = if i % 2 == 0 { a.clone() } else { b.clone() };
-        legs.spawn(async move { (i, store.create(&key(i), &bases("cap"), 300).await) });
-    }
-    let mut stored = Vec::new();
-    let mut refused = Vec::new();
-    while let Some(joined) = legs.join_next().await {
-        match joined.expect("leg ran") {
-            (i, Ok(Creation::Stored)) => stored.push(i),
-            (i, Ok(Creation::AtCapacity)) => refused.push(i),
-            other => panic!("a fresh key is stored or refused for capacity, got {other:?}"),
-        }
-    }
+    let (stored, refused) = race_twelve_legs(&a, &b).await;
     assert_eq!(
         stored.len(),
         8,

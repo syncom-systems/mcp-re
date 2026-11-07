@@ -282,116 +282,74 @@ fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
 
 // --- the whole production wiring: success, replay, expiry, rotation ----------
 
-#[tokio::test]
-async fn delegated_required_wiring_serves_verifies_and_rotates() {
-    let config = delegated_config();
-    let (proxy, mut rotor) = build_proxy(&config);
+/// The delegated response `resp` verifies against `req` at `now` through the
+/// credential→root chain; returns the key id of the key that signed it.
+fn delegated_signer_kid(resp: &HttpResponse, req: &HttpRequest, now: i64, claim: &str) -> String {
+    let r = resolver();
+    let verified = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
+        .verify_delegated_bound_response(resp, req, &expectations(&[EPOCH]), &|_| false, now)
+        .expect(claim);
+    verified
+        .signature_facts()
+        .accepted_signer
+        .identity
+        .keyid
+        .clone()
+}
 
-    // Startup issuance (the binary does this before serving; fail closed if it errors).
-    // key1 exp = NOW + TTL.
-    rotor
-        .rotate(NOW)
-        .expect("startup: initial delegated key issued");
+fn assert_carries_credential(resp: &HttpResponse, claim: &str) {
+    assert!(
+        String::from_utf8(resp.body.clone())
+            .unwrap()
+            .contains("server_delegation"),
+        "{claim}"
+    );
+}
 
-    // --- success: a delegated-signed response verifies via the attestation chain ---
-    let mut first_delegated_kid: Option<String> = None;
+/// Five fresh requests are served and verify; returns the key id that signed them.
+///
+/// Profile-issued kids are RFC 7638 JWK thumbprints (#415 rev 2 §1.5), so the property
+/// asserted is the one that matters — the signer is a delegated key, NOT the root —
+/// rather than a kid literal.
+async fn serve_and_verify_five(proxy: &HttpProfileProxy) -> String {
+    let mut delegated_kid = None;
     for i in 0..5 {
         let (req, _ev, _verified_req) = signed_request(&format!("nonce-ok-{i}"), NOW);
         let served = proxy.handle(served_of(&req), NOW).await;
         assert_eq!(served.status, 200, "delegated-required request served");
         let resp = http_response(served);
-        assert!(
-            String::from_utf8(resp.body.clone())
-                .unwrap()
-                .contains("server_delegation"),
-            "response carries the inline delegation credential"
+        assert_carries_credential(&resp, "response carries the inline delegation credential");
+        let kid = delegated_signer_kid(
+            &resp,
+            &req,
+            NOW,
+            "delegated response verifies via the credential→root chain",
         );
-        let r = resolver();
-        let verified = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
-            .verify_delegated_bound_response(&resp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
-            .expect("delegated response verifies via the credential→root chain");
-        // Profile-issued kids are RFC 7638 JWK thumbprints (#415 rev 2 §1.5), so
-        // the property asserted here is the one that matters — the signer is a
-        // delegated key, NOT the root — rather than a kid literal.
-        first_delegated_kid = Some(
-            verified
-                .signature_facts()
-                .accepted_signer
-                .identity
-                .keyid
-                .clone(),
-        );
-        assert_ne!(
-            verified.signature_facts().accepted_signer.identity.keyid,
-            ROOT_KID,
-            "signed by the delegated key, not the root"
-        );
+        assert_ne!(kid, ROOT_KID, "signed by the delegated key, not the root");
+        delegated_kid = Some(kid);
     }
-    let first_delegated_kid = first_delegated_kid.expect("the success loop ran");
-    // Zero root ops on the request path: the root was touched ONLY at issuance.
-    assert_eq!(
-        rotor.root_invocations(),
-        1,
-        "root issuer off the request path"
-    );
+    delegated_kid.expect("the success loop ran")
+}
 
-    // --- bound rejection: a replay is rejected with a request-bound receipt --------
+/// A replay is rejected with a request-bound receipt that still verifies.
+async fn assert_replay_is_rejected_with_a_bound_receipt(proxy: &HttpProfileProxy) {
     let (req, _ev, _verified_req) = signed_request(&mcp_re_test_paths::unique_test_nonce(), NOW);
     assert_eq!(proxy.handle(served_of(&req), NOW).await.status, 200);
     let served = proxy.handle(served_of(&req), NOW).await;
     assert_eq!(served.status, 409, "replay rejected");
     let resp = http_response(served);
-    assert!(
-        String::from_utf8(resp.body.clone())
-            .unwrap()
-            .contains("server_delegation"),
-        "the rejection carries the inline delegation credential"
+    assert_carries_credential(
+        &resp,
+        "the rejection carries the inline delegation credential",
     );
-    let r = resolver();
-    Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
-        .verify_delegated_bound_response(&resp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
-        .expect("bound delegated rejection verifies");
+    delegated_signer_kid(&resp, &req, NOW, "bound delegated rejection verifies");
+}
 
-    // --- rotation: a successor minted in the overlap window keeps serving (no gap) --
-    // The rotor wakes at key1.exp - overlap; rotate there → key2 (exp = ROT + TTL).
-    let rot = NOW + TTL - OVERLAP + 10;
-    rotor.rotate(rot).expect("rotation mints a successor");
-    assert_eq!(
-        rotor.root_invocations(),
-        2,
-        "one more root op for the successor"
-    );
-    let (req, _ev, _verified_req) = signed_request(&mcp_re_test_paths::unique_test_nonce(), rot);
-    let served = proxy.handle(served_of(&req), rot).await;
-    assert_eq!(
-        served.status, 200,
-        "serving continues under the successor key"
-    );
-    let resp = http_response(served);
-    let r = resolver();
-    let verified = Verifier::new(&VerifierPolicy::default(), &move |k: &str, s| r(k, s))
-        .verify_delegated_bound_response(&resp, &req, &expectations(&[EPOCH]), &|_| false, rot)
-        .expect("successor delegated response verifies");
-    // The successor is a DIFFERENT delegated key: distinct key material yields a
-    // distinct RFC 7638 thumbprint, so the kid changing is itself the proof that
-    // rotation minted a new key rather than re-serving the old one.
-    assert_ne!(
-        verified.signature_facts().accepted_signer.identity.keyid,
-        first_delegated_kid,
-        "signed by the SUCCESSOR delegated key, not the predecessor"
-    );
-    assert_ne!(
-        verified.signature_facts().accepted_signer.identity.keyid,
-        ROOT_KID,
-        "and still not the root"
-    );
-
-    // --- fail closed: past the successor's expiry with no further rotation ---------
-    // key2 exp = ROT + TTL. Advance there WITHOUT rotating: the hot path has no valid
-    // key, so serving refuses (503, unsigned) — no stale-key extension, no direct-root
-    // fallback. The request itself is fresh at this instant, so this exercises the
-    // SIGNING fail-closed path, not a request-freshness rejection.
-    let expired = rot + TTL;
+/// Past the successor's expiry with no further rotation the hot path has no valid key, so
+/// serving refuses (503, unsigned) — no stale-key extension, no direct-root fallback. The
+/// request itself is fresh at this instant, so this exercises the SIGNING fail-closed
+/// path, not a request-freshness rejection.
+async fn assert_expired_key_fails_closed(proxy: &HttpProfileProxy, expired: i64) {
     let (req, _ev, _v) = signed_request(&mcp_re_test_paths::unique_test_nonce(), expired);
     let served = proxy.handle(served_of(&req), expired).await;
     assert_eq!(served.status, 503, "expired delegated key ⇒ fail closed");
@@ -408,6 +366,63 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
             .any(|(k, _)| k.eq_ignore_ascii_case("signature-input")),
         "the fail-closed error is unsigned"
     );
+}
+
+#[tokio::test]
+async fn delegated_required_wiring_serves_verifies_and_rotates() {
+    let config = delegated_config();
+    let (proxy, mut rotor) = build_proxy(&config);
+
+    // Startup issuance (the binary does this before serving; fail closed if it errors).
+    // key1 exp = NOW + TTL.
+    rotor
+        .rotate(NOW)
+        .expect("startup: initial delegated key issued");
+
+    // --- success: a delegated-signed response verifies via the attestation chain ---
+    let first_delegated_kid = serve_and_verify_five(&proxy).await;
+    // Zero root ops on the request path: the root was touched ONLY at issuance.
+    assert_eq!(
+        rotor.root_invocations(),
+        1,
+        "root issuer off the request path"
+    );
+
+    // --- bound rejection: a replay is rejected with a request-bound receipt --------
+    assert_replay_is_rejected_with_a_bound_receipt(&proxy).await;
+
+    // --- rotation: a successor minted in the overlap window keeps serving (no gap) --
+    // The rotor wakes at key1.exp - overlap; rotate there → key2 (exp = ROT + TTL).
+    let rot = NOW + TTL - OVERLAP + 10;
+    rotor.rotate(rot).expect("rotation mints a successor");
+    assert_eq!(
+        rotor.root_invocations(),
+        2,
+        "one more root op for the successor"
+    );
+    let (req, _ev, _verified_req) = signed_request(&mcp_re_test_paths::unique_test_nonce(), rot);
+    let served = proxy.handle(served_of(&req), rot).await;
+    assert_eq!(
+        served.status, 200,
+        "serving continues under the successor key"
+    );
+    let successor_kid = delegated_signer_kid(
+        &http_response(served),
+        &req,
+        rot,
+        "successor delegated response verifies",
+    );
+    // The successor is a DIFFERENT delegated key: distinct key material yields a
+    // distinct RFC 7638 thumbprint, so the kid changing is itself the proof that
+    // rotation minted a new key rather than re-serving the old one.
+    assert_ne!(
+        successor_kid, first_delegated_kid,
+        "signed by the SUCCESSOR delegated key, not the predecessor"
+    );
+    assert_ne!(successor_kid, ROOT_KID, "and still not the root");
+
+    // --- fail closed: key2 exp = ROT + TTL; advance there WITHOUT rotating ---------
+    assert_expired_key_fails_closed(&proxy, rot + TTL).await;
 }
 
 /// The `SigningPlan` `app::run` projects, so this lane drives the production wiring
