@@ -283,15 +283,14 @@ def test_matching_components_with_a_different_fingerprint_is_unknown():
 UNITS = [{"id": "producer"}, {"id": "consumer"}]
 
 
-def graph(edge, producer_now, consumer_now=None, producer_att=None, consumer_att=None):
+def graph(edge, producer_now, consumer_now=None, **attested):
+    """Evaluate one edge; `producer=` and `consumer=` replace that unit's attestation."""
+    attestations = {role: attestation(role) for role in ("producer", "consumer")} | attested
     return evaluate(
         UNITS,
         [edge],
         {"producer": producer_now, "consumer": consumer_now or current()},
-        {
-            "producer": producer_att or attestation("producer"),
-            "consumer": consumer_att or attestation("consumer"),
-        },
+        attestations,
     )
 
 
@@ -331,7 +330,7 @@ def test_a_sealed_edge_does_not_stop_a_failed_proof():
     whole of the consumer's reasoning about the producer, and that claim is worthless when
     the proof establishing the contract has failed. Nothing the consumer can re-run repairs
     a prerequisite outside it."""
-    result = graph(SEALED, current(), producer_att=attestation("producer", evidence={"verus": "fail"}))
+    result = graph(SEALED, current(), producer=attestation("producer", evidence={"verus": "fail"}))
     assert result["states"]["producer"][0] == "BLOCKED"
     assert result["states"]["consumer"][0] == "BLOCKED"
 
@@ -402,30 +401,30 @@ def test_the_composed_claim_lifecycle_through_failure_and_recovery():
     passing = attestation("producer")
     failing = attestation("producer", evidence={"verus": "fail"})
 
-    both_pass = graph(PROOF, current(), producer_att=passing)
+    both_pass = graph(PROOF, current(), producer=passing)
     assert both_pass["states"]["producer"][0] == "FRESH"
     assert both_pass["states"]["consumer"][0] == "FRESH"
 
-    a_broken = graph(PROOF, current(), producer_att=failing)
+    a_broken = graph(PROOF, current(), producer=failing)
     assert a_broken["states"]["producer"][0] == "BLOCKED"
     assert a_broken["states"]["consumer"][0] == "BLOCKED"
 
     # Re-attesting the consumer at its own unchanged, still-passing inputs changes nothing.
     still_broken = graph(
-        PROOF, current(), producer_att=failing, consumer_att=attestation("consumer")
+        PROOF, current(), producer=failing, consumer=attestation("consumer")
     )
     assert still_broken["states"]["consumer"][0] == "BLOCKED"
 
     # The producer is repaired to the SAME inputs its record was taken at, so nothing in
     # the closure has moved and the composed claim is supported again.
-    restored = graph(PROOF, current(), producer_att=passing)
+    restored = graph(PROOF, current(), producer=passing)
     assert restored["states"]["producer"][0] == "FRESH"
     assert restored["states"]["consumer"][0] == "FRESH"
 
     # Repaired to DIFFERENT source is a different matter: the producer is dirty, and the
     # consumer inherits an ordinary dependency refresh rather than a block.
     repaired_differently = graph(
-        PROOF, current({"source_inputs": {"a.rs": "sha256:ccc"}}), producer_att=passing
+        PROOF, current({"source_inputs": {"a.rs": "sha256:ccc"}}), producer=passing
     )
     assert repaired_differently["states"]["producer"][0] == "DIRTY_SELF"
     assert repaired_differently["states"]["consumer"][0] == "DIRTY_DEPENDENCY"
@@ -438,7 +437,7 @@ def test_blocked_escalates_a_consumer_that_was_merely_dirty():
         PROOF,
         current(),
         consumer_now=current({"source_inputs": {"a.rs": "sha256:bbb"}}),
-        producer_att=attestation("producer", evidence={"verus": "fail"}),
+        producer=attestation("producer", evidence={"verus": "fail"}),
     )
     assert result["states"]["consumer"][0] == "BLOCKED"
 
@@ -458,7 +457,7 @@ def test_a_failed_lower_proof_does_not_leave_the_composed_claim_green():
     result = graph(
         PROOF,
         current(),
-        producer_att=attestation("producer", evidence={"verus": "fail"}),
+        producer=attestation("producer", evidence={"verus": "fail"}),
     )
     assert result["states"]["producer"][0] == "BLOCKED"
     assert result["states"]["consumer"][0] == "BLOCKED"
@@ -473,8 +472,8 @@ def test_a_failed_proof_keeps_propagating_and_cannot_be_re_attested_away():
     result = graph(
         PROOF,
         current(),
-        producer_att=attestation("producer", evidence={"verus": "fail"}),
-        consumer_att=fresh_consumer,
+        producer=attestation("producer", evidence={"verus": "fail"}),
+        consumer=fresh_consumer,
     )
     assert result["states"]["consumer"][0] == "BLOCKED"
 
