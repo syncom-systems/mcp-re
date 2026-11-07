@@ -205,7 +205,8 @@ def _nearest_project(start: Path, eco: Ecosystem) -> str | None:
             rel = current.relative_to(REPO_ROOT)
         except ValueError:
             return None
-        if any(_tree.current().is_file((rel / manifest).as_posix()) for manifest in eco.project_manifests):
+        tree = _tree.current()
+        if any(tree.is_file((rel / manifest).as_posix()) for manifest in eco.project_manifests):
             return rel.as_posix()
         if current == REPO_ROOT:
             return None
@@ -398,6 +399,95 @@ RUNTIME_PROBES = {
 }
 
 
+def _rust_argv(target: str, selectors: list[str], libtest_log: Path | None) -> list[str]:
+    """A Rust target is a Bazel test label, run from the workspace root. `--nocache_test_results`
+    because a cached result is a statement about an earlier run; `--test_output=streamed`
+    because the lane reads libtest's own result lines, which Bazel then passes through as
+    the test wrote them. A doctest target is run whole: a doctest's reported name embeds the
+    LINE it starts on, so the lane matches the declared ITEMS against what ran instead of
+    selecting by a name that breaks on any edit above it.
+    """
+    argv = ["bazel", "test", target, "--nocache_test_results", "--test_output=streamed"]
+    row = _rust_targets.target(target)
+    if row is not None and row["kind"] == "rust_doc_test":
+        return argv
+    argv += ["--test_arg=--exact", *(f"--test_arg={s}" for s in selectors)]
+    if libtest_log is not None:
+        # libtest's own record of each result, written by the harness to a file the
+        # test's stdout and stderr never reach. Bazel merges those two streams into one
+        # log, so a result line read from it can carry another thread's unterminated
+        # stderr text; this file cannot. Bazel's sandbox lets the test write only to
+        # its own directories, so the file's directory is named writable.
+        argv += [
+            f"--test_arg=--logfile={libtest_log}",
+            f"--sandbox_writable_path={libtest_log.parent}",
+        ]
+    return argv
+
+
+def _python_argv(selectors: list[str], runtime: str | None) -> list[str]:
+    # A PREPARED environment, named by the pinned interpreter, and never `uv run`.
+    # `uv run` resolves and syncs, so the lane would be building the thing it measures
+    # — and it would pick whatever interpreter the machine offered, which is exactly the
+    # gap the `[python]` runtime pin closes: the battery ran on one unpinned CPython and
+    # the result was recorded as if it described the supported set. The environments are
+    # prepared by `scripts/prepare_python_matrix.sh`; this runs in them.
+    #
+    # `-p no:randomly` because a battery whose order varies is not reproducible from the
+    # record that measured it. Selection is by exact node id, which pytest supports
+    # natively.
+    if runtime is None:
+        raise ValueError("a Python battery names the interpreter it is measured on")
+    return [
+        f"{python_runtime_venv(runtime)}/bin/python",
+        "-m",
+        "pytest",
+        "-p",
+        "no:randomly",
+        "--no-header",
+        # `--color=no` because pytest honours FORCE_COLOR even when its stdout is a
+        # PIPE, and a coloured status wraps the word this lane reads in escape bytes.
+        # Without it, an environment variable set by whatever invoked the lane decides
+        # whether the report is readable — and an unreadable report presented as forty
+        # controls that "never ran" is a statement about the tests, which is false.
+        # The runner is told what to emit rather than the lane guessing what it meant.
+        "--color=no",
+        "-v",
+        *selectors,
+    ]
+
+
+def _typescript_argv(target: str, selectors: list[str], runtime: str | None) -> list[str]:
+    # The PINNED Node, and never a bare `npx`. `npx vitest` runs under whatever node is
+    # on PATH, so the battery's result described an unnamed runtime — the same gap the
+    # Python side had, and the reason `[typescript].interpreters` exists. The binary
+    # comes from `scripts/prepare_node_matrix.sh`; vitest is invoked through its own
+    # entry point rather than through `npx`, which would resolve a node of its own.
+    #
+    # vitest selects by FILE; `-t` matches a name by substring, which is not selection.
+    # So the files are selected here and the exact names are compared by the lane, which
+    # is where the both-directions rule already lives: a declared name that did not
+    # report success fails, and a name nobody declared is not evidence for anything.
+    #
+    # `--reporter=json`, and the reason is a measured CI failure: the verbose reporter
+    # writes marks meant for a terminal, and on the runner every one of 26 declared
+    # controls came back `never ran` from a suite that had actually passed. A lane must
+    # not read a human-facing rendering — the machine-readable report is the same run
+    # said in a form that does not depend on what the process is attached to.
+    if runtime is None:
+        raise ValueError("a TypeScript battery names the runtime it is measured on")
+    files = sorted({selector.split(" > ", 1)[0] for selector in selectors})
+    return [
+        f"{node_runtime_dir(runtime)}/node_modules/node/bin/node",
+        "node_modules/vitest/vitest.mjs",
+        "run",
+        "--reporter=json",
+        # WHERE the report goes is the lane's to say — see `vitest_report_path`.
+        f"--outputFile={vitest_report_path(runtime, target)}",
+        *files,
+    ]
+
+
 def test_argv(
     eco: Ecosystem,
     project: str | None,
@@ -411,90 +501,13 @@ def test_argv(
     Exact selection is the property, not a convenience: a runner that matched by substring
     would let a battery grow silently, and one that ran the whole suite would report a pass
     for symbols nobody declared.
-
-    A Rust target is a Bazel test label, run from the workspace root. `--nocache_test_results`
-    because a cached result is a statement about an earlier run; `--test_output=streamed`
-    because the lane reads libtest's own result lines, which Bazel then passes through as
-    the test wrote them. A doctest target is run whole: a doctest's reported name embeds the
-    LINE it starts on, so the lane matches the declared ITEMS against what ran instead of
-    selecting by a name that breaks on any edit above it.
     """
     if eco is RUST:
-        argv = ["bazel", "test", target, "--nocache_test_results", "--test_output=streamed"]
-        row = _rust_targets.target(target)
-        if row is not None and row["kind"] == "rust_doc_test":
-            return argv
-        argv += ["--test_arg=--exact", *(f"--test_arg={s}" for s in selectors)]
-        if libtest_log is not None:
-            # libtest's own record of each result, written by the harness to a file the
-            # test's stdout and stderr never reach. Bazel merges those two streams into one
-            # log, so a result line read from it can carry another thread's unterminated
-            # stderr text; this file cannot. Bazel's sandbox lets the test write only to
-            # its own directories, so the file's directory is named writable.
-            argv += [
-                f"--test_arg=--logfile={libtest_log}",
-                f"--sandbox_writable_path={libtest_log.parent}",
-            ]
-        return argv
+        return _rust_argv(target, selectors, libtest_log)
     if eco is PYTHON:
-        # A PREPARED environment, named by the pinned interpreter, and never `uv run`.
-        # `uv run` resolves and syncs, so the lane would be building the thing it measures
-        # — and it would pick whatever interpreter the machine offered, which is exactly the
-        # gap the `[python]` runtime pin closes: the battery ran on one unpinned CPython and
-        # the result was recorded as if it described the supported set. The environments are
-        # prepared by `scripts/prepare_python_matrix.sh`; this runs in them.
-        #
-        # `-p no:randomly` because a battery whose order varies is not reproducible from the
-        # record that measured it. Selection is by exact node id, which pytest supports
-        # natively.
-        if runtime is None:
-            raise ValueError("a Python battery names the interpreter it is measured on")
-        return [
-            f"{python_runtime_venv(runtime)}/bin/python",
-            "-m",
-            "pytest",
-            "-p",
-            "no:randomly",
-            "--no-header",
-            # `--color=no` because pytest honours FORCE_COLOR even when its stdout is a
-            # PIPE, and a coloured status wraps the word this lane reads in escape bytes.
-            # Without it, an environment variable set by whatever invoked the lane decides
-            # whether the report is readable — and an unreadable report presented as forty
-            # controls that "never ran" is a statement about the tests, which is false.
-            # The runner is told what to emit rather than the lane guessing what it meant.
-            "--color=no",
-            "-v",
-            *selectors,
-        ]
+        return _python_argv(selectors, runtime)
     if eco is TYPESCRIPT:
-        # The PINNED Node, and never a bare `npx`. `npx vitest` runs under whatever node is
-        # on PATH, so the battery's result described an unnamed runtime — the same gap the
-        # Python side had, and the reason `[typescript].interpreters` exists. The binary
-        # comes from `scripts/prepare_node_matrix.sh`; vitest is invoked through its own
-        # entry point rather than through `npx`, which would resolve a node of its own.
-        #
-        # vitest selects by FILE; `-t` matches a name by substring, which is not selection.
-        # So the files are selected here and the exact names are compared by the lane, which
-        # is where the both-directions rule already lives: a declared name that did not
-        # report success fails, and a name nobody declared is not evidence for anything.
-        #
-        # `--reporter=json`, and the reason is a measured CI failure: the verbose reporter
-        # writes marks meant for a terminal, and on the runner every one of 26 declared
-        # controls came back `never ran` from a suite that had actually passed. A lane must
-        # not read a human-facing rendering — the machine-readable report is the same run
-        # said in a form that does not depend on what the process is attached to.
-        if runtime is None:
-            raise ValueError("a TypeScript battery names the runtime it is measured on")
-        files = sorted({selector.split(" > ", 1)[0] for selector in selectors})
-        return [
-            f"{node_runtime_dir(runtime)}/node_modules/node/bin/node",
-            "node_modules/vitest/vitest.mjs",
-            "run",
-            "--reporter=json",
-            # WHERE the report goes is the lane's to say — see `vitest_report_path`.
-            f"--outputFile={vitest_report_path(runtime, target)}",
-            *files,
-        ]
+        return _typescript_argv(target, selectors, runtime)
     raise ValueError(f"no test command for ecosystem {eco.name!r}")
 
 
@@ -543,6 +556,44 @@ _LIBTEST_LOGFILE_STATUS = {
 }
 
 
+class _LogfileReader:
+    """The state of one pass over a libtest `--logfile`: the results read so far and the
+    message-bearing record that is still open, if any."""
+
+    def __init__(self, selected: Iterable[str]) -> None:
+        self.names = tuple(sorted(set(selected), key=len, reverse=True))
+        self.out: dict[str, str] = {}
+        self.open_status: str | None = None
+        self.open_text = ""
+
+    def feed(self, line: str) -> None:
+        plain = _LIBTEST_LOGFILE_PLAIN.match(line)
+        if plain:
+            self.out[plain.group("name")] = _LIBTEST_LOGFILE_STATUS[plain.group("status")]
+            self.open_status = None
+            return
+        if not self._extend_or_open(line):
+            return
+        name = next((n for n in self.names if self.open_text.endswith(" " + n)), None)
+        if name is not None:
+            self._close(name)
+
+    def _close(self, name: str) -> None:
+        assert self.open_status is not None
+        self.out[name] = _LIBTEST_LOGFILE_STATUS[self.open_status]
+        self.open_status = None
+
+    def _extend_or_open(self, line: str) -> bool:
+        if self.open_status is not None:
+            self.open_text += "\n" + line
+            return True
+        opened = _LIBTEST_LOGFILE_OPENS_MESSAGE.match(line)
+        if not opened:
+            return False
+        self.open_status, self.open_text = opened.group("status"), line
+        return True
+
+
 def parse_libtest_logfile(text: str, selected: Iterable[str] = ()) -> dict[str, str]:
     """The lane's one vocabulary, read from libtest's `--logfile` record.
 
@@ -554,30 +605,10 @@ def parse_libtest_logfile(text: str, selected: Iterable[str] = ()) -> dict[str, 
     A plain record always starts a fresh record, so an unterminated message cannot swallow
     the results after it.
     """
-    names = tuple(sorted(set(selected), key=len, reverse=True))
-    out: dict[str, str] = {}
-    open_status: str | None = None
-    open_text = ""
+    reader = _LogfileReader(selected)
     for line in text.splitlines():
-        plain = _LIBTEST_LOGFILE_PLAIN.match(line)
-        if plain:
-            out[plain.group("name")] = _LIBTEST_LOGFILE_STATUS[plain.group("status")]
-            open_status = None
-            continue
-        if open_status is None:
-            opened = _LIBTEST_LOGFILE_OPENS_MESSAGE.match(line)
-            if not opened:
-                continue
-            open_status, open_text = opened.group("status"), line
-        else:
-            open_text += "\n" + line
-        for name in names:
-            if open_text.endswith(" " + name):
-                out[name] = _LIBTEST_LOGFILE_STATUS[open_status]
-                open_status = None
-                break
-    return out
-
+        reader.feed(line)
+    return reader.out
 
 
 _LIBTEST_FAILURE_NAME = re.compile(r"^    (?P<name>[A-Za-z_][\w:]*)$")
@@ -591,13 +622,15 @@ def _libtest_failure_summary(stdout: str) -> list[str]:
         if line.strip() == "failures:":
             listing = True
             continue
-        if listing:
-            match = _LIBTEST_FAILURE_NAME.match(line)
-            if match:
-                names.append(match.group("name"))
-            elif line.strip():
-                listing = False
+        if not listing:
+            continue
+        match = _LIBTEST_FAILURE_NAME.match(line)
+        if match:
+            names.append(match.group("name"))
+        elif line.strip():
+            listing = False
     return names
+
 
 #: SGR/CSI escape sequences a runner emits when it decides to colour its output. Stripped
 #: before any line is matched: the lane reads a WORD at a known position, and an escape
@@ -644,6 +677,83 @@ def _vitest_report(stdout: str) -> dict:
     )
 
 
+def _parse_libtest(stdout: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for line in stdout.splitlines():
+        match = _LIBTEST_RESULT.match(line.strip())
+        if match:
+            out[match.group("name")] = match.group("status")
+    # libtest's own failure summary names every failed test, whatever was interleaved
+    # with its result line. A newline inside the interleave leaves `FAILED` off the
+    # `test <name> ... ` line, which read as `never ran` and made a RED control look
+    # unmeasured: the mutation lane then reported a probe whose weakening had broken its
+    # control as a MEASUREMENT FAILURE, on a fraction of runs. The summary only ever adds
+    # `FAILED`, so no test it names can read as passing.
+    for name in _libtest_failure_summary(stdout):
+        out.setdefault(name, "FAILED")
+    return out
+
+
+def _pytest_outcome(status: str) -> str:
+    if status == "PASSED":
+        return "ok"
+    return "ignored" if status == "SKIPPED" else "FAILED"
+
+
+def _unread_collection(out: dict[str, str], stdout: str) -> str | None:
+    """The refusal when pytest collected cases and this reader understood none of them."""
+    collected = _PYTEST_COLLECTED.search(stdout)
+    if out or not collected:
+        return None
+    if int(collected.group("count")) <= 0:
+        return None
+    return (
+        f"pytest collected {collected.group('count')} case(s) and this lane read a "
+        f"status line for none of them; the run said: "
+        + (stdout.strip()[-2000:] or "(nothing)")
+    )
+
+
+def _parse_pytest(stdout: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for line in stdout.splitlines():
+        match = _PYTEST_RESULT.match(line.strip())
+        if match:
+            out[match.group("name")] = _pytest_outcome(match.group("status"))
+    # The runner SAID it collected cases and this reader understood none of them. That
+    # is the lane failing to read a report, not a battery of controls that never ran,
+    # and the two call for opposite next actions: one is fixed here, the other in the
+    # tests. Reported as its own failure so it cannot masquerade as the second.
+    unread = _unread_collection(out, stdout)
+    if unread is not None:
+        raise ReportUnreadable(unread)
+    return out
+
+
+def _vitest_cases(file_result: dict) -> Iterable[tuple[str, str]]:
+    """`(full name, lane status)` for each case a vitest file result reports."""
+    name = str(file_result.get("name", ""))
+    relative = name.split("/test/", 1)
+    prefix = f"test/{relative[1]}" if len(relative) == 2 else name
+    for case in file_result.get("assertionResults", []):
+        titles = [*case.get("ancestorTitles", []), case.get("title", "")]
+        full = " > ".join([prefix, *[t for t in titles if t]])
+        yield full, _VITEST_STATUS.get(str(case.get("status")), "FAILED")
+
+
+def _parse_vitest(stdout: str) -> dict[str, str]:
+    # The JSON blob is the last thing on stdout, after whatever the build or the runner
+    # printed before it. Scanning back from the first `{` that parses keeps a warning
+    # line from making the whole report unreadable — which would present as every
+    # declared control having "never ran", the exact false RED this reporter replaced.
+    report = _vitest_report(stdout)
+    return dict(
+        case
+        for file_result in report.get("testResults", [])
+        for case in _vitest_cases(file_result)
+    )
+
+
 def parse_results(eco: Ecosystem, stdout: str) -> dict[str, str]:
     """Selected test name → one of `ok`, `FAILED`, `ignored`.
 
@@ -653,56 +763,12 @@ def parse_results(eco: Ecosystem, stdout: str) -> dict[str, str]:
     ecosystem, so an ecosystem's own words are translated here rather than special-cased
     where the rule is applied.
     """
-    out: dict[str, str] = {}
     # Before anything is matched, and for every runner: see `_ANSI`.
     stdout = _ANSI.sub("", stdout)
     if eco is RUST:
-        for line in stdout.splitlines():
-            match = _LIBTEST_RESULT.match(line.strip())
-            if match:
-                out[match.group("name")] = match.group("status")
-        # libtest's own failure summary names every failed test, whatever was interleaved
-        # with its result line. A newline inside the interleave leaves `FAILED` off the
-        # `test <name> ... ` line, which read as `never ran` and made a RED control look
-        # unmeasured: the mutation lane then reported a probe whose weakening had broken its
-        # control as a MEASUREMENT FAILURE, on a fraction of runs. The summary only ever adds
-        # `FAILED`, so no test it names can read as passing.
-        for name in _libtest_failure_summary(stdout):
-            out.setdefault(name, "FAILED")
-        return out
+        return _parse_libtest(stdout)
     if eco is PYTHON:
-        for line in stdout.splitlines():
-            match = _PYTEST_RESULT.match(line.strip())
-            if match:
-                status = match.group("status")
-                out[match.group("name")] = (
-                    "ok" if status == "PASSED" else "ignored" if status == "SKIPPED" else "FAILED"
-                )
-        # The runner SAID it collected cases and this reader understood none of them. That
-        # is the lane failing to read a report, not a battery of controls that never ran,
-        # and the two call for opposite next actions: one is fixed here, the other in the
-        # tests. Reported as its own failure so it cannot masquerade as the second.
-        collected = _PYTEST_COLLECTED.search(stdout)
-        if not out and collected and int(collected.group("count")) > 0:
-            raise ReportUnreadable(
-                f"pytest collected {collected.group('count')} case(s) and this lane read a "
-                f"status line for none of them; the run said: "
-                + (stdout.strip()[-2000:] or "(nothing)")
-            )
-        return out
+        return _parse_pytest(stdout)
     if eco is TYPESCRIPT:
-        # The JSON blob is the last thing on stdout, after whatever the build or the runner
-        # printed before it. Scanning back from the first `{` that parses keeps a warning
-        # line from making the whole report unreadable — which would present as every
-        # declared control having "never ran", the exact false RED this reporter replaced.
-        report = _vitest_report(stdout)
-        for file_result in report.get("testResults", []):
-            name = str(file_result.get("name", ""))
-            relative = name.split("/test/", 1)
-            prefix = f"test/{relative[1]}" if len(relative) == 2 else name
-            for case in file_result.get("assertionResults", []):
-                titles = [*case.get("ancestorTitles", []), case.get("title", "")]
-                full = " > ".join([prefix, *[t for t in titles if t]])
-                out[full] = _VITEST_STATUS.get(str(case.get("status")), "FAILED")
-        return out
+        return _parse_vitest(stdout)
     raise ValueError(f"no result parser for ecosystem {eco.name!r}")
