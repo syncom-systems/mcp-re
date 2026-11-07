@@ -6538,7 +6538,12 @@ tested_symbols = [
 id = "sdk_typescript.bounded_read"
 class = "V0"
 description = "The response read is bounded by the aggregate wall clock rather than by socket inactivity alone and by a byte ceiling, and the verifying channel it runs over is constructed against the configured CA with the hostname proved and no transport-owned or splitting header admitted; exceeding either bound, or a channel that cannot be constructed, fails the exchange."
-paths = ["sdk/typescript/src/mtls.ts"]
+paths = [
+  "sdk/typescript/src/mtls.ts",
+  "sdk/typescript/src/mtls_errors.ts",
+  "sdk/typescript/src/mtls_exchange.ts",
+  "sdk/typescript/src/mtls_settings.ts",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"

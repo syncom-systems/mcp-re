@@ -5791,12 +5791,12 @@ nothing about the code LOOKS wrong once the keyword is gone.
 id = "M213-typescript-the-aggregate-read-is-bounded"
 unit = "sdk_typescript.bounded_read"
 conjunct = "the response read is bounded by the aggregate wall clock rather than by socket inactivity alone"
-path = "sdk/typescript/src/mtls.ts"
+path = "sdk/typescript/src/mtls_exchange.ts"
 anchor = """
-              }, timeoutMs);
+  }, timeoutMs);
 """
 weakening = """
-              }, 24 * 60 * 60 * 1000);
+  }, 24 * 60 * 60 * 1000);
 """
 expect_red = [
   "vitest#test/mtls.test.ts > the mTLS connect helper > bounds the TOTAL response read, not only socket inactivity",
