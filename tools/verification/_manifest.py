@@ -376,18 +376,17 @@ def aggregate_verdict(formal_verdicts, hygiene_verdicts=()) -> str:
     """
     formal = list(formal_verdicts)
     hygiene = list(hygiene_verdicts)
-    if any(v not in LANE_VERDICTS for v in formal + hygiene):
+    every = formal + hygiene
+    if not set(every) <= LANE_VERDICTS:
         return "INCOMPLETE"
     # A failing precondition outranks everything: evidence gathered beside a broken
     # assumption gate is not evidence we may rely on.
-    if any(v == "FAIL" for v in hygiene) or any(v == "FAIL" for v in formal):
+    if "FAIL" in every:
         return "FAIL"
     required = [v for v in formal if v != "NOT_REQUIRED"]
     if not required:
         return "INCOMPLETE"
-    if any(v in {"UNAVAILABLE", "SKIPPED"} for v in required):
-        return "INCOMPLETE"
-    if any(v in {"UNAVAILABLE", "SKIPPED"} for v in hygiene):
+    if not {"UNAVAILABLE", "SKIPPED"}.isdisjoint(required + hygiene):
         return "INCOMPLETE"
     return "PASS"
 
@@ -464,38 +463,55 @@ def validate_edges(
     """
     for index, edge in enumerate(edges):
         ewhere = f"{where} [[edge]] #{index}"
-        reject_unknown(ewhere, edge, _EDGE_KEYS)
-        require(ewhere, edge, {"kind", "from", "to"})
-        if edge["kind"] not in EDGE_KINDS:
-            raise ManifestError(
-                f"{ewhere}: kind {edge['kind']!r} not one of {sorted(EDGE_KINDS)}"
-            )
-        for endpoint in ("from", "to"):
-            if edge[endpoint] not in unit_ids:
-                raise ManifestError(
-                    f"{ewhere}: {endpoint} {edge[endpoint]!r} is not a declared unit"
-                )
+        _validate_edge_shape(ewhere, edge, unit_ids)
         if edge["kind"] == "CONTRACT_CONSUMES":
-            require(ewhere, edge, {"contract"})
-            # Exported by THIS edge's `from`, not by some unit somewhere. The previous check
-            # ran only under `sealed` and compared against the union of every unit's exports,
-            # so a seal could name a contract an unrelated unit published — a relation
-            # between two units justified by a third.
-            if edge["contract"] not in exports.get(edge["from"], set()):
-                raise ManifestError(
-                    f"{ewhere}: CONTRACT_CONSUMES names contract {edge['contract']!r}, "
-                    f"which {edge['from']!r} does not export. A contract edge is a relation "
-                    f"to the PRODUCER's published interface; if this dependency is real but "
-                    f"no such contract exists, it is a COMPILE_DEPENDENCY."
-                )
+            _validate_contract_relation(ewhere, edge, exports)
         if edge.get("sealed"):
-            if edge["kind"] != "CONTRACT_CONSUMES":
-                raise ManifestError(
-                    f"{ewhere}: only a CONTRACT_CONSUMES edge may be sealed. Sealing "
-                    f"means source-only dirtiness stops at a proved unchanged contract, "
-                    f"which is meaningless without a contract."
-                )
-            require(ewhere, edge, {"sealed_by", "rationale"})
+            _validate_seal(ewhere, edge)
+
+
+def _validate_edge_shape(ewhere: str, edge: dict, unit_ids: set[str]) -> None:
+    """An edge has known keys, a closed kind, and endpoints that are declared units."""
+    reject_unknown(ewhere, edge, _EDGE_KEYS)
+    require(ewhere, edge, {"kind", "from", "to"})
+    if edge["kind"] not in EDGE_KINDS:
+        raise ManifestError(
+            f"{ewhere}: kind {edge['kind']!r} not one of {sorted(EDGE_KINDS)}"
+        )
+    for endpoint in ("from", "to"):
+        if edge[endpoint] not in unit_ids:
+            raise ManifestError(
+                f"{ewhere}: {endpoint} {edge[endpoint]!r} is not a declared unit"
+            )
+
+
+def _validate_contract_relation(
+    ewhere: str, edge: dict, exports: dict[str, set[str]]
+) -> None:
+    """A `CONTRACT_CONSUMES` edge names a contract its own producer exports."""
+    require(ewhere, edge, {"contract"})
+    # Exported by THIS edge's `from`, not by some unit somewhere. The previous check
+    # ran only under `sealed` and compared against the union of every unit's exports,
+    # so a seal could name a contract an unrelated unit published — a relation
+    # between two units justified by a third.
+    if edge["contract"] not in exports.get(edge["from"], set()):
+        raise ManifestError(
+            f"{ewhere}: CONTRACT_CONSUMES names contract {edge['contract']!r}, "
+            f"which {edge['from']!r} does not export. A contract edge is a relation "
+            f"to the PRODUCER's published interface; if this dependency is real but "
+            f"no such contract exists, it is a COMPILE_DEPENDENCY."
+        )
+
+
+def _validate_seal(ewhere: str, edge: dict) -> None:
+    """Only a contract edge may be sealed, and a seal says who sealed it and why."""
+    if edge["kind"] != "CONTRACT_CONSUMES":
+        raise ManifestError(
+            f"{ewhere}: only a CONTRACT_CONSUMES edge may be sealed. Sealing "
+            f"means source-only dirtiness stops at a proved unchanged contract, "
+            f"which is meaningless without a contract."
+        )
+    require(ewhere, edge, {"sealed_by", "rationale"})
 
 
 def _validate_header(where: str, doc: dict) -> None:
@@ -528,6 +544,16 @@ def _validate_unit_identity(
 
     Records `unit["id"]` in `seen_ids`, which is how a duplicate is caught across units.
     """
+    _refuse_unadmitted_class(uwhere, unit)
+    if unit["id"] in seen_ids:
+        raise ManifestError(f"{uwhere}: duplicate unit id {unit['id']!r}")
+    seen_ids.add(unit["id"])
+    if tree_checks:
+        _require_paths_resolve(uwhere, unit)
+
+
+def _refuse_unadmitted_class(uwhere: str, unit: dict) -> None:
+    """The declared class is a known one that the record's own evidence satisfies."""
     # ADR-MCPRE-068 §9.3, registry adequacy: declaring a class you do not satisfy is a
     # lie and is fatal here, at load, before anything reads the unit. Every rule
     # `class_problems` applies is computable from THIS record alone, which is what
@@ -542,10 +568,11 @@ def _validate_unit_identity(
         raise ManifestError(
             f"{uwhere}: class {unit['class']!r} not one of {sorted(CLASSES)}"
         )
-    if unit["id"] in seen_ids:
-        raise ManifestError(f"{uwhere}: duplicate unit id {unit['id']!r}")
-    seen_ids.add(unit["id"])
-    for declared in unit["paths"] if tree_checks else ():
+
+
+def _require_paths_resolve(uwhere: str, unit: dict) -> None:
+    """Every declared path names at least one file in the current tree."""
+    for declared in unit["paths"]:
         if not _tree.current().files(declared):
             raise ManifestError(
                 f"{uwhere}: path {declared!r} matches nothing. A unit whose source "
@@ -614,6 +641,13 @@ def _validate_proof_selection(uwhere: str, unit: dict) -> None:
         )
 
 
+def _is_runnable(eco: Ecosystem | None, target: str, path: str) -> bool:
+    """The selector has a path, and `eco` is a single ecosystem that runs `target`."""
+    if not path or eco is None:
+        return False
+    return valid_target(eco, target)
+
+
 def _require_runnable_target(uwhere: str, symbol: object, eco: Ecosystem | None) -> None:
     """A `tested_symbol` names a target its unit's ecosystem can run, and a path inside it."""
     target, _, path = str(symbol).partition("#")
@@ -625,7 +659,7 @@ def _require_runnable_target(uwhere: str, symbol: object, eco: Ecosystem | None)
     # vitest battery has the one target that says which runner reads the
     # selector. A unit whose paths name no single ecosystem has no runnable
     # target at all, which is the same refusal for a different reason.
-    if not path or eco is None or not valid_target(eco, target):
+    if not _is_runnable(eco, target, path):
         raise ManifestError(
             f"{uwhere}: tested_symbol {symbol!r} names no runnable "
             f"{eco.name if eco else '<unresolved ecosystem>'} target; "
@@ -710,6 +744,18 @@ def load_assumptions(*, tree_checks: bool = True) -> dict:
     """Load and validate the trusted-assumption registry."""
     doc = _load(ASSUMPTIONS_TOML)
     where = "assumptions.toml"
+    _validate_assumptions_header(where, doc)
+    seen: set[str] = set()
+    for index, entry in enumerate(doc.get("assumption", [])):
+        _validate_assumption(f"{where} [[assumption]] #{index}", entry, seen, tree_checks)
+    problems = registration_problems(doc)
+    if problems:
+        raise ManifestError(f"{where}: " + "; ".join(problems))
+    return doc
+
+
+def _validate_assumptions_header(where: str, doc: dict) -> None:
+    """The registry's own keys and schema version."""
     reject_unknown(where, doc, {"schema_version", "assumption"})
     require(where, doc, {"schema_version"})
     if doc["schema_version"] != ASSUMPTIONS_SCHEMA_VERSION:
@@ -718,40 +764,42 @@ def load_assumptions(*, tree_checks: bool = True) -> dict:
             f"{ASSUMPTIONS_SCHEMA_VERSION}. A premise registry written against an older "
             f"schema would load with untyped records reading as typed ones."
         )
-    seen: set[str] = set()
-    for index, entry in enumerate(doc.get("assumption", [])):
-        awhere = f"{where} [[assumption]] #{index}"
-        reject_unknown(awhere, entry, _ASSUMPTION_KEYS)
-        require(awhere, entry, _ASSUMPTION_REQUIRED)
-        if entry["id"] in seen:
+
+
+def _validate_assumption(awhere: str, entry: dict, seen: set[str], tree_checks: bool) -> None:
+    """Every admission rule one `[[assumption]]` record owes, in the order they are checked."""
+    reject_unknown(awhere, entry, _ASSUMPTION_KEYS)
+    require(awhere, entry, _ASSUMPTION_REQUIRED)
+    if entry["id"] in seen:
+        raise ManifestError(
+            f"{awhere}: duplicate assumption id {entry['id']!r}. Ids are never reused "
+            f"— a reused id makes two different trusted claims indistinguishable in "
+            f"the review history."
+        )
+    seen.add(entry["id"])
+    _require_resolvable_scope(awhere, entry)
+    if tree_checks:
+        _validate_sites(awhere, entry)
+    _require_boundary_edge(awhere, entry)
+    # ADR-MCPRE-068 §7. Computable from ONE record in isolation, which is what keeps it
+    # loader-stage and therefore merge-fatal: a malformed premise declaration is a lie
+    # about what is trusted, and malformed has always been fatal here. Whether an
+    # OBSERVABLE obligation has already come true is a different question — it needs
+    # the other registries and the tree — and lives in `check-assumptions`.
+    problem = class_problem(awhere, entry, is_live(entry))
+    if problem is not None:
+        raise ManifestError(problem)
+
+
+def _require_resolvable_scope(awhere: str, entry: dict) -> None:
+    """Every scope entry is a `unit://` or `boundary://` URI the tooling can resolve."""
+    for target in entry.get("scope", []):
+        if not str(target).startswith(_SCOPE_PREFIXES):
             raise ManifestError(
-                f"{awhere}: duplicate assumption id {entry['id']!r}. Ids are never reused "
-                f"— a reused id makes two different trusted claims indistinguishable in "
-                f"the review history."
+                f"{awhere}: scope entry {target!r} is neither `unit://<id>` nor "
+                f"`boundary://<id>`. A scope the tooling cannot resolve trusts the "
+                f"assumption nowhere while reading as a registration."
             )
-        seen.add(entry["id"])
-        for target in entry.get("scope", []):
-            if not str(target).startswith(_SCOPE_PREFIXES):
-                raise ManifestError(
-                    f"{awhere}: scope entry {target!r} is neither `unit://<id>` nor "
-                    f"`boundary://<id>`. A scope the tooling cannot resolve trusts the "
-                    f"assumption nowhere while reading as a registration."
-                )
-        if tree_checks:
-            _validate_sites(awhere, entry)
-        _require_boundary_edge(awhere, entry)
-        # ADR-MCPRE-068 §7. Computable from ONE record in isolation, which is what keeps it
-        # loader-stage and therefore merge-fatal: a malformed premise declaration is a lie
-        # about what is trusted, and malformed has always been fatal here. Whether an
-        # OBSERVABLE obligation has already come true is a different question — it needs
-        # the other registries and the tree — and lives in `check-assumptions`.
-        problem = class_problem(awhere, entry, is_live(entry))
-        if problem is not None:
-            raise ManifestError(problem)
-    problems = registration_problems(doc)
-    if problems:
-        raise ManifestError(f"{where}: " + "; ".join(problems))
-    return doc
 
 
 def _validate_sites(where: str, entry: dict) -> None:
@@ -768,31 +816,47 @@ def _validate_sites(where: str, entry: dict) -> None:
     declared = entry.get("sites")
     if declared is None:
         return
+    _require_nonempty_list(where, declared)
+    seen: set[str] = set()
+    for site in declared:
+        site = str(site)
+        path = _site_path(where, site)
+        if site in seen:
+            raise ManifestError(f"{where}: site {site!r} is registered twice in one entry.")
+        seen.add(site)
+        _require_site_file(where, site, path)
+
+
+def _require_nonempty_list(where: str, declared: object) -> None:
+    """`sites`, when present, is a list with at least one member."""
     if not isinstance(declared, list) or not declared:
         raise ManifestError(
             f"{where}: `sites` must be a non-empty list. Omit the key entirely to register "
             f"nothing — an EMPTY list and an absent one would be the same fact written two "
             f"ways."
         )
-    seen: set[str] = set()
-    for site in declared:
-        site = str(site)
-        path, separator, item = site.partition("#")
-        if not separator or not path or not item:
-            raise ManifestError(
-                f"{where}: site {site!r} is not `<path>#<item>`. A seam is identified by "
-                f"the item it sits on, never by a line number: a line number moves when a "
-                f"comment is added above it, and a registry that goes stale on formatting "
-                f"is one people regenerate without reading."
-            )
-        if site in seen:
-            raise ManifestError(f"{where}: site {site!r} is registered twice in one entry.")
-        seen.add(site)
-        if not _tree.current().is_file(path):
-            raise ManifestError(
-                f"{where}: site {site!r} names {path}, which does not exist. A registration "
-                f"against a missing file registers nothing while reading as a registration."
-            )
+
+
+def _require_site_file(where: str, site: str, path: str) -> None:
+    """The file half of a site exists in the current tree."""
+    if not _tree.current().is_file(path):
+        raise ManifestError(
+            f"{where}: site {site!r} names {path}, which does not exist. A registration "
+            f"against a missing file registers nothing while reading as a registration."
+        )
+
+
+def _site_path(where: str, site: str) -> str:
+    """The path half of a `<path>#<item>` site; a site without both halves is refused."""
+    path, separator, item = site.partition("#")
+    if "" in (path, separator, item):
+        raise ManifestError(
+            f"{where}: site {site!r} is not `<path>#<item>`. A seam is identified by "
+            f"the item it sits on, never by a line number: a line number moves when a "
+            f"comment is added above it, and a registry that goes stale on formatting "
+            f"is one people regenerate without reading."
+        )
+    return path
 
 
 def _require_boundary_edge(where: str, entry: dict) -> None:
@@ -835,26 +899,36 @@ def load_trust_boundaries(*, tree_checks: bool = True) -> dict:
     reject_unknown(where, doc, {"schema_version", "boundary"})
     require(where, doc, {"schema_version"})
     for index, entry in enumerate(doc.get("boundary", [])):
-        bwhere = f"{where} [[boundary]] #{index}"
-        reject_unknown(bwhere, entry, _BOUNDARY_KEYS)
-        require(bwhere, entry, {"id", "description", "kind", "paths", "beyond"})
-        cls = entry.get("max_class_without_assumption")
-        if cls is not None and cls not in CLASSES:
-            raise ManifestError(f"{bwhere}: max_class_without_assumption {cls!r} invalid")
-        for pattern in entry.get("paths", []) if tree_checks else ():
-            # A boundary path that matches nothing SILENTLY NARROWS the boundary. Unlike a
-            # unit path, `expand_paths` globs these, so a stale entry raises nothing and the
-            # code it used to name simply stops being inside the boundary — and
-            # `boundary_class_violations` stops seeing units that cross it. That is an
-            # over-read produced by a rename, which is exactly what happened when MCPRE-175
-            # turned `pkcs11_keysource.rs` and `async_replay.rs` into owner subtrees.
-            if not _tree.current().files(str(pattern)):
-                raise ManifestError(
-                    f"{bwhere}: path {pattern!r} matches nothing. A boundary that names no "
-                    f"file bounds no unit's class, so a stale entry reads as a registered "
-                    f"boundary while trusting the code it used to cover nowhere."
-                )
+        _validate_boundary(f"{where} [[boundary]] #{index}", entry, tree_checks)
     return doc
+
+
+def _validate_boundary(bwhere: str, entry: dict, tree_checks: bool) -> None:
+    """Every admission rule one `[[boundary]]` record owes, in the order they are checked."""
+    reject_unknown(bwhere, entry, _BOUNDARY_KEYS)
+    require(bwhere, entry, {"id", "description", "kind", "paths", "beyond"})
+    cls = entry.get("max_class_without_assumption")
+    if cls is not None and cls not in CLASSES:
+        raise ManifestError(f"{bwhere}: max_class_without_assumption {cls!r} invalid")
+    if tree_checks:
+        _require_boundary_paths_resolve(bwhere, entry)
+
+
+def _require_boundary_paths_resolve(bwhere: str, entry: dict) -> None:
+    """Every path a boundary declares matches at least one file in the current tree."""
+    for pattern in entry.get("paths", []):
+        # A boundary path that matches nothing SILENTLY NARROWS the boundary. Unlike a
+        # unit path, `expand_paths` globs these, so a stale entry raises nothing and the
+        # code it used to name simply stops being inside the boundary — and
+        # `boundary_class_violations` stops seeing units that cross it. That is an
+        # over-read produced by a rename, which is exactly what happened when MCPRE-175
+        # turned `pkcs11_keysource.rs` and `async_replay.rs` into owner subtrees.
+        if not _tree.current().files(str(pattern)):
+            raise ManifestError(
+                f"{bwhere}: path {pattern!r} matches nothing. A boundary that names no "
+                f"file bounds no unit's class, so a stale entry reads as a registered "
+                f"boundary while trusting the code it used to cover nowhere."
+            )
 
 
 def expand_paths(patterns) -> set[str]:
@@ -990,17 +1064,7 @@ def boundary_class_violations(
     way ASM-0037 names `boundary://boundary.crypto_primitives` — which is the declared half
     of the relation this function's own docstring calls a floor with a declared complement.
     """
-    covered: set[tuple[str, str]] = set()
-    for entry in assumptions.get("assumption", []):
-        scope = [str(target) for target in entry.get("scope", [])]
-        units = [t.removeprefix("unit://") for t in scope if t.startswith("unit://")]
-        crossed = [
-            t.removeprefix("boundary://") for t in scope if t.startswith("boundary://")
-        ]
-        for unit_id in units:
-            for boundary_id in crossed:
-                covered.add((unit_id, boundary_id))
-
+    covered = _covered_crossings(assumptions)
     caps = {
         boundary["id"]: boundary["max_class_without_assumption"]
         for boundary in boundaries.get("boundary", [])
@@ -1011,23 +1075,46 @@ def boundary_class_violations(
     # being asked about, and computing them inside the boundary loop rescanned every seam
     # file once per boundary.
     for unit in verification.get("unit", []):
-        if unit["class"] not in RUST_SEAM_CONSUMERS:
-            continue
-        for boundary_id, seams in semantic_boundary_crossings(unit, boundaries).items():
-            cap = caps.get(boundary_id)
-            if cap is None or CLASS_ORDER[unit["class"]] <= CLASS_ORDER[cap]:
-                continue
-            if (unit["id"], boundary_id) in covered:
-                continue
-            violations.append(
-                f"unit {unit['id']} is class {unit['class']} and its proof TRUSTS a seam "
-                f"beyond {boundary_id} ({', '.join(seams)}), which permits at most {cap} "
-                f"without a registered assumption covering the crossing. The seam is an "
-                f"unproved proposition the proof consumes, not a file it is compiled "
-                f"beside. Register an assumption in assumptions.toml with "
-                f"`boundary://{boundary_id}` in its scope, or lower the unit's class."
-            )
+        if unit["class"] in RUST_SEAM_CONSUMERS:
+            violations.extend(_uncovered_crossings(unit, boundaries, caps, covered))
     return sorted(violations)
+
+
+def _covered_crossings(assumptions: dict) -> set[tuple[str, str]]:
+    """The `(unit id, boundary id)` pairs some assumption's `scope` names together."""
+    covered: set[tuple[str, str]] = set()
+    for entry in assumptions.get("assumption", []):
+        scope = [str(target) for target in entry.get("scope", [])]
+        units = [t.removeprefix("unit://") for t in scope if t.startswith("unit://")]
+        crossed = [
+            t.removeprefix("boundary://") for t in scope if t.startswith("boundary://")
+        ]
+        for unit_id in units:
+            for boundary_id in crossed:
+                covered.add((unit_id, boundary_id))
+    return covered
+
+
+def _uncovered_crossings(
+    unit: dict, boundaries: dict, caps: dict[str, str], covered: set[tuple[str, str]]
+) -> list[str]:
+    """One refusal per boundary this unit's proof trusts past that boundary's class cap."""
+    violations: list[str] = []
+    for boundary_id, seams in semantic_boundary_crossings(unit, boundaries).items():
+        cap = caps.get(boundary_id)
+        if cap is None or CLASS_ORDER[unit["class"]] <= CLASS_ORDER[cap]:
+            continue
+        if (unit["id"], boundary_id) in covered:
+            continue
+        violations.append(
+            f"unit {unit['id']} is class {unit['class']} and its proof TRUSTS a seam "
+            f"beyond {boundary_id} ({', '.join(seams)}), which permits at most {cap} "
+            f"without a registered assumption covering the crossing. The seam is an "
+            f"unproved proposition the proof consumes, not a file it is compiled "
+            f"beside. Register an assumption in assumptions.toml with "
+            f"`boundary://{boundary_id}` in its scope, or lower the unit's class."
+        )
+    return violations
 
 
 def unit_assumptions(unit_id: str, assumptions: dict) -> list[str]:
@@ -1102,6 +1189,14 @@ def load_toolchains() -> dict:
     return doc
 
 
+def _is_absent(toolchains: dict, head: str, tail: str) -> bool:
+    """The lock has no table for `head`, or no sub-table `tail` inside it."""
+    entry = toolchains.get(head)
+    if not isinstance(entry, dict):
+        return True
+    return bool(tail) and not isinstance(entry.get(tail), dict)
+
+
 def unpinned_identities(toolchains: dict, required: Iterable[str]) -> dict[str, str]:
     """Each required identity that is not resolved, mapped to WHY it is not.
 
@@ -1127,8 +1222,7 @@ def unpinned_identities(toolchains: dict, required: Iterable[str]) -> dict[str, 
     unresolved = set(unresolved_pins(toolchains))
     for name in required:
         head, _, tail = name.partition(".")
-        entry = toolchains.get(head)
-        if not isinstance(entry, dict) or (tail and not isinstance(entry.get(tail), dict)):
+        if _is_absent(toolchains, head, tail):
             out[name] = "absent"
         elif name in unresolved:
             out[name] = "unresolved"
