@@ -2818,6 +2818,9 @@
     "mcp-re-proxy/tests/integration/serving_trust_seam_test.rs",
     "mcp-re-proxy/tests/integration/signing_credential_provenance_test.rs",
     "mcp-re-proxy/tests/integration/tls_test.rs",
+    "mcp-re-proxy/tests/integration/tls_test/pki.rs",
+    "mcp-re-proxy/tests/integration/tls_test/serving.rs",
+    "mcp-re-proxy/tests/integration/tls_test/signers.rs",
     "mcp-re-proxy/tests/serving_fixtures/mod.rs",
     "mcp-re-proxy/tests/startup_transcript/mod.rs"
    ],
@@ -2907,6 +2910,9 @@
     "mcp-re-proxy/tests/integration/serving_trust_seam_test.rs",
     "mcp-re-proxy/tests/integration/signing_credential_provenance_test.rs",
     "mcp-re-proxy/tests/integration/tls_test.rs",
+    "mcp-re-proxy/tests/integration/tls_test/pki.rs",
+    "mcp-re-proxy/tests/integration/tls_test/serving.rs",
+    "mcp-re-proxy/tests/integration/tls_test/signers.rs",
     "mcp-re-proxy/tests/serving_fixtures/mod.rs",
     "mcp-re-proxy/tests/startup_transcript/mod.rs"
    ],
