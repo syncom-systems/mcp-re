@@ -40,12 +40,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))
 from gen_mtls_test_material import SERVER_NAME, generate  # noqa: E402
 
 from mcp_re_sdk import McpReConfig, McpReSdkError, Signer  # noqa: E402
-from mcp_re_sdk.mtls import (  # noqa: E402
-    MtlsOptions,
-    MtlsTransportError,
-    _read_bounded,
-    mtls_poster,
-)
+from mcp_re_sdk.mtls import MtlsOptions, MtlsTransportError, mtls_poster  # noqa: E402
+from mcp_re_sdk.mtls_exchange import _read_bounded  # noqa: E402
 
 CLIENT_SEED = bytes([11]) * 32
 

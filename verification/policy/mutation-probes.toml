@@ -4918,7 +4918,7 @@ unit = "sdk_python.bounded_read"
 # closure that sentence declines, and this probe evidences its unit, which is what the lane
 # reports it under.
 conjunct ="the aggregate deadline this SDK advertises is the deadline it enforces, because no NEW underlying read begins once it has passed"
-path = "sdk/python/python/mcp_re_sdk/mtls.py"
+path = "sdk/python/python/mcp_re_sdk/mtls_exchange.py"
 anchor = """
         chunk = response.read1(want)
 """
