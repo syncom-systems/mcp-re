@@ -35,6 +35,7 @@
 //! capability with no relationship to protocol legality.
 
 use crate::error::HttpProfileError;
+use serde_json::Map;
 use serde_json::Value;
 
 use super::Outstanding;
@@ -104,56 +105,80 @@ pub fn validate_response_envelope<'a>(
     parsed: &'a Value,
     outstanding: &OutstandingId,
 ) -> Result<ValidatedEnvelope<'a>, HttpProfileError> {
-    let invalid = HttpProfileError::UpstreamResponseInvalid;
-
-    let object = parsed.as_object().ok_or(invalid("not a JSON object"))?;
-
-    match object.get("jsonrpc") {
-        Some(Value::String(v)) if v == JSON_RPC_VERSION => {}
-        None => return Err(invalid("jsonrpc member absent")),
-        Some(_) => return Err(invalid("jsonrpc member is not \"2.0\"")),
-    }
-
+    let object = parsed
+        .as_object()
+        .ok_or(HttpProfileError::UpstreamResponseInvalid("not a JSON object"))?;
+    require_jsonrpc_version(object)?;
+    let outcome = response_outcome(object)?;
     let result = object.get("result");
-    let error = object.get("error");
-    let outcome = match (result, error) {
-        (Some(_), Some(_)) => return Err(invalid("both result and error present")),
-        (None, None) => return Err(invalid("neither result nor error present")),
-        (Some(_), None) => ResponseOutcome::Result,
-        (None, Some(_)) => ResponseOutcome::Error,
-    };
-
-    if let Some(error) = error {
-        let error = error.as_object().ok_or(invalid("error is not an object"))?;
-        match error.get("code") {
-            Some(code) if code.is_i64() => {}
-            _ => return Err(invalid("error.code is not an integer")),
-        }
-        match error.get("message") {
-            Some(Value::String(_)) => {}
-            _ => return Err(invalid("error.message is not a string")),
-        }
+    if let Some(error) = object.get("error") {
+        require_error_shape(error)?;
     }
 
     // MCP defines every Result as an object. A non-object `result` also silently classifies
     // as terminal in `result_class` — `get("resultType")` on a string yields `None` — so
     // refusing it here is what keeps that classifier's contract honest.
-    if let Some(result) = result {
-        if !result.is_object() {
-            return Err(invalid("result is not an object"));
-        }
+    if result.is_some_and(|result| !result.is_object()) {
+        return Err(invalid("result is not an object"));
     }
+    require_response_only(object)?;
+    require_correlation(object, outstanding)?;
+    Ok(ValidatedEnvelope { outcome, result })
+}
 
-    // A response is a response and nothing else. `method` is the member that makes a
-    // JSON-RPC document a request, and `params` only ever accompanies one.
+fn invalid(clause: &'static str) -> HttpProfileError {
+    HttpProfileError::UpstreamResponseInvalid(clause)
+}
+
+fn require_jsonrpc_version(object: &Map<String, Value>) -> Result<(), HttpProfileError> {
+    match object.get("jsonrpc") {
+        Some(Value::String(v)) if v == JSON_RPC_VERSION => Ok(()),
+        None => Err(invalid("jsonrpc member absent")),
+        Some(_) => Err(invalid("jsonrpc member is not \"2.0\"")),
+    }
+}
+
+/// Exactly one of `result` / `error` is present, and which one it is.
+fn response_outcome(object: &Map<String, Value>) -> Result<ResponseOutcome, HttpProfileError> {
+    match (object.get("result"), object.get("error")) {
+        (Some(_), Some(_)) => Err(invalid("both result and error present")),
+        (None, None) => Err(invalid("neither result nor error present")),
+        (Some(_), None) => Ok(ResponseOutcome::Result),
+        (None, Some(_)) => Ok(ResponseOutcome::Error),
+    }
+}
+
+/// An `error` member is an object with an integer `code` and a string `message`.
+fn require_error_shape(error: &Value) -> Result<(), HttpProfileError> {
+    let error = error
+        .as_object()
+        .ok_or(invalid("error is not an object"))?;
+    if !error.get("code").is_some_and(Value::is_i64) {
+        return Err(invalid("error.code is not an integer"));
+    }
+    if !error.get("message").is_some_and(Value::is_string) {
+        return Err(invalid("error.message is not a string"));
+    }
+    Ok(())
+}
+
+/// A response is a response and nothing else. `method` is the member that makes a
+/// JSON-RPC document a request, and `params` only ever accompanies one.
+fn require_response_only(object: &Map<String, Value>) -> Result<(), HttpProfileError> {
     if object.contains_key("method") {
         return Err(invalid("response carries a method member"));
     }
     if object.contains_key("params") {
         return Err(invalid("response carries a params member"));
     }
+    Ok(())
+}
 
-    // Correlation, last, because it is the check most likely to be read as the only one.
+/// Correlation, last, because it is the check most likely to be read as the only one.
+fn require_correlation(
+    object: &Map<String, Value>,
+    outstanding: &OutstandingId,
+) -> Result<(), HttpProfileError> {
     let expected = match &outstanding.0 {
         // A response to a notification is not a correlation failure — it is a response that
         // should not exist. The serving path never asks this question (the notification arm
@@ -163,12 +188,10 @@ pub fn validate_response_envelope<'a>(
         Outstanding::Id(id) => id,
     };
     match object.get("id") {
-        None => return Err(invalid("id member absent")),
-        Some(id) if id == expected => {}
-        Some(_) => return Err(invalid("id does not match the outstanding request")),
+        None => Err(invalid("id member absent")),
+        Some(id) if id == expected => Ok(()),
+        Some(_) => Err(invalid("id does not match the outstanding request")),
     }
-
-    Ok(ValidatedEnvelope { outcome, result })
 }
 
 /// Parse a backend reply body, failing closed with the envelope error.

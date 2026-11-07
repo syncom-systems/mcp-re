@@ -176,6 +176,15 @@ pub fn code_only(source: &str) -> String {
 mod tests {
     use super::*;
 
+    /// A test region holding `inner` is followed by `fn after()`. The production half keeps
+    /// `fn after()` and drops `elided`, which sits inside the region.
+    fn assert_region_elided(inner: &str, elided: &str) {
+        let src = format!("#[cfg(test)]\nmod tests {{\n{inner}}}\nfn after() {{}}\n");
+        let production = production_half(&src);
+        assert!(production.contains("fn after()"));
+        assert!(!production.contains(elided), "{elided} was kept");
+    }
+
     #[test]
     fn a_line_comment_inside_a_string_is_not_a_comment() {
         let code = code_only(
@@ -278,63 +287,33 @@ mod tests {
     /// terminator.
     #[test]
     fn a_raw_string_closes_only_on_its_own_hash_count() {
-        let src = concat!(
-            "#[cfg(test)]\n",
-            "mod tests {\n",
-            "    const S: &str = r##\"a \"# b {\"##;\n",
-            "    fn t() { let _ = S; }\n",
-            "}\n",
-            "fn after() {}\n",
+        assert_region_elided(
+            "    const S: &str = r##\"a \"# b {\"##;\n    fn t() { let _ = S; }\n",
+            "let _ = S",
         );
-        let production = production_half(src);
-        assert!(production.contains("fn after()"));
-        assert!(!production.contains("let _ = S"));
     }
 
     /// `for` and `char` end in the letters a raw-string opener starts with. Treating one as
     /// an opener would swallow the rest of the file into a literal.
     #[test]
     fn an_identifier_ending_in_r_is_not_a_raw_string_opener() {
-        let src = concat!(
-            "#[cfg(test)]\n",
-            "mod tests {\n",
-            "    fn t() { for \"x\" in [] {} }\n",
-            "}\n",
-            "fn after() {}\n",
-        );
-        assert!(production_half(src).contains("fn after()"));
+        assert_region_elided("    fn t() { for \"x\" in [] {} }\n", "fn t()");
     }
 
     /// A brace inside a character literal is not a brace, and a lifetime tick is not a
     /// character literal.
     #[test]
     fn a_brace_in_a_char_literal_does_not_close_a_region() {
-        let src = concat!(
-            "#[cfg(test)]\n",
-            "mod tests {\n",
+        assert_region_elided(
             "    fn t<'a>(s: &'a str) { let _ = ('}', '{', s); }\n",
-            "}\n",
-            "fn after() {}\n",
+            "fn t<",
         );
-        let production = production_half(src);
-        assert!(production.contains("fn after()"));
-        assert!(!production.contains("fn t<"));
     }
 
     /// A block comment nests, and its braces are not code.
     #[test]
     fn a_brace_in_a_nested_block_comment_does_not_close_a_region() {
-        let src = concat!(
-            "#[cfg(test)]\n",
-            "mod tests {\n",
-            "    /* } /* } */ } */\n",
-            "    fn t() {}\n",
-            "}\n",
-            "fn after() {}\n",
-        );
-        let production = production_half(src);
-        assert!(production.contains("fn after()"));
-        assert!(!production.contains("fn t()"));
+        assert_region_elided("    /* } /* } */ } */\n    fn t() {}\n", "fn t()");
     }
 
     #[test]

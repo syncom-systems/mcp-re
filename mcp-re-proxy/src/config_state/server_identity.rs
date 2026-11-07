@@ -258,54 +258,38 @@ mod tests {
         assert_ne!(actor.keyid, config.server_key_id);
     }
 
-    #[test]
-    fn a_missing_coordinate_leaves_no_identity_and_names_itself() {
-        for (flag, mutate) in [
-            (
-                "--trust-domain",
-                Box::new(|c: &mut DeploymentRequest| c.trust_domain = String::new())
-                    as Box<dyn FnOnce(&mut DeploymentRequest)>,
-            ),
-            (
-                "--server-signer",
-                Box::new(|c: &mut DeploymentRequest| c.server_signer = String::new()),
-            ),
-        ] {
-            let mut config = legal_config();
-            mutate(&mut config);
+    /// Sets the trust domain to `domain` in one request and the server signer to `signer`
+    /// in another, and hands each flag's refusals to `check` after asserting that no identity
+    /// was built.
+    fn refuse_each_coordinate(domain: &str, signer: &str, check: impl Fn(&str, &[String])) {
+        let mut bad_domain = legal_config();
+        bad_domain.trust_domain = domain.to_string();
+        let mut bad_signer = legal_config();
+        bad_signer.server_signer = signer.to_string();
+        for (flag, config) in [("--trust-domain", bad_domain), ("--server-signer", bad_signer)] {
             let (identity, violations) = facts(&config);
             assert!(identity.is_none(), "{flag}: an identity was built anyway");
-            assert!(
-                violations.iter().any(|v| v.contains(flag)),
-                "{flag}: not named in {violations:?}"
-            );
+            check(flag, &violations);
         }
+    }
+
+    fn assert_names_flag(flag: &str, violations: &[String]) {
+        assert!(
+            violations.iter().any(|v| v.contains(flag)),
+            "{flag}: not named in {violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_coordinate_leaves_no_identity_and_names_itself() {
+        refuse_each_coordinate("", "", assert_names_flag);
     }
 
     /// Whitespace is emptiness here: a coordinate of spaces distinguishes nothing, and the
     /// refusal names the flag rather than leaving the absence unexplained.
     #[test]
     fn a_whitespace_coordinate_is_empty_and_names_itself() {
-        for (flag, mutate) in [
-            (
-                "--trust-domain",
-                Box::new(|c: &mut DeploymentRequest| c.trust_domain = "   ".to_string())
-                    as Box<dyn FnOnce(&mut DeploymentRequest)>,
-            ),
-            (
-                "--server-signer",
-                Box::new(|c: &mut DeploymentRequest| c.server_signer = "\t \n".to_string()),
-            ),
-        ] {
-            let mut config = legal_config();
-            mutate(&mut config);
-            let (identity, violations) = facts(&config);
-            assert!(identity.is_none(), "{flag}: an identity was built anyway");
-            assert!(
-                violations.iter().any(|v| v.contains(flag)),
-                "{flag}: not named in {violations:?}"
-            );
-        }
+        refuse_each_coordinate("   ", "\t \n", assert_names_flag);
     }
 
     /// A padded coordinate is refused by name rather than minted: ` corp.example` or
@@ -313,27 +297,13 @@ mod tests {
     /// the ones the operator meant.
     #[test]
     fn a_padded_coordinate_leaves_no_identity_and_names_itself() {
-        for (flag, mutate) in [
-            (
-                "--trust-domain",
-                Box::new(|c: &mut DeploymentRequest| c.trust_domain = " corp.example".to_string())
-                    as Box<dyn FnOnce(&mut DeploymentRequest)>,
-            ),
-            (
-                "--server-signer",
-                Box::new(|c: &mut DeploymentRequest| c.server_signer = "did:x\n".to_string()),
-            ),
-        ] {
-            let mut config = legal_config();
-            mutate(&mut config);
-            let (identity, violations) = facts(&config);
-            assert!(identity.is_none(), "{flag}: an identity was built anyway");
+        refuse_each_coordinate(" corp.example", "did:x\n", |flag, violations| {
             assert_eq!(violations.len(), 1, "{flag}: {violations:?}");
             assert!(
                 violations[0].starts_with(flag) && violations[0].contains("whitespace"),
                 "{flag}: {violations:?}"
             );
-        }
+        });
     }
 
     /// The delegated-absent branch: legal coordinates, and a delegated owner that resolved

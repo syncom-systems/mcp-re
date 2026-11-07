@@ -258,36 +258,35 @@ mod tests {
 
     #[test]
     fn parse_rejects_unknown_and_malformed() {
-        assert!(ReplayDurabilityTier::parse("cluster").is_err());
-        assert!(ReplayDurabilityTier::parse("redis-wait-quorum").is_err());
-        assert!(ReplayDurabilityTier::parse("redis-wait-quorum:0:500").is_err());
-        assert!(ReplayDurabilityTier::parse("redis-wait-quorum:2:0").is_err());
-        assert!(ReplayDurabilityTier::parse("redis-wait-quorum:2:500:9").is_err());
-        assert!(ReplayDurabilityTier::parse("redis-wait-quorum:two:500").is_err());
+        for spec in [
+            "cluster",
+            "redis-wait-quorum",
+            "redis-wait-quorum:0:500",
+            "redis-wait-quorum:2:0",
+            "redis-wait-quorum:2:500:9",
+            "redis-wait-quorum:two:500",
+        ] {
+            assert!(ReplayDurabilityTier::parse(spec).is_err(), "{spec}");
+        }
     }
 
     #[test]
     fn wire_names_are_the_semantic_adr_names() {
-        assert_eq!(
-            ReplayDurabilityTier::AsyncReplicatedBounded.wire_name(),
-            "REDIS_ASYNC"
-        );
-        assert_eq!(
-            ReplayDurabilityTier::QuorumAcknowledged {
-                quorum: 2,
-                timeout_ms: 500
-            }
-            .wire_name(),
-            "REDIS_WAIT_QUORUM"
-        );
-        assert_eq!(
-            ReplayDurabilityTier::Linearizable.wire_name(),
-            "LINEARIZABLE"
-        );
-        assert_eq!(
-            ReplayDurabilityTier::SingleStoreFailClosed.wire_name(),
-            "SINGLE_STORE_FAIL_CLOSED"
-        );
+        let quorum = ReplayDurabilityTier::QuorumAcknowledged {
+            quorum: 2,
+            timeout_ms: 500,
+        };
+        for (tier, wire) in [
+            (ReplayDurabilityTier::AsyncReplicatedBounded, "REDIS_ASYNC"),
+            (quorum, "REDIS_WAIT_QUORUM"),
+            (ReplayDurabilityTier::Linearizable, "LINEARIZABLE"),
+            (
+                ReplayDurabilityTier::SingleStoreFailClosed,
+                "SINGLE_STORE_FAIL_CLOSED",
+            ),
+        ] {
+            assert_eq!(tier.wire_name(), wire);
+        }
     }
 
     /// The declared tier must hand the store the exact parameters it parsed, so a
@@ -378,23 +377,27 @@ mod tests {
             timeout_ms: 500,
         }
         .startup_audit_line("redis");
-        assert!(line.contains("backend=redis"));
-        assert!(line.contains("tier=REDIS_WAIT_QUORUM"));
-        assert!(line.contains("guarantee="));
+        for carried in ["backend=redis", "tier=REDIS_WAIT_QUORUM", "guarantee="] {
+            assert!(line.contains(carried), "{carried} missing from {line}");
+        }
         // No nonce/correlation material may leak into the startup line.
         assert!(!line.to_lowercase().contains("nonce"));
     }
 
     #[test]
     fn strict_production_minimum_is_wait_quorum_or_stronger() {
-        assert!(ReplayDurabilityTier::QuorumAcknowledged {
+        let wait_quorum = ReplayDurabilityTier::QuorumAcknowledged {
             quorum: 1,
-            timeout_ms: 100
-        }
-        .meets_strict_production_minimum());
-        assert!(ReplayDurabilityTier::Linearizable.meets_strict_production_minimum());
+            timeout_ms: 100,
+        };
         // Weaker tiers do NOT meet the strict-production minimum.
-        assert!(!ReplayDurabilityTier::AsyncReplicatedBounded.meets_strict_production_minimum());
-        assert!(!ReplayDurabilityTier::SingleStoreFailClosed.meets_strict_production_minimum());
+        for (tier, meets) in [
+            (wait_quorum, true),
+            (ReplayDurabilityTier::Linearizable, true),
+            (ReplayDurabilityTier::AsyncReplicatedBounded, false),
+            (ReplayDurabilityTier::SingleStoreFailClosed, false),
+        ] {
+            assert_eq!(tier.meets_strict_production_minimum(), meets, "{tier:?}");
+        }
     }
 }

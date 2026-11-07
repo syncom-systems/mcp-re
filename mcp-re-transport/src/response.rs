@@ -91,37 +91,48 @@ pub(super) fn parse_response(raw: &[u8]) -> Result<HttpResponseParts, TransportE
 fn parse_header_block<'a>(
     lines: impl Iterator<Item = &'a str>,
 ) -> Result<Vec<(String, String)>, TransportError> {
-    let mut headers: Vec<(String, String)> = Vec::new();
-    for line in lines {
-        if line.starts_with(' ') || line.starts_with('\t') {
-            return Err(TransportError::MalformedResponse(
-                "obs-fold header continuation".to_string(),
-            ));
-        }
-        // `split("\r\n")` leaves any BARE CR or LF inside a line; either one is a
-        // second framing interpretation the peer's parser may take.
-        if line.bytes().any(|b| b == b'\r' || b == b'\n') {
-            return Err(TransportError::MalformedResponse(
-                "bare CR or LF in the header block".to_string(),
-            ));
-        }
-        let (name, value) = line.split_once(':').ok_or_else(|| {
-            TransportError::MalformedResponse("header line without a colon".to_string())
-        })?;
-        if name.is_empty() || !name.bytes().all(is_token_byte) {
-            return Err(TransportError::MalformedResponse(format!(
-                "header name is not an RFC 9110 token: {name:?}"
-            )));
-        }
-        let value = value.trim_matches([' ', '\t']);
-        if value.bytes().any(|b| (b < 0x20 && b != b'\t') || b == 0x7F) {
-            return Err(TransportError::MalformedResponse(format!(
-                "header {name} carries a control character"
-            )));
-        }
-        headers.push((name.to_ascii_lowercase(), value.to_string()));
+    lines.map(parse_header_line).collect()
+}
+
+/// One header line, as a lowercased name and a trimmed value.
+fn parse_header_line(line: &str) -> Result<(String, String), TransportError> {
+    reject_ambiguous_framing(line)?;
+    let (name, value) = line.split_once(':').ok_or_else(|| {
+        TransportError::MalformedResponse("header line without a colon".to_string())
+    })?;
+    if name.is_empty() || !name.bytes().all(is_token_byte) {
+        return Err(TransportError::MalformedResponse(format!(
+            "header name is not an RFC 9110 token: {name:?}"
+        )));
     }
-    Ok(headers)
+    let value = value.trim_matches([' ', '\t']);
+    if value.bytes().any(is_control_byte) {
+        return Err(TransportError::MalformedResponse(format!(
+            "header {name} carries a control character"
+        )));
+    }
+    Ok((name.to_ascii_lowercase(), value.to_string()))
+}
+
+/// An obs-fold continuation, or a bare CR or LF that `split("\r\n")` left inside the line:
+/// each is a second framing interpretation the peer's parser may take.
+fn reject_ambiguous_framing(line: &str) -> Result<(), TransportError> {
+    if line.starts_with(' ') || line.starts_with('\t') {
+        return Err(TransportError::MalformedResponse(
+            "obs-fold header continuation".to_string(),
+        ));
+    }
+    if line.bytes().any(|b| b == b'\r' || b == b'\n') {
+        return Err(TransportError::MalformedResponse(
+            "bare CR or LF in the header block".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// A control character other than HTAB, which a header value may carry.
+fn is_control_byte(b: u8) -> bool {
+    (b < 0x20 && b != b'\t') || b == 0x7F
 }
 
 /// The two headers that decide where this message ends.
