@@ -2481,8 +2481,8 @@ half.
 | a read-only (`0555`) archive opens for reading and serves its objects | `retained_evidence::archive::tests` (cargo lib) |
 | the SERVING constructor still refuses a directory it cannot write | `retained_evidence::store::tests`, `transparency::retained_archive::tests` (cargo lib) |
 | re-addressing refuses swapped bytes THROUGH THE READ VIEW | `retained_evidence::archive::tests` (cargo lib) |
-| the SHIPPED `mcp-re-auditor` binary audits a `0555` archive end to end | `transparency_e2e_test::the_auditor_binary_audits_an_archive_it_cannot_write_to` (**Bazel** `//mcp-re-proxy:integration_async_test`) |
-| the serving constructor still proves writability, in the same lane | `transparency_e2e_test::the_serving_constructor_still_proves_the_archive_writable` (**Bazel**) |
+| the SHIPPED `mcp-re-auditor` binary audits a `0555` archive end to end | `transparency_e2e_test::auditor::the_auditor_binary_audits_an_archive_it_cannot_write_to` (**Bazel** `//mcp-re-proxy:integration_async_test`) |
+| the serving constructor still proves writability, in the same lane | `transparency_e2e_test::auditor::the_serving_constructor_still_proves_the_archive_writable` (**Bazel**) |
 
 The two shipped-binary lanes are Bazel-only: `MCP_RE_AUDITOR_CLI` is a runfile, so a cargo
 run compiles them to nothing. Stated here because a green cargo lane says nothing about
@@ -2674,7 +2674,7 @@ correct statement about a system this one is deployed beside.
 | `config/ports.toml`, `docs/dev/port-registry.md` | the enclosing monorepo's service registry, which is where this project's port band is reserved |
 | `MODULE.bazel` | the enclosing monorepo's build-manifest registry |
 | `.github/workflows/cloud-kms-live.yml` | a LocalStack source file, quoted to say which upstream behaviour the KMS live lane works around |
-| `tools/slo/host_gate.py` | the retention script that runs on the verification host, which is administered outside this repository |
+| `tools/slo/host_gate_config.py` | the retention script that runs on the verification host, which is administered outside this repository |
 | `mcp-re-conformance/tests/security_traceability_guard_test.rs` | the manifest's path as the enclosing monorepo sees it |
 | `docs/dogfood-runbook.md` | the inner MCP server's own entry point (`intelli_code_mcp`), which the dogfood is run AGAINST and which is a separate project |
 

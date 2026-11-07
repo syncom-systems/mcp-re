@@ -33,6 +33,7 @@ SCRIPTS = os.path.join(os.path.dirname(HERE), "scripts")
 sys.path.insert(0, SCRIPTS)
 
 from _persist import atomic_write_lines, read_jsonl  # noqa: E402
+import _reduce_input  # noqa: E402
 import reduce  # noqa: E402
 from reduce import reduce_journal  # noqa: E402
 
@@ -478,9 +479,9 @@ def test_unstable_live_snapshot_withholds_ledger_checks() -> None:
     """Simulate a writer landing between the stat-before and stat-after of
     EVERY read. Live: LED-900, and a planted ledger disagreement must NOT be
     reported as corruption. Final audit: the same condition is exit 2."""
-    real = reduce._file_stat
+    real = _reduce_input._file_stat
     ticks = iter(range(10_000))
-    reduce._file_stat = lambda p: (next(ticks), 0)
+    _reduce_input._file_stat = lambda p: (next(ticks), 0)
     try:
         flip = [dict(r, status="open") if r["id"] == "f001" else r for r in _golden_ledger()]
         with tempfile.TemporaryDirectory() as td:
@@ -494,7 +495,7 @@ def test_unstable_live_snapshot_withholds_ledger_checks() -> None:
             assert rc == 2, "a moving input in a final audit must be exit 2, got %d" % rc
             print("  unstable final-audit input: exit 2  OK")
     finally:
-        reduce._file_stat = real
+        _reduce_input._file_stat = real
     # CONTROL: the same flipped ledger, stable reads -> the disagreement IS an error.
     _mutation("flipped-ledger-stable-live(control)", ["LED-002"], None,
               lambda rows: [dict(r, status="open") if r["id"] == "f001" else r for r in rows],

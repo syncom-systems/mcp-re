@@ -48,7 +48,7 @@ impl super::RedisEpochReader {
         let (counter, generation) =
             match state_command().query::<(Option<i64>, Option<String>)>(conn) {
                 Ok(state) => state,
-                Err(e) if super::is_transient(&e) => {
+                Err(e) if super::redis_reader::is_transient(&e) => {
                     *guard = None;
                     let mut fresh = Self::fresh_conn(&self.client)?;
                     let state = state_command()

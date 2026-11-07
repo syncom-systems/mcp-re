@@ -267,6 +267,11 @@ paths = [
   "mcp-re-http-profile/src/sigbase.rs",
   "mcp-re-http-profile/src/digest.rs",
   "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/block/actor.rs",
+  "mcp-re-http-profile/src/block/audience.rs",
+  "mcp-re-http-profile/src/block/continuation.rs",
+  "mcp-re-http-profile/src/block/request.rs",
+  "mcp-re-http-profile/src/block/response.rs",
   "mcp-re-http-profile/src/message.rs",
   "mcp-re-http-profile/src/evidence/mod.rs",
   "mcp-re-http-profile/src/evidence/role.rs",
@@ -355,6 +360,11 @@ paths = [
   "mcp-re-http-profile/src/sigbase.rs",
   "mcp-re-http-profile/src/digest.rs",
   "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/block/actor.rs",
+  "mcp-re-http-profile/src/block/audience.rs",
+  "mcp-re-http-profile/src/block/continuation.rs",
+  "mcp-re-http-profile/src/block/request.rs",
+  "mcp-re-http-profile/src/block/response.rs",
   "mcp-re-http-profile/src/message.rs",
   "mcp-re-http-profile/src/evidence/mod.rs",
   "mcp-re-http-profile/src/evidence/role.rs",
@@ -435,6 +445,11 @@ paths = [
   "mcp-re-http-profile/src/sigbase.rs",
   "mcp-re-http-profile/src/digest.rs",
   "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/block/actor.rs",
+  "mcp-re-http-profile/src/block/audience.rs",
+  "mcp-re-http-profile/src/block/continuation.rs",
+  "mcp-re-http-profile/src/block/request.rs",
+  "mcp-re-http-profile/src/block/response.rs",
   "mcp-re-http-profile/src/message.rs",
   "mcp-re-http-profile/src/evidence/mod.rs",
   "mcp-re-http-profile/src/evidence/role.rs",
@@ -503,6 +518,11 @@ paths = [
   "mcp-re-http-profile/src/sigbase.rs",
   "mcp-re-http-profile/src/digest.rs",
   "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/block/actor.rs",
+  "mcp-re-http-profile/src/block/audience.rs",
+  "mcp-re-http-profile/src/block/continuation.rs",
+  "mcp-re-http-profile/src/block/request.rs",
+  "mcp-re-http-profile/src/block/response.rs",
   "mcp-re-http-profile/src/message.rs",
   "mcp-re-http-profile/src/evidence/mod.rs",
   "mcp-re-http-profile/src/evidence/role.rs",
@@ -555,6 +575,11 @@ paths = [
   "mcp-re-http-profile/src/sigbase.rs",
   "mcp-re-http-profile/src/digest.rs",
   "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/block/actor.rs",
+  "mcp-re-http-profile/src/block/audience.rs",
+  "mcp-re-http-profile/src/block/continuation.rs",
+  "mcp-re-http-profile/src/block/request.rs",
+  "mcp-re-http-profile/src/block/response.rs",
   "mcp-re-http-profile/src/message.rs",
   "mcp-re-http-profile/src/evidence/mod.rs",
   "mcp-re-http-profile/src/evidence/role.rs",
@@ -623,6 +648,11 @@ paths = [
   "mcp-re-http-profile/src/sigbase.rs",
   "mcp-re-http-profile/src/digest.rs",
   "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/block/actor.rs",
+  "mcp-re-http-profile/src/block/audience.rs",
+  "mcp-re-http-profile/src/block/continuation.rs",
+  "mcp-re-http-profile/src/block/request.rs",
+  "mcp-re-http-profile/src/block/response.rs",
   "mcp-re-http-profile/src/message.rs",
   "mcp-re-http-profile/src/evidence/mod.rs",
   "mcp-re-http-profile/src/evidence/role.rs",
@@ -677,6 +707,11 @@ paths = [
   "mcp-re-http-profile/src/sigbase.rs",
   "mcp-re-http-profile/src/digest.rs",
   "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/block/actor.rs",
+  "mcp-re-http-profile/src/block/audience.rs",
+  "mcp-re-http-profile/src/block/continuation.rs",
+  "mcp-re-http-profile/src/block/request.rs",
+  "mcp-re-http-profile/src/block/response.rs",
   "mcp-re-http-profile/src/message.rs",
   "mcp-re-http-profile/src/evidence/mod.rs",
   "mcp-re-http-profile/src/evidence/role.rs",
@@ -723,9 +758,9 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#evidence::request_role::tests::a_derived_handle_agrees_with_the_signers_handle",
   "//mcp-re-http-profile:mcp_re_http_profile_test#evidence::request_role::tests::a_request_differing_in_a_covered_component_derives_a_different_handle",
   "//mcp-re-http-profile:mcp_re_http_profile_test#evidence::request_role::tests::a_thin_covered_set_cannot_reproduce_a_signed_handle",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::response_block_foreign_profile_fails_closed",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::response_block_unknown_field_fails_closed",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::response_block_round_trips_and_validates",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::response::tests::response_block_foreign_profile_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::response::tests::response_block_unknown_field_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::response::tests::response_block_round_trips_and_validates",
 ]
 
 # THM-0019's owner.
@@ -739,6 +774,11 @@ paths = [
   "mcp-re-http-profile/src/sigbase.rs",
   "mcp-re-http-profile/src/digest.rs",
   "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/block/actor.rs",
+  "mcp-re-http-profile/src/block/audience.rs",
+  "mcp-re-http-profile/src/block/continuation.rs",
+  "mcp-re-http-profile/src/block/request.rs",
+  "mcp-re-http-profile/src/block/response.rs",
   "mcp-re-http-profile/src/message.rs",
   "mcp-re-http-profile/src/evidence/mod.rs",
   "mcp-re-http-profile/src/evidence/role.rs",
@@ -797,6 +837,11 @@ paths = [
   "mcp-re-http-profile/src/sigbase.rs",
   "mcp-re-http-profile/src/digest.rs",
   "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/block/actor.rs",
+  "mcp-re-http-profile/src/block/audience.rs",
+  "mcp-re-http-profile/src/block/continuation.rs",
+  "mcp-re-http-profile/src/block/request.rs",
+  "mcp-re-http-profile/src/block/response.rs",
   "mcp-re-http-profile/src/message.rs",
   "mcp-re-http-profile/src/evidence/mod.rs",
   "mcp-re-http-profile/src/evidence/role.rs",
@@ -910,6 +955,11 @@ paths = [
   "mcp-re-http-profile/src/sigbase.rs",
   "mcp-re-http-profile/src/digest.rs",
   "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/block/actor.rs",
+  "mcp-re-http-profile/src/block/audience.rs",
+  "mcp-re-http-profile/src/block/continuation.rs",
+  "mcp-re-http-profile/src/block/request.rs",
+  "mcp-re-http-profile/src/block/response.rs",
   "mcp-re-http-profile/src/message.rs",
   "mcp-re-http-profile/src/evidence/mod.rs",
   "mcp-re-http-profile/src/evidence/role.rs",
@@ -1795,6 +1845,11 @@ paths = [
   "mcp-re-http-profile/src/artifact/nonvacuity_probe.rs",
   "mcp-re-http-profile/src/artifact/thumbprint.rs",
   "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/block/actor.rs",
+  "mcp-re-http-profile/src/block/audience.rs",
+  "mcp-re-http-profile/src/block/continuation.rs",
+  "mcp-re-http-profile/src/block/request.rs",
+  "mcp-re-http-profile/src/block/response.rs",
   # The artifact-binding vocabulary and its fallible construction moved here
   # under ADR-MCPRE-065 Slice 2, which split it from the evidence block that carries it.
   # The path follows the ITEM: a unit whose path set no longer covers its own
@@ -1829,9 +1884,9 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#artifact::tests::wrong_artifact_type_fails_closed",
   "//mcp-re-http-profile:mcp_re_http_profile_test#artifact::tests::dispatch_matches_the_typed_verifiers",
   "//mcp-re-http-profile:mcp_re_http_profile_test#artifact::tests::end_to_end_dpop_from_authorization_header",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::artifact_binding_carries_only_digest_and_reference_never_token_bytes",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::opaque_binding_with_reference_fields_fails_closed",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::reference_binding_missing_fields_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::request::tests::artifact_binding_carries_only_digest_and_reference_never_token_bytes",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::request::tests::opaque_binding_with_reference_fields_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::request::tests::reference_binding_missing_fields_fails_closed",
   "//mcp-re-http-profile:full_profile_test#artifact_binding_mismatch_fails",
   "//mcp-re-http-profile:full_profile_test#unverifiable_binding_without_material_fails_closed",
   "//mcp-re-http-profile:full_profile_test#caller_supplied_material_verifies_non_header_binding",
@@ -1897,6 +1952,11 @@ paths = [
   # presentable: both halves or neither, exactly one applicable binding, never the
   # reference form.
   "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/block/actor.rs",
+  "mcp-re-http-profile/src/block/audience.rs",
+  "mcp-re-http-profile/src/block/continuation.rs",
+  "mcp-re-http-profile/src/block/request.rs",
+  "mcp-re-http-profile/src/block/response.rs",
   # The selection itself — `enforce_full_profile_bindings`, and the credential resolution
   # that decides whether an OAuth branch is reachable at all.
   "mcp-re-http-profile/src/verify/full/request.rs",
@@ -1926,8 +1986,8 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#artifact::tests::wrong_artifact_type_fails_closed",
   "//mcp-re-http-profile:mcp_re_http_profile_test#artifact::tests::end_to_end_dpop_from_authorization_header",
   "//mcp-re-http-profile:mcp_re_http_profile_test#body::tests::authorization_bearer_bytes_refuses_a_duplicated_authorization_header",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::opaque_binding_with_reference_fields_fails_closed",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::reference_binding_missing_fields_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::request::tests::opaque_binding_with_reference_fields_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::request::tests::reference_binding_missing_fields_fails_closed",
   "//mcp-re-http-profile:mcp_re_http_profile_test#pdp_decision::binding::tests::the_exact_transmitted_bytes_correspond",
   "//mcp-re-http-profile:mcp_re_http_profile_test#pdp_decision::binding::tests::a_different_document_does_not",
   "//mcp-re-http-profile:mcp_re_http_profile_test#pdp_decision::binding::tests::a_reference_binding_can_never_satisfy_the_evidence_form",
@@ -1950,7 +2010,7 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::artifact_binding::tests::an_opaque_binding_over_a_held_digest_is_checked",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::artifact_binding::unchecked::tests::the_unchecked_form_holds_what_a_binding_refuses",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::artifact_binding::vocabulary::tests::the_tags_serialize_to_their_registry_tokens",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::a_block_carrying_a_malformed_binding_does_not_parse",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::request::tests::a_block_carrying_a_malformed_binding_does_not_parse",
 ]
 
 # ---------------------------------------------------------------------------
@@ -2007,6 +2067,11 @@ paths = [
   "mcp-re-http-profile/src/dispatch/outcome.rs",
   "mcp-re-http-profile/src/dispatch/retained_continuation.rs",
   "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/block/actor.rs",
+  "mcp-re-http-profile/src/block/audience.rs",
+  "mcp-re-http-profile/src/block/continuation.rs",
+  "mcp-re-http-profile/src/block/request.rs",
+  "mcp-re-http-profile/src/block/response.rs",
   "mcp-re-http-profile/src/evidence/digest.rs",
   "mcp-re-http-profile/src/evidence/role.rs",
   "mcp-re-http-profile/src/evidence/prover_model.rs",
@@ -2129,6 +2194,11 @@ class = "V1"
 description = "MCPRE-97 continuation role-labeled binding discipline: an accepted continuation's two evidence handles are the retained handles, compared each in its own slot, and its state handle is the modeled labeled digest of the presented `requestState`. Collision-resistant separation BETWEEN roles is not proved and remains at boundary.crypto_primitives."
 paths = [
   "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/block/actor.rs",
+  "mcp-re-http-profile/src/block/audience.rs",
+  "mcp-re-http-profile/src/block/continuation.rs",
+  "mcp-re-http-profile/src/block/request.rs",
+  "mcp-re-http-profile/src/block/response.rs",
   "mcp-re-http-profile/src/evidence/digest.rs",
   "mcp-re-http-profile/src/evidence/role.rs",
   "mcp-re-http-profile/src/evidence/prover_model.rs",
@@ -2149,13 +2219,13 @@ evidence = [
 # The role-labelled binding discipline at the block layer: a continuation that verifies, and
 # the three ways a handle presented under the wrong input or the wrong role must not.
 tested_symbols = [
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::continuation_round_trips_and_verifies",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::tampered_request_state_breaks_the_digest",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::splice_across_continuation_boundary_fails",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::wrong_continuation_type_is_malformed",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::a_malformed_handle_is_a_binding_failure_at_the_verifier",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::a_wrong_role_handle_from_handles_is_refused_by_verify",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::from_handles_over_role_labeled_digests_is_wire_identical_to_build",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::continuation::tests::continuation_round_trips_and_verifies",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::continuation::tests::tampered_request_state_breaks_the_digest",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::continuation::tests::splice_across_continuation_boundary_fails",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::continuation::tests::wrong_continuation_type_is_malformed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::continuation::tests::a_malformed_handle_is_a_binding_failure_at_the_verifier",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::continuation::tests::a_wrong_role_handle_from_handles_is_refused_by_verify",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::continuation::tests::from_handles_over_role_labeled_digests_is_wire_identical_to_build",
 ]
 proved_symbols = [
   "mcp_re_http_profile::block::HttpContinuation::verify",
@@ -8192,8 +8262,8 @@ tested_symbols = [
   # who can produce a post-dispatch refusal on demand must not accumulate dangling ones. The
   # mirror is not optional: the first control alone passes against a proxy that refuses to
   # serve anything it cannot retain, which would lose the cause the client needs.
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::a_post_dispatch_refusal_leaves_no_dangling_crossing",
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::a_post_dispatch_refusal_is_served_the_same_where_nothing_is_retained",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::retention::a_post_dispatch_refusal_leaves_no_dangling_crossing",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::retention::a_post_dispatch_refusal_is_served_the_same_where_nothing_is_retained",
   # r11 R11-632. The hop that discharges a crossing describes the exchange the crossing was
   # taken for. The main half of that is NOT a control and cannot be one: `complete` takes no
   # request, so a hop for a different exchange is not expressible and the consumer closure
@@ -8247,13 +8317,13 @@ tested_symbols = [
   # reached a backend" — asserted on the live path. Nothing else in this battery observes
   # the backend at all; the lib# twin beside it in `http_profile_serve::retention` asserts
   # the refusal's CAUSE, never that the backend did not run.
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::a_retention_store_that_cannot_accept_the_call_refuses_before_the_backend_runs",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::retention::a_retention_store_that_cannot_accept_the_call_refuses_before_the_backend_runs",
   # "`reserve` publishes `<digest>.reserved` … only `commit_to_dispatch` advances it to
   # `<digest>.pending`, and it advances by RENAMING": both names observed ON DISK, in
   # order, through the real writer thread, with the second in place before the side effects
   # run. The completion is then broken and fails, which the scope already admits — "It does
   # not establish that the completion write succeeds" — and no hop is retained for it.
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::a_retention_failure_after_execution_is_indeterminate_and_leaves_its_reservation",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::retention::a_retention_failure_after_execution_is_indeterminate_and_leaves_its_reservation",
   # THREE MORE ROWS OF NP-154 ARE DELIBERATELY ABSENT, and each is refused by a different
   # sentence this theorem already wrote down.
   #
@@ -10162,7 +10232,7 @@ paths = [
   # the failure visible to the budget above instead of serving a document the operator did
   # not write. No theorem claims the bound in terms; recorded in the Phase-1 packet.
   "mcp-re-proxy/src/trust_plane/snapshot.rs",
-  # NOT `trust_epoch.rs`: the epoch→event source is `proxy.trust_epoch_source`, split out
+  # NOT `trust_epoch/redis_reader.rs`: the epoch→event source is `proxy.trust_epoch_source`, split out
   # on 2026-09-05 when THM-0097 was registered. Assumption reach is derived scope → unit →
   # theorem, so a unit holding the reader would carry ASM-0044 into a theorem that is true
   # without any cross-connection propagation. The seam between the two is
@@ -10347,6 +10417,10 @@ paths = [
   # reader's absent-key rule, which is the one place a foreign read's MEANING is decided
   # locally and belongs beside the comparison that consumes it.
   "mcp-re-proxy/src/trust_epoch.rs",
+  "mcp-re-proxy/src/trust_epoch/poller.rs",
+  "mcp-re-proxy/src/trust_epoch/redis_reader.rs",
+  "mcp-re-proxy/src/trust_epoch/shared.rs",
+  "mcp-re-proxy/src/trust_epoch/source.rs",
   # What one read returns, and the single Redis read that produces it.
   "mcp-re-proxy/src/trust_epoch/state.rs",
 ]
@@ -10368,50 +10442,50 @@ evidence = [
 # The e2e in `tests/integration_ext/redis_trust_epoch_e2e_test.rs` is NOT a member, for
 # the reason recorded on `proxy.trust_resolution_window`: it self-skips green without a store.
 tested_symbols = [
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::first_poll_establishes_baseline_without_flush",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::epoch_advance_emits_a_single_flush_all",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::first_poll_establishes_baseline_without_flush",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::epoch_advance_emits_a_single_flush_all",
   # Rollback is not representable on this side: any change flushes, and a flush can only
   # tighten. Without this, `!=` may become `>` and a regressed store silently adopts.
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_regressed_counter_flushes_rather_than_being_adopted_silently",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::read_error_marks_unhealthy_and_emits_nothing",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::recovery_after_outage_catches_an_epoch_that_advanced_during_it",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::draining_does_not_read_the_store",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::the_request_path_does_not_wait_on_a_stalled_epoch_read",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_source_that_stops_being_polled_stops_reporting_healthy",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::a_regressed_counter_flushes_rather_than_being_adopted_silently",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::read_error_marks_unhealthy_and_emits_nothing",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::recovery_after_outage_catches_an_epoch_that_advanced_during_it",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::draining_does_not_read_the_store",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::the_request_path_does_not_wait_on_a_stalled_epoch_read",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::a_source_that_stops_being_polled_stops_reporting_healthy",
   # The OTHER exit, and the one the supervisor did not report: a poller asked to stop left
   # `is_healthy()` true for the whole missed-poll tolerance, so the latch described a source
   # nothing was driving. The liveness bound in that control is a minute wide, so a pass is a
   # statement about the exit path and not about how long the test waited (R11-707).
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_gracefully_stopped_poller_reports_unhealthy_at_once",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_poller_that_never_ran_is_not_healthy",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_poisoned_queue_still_delivers_the_flush",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::poller::tests::a_gracefully_stopped_poller_reports_unhealthy_at_once",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::a_poller_that_never_ran_is_not_healthy",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::a_poisoned_queue_still_delivers_the_flush",
   # THE POLLER. The only controls that run `trust_epoch_poller_body`, which is what makes
   # "flush within one poll interval" a fact about the deployment rather than about
   # `poll_once` driven by hand.
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::the_poller_body_reads_at_once_then_on_its_cadence_and_stops_when_asked",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_poller_whose_read_panics_reports_the_source_unhealthy_at_once",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::poller::tests::the_poller_body_reads_at_once_then_on_its_cadence_and_stops_when_asked",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::poller::tests::a_poller_whose_read_panics_reports_the_source_unhealthy_at_once",
   # THE COMPOSITION, in process: this source under the production cache type through the
   # production adapter. Advance → the next answer is the store's; outage → nothing flushes
   # and the deadline governs. Listed here because the source is what these drive; the
   # cache's half of each is a member of `proxy.trust_resolution_window` in its own right.
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_observed_advance_makes_the_next_lookup_the_stores_answer",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::an_observed_advance_makes_the_next_lookup_the_stores_answer",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
   # The reader's one local rule about a foreign read's meaning. Exists only under
   # `redis_replay`, which is why the battery names `proxy_ext_unit_test`.
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_absent_epoch_key_is_a_read_failure_not_epoch_zero",  # ADR-MCPRE-069 batch 19. Two controls in this unit's own file, each a clause of this
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::redis_reader::tests::an_absent_epoch_key_is_a_read_failure_not_epoch_zero",  # ADR-MCPRE-069 batch 19. Two controls in this unit's own file, each a clause of this
   # statement that its other controls do not reach: a source driven DIRECTLY is not subject
   # to the poller's liveness bound — the bound is the poller's property and not the source's
   # — and one epoch read cannot consume the rotation overlap, which is what keeps a single
   # read from spending the window the rotation depends on.
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_directly_driven_source_is_not_subject_to_the_liveness_bound",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::one_epoch_read_cannot_consume_the_rotation_overlap",
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_advance_onto_an_already_seen_counter_still_flushes",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::a_directly_driven_source_is_not_subject_to_the_liveness_bound",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::redis_reader::tests::one_epoch_read_cannot_consume_the_rotation_overlap",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::source::tests::an_advance_onto_an_already_seen_counter_still_flushes",
   "//mcp-re-proxy:proxy_unit_test#trust_epoch::state::tests::equal_counters_under_different_generations_are_different_states",
   # The startup half of fail-closed: the eager first read is what refuses an unreachable
   # store, and the trust plane spawns its poller only over a source this returned. The
   # signing plane holds its own reader of the same store and its own refusal, in
   # `proxy.signing_plane_epoch_read_refusal`.
-  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_unreachable_epoch_store_builds_no_source",
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::redis_reader::tests::an_unreachable_epoch_store_builds_no_source",
 ]
 # The Redis reader and its two controls exist only under `redis_replay`. The selectors name
 # `proxy_ext_unit_test` so the fingerprint says the battery measured the crate that carries
@@ -11089,6 +11163,10 @@ class = "V0"
 description = "How many files in this workspace decide what an `mcp-re.*` verdict token says, measured over every crate's source tree rather than read off a list of producers: exactly two, the frozen Core taxonomy and the frozen authorization taxonomy."
 paths = [
   "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs",
+  "mcp-re-conformance/tests/audit_vocabulary_guard_test/corpus.rs",
+  "mcp-re-conformance/tests/audit_vocabulary_guard_test/producers.rs",
+  "mcp-re-conformance/tests/audit_vocabulary_guard_test/source.rs",
+  "mcp-re-conformance/tests/audit_vocabulary_guard_test/vocabulary.rs",
   # The primitive the walk rests on. A scan that mis-reads a literal reports test code as
   # production, which is how this control would pass over a producer it never read.
   "mcp-re-test-paths/src/rust_source.rs",
@@ -11267,7 +11345,7 @@ tested_symbols = [
   # The end-to-end witness that the record a served call actually produces is the one an
   # auditor reconstructs from. Without it the controls above are about a type rather than
   # about what the serving path writes.
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::a_served_notification_is_retained_like_any_other_accepted_exchange",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::retention::a_served_notification_is_retained_like_any_other_accepted_exchange",
   # ADR-MCPRE-069 batch 9 measured a reattribution that CANNOT be made here, for the same
   # reason as NP-045 one unit over. Four controls in `transparency/durability.rs` and
   # `transparency/retained_archive.rs` are this statement's own clauses at the STORAGE
@@ -11302,9 +11380,9 @@ evidence = [
 # call-specific there too — so the check was absent on precisely the records an audit is
 # about.
 tested_symbols = [
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::a_served_call_becomes_an_offline_verifiable_receipt",
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::the_statement_is_verifiable_against_the_bytes_the_store_kept",
-  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::a_chain_with_no_verified_hop_is_still_attested",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::attestation::a_served_call_becomes_an_offline_verifiable_receipt",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::attestation::the_statement_is_verifiable_against_the_bytes_the_store_kept",
+  "//mcp-re-proxy:integration_async_test#transparency_e2e_test::attestation::a_chain_with_no_verified_hop_is_still_attested",
 ]
 
 # v0.17 assurance-closure mandate, priority 4. `remote_signer_call/` is compiled under
@@ -13152,6 +13230,10 @@ class = "V0"
 description = "WHAT AN AUDIT TOKEN MAY BE, MEASURED BETWEEN THE TWO FILES ON DISK RATHER THAN INSIDE EITHER: the frozen `McpReError::wire_code()` set is parsed from `error.rs`'s own match arms, the `mcp-re.*` tokens the audit layer names are parsed from `audit.rs`, and every one of the latter is either a member of the former or one of the nine fixed event types. The success set is EXACTLY the two events the error taxonomy cannot express, the key-lifecycle set EXACTLY the three ADR-MCPRE-052 §7 authorizes, and the execution and accounting sets EXACTLY the one event each ADR-MCPRE-070 D1 and D2/Q3 authorize, both resolved through the `event_type` constants rather than through duplicated literals; no event type is itself a frozen wire token, so a rejection sub-name cannot masquerade as an event; and no `authorization_hash_mismatch` notion exists in either file, because Core binds an authorization artifact it never compares. The anti-vacuity arm is part of the claim and not apparatus around it: a guard whose runfiles wiring is broken parses an empty vocabulary and reports a clean one, so the parse must yield at least fifteen frozen tokens, a representative token by name, and every pinned rejection event. Says NOTHING about the CARRIERS — whether a producer outside the frozen taxonomies keeps a vocabulary of its own is `conformance.carrier_minting_absence`, under THM-0111 rather than THM-0122. Says nothing about emission, about a sink, or about which coordinate an authority writes into, and nothing about whether the type-level containment holds — that is `core.audit_vocabulary`'s, and the two are different evidence for the same clause: one reads the compiled constants, this one reads the two files and asks whether they have drifted apart."
 paths = [
   "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs",
+  "mcp-re-conformance/tests/audit_vocabulary_guard_test/corpus.rs",
+  "mcp-re-conformance/tests/audit_vocabulary_guard_test/producers.rs",
+  "mcp-re-conformance/tests/audit_vocabulary_guard_test/source.rs",
+  "mcp-re-conformance/tests/audit_vocabulary_guard_test/vocabulary.rs",
   "mcp-re-core/src/audit.rs",
   "mcp-re-core/src/error.rs",
 ]
@@ -13180,6 +13262,10 @@ class = "V0"
 description = "NO CARRIER THAT REACHES THE WIRE KEEPS A VERDICT VOCABULARY OF ITS OWN, READ AS SOURCE TEXT: the production half of the RFC 9421 carrier's taxonomy and its Core projection, the replay-tier dispatch gate's and its projection, and the client seam's binding-spec refusal and its projection hold NO `mcp-re.*` string literal at all — not a verdict token, and not a dotted audit event type either. Each named projection is where that producer's verdicts are actually decided, asserted by the `impl From<&_> for McpReError` signature being present in the file the guard reads, and NEITHER HAS A WILDCARD ARM, so a new carrier variant is a compile error until it names a Core verdict instead of inheriting one. The wildcard clause is a property of the text and of nothing else: an exhaustive match and a defaulted one agree on every input the tests can supply, so no runtime control in any of these crates is positioned to observe it. The parse is its own positive control — the one file that IS supposed to mint tokens still yields at least fifteen — so an empty result reads as absence rather than as a guard that read nothing. Says NOTHING about WHICH files in the workspace mint a verdict token: that is measured over every crate's source tree by `conformance.verdict_vocabulary_scope`, and this control's six-file list is the narrower question of whether these particular carriers kept a table. Says nothing about whether a projection's GROUPING is right — THM-0111's own scope reserves that as a ratified owner decision no guard can see."
 paths = [
   "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs",
+  "mcp-re-conformance/tests/audit_vocabulary_guard_test/corpus.rs",
+  "mcp-re-conformance/tests/audit_vocabulary_guard_test/producers.rs",
+  "mcp-re-conformance/tests/audit_vocabulary_guard_test/source.rs",
+  "mcp-re-conformance/tests/audit_vocabulary_guard_test/vocabulary.rs",
   "mcp-re-http-profile/src/error.rs",
   "mcp-re-http-profile/src/error/core_projection.rs",
   "mcp-re-proxy/src/http_profile_dispatch.rs",
@@ -13235,10 +13321,10 @@ evidence = [
   "mutation://http_profile/block/evidence_block_closure",
 ]
 tested_symbols = [
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::block_round_trips",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::empty_artifact_bindings_fails_closed",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::foreign_profile_fails_closed",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::unknown_field_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::request::tests::block_round_trips",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::request::tests::empty_artifact_bindings_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::request::tests::foreign_profile_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::request::tests::unknown_field_fails_closed",
 ]
 
 [[unit]]

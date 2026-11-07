@@ -577,7 +577,7 @@ identities colliding there would let a credential issued for one be accepted for
 That is correct, and the scope is still right, because THIS assumption is not injectivity —
 it is the narrower claim that the join is OPAQUE TO THE PROVER and contributes no ensures
 to one Verus theorem. Injectivity itself is a tested property of shipped code, controlled by
-`block::tests::actor_id_is_injective_across_colon_boundaries`,
+`block::actor::tests::actor_id_is_injective_across_colon_boundaries`,
 `separator_cannot_be_forged_across_fields` and
 `the_escape_marker_itself_does_not_create_a_collision`, and dispositioned as the unratified
 NP-087. The honest gap R12-285 names is therefore a RATIFICATION gap at NP-087, not a
@@ -592,8 +592,8 @@ premise_class = "review-obligation"
 discharging_event = { kind = "registry-fact", predicate = "toolchain-version-differs", tool = "verus", from = "0.2026.10.18.7d82994" }
 affected_contracts = ["contract://http_profile/dispatch/prepare_http_dispatch"]
 sites = [
-  "mcp-re-http-profile/src/block.rs#ActorIdentity::actor_id",
-  "mcp-re-http-profile/src/block.rs#ResolvedActor::actor_id",
+  "mcp-re-http-profile/src/block/actor.rs#ActorIdentity::actor_id",
+  "mcp-re-http-profile/src/block/actor.rs#ResolvedActor::actor_id",
 ]
 tool_specific_mechanism = "verus:external_body"
 
