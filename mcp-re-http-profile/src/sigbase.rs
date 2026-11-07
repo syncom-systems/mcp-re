@@ -185,16 +185,14 @@ fn component_value(
     Ok(value)
 }
 
-/// The one message a component resolves against: the originating request for a `;req`
-/// component, otherwise the message being signed.
+/// The one message a component resolves against: the request for `;req`, else the message.
 enum Origin<'a> {
     Request(&'a HttpRequest),
     Response(&'a HttpResponse),
 }
 
 impl<'a> Origin<'a> {
-    /// The message `component` resolves against, or `None` when it has none: a `;req`
-    /// component on a request, or on a response with no request context, cannot be resolved.
+    /// The message `component` resolves against; `None` for a `;req` with no request context.
     fn of(component: &CoveredComponent, source: &'a SourceMessage<'_>) -> Option<Self> {
         match (source, component.req) {
             (SourceMessage::Request(_), true) | (SourceMessage::ResponseOnly(_), true) => None,
@@ -251,10 +249,10 @@ fn derived_value(name: &str, origin: &Origin<'_>) -> Option<String> {
 fn field_value(name: &str, headers: &[(String, String)]) -> Option<String> {
     let mut matching = headers.iter().filter(|(k, _)| k.eq_ignore_ascii_case(name));
     let (_, value) = matching.next()?;
-    if matching.next().is_some() {
-        return None;
-    }
-    Some(value.trim_matches([' ', '\t']).to_owned())
+    matching
+        .next()
+        .is_none()
+        .then(|| value.trim_matches([' ', '\t']).to_owned())
 }
 
 /// `host[:port]` from an absolute URI, lowercased; userinfo is refused (RFC 9421 `@authority`).
@@ -295,13 +293,14 @@ pub fn signature_base(
 ) -> Result<Vec<u8>, HttpProfileError> {
     let mut lines = Vec::with_capacity(components.len().saturating_add(1));
     for c in components {
-        let value = component_value(c, source)?;
-        lines.push(format!("{}: {}", c.identifier(), value));
+        lines.push(format!(
+            "{}: {}",
+            c.identifier(),
+            component_value(c, source)?
+        ));
     }
-    lines.push(format!(
-        "\"@signature-params\": {}",
-        params.serialize_with(components)?
-    ));
+    let signature_params = params.serialize_with(components)?;
+    lines.push(format!("\"@signature-params\": {signature_params}"));
     Ok(lines.join("\n").into_bytes())
 }
 

@@ -6637,6 +6637,7 @@ paths = [
   # one of them — so a supervisor that stopped retiring the snapshot would have left this
   # claim standing on a fingerprint that never moved.
   "mcp-re-proxy/src/signing_plane/rotation.rs",
+  "mcp-re-proxy/src/signing_plane/rotation/wait.rs",
   # r11 R11-571, and the same argument one level down. `rotation.rs` was registered; the two
   # modules the loop was SPLIT INTO were not, so the mint-honesty rule and the epoch-advance
   # rule sat in no fingerprint at all. Both are transitions of this credential:
@@ -9442,6 +9443,7 @@ paths = [
   # itself lives beside it. Both, so neither can move under a standing attestation.
   "mcp-re-operator-display/src/lib.rs",
   "mcp-re-operator-display/src/locator.rs",
+  "mcp-re-operator-display/src/locator_parts.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"

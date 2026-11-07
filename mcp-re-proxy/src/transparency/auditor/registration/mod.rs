@@ -60,6 +60,9 @@
 /// WHAT registering establishes, and what it refuses in.
 mod capability;
 
+/// WHAT a receipt is judged against.
+mod trust;
+
 /// ONE HTTP EXCHANGE — the seam both mechanism leaves are built on.
 ///
 /// Here rather than inside either leaf because it carries no protocol vocabulary: its
@@ -103,9 +106,9 @@ mod endpoint;
 // mechanism a selection made here rather than a type the layer above can name.
 pub use capability::RegisteredStatement;
 pub use capability::RegistrationError;
-pub(super) use capability::RegistrationTrust;
 pub(super) use endpoint::RegistrationTarget;
 pub(super) use protocol::RegistrationProtocol;
+pub(super) use trust::RegistrationTrust;
 
 #[cfg(all(test, feature = "scitt_registration"))]
 mod fixtures {
@@ -208,7 +211,7 @@ mod fixtures {
         super::capability::register_and_verify(
             mechanism,
             statement,
-            &super::capability::RegistrationTrust {
+            &super::RegistrationTrust {
                 issuer_key: &issuer_key,
                 pin: &pin,
                 ts_key,

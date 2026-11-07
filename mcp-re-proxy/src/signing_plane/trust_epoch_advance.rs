@@ -27,6 +27,7 @@ use mcp_re_http_profile::CustodyError;
 
 use super::epoch_watch::EpochRefusal;
 use super::rotation_jitter;
+use super::rotation::RotationScope;
 use super::DelegatedEpochWatch;
 
 /// What the shared trust epoch says to do next.
@@ -74,12 +75,11 @@ pub(super) fn epoch_moved(
 /// minting, no rebase.
 pub(super) fn observe_trust_epoch(
     rotor: &mut crate::delegated_wiring::ProdDelegatedRotor,
-    signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
-    epoch_watch: Option<&DelegatedEpochWatch>,
+    scope: &RotationScope<'_>,
     last: &mut TrustEpoch,
-    halt: &crate::managed_worker::Halt,
 ) -> EpochStep {
-    let Some(watch) = epoch_watch.as_ref() else {
+    let (signer, halt) = (scope.signer, scope.halt);
+    let Some(watch) = scope.epoch_watch else {
         return EpochStep::Proceed;
     };
     let counter = match watch.counter() {
