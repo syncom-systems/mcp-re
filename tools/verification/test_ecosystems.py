@@ -511,7 +511,7 @@ def test_stale_evidence_cannot_establish_a_non_rust_unit():
     cannot establish a claim about another, and that must hold for a Python unit exactly as
     it does for a Rust one — otherwise the SDK roots are established by whatever was last
     measured rather than by what is there."""
-    from _evidence import EvidenceRecord, decide_issuance
+    from _evidence import EvidenceRecord, IssuanceBasis, decide_issuance
 
     at = fingerprint(PY_UNIT)["fingerprint"]
     stale = EvidenceRecord(
@@ -522,7 +522,7 @@ def test_stale_evidence_cannot_establish_a_non_rust_unit():
         detail="measured over some other tree",
     )
     decision, _, reason = decide_issuance(
-        [PY_UNIT], [], {PY_UNIT["id"]: {"fingerprint": at}}, {"test": {PY_UNIT["id"]: stale}}
+        IssuanceBasis([PY_UNIT], [], {PY_UNIT["id"]: {"fingerprint": at}}, {"test": {PY_UNIT["id"]: stale}})
     )[PY_UNIT["id"]]
     assert decision == "REFUSE", reason
 
@@ -531,14 +531,14 @@ def test_an_unknown_evidence_provider_fails_closed_for_a_non_rust_unit():
     """A declared evidence class nothing resolves is unmeasured evidence. Filtering to the
     schemes that happen to have an implementation is how a unit ends up claiming no lane and
     being issued a PASS with an empty evidence map."""
-    from _evidence import MALFORMED_LANE, decide_issuance, required_lanes
+    from _evidence import MALFORMED_LANE, IssuanceBasis, decide_issuance, required_lanes
 
     unknown = dict(PY_UNIT)
     unknown["evidence"] = ["hypothesis://sdk/python/probe"]
     assert required_lanes(unknown) == {"hypothesis"}
     at = fingerprint(unknown)["fingerprint"]
     decision, _, reason = decide_issuance(
-        [unknown], [], {unknown["id"]: {"fingerprint": at}}, {}
+        IssuanceBasis([unknown], [], {unknown["id"]: {"fingerprint": at}}, {})
     )[unknown["id"]]
     assert decision == "REFUSE", reason
 

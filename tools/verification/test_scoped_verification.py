@@ -28,7 +28,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from _compose import Requirement, within  # noqa: E402
-from _evidence import decide_issuance, load_bundle, write_bundle  # noqa: E402
+from _evidence import Bundle, IssuanceBasis, decide_issuance, load_bundle, write_bundle  # noqa: E402
 from _lanes import LANES, SCOPABLE_LANES  # noqa: E402
 from _load_tool import load_tool  # noqa: E402
 from _unit_selection import selection_error  # noqa: E402
@@ -167,9 +167,9 @@ def test_a_scoped_run_never_bundles_a_pass():
 def test_the_scoped_bundle_records_its_scope_and_the_full_one_does_not():
     with tempfile.TemporaryDirectory() as scratch:
         store = Path(scratch)
-        write_bundle(store, "INCOMPLETE", {}, "rev", scope=("a", "b"))
+        write_bundle(store, Bundle("INCOMPLETE", {}, "rev", scope=("a", "b")))
         assert load_bundle(store)["scope"] == ["a", "b"]
-        write_bundle(store, "PASS", {}, "rev")
+        write_bundle(store, Bundle("PASS", {}, "rev"))
         assert "scope" not in load_bundle(store)
 
 
@@ -180,11 +180,11 @@ def test_attest_issues_nothing_from_what_a_scoped_run_bundles():
 
     records = {"verus": {"a": EvidenceRecord("a", "verus", "pass", "fp")}}
     scoped = verify.RunOutcome(0, "PASS", {"verus": "PASS"}, ("a",)).bundle_aggregate()
-    decision = decide_issuance(unit, [], current, records, scoped)["a"][0]
+    decision = decide_issuance(IssuanceBasis(unit, [], current, records, scoped))["a"][0]
     assert decision != "ISSUE_PASS", decision
     # Control: the identical evidence under a full run's PASS IS issued, so the refusal
     # above is the scope's doing and not a defect in the fixture.
-    assert decide_issuance(unit, [], current, records, "PASS")["a"][0] == "ISSUE_PASS"
+    assert decide_issuance(IssuanceBasis(unit, [], current, records, "PASS"))["a"][0] == "ISSUE_PASS"
 
 
 # --- the lanes' shared --unit semantics ------------------------------------------------
