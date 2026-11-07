@@ -4231,6 +4231,7 @@ class = "V0"
 description = "The per-exchange relation itself: every (state, event) pair is explicitly legal or explicitly rejected, no event moves a terminal state, the pipeline order is a directed path whose only branches are the notification arm and the open-leg/terminal split, no state at or past the execution threshold reaches a pre-dispatch terminal, and an advance the relation does not admit latches an anomaly in every build rather than being ignored or panicking."
 paths = [
   "mcp-re-proxy/src/exchange_state.rs",
+  "mcp-re-proxy/src/exchange_state/invariants.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"

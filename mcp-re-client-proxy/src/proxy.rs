@@ -141,6 +141,21 @@ pub enum ResponseKind {
     },
 }
 
+/// A transport reply together with the instant it arrived, which is the clock the reply
+/// is judged at.
+#[derive(Clone, Copy)]
+struct Arrival<'a> {
+    response: &'a HttpResponse,
+    now_unix: i64,
+}
+
+/// The JSON-RPC `id` of a plain message, absent for a NOTIFICATION. Both the signer and
+/// the verification path classify on exactly this key's absence, so this is the one place
+/// that reads it.
+fn request_id(plain_request: &Value) -> Option<&Value> {
+    plain_request.get("id")
+}
+
 /// The local client-side MCP-RE proxy. Holds the static route registry, the client
 /// signing key + keyid, and the remote transport.
 pub struct ClientProxy {
@@ -185,8 +200,8 @@ impl ClientProxy {
         // the same thing: it is a PRESENT id, so defaulting to it turned every one-way
         // notification into a request the server dispatched to the backend and answered with
         // a bodied reply nothing was awaiting.
-        let id = plain_request.get("id").cloned();
-        let signed = self.sign_request(route, plain_request, params, id.as_ref())?;
+        let id = request_id(plain_request).cloned();
+        let signed = self.sign_request(route, plain_request, params)?;
 
         // Forward to the remote MCP-RE endpoint.
         let response = self
@@ -200,10 +215,14 @@ impl ClientProxy {
         // classify and no body to rebuild. It carries no `ResponseExpectation` either —
         // a bodyless 202 has no response block to bind one to — so the route's pin is
         // passed to it directly.
+        let arrival = Arrival {
+            response: &response,
+            now_unix,
+        };
         if id.is_none() {
-            return self.verify_notification_ack(route, &signed, &response, now_unix);
+            return self.verify_notification_ack(route, &signed, arrival);
         }
-        let verified = self.verify_reply(route, &signed, &response, now_unix)?;
+        let verified = self.verify_reply(route, &signed, arrival)?;
 
         // The request id the PROXY signed, not the one the server echoed. The plain
         // reply is addressed to the local client's outstanding call, and taking the id
@@ -221,7 +240,6 @@ impl ClientProxy {
         route: &crate::route::Route,
         plain_request: &Value,
         params: &CallParams<'_>,
-        id: Option<&Value>,
     ) -> Result<mcp_re_client_core::SignedRequest, ProxyError> {
         let method = plain_request
             .get("method")
@@ -245,7 +263,7 @@ impl ClientProxy {
         )
         .with_headers(route.extra_headers.clone());
         Ok(build_signed_message(
-            McpMessage::new(id, &method, req_params),
+            McpMessage::new(request_id(plain_request), &method, req_params),
             &route.target_uri,
             &inputs,
             &self.signing_key,
@@ -265,9 +283,9 @@ impl ClientProxy {
         &self,
         route: &crate::route::Route,
         signed: &mcp_re_client_core::SignedRequest,
-        response: &HttpResponse,
-        now_unix: i64,
+        arrival: Arrival<'_>,
     ) -> Result<mcp_re_client_core::VerifiedDelegatedResponse, ProxyError> {
+        let Arrival { response, now_unix } = arrival;
         // Verify the signed response bound to THIS request under the route's required
         // profile (configured profile = required profile). Fail closed on any failure;
         // no cross-profile fallback.
@@ -331,14 +349,12 @@ impl ClientProxy {
         &self,
         route: &crate::route::Route,
         signed: &mcp_re_client_core::SignedRequest,
-        response: &HttpResponse,
-        now_unix: i64,
+        arrival: Arrival<'_>,
     ) -> Result<ProxyResponse, ProxyError> {
+        let Arrival { response, now_unix } = arrival;
         // A non-2xx answer is a signed refusal verified exactly as a reply is.
         if !(200..300).contains(&response.status) {
-            return read_notification_rejection(
-                self.verify_reply(route, signed, response, now_unix)?,
-            );
+            return read_notification_rejection(self.verify_reply(route, signed, arrival)?);
         }
         let pin = route.expected_server_keyid.as_deref();
         match &route.verification {
@@ -782,6 +798,21 @@ mod tests {
     /// This module's own source, at compile time.
     const PROXY_SRC: &str = include_str!("proxy.rs");
 
+    /// The index just past the brace-delimited item that opens at `lines[start]`.
+    fn end_of_item(lines: &[&str], start: usize) -> usize {
+        let mut depth: i64 = 0;
+        let mut opened = false;
+        for (offset, line) in lines[start..].iter().enumerate() {
+            depth += line.matches('{').count() as i64;
+            depth -= line.matches('}').count() as i64;
+            opened = opened || line.contains('{');
+            if opened && depth <= 0 {
+                return start + offset + 1;
+            }
+        }
+        lines.len()
+    }
+
     /// Everything outside a `#[cfg(test)]` region — the shipped half of this file.
     fn production(source: &str) -> String {
         let mut out = Vec::new();
@@ -789,17 +820,7 @@ mod tests {
         let mut i = 0;
         while i < lines.len() {
             if lines[i].trim_start().starts_with("#[cfg(test)]") {
-                let mut depth: i64 = 0;
-                let mut opened = false;
-                while i < lines.len() {
-                    depth += lines[i].matches('{').count() as i64;
-                    depth -= lines[i].matches('}').count() as i64;
-                    opened = opened || lines[i].contains('{');
-                    i += 1;
-                    if opened && depth <= 0 {
-                        break;
-                    }
-                }
+                i = end_of_item(&lines, i);
                 continue;
             }
             out.push(lines[i]);

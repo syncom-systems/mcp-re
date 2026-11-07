@@ -854,47 +854,9 @@ impl ExchangeProgress {
             }
         }
     }
-
-    /// The cross-machine invariants, as one predicate over the tuple.
-    ///
-    /// `None` means the tuple is coherent. These are the combinations that the transition
-    /// relation alone cannot rule out, because they are agreements BETWEEN projections and
-    /// `transition` sees only one of them.
-    fn invariant_violation(&self) -> Option<&'static str> {
-        // P2. An open leg may be claimed only once it can actually be answered. The
-        // obligation is incurred at classification and discharged only by the durable
-        // record; reaching a success terminal with it outstanding is MCP-RE telling a client
-        // to continue an exchange it has kept nothing to continue from.
-        if self.request == ExchangeState::CompletedContinuationOpen
-            && self.open_leg != OpenLeg::Recorded
-        {
-            return Some("an open leg was served without a durable continuation record");
-        }
-        if self.request == ExchangeState::CompletedTerminal
-            && self.open_leg != OpenLeg::NotApplicable
-        {
-            return Some("a reply that opens a leg was served as a terminal completion");
-        }
-        // Bytes MCP-RE synthesized because the transport failed are a report ABOUT the
-        // exchange, never the exchange's own successful answer. Serving them as one is the
-        // signed-200-carrying-a-timeout case.
-        if self.request.is_success_terminal()
-            && self.origin == ResponseOrigin::DispatchIndeterminate
-        {
-            return Some("synthesized transport-failure bytes were served as a success");
-        }
-        // The derived projection, asserted rather than assumed.
-        let expected = if self.request.backend_may_have_executed() {
-            BackendState::Dispatched
-        } else {
-            BackendState::NotDispatched
-        };
-        if self.backend != expected {
-            return Some("the backend projection disagrees with the exchange state");
-        }
-        None
-    }
 }
+
+mod invariants;
 
 #[cfg(test)]
 mod tests {
@@ -1624,39 +1586,51 @@ mod tests {
                 base.request = *state;
                 base.continuation = *continuation;
                 base.sync_backend();
-                let before = base.retry_semantics();
-
-                for event in EVENTS {
-                    if transition(*state, *event).is_err() {
-                        continue;
-                    }
-                    let mut after = base.clone();
-                    // `advance` debug-asserts the tuple invariants, which the open-leg and
-                    // origin projections are not being exercised by here; the consequence
-                    // question is about the request/continuation pair alone.
-                    after.request = transition(*state, *event).unwrap();
-                    after.sync_backend();
-                    assert!(
-                        after.retry_semantics() >= before,
-                        "{state:?}/{continuation:?} + {event:?}: {:?} < {before:?}",
-                        after.retry_semantics()
-                    );
-                }
-
-                for observed in CONTINUATIONS {
-                    let mut after = base.clone();
-                    after.observe_continuation(*observed);
-                    assert!(
-                        after.continuation() >= base.continuation(),
-                        "{state:?}/{continuation:?} observed {observed:?}: continuation moved backward"
-                    );
-                    assert!(
-                        after.retry_semantics() >= before,
-                        "{state:?}/{continuation:?} observed {observed:?}: {:?} < {before:?}",
-                        after.retry_semantics()
-                    );
-                }
+                assert_events_keep_consequence(&base);
+                assert_observations_keep_consequence(&base);
             }
+        }
+    }
+
+    /// Every legal event from `base` leaves the retry consequence at least as strong.
+    fn assert_events_keep_consequence(base: &ExchangeProgress) {
+        let before = base.retry_semantics();
+        let (state, continuation) = (base.request, base.continuation);
+        for event in EVENTS {
+            let Ok(next) = transition(state, *event) else {
+                continue;
+            };
+            let mut after = base.clone();
+            // `advance` debug-asserts the tuple invariants, which the open-leg and
+            // origin projections are not being exercised by here; the consequence
+            // question is about the request/continuation pair alone.
+            after.request = next;
+            after.sync_backend();
+            assert!(
+                after.retry_semantics() >= before,
+                "{state:?}/{continuation:?} + {event:?}: {:?} < {before:?}",
+                after.retry_semantics()
+            );
+        }
+    }
+
+    /// Every continuation observation from `base` moves neither the continuation nor the
+    /// retry consequence backward.
+    fn assert_observations_keep_consequence(base: &ExchangeProgress) {
+        let before = base.retry_semantics();
+        let (state, continuation) = (base.request, base.continuation);
+        for observed in CONTINUATIONS {
+            let mut after = base.clone();
+            after.observe_continuation(*observed);
+            assert!(
+                after.continuation() >= base.continuation(),
+                "{state:?}/{continuation:?} observed {observed:?}: continuation moved backward"
+            );
+            assert!(
+                after.retry_semantics() >= before,
+                "{state:?}/{continuation:?} observed {observed:?}: {:?} < {before:?}",
+                after.retry_semantics()
+            );
         }
     }
 
