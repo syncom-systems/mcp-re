@@ -1379,6 +1379,7 @@ nt_rust_test(
     srcs = glob([
         "tests/integration_async/*.rs",
         "tests/integration_async/*/*.rs",
+        "tests/integration_async/*/*/*.rs",
     ]) + [
         # `main.rs` reaches the shared helpers via `#[path = "../common/mod.rs"]`.
         "tests/common/mod.rs",
@@ -1437,6 +1438,7 @@ nt_rust_test(
     srcs = glob([
         "tests/integration_async/*.rs",
         "tests/integration_async/*/*.rs",
+        "tests/integration_async/*/*/*.rs",
     ]) + [
         # `main.rs` reaches the shared helpers in tests/common/mod.rs.
         "tests/common/mod.rs",
