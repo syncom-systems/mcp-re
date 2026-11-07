@@ -4944,7 +4944,7 @@ id = "M179-typescript-sign-time-nonce-floor"
 unit = "sdk_typescript.nonce_floor"
 theorem = "THM-0095"
 conjunct = "no request and no notification is signed under a nonce below the 128-bit floor, and a sub-floor or non-string factory result fails closed at sign time"
-path = "sdk/typescript/src/transport.ts"
+path = "sdk/typescript/src/transport_freshness.ts"
 anchor = """
   if (typeof nonce !== "string" || nonce.length < MIN_NONCE_CHARS) {
 """
@@ -5048,12 +5048,12 @@ id = "M183-typescript-trust-anchor-completeness"
 unit = "sdk_typescript.trust_anchor_completeness"
 theorem = "THM-0095"
 conjunct = "an incomplete delegated-verification anchor is refused at construction rather than defaulted"
-path = "sdk/typescript/src/transport.ts"
+path = "sdk/typescript/src/transport_config.ts"
 anchor = """
-    if (missing.length > 0) {
+  if (missing.length > 0) {
 """
 weakening = """
-    if (false) {
+  if (false) {
 """
 expect_red = [
   "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty issuerKeyId",
@@ -5072,12 +5072,12 @@ id = "M184-typescript-denylist-bare-string"
 unit = "sdk_typescript.trust_anchor_completeness"
 theorem = "THM-0095"
 conjunct = "a bare-string denylist is refused rather than spread one entry per character"
-path = "sdk/typescript/src/transport.ts"
+path = "sdk/typescript/src/transport_config.ts"
 anchor = """
-      if (!Array.isArray(revoked)) {
+  if (!Array.isArray(revoked)) {
 """
 weakening = """
-      if (false) {
+  if (false) {
 """
 expect_red = [
   "vitest#test/transport.test.ts > McpReHttpTransport revocation denylist shape > refuses a bare string, which would spread into a per-character denylist",
@@ -5093,12 +5093,12 @@ id = "M185-typescript-denylist-entry-shape"
 unit = "sdk_typescript.trust_anchor_completeness"
 theorem = "THM-0095"
 conjunct = "a denylist entry that is not a non-empty string is refused rather than silently revoking nothing"
-path = "sdk/typescript/src/transport.ts"
+path = "sdk/typescript/src/transport_config.ts"
 anchor = """
-        if (typeof id !== "string" || id.length === 0) {
+    if (typeof id !== "string" || id.length === 0) {
 """
 weakening = """
-        if (false) {
+    if (false) {
 """
 expect_red = [
   "vitest#test/transport.test.ts > McpReHttpTransport revocation denylist shape > refuses an entry that is not a non-empty string",
@@ -5141,10 +5141,10 @@ theorem = "THM-0095"
 conjunct = "a verdict whose outcome is not success reaches the application as a correlated JSON-RPC error and never as a result"
 path = "sdk/typescript/src/transport.ts"
 anchor = """
-        if (verified.outcome !== "success") {
+    if (verified.outcome !== "success") {
 """
 weakening = """
-        if (false) {
+    if (false) {
 """
 expect_red = [
   "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > delivers a verified rejection receipt as an error, not a result",
@@ -5160,10 +5160,10 @@ theorem = "THM-0095"
 conjunct = "an empty wire code is delivered as the SDK's own named condition rather than passed through as an error the application cannot act on"
 path = "sdk/typescript/src/transport.ts"
 anchor = """
-            verified.wireCode ? verified.wireCode : NO_PEER_WIRE_CODE,
+        verified.wireCode ? verified.wireCode : NO_PEER_WIRE_CODE,
 """
 weakening = """
-            verified.wireCode as string,
+        verified.wireCode as string,
 """
 expect_red = [
   "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > invents no peer wire code for a verified receipt that carried none",
@@ -5262,7 +5262,7 @@ id = "M192-typescript-verified-reply-is-rebuilt"
 unit = "sdk_typescript.reply_envelope"
 theorem = "THM-0095"
 conjunct = "what reaches the client is rebuilt from the one member the verified reply carried, and a verified reply that is not a JSON-RPC response is refused rather than dispatched"
-path = "sdk/typescript/src/transport.ts"
+path = "sdk/typescript/src/transport_envelope.ts"
 anchor = """
   const response = plainResponseObject(JSON.parse(body.toString("utf8")));
 """
@@ -5402,7 +5402,7 @@ id = "M198-typescript-no-member-the-receipt-did-not-carry"
 unit = "sdk_typescript.execution_report"
 theorem = "THM-0095"
 conjunct = "a member the verified receipt did not carry is not invented for the application"
-path = "sdk/typescript/src/transport.ts"
+path = "sdk/typescript/src/transport_errors.ts"
 anchor = """
     if (value !== undefined && value !== null) data[key] = value;
 """
@@ -5456,7 +5456,7 @@ id = "M200-typescript-no-borrowed-wire-vocabulary"
 unit = "sdk_typescript.local_failure_provenance"
 theorem = "THM-0095"
 conjunct = "a condition this SDK originated is reported under the SDK's own prefix, never as a frozen mcp-re.* token the peer did not send"
-path = "sdk/typescript/src/transport.ts"
+path = "sdk/typescript/src/transport_errors.ts"
 anchor = """
   return typeof code === "string" && code.startsWith("mcp-re.") ? code : null;
 """
@@ -5627,12 +5627,12 @@ id = "M207-typescript-the-continuation-ceiling-is-enforced"
 unit = "sdk_typescript.continuation_drive"
 theorem = "THM-0095"
 conjunct = "an elicitation past the continuation ceiling fails the call closed rather than resolving it"
-path = "sdk/typescript/src/transport.ts"
+path = "sdk/typescript/src/transport_continuation.ts"
 anchor = """
-        if (round > (config.maxContinuationRounds ?? 4)) {
+  if (round > ceiling) {
 """
 weakening = """
-        if (false) {
+  if (false) {
 """
 expect_red = [
   "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > enforces the continuation ceiling before asking the caller",
@@ -5646,12 +5646,12 @@ id = "M208-typescript-an-unanswerable-elicitation-is-refused"
 unit = "sdk_typescript.continuation_drive"
 theorem = "THM-0095"
 conjunct = "an elicitation with no handler fails the call closed rather than resolving it"
-path = "sdk/typescript/src/transport.ts"
+path = "sdk/typescript/src/transport_continuation.ts"
 anchor = """
-        if (!config.answerInputRequired) {
+  if (!config.answerInputRequired) {
 """
 weakening = """
-        if (false) {
+  if (false) {
 """
 expect_red = [
   "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > refuses an unanswerable elicitation rather than delivering it as a result",
@@ -5700,26 +5700,21 @@ theorem = "THM-0095"
 conjunct = "the value returned by signRequest is the one POSTed and the one passed to the verifier, and nothing is re-derived or re-serialized for it"
 path = "sdk/typescript/src/transport.ts"
 anchor = """
-        const httpReply = await this.#poster(
-          signed.method,
-          signed.targetUri,
-          signed.headers,
-          signed.body,
-        );
+    return this.#poster(signed.method, signed.targetUri, signed.headers, signed.body);
 """
 weakening = """
-        const httpReply = await this.#poster(
-          signed.method,
-          signed.targetUri,
-          signed.headers,
-          Buffer.from(
-            JSON.stringify(
-              Object.fromEntries(
-                Object.entries(JSON.parse(signed.body.toString("utf8")) as object).reverse(),
-              ),
-            ),
+    return this.#poster(
+      signed.method,
+      signed.targetUri,
+      signed.headers,
+      Buffer.from(
+        JSON.stringify(
+          Object.fromEntries(
+            Object.entries(JSON.parse(signed.body.toString("utf8")) as object).reverse(),
           ),
-        );
+        ),
+      ),
+    );
 """
 expect_red = [
   "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > shows the verifier the bytes that were transmitted",
@@ -8274,17 +8269,17 @@ weakening = """
 """
 also = [
   { path = "sdk/typescript/src/transport.ts", anchor = """
-        if (this.#abort.signal.aborted) throw this.#abort.signal.reason;
-        const created = now();
+    if (this.#abort.signal.aborted) throw this.#abort.signal.reason;
+    const { signed, correlationId } = this.#signLeg(request.method, state);
 """, weakening = """
-        const created = now();
+    const { signed, correlationId } = this.#signLeg(request.method, state);
 """ },
   { path = "sdk/typescript/src/transport.ts", anchor = """
-        if (this.#abort.signal.aborted) throw this.#abort.signal.reason;
+    if (this.#abort.signal.aborted) throw this.#abort.signal.reason;
 
-        const responses = await config.answerInputRequired({
+    const responses = await collectAnswer(handler, {
 """, weakening = """
-        const responses = await config.answerInputRequired({
+    const responses = await collectAnswer(handler, {
 """ },
 ]
 expect_red = [
@@ -13167,10 +13162,10 @@ theorem = "THM-0095"
 conjunct = "a member the receipt did not carry is not invented for it: no `mcp-re.*` token stands in for an absent wire code"
 path = "sdk/typescript/src/transport.ts"
 anchor = """
-            verified.wireCode ? verified.wireCode : NO_PEER_WIRE_CODE,
+        verified.wireCode ? verified.wireCode : NO_PEER_WIRE_CODE,
 """
 weakening = """
-            verified.wireCode ? verified.wireCode : "mcp-re.response_sig_invalid",
+        verified.wireCode ? verified.wireCode : "mcp-re.response_sig_invalid",
 """
 expect_red = [
   "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > invents no peer wire code for a verified receipt that carried none",
