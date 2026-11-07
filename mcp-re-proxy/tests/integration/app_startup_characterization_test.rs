@@ -21,13 +21,30 @@ use crate::startup_transcript;
 
 use serving_fixtures::Material;
 
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
+use mcp_re_proxy::deployment_request::{
+    AwsKmsSigningSourceRequest, DeploymentRequest, GcpKmsSigningSourceRequest, SigningSourceRequest,
+};
+
+/// A change to a parsed configuration: the mutation a parser would have refused.
+type Mutation = fn(&mut DeploymentRequest);
+
+/// `flag` and its value removed from `argv`, once. Whether `argv` named the flag at all.
+fn remove_flag(argv: &mut Vec<String>, flag: &str) -> bool {
+    let Some(at) = argv.iter().position(|a| a == flag) else {
+        return false;
+    };
+    argv.drain(at..=(at + 1).min(argv.len() - 1));
+    true
+}
+
 /// `extra` appended to `base`, each single-valued flag stated once: a flag `extra` states is
 /// dropped from `base` first, because a repeated single-valued flag is refused at parse.
 fn stated_once(mut base: Vec<String>, extra: Vec<String>) -> Vec<String> {
     for flag in extra.iter().filter(|a| a.starts_with("--")) {
-        while let Some(at) = base.iter().position(|a| a == flag) {
-            base.drain(at..=(at + 1).min(base.len() - 1));
-        }
+        while remove_flag(&mut base, flag) {}
     }
     base.extend(extra);
     base
@@ -79,10 +96,78 @@ fn base_args(m: &Material) -> Vec<String> {
     .collect()
 }
 
+fn owned(args: &[&str]) -> Vec<String> {
+    args.iter().map(|s| s.to_string()).collect()
+}
+
 fn with(m: &Material, extra: &[&str]) -> Vec<String> {
     let mut args = base_args(m);
-    args.extend(extra.iter().map(|s| s.to_string()));
+    args.extend(owned(extra));
     args
+}
+
+/// The base configuration as `parse_args` builds it.
+///
+/// Every "programmatic" case below starts here and mutates the result afterwards: a
+/// mutation the parser would have refused, applied after it, is the only shape a caller
+/// building a `DeploymentRequest` in code has.
+fn parsed_base(m: &Material) -> DeploymentRequest {
+    mcp_re_proxy::cli::parse_args(&base_args(m))
+        .expect("the base config parses")
+        .config()
+        .clone()
+}
+
+/// What `app::run_request` returned for a configuration it refused.
+struct Refusal(String);
+
+impl Refusal {
+    fn contains(&self, what: &str) -> bool {
+        self.0.contains(what)
+    }
+
+    /// This is the validation boundary's own refusal and it names every one of `named`.
+    ///
+    /// The boundary's wrapper is asserted rather than the bare refusal: with the guard gone,
+    /// the same config would still fail later for an unrelated reason, and a weaker
+    /// assertion would report protection that had moved somewhere accidental.
+    fn assert_at_boundary(&self, named: &[&str]) {
+        assert!(
+            self.contains("refuses unsafe configuration"),
+            "the refusal must come from the validation boundary, got: {self}"
+        );
+        for what in named {
+            assert!(
+                self.contains(what),
+                "the refusal must name {what}, got: {self}"
+            );
+        }
+    }
+
+    /// This is NOT the validation boundary's refusal: the control config stopped somewhere
+    /// environmental, which is what shows the boundary does not refuse everything.
+    fn assert_not_at_boundary(&self, why: &str) {
+        assert!(
+            !self.contains("refuses unsafe configuration"),
+            "{why}, got: {self}"
+        );
+    }
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// The refusal `app::run_request` returns for `config`, which must be an `Err`. `shutdown`
+/// is pre-flipped: a config that unexpectedly reached the serve loop would drain at once,
+/// and the returned `Ok` would still fail the `expect_err`.
+fn run_refusal(config: DeploymentRequest) -> Refusal {
+    Refusal(
+        mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
+            .expect_err("the configuration must be refused before serving"),
+    )
 }
 
 /// The trust plane states its declared revocation tier and its reload posture, in that
@@ -274,30 +359,16 @@ fn the_trust_store_is_refused_before_the_client_crls_are_read() {
 /// posture the whole Mode-A design rests on.
 #[test]
 fn a_config_that_skipped_the_parser_still_cannot_bypass_the_safety_guards() {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
-
     let m = serving_fixtures::write_material();
-    let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m))
-        .expect("the base config parses")
-        .config()
-        .clone();
+    let mut config = parsed_base(&m);
 
     // `parse_args` would have refused this. Setting it afterwards is not a contrived
     // move — it is the only shape an in-code caller has.
     config.max_client_cert_lifetime = None;
 
-    let err = mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
-        .expect_err("an unsafe configuration must be refused however it was built");
+    let err = run_refusal(config);
 
-    assert!(
-        err.contains("refuses unsafe configuration"),
-        "expected the unsafe-configuration refusal, got: {err}"
-    );
-    assert!(
-        err.contains("--max-client-cert-lifetime"),
-        "the refusal must name the offending setting, got: {err}"
-    );
+    err.assert_at_boundary(&["--max-client-cert-lifetime"]);
 }
 
 /// The same bypass, for the posture that says an online revocation check is running.
@@ -315,14 +386,8 @@ fn a_config_that_skipped_the_parser_still_cannot_bypass_the_safety_guards() {
 /// was — but only off the parsed path.
 #[test]
 fn a_programmatic_config_cannot_claim_an_ocsp_check_the_serving_path_never_makes() {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
-
     let m = serving_fixtures::write_material();
-    let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m))
-        .expect("the base config parses")
-        .config()
-        .clone();
+    let mut config = parsed_base(&m);
 
     // What an in-code caller can write. `parse_args` refuses the flag, so this is the
     // only shape the configuration can take.
@@ -331,17 +396,9 @@ fn a_programmatic_config_cannot_claim_an_ocsp_check_the_serving_path_never_makes
             mcp_re_proxy::deployment_request::OcspResponderRequest::default(),
         );
 
-    let err = mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
-        .expect_err("a claim the serving path cannot deliver must be refused however it was built");
+    let err = run_refusal(config);
 
-    assert!(
-        err.contains("refuses unsafe configuration"),
-        "expected the unsafe-configuration refusal, got: {err}"
-    );
-    assert!(
-        err.contains("--client-ocsp require cannot be honored"),
-        "the refusal must name the offending setting, got: {err}"
-    );
+    err.assert_at_boundary(&["--client-ocsp require cannot be honored"]);
 }
 
 /// The same bypass again, for a revocation control that nothing enforces.
@@ -357,30 +414,16 @@ fn a_programmatic_config_cannot_claim_an_ocsp_check_the_serving_path_never_makes
 /// path that was already correct, which is the lesson the `--client-ocsp` case taught.
 #[test]
 fn a_programmatic_config_cannot_carry_a_deny_list_nothing_enforces() {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
-
     let m = serving_fixtures::write_material();
-    let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m))
-        .expect("the base config parses")
-        .config()
-        .clone();
+    let mut config = parsed_base(&m);
 
     // What an in-code caller can write; `parse_args` refuses the flag, so this is the only
     // shape the configuration can take.
     config.authorization.revocation_list_paths = vec!["/tmp/deny-list.json".to_string()];
 
-    let err = mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
-        .expect_err("a revocation control nothing enforces must be refused however it was built");
+    let err = run_refusal(config);
 
-    assert!(
-        err.contains("refuses unsafe configuration"),
-        "expected the unsafe-configuration refusal, got: {err}"
-    );
-    assert!(
-        err.contains("--revocation-list"),
-        "the refusal must name the offending setting, got: {err}"
-    );
+    err.assert_at_boundary(&["--revocation-list"]);
 }
 
 /// An unaccepted authorization profile is refused at the VALIDATION boundary.
@@ -396,29 +439,14 @@ fn a_programmatic_config_cannot_carry_a_deny_list_nothing_enforces() {
 /// refusing a programmatic `authz = Reference` at all.
 #[test]
 fn a_programmatic_config_cannot_enable_an_unaccepted_authz_profile() {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
-
     let m = serving_fixtures::write_material();
-    let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m))
-        .expect("the base config parses")
-        .config()
-        .clone();
+    let mut config = parsed_base(&m);
 
     config.authorization.kind = mcp_re_proxy::deployment_request::AuthzKind::Reference;
 
-    let err = mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
-        .expect_err("an unaccepted authorization profile must be refused however it was built");
+    let err = run_refusal(config);
 
-    assert!(
-        err.contains("refuses unsafe configuration"),
-        "the refusal must come from the validation boundary, not a later ad-hoc check, \
-         got: {err}"
-    );
-    assert!(
-        err.contains("--authz reference"),
-        "the refusal must name the offending setting, got: {err}"
-    );
+    err.assert_at_boundary(&["--authz reference"]);
 }
 
 /// `--transport-binding lb-assertion` is refused by the validation boundary alone.
@@ -433,14 +461,8 @@ fn a_programmatic_config_cannot_enable_an_unaccepted_authz_profile() {
 /// report protection that had moved somewhere accidental.
 #[test]
 fn the_boundary_alone_refuses_an_lb_assertion_binding() {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
-
     let m = serving_fixtures::write_material();
-    let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m))
-        .expect("the base config parses")
-        .config()
-        .clone();
+    let mut config = parsed_base(&m);
 
     config.peer_identity =
         mcp_re_proxy::deployment_request::PeerIdentityEvidenceRequest::IngressAssertion(
@@ -449,17 +471,9 @@ fn the_boundary_alone_refuses_an_lb_assertion_binding() {
             },
         );
 
-    let err = mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
-        .expect_err("lb-assertion binding must be refused however it was built");
+    let err = run_refusal(config);
 
-    assert!(
-        err.contains("refuses unsafe configuration"),
-        "the refusal must come from the validation boundary, got: {err}"
-    );
-    assert!(
-        err.contains("lb-assertion"),
-        "the refusal must name the offending setting, got: {err}"
-    );
+    err.assert_at_boundary(&["lb-assertion"]);
 }
 
 /// Mode-C attested ingress is refused at the configuration boundary, not later.
@@ -479,14 +493,8 @@ fn the_boundary_alone_refuses_an_lb_assertion_binding() {
 /// contract is the durable thing.
 #[test]
 fn mode_c_attested_ingress_is_refused_at_the_configuration_boundary() {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
-
     let m = serving_fixtures::write_material();
-    let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m))
-        .expect("the base config parses")
-        .config()
-        .clone();
+    let mut config = parsed_base(&m);
 
     config.peer_identity =
         mcp_re_proxy::deployment_request::PeerIdentityEvidenceRequest::AttestedIngress(
@@ -500,18 +508,9 @@ fn mode_c_attested_ingress_is_refused_at_the_configuration_boundary() {
             },
         );
 
-    let err = mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
-        .expect_err("a non-deployable transport-binding mode must be refused");
+    let err = run_refusal(config);
 
-    assert!(
-        err.contains("refuses unsafe configuration"),
-        "the refusal must come from the validation boundary, not a later ad-hoc check, \
-         got: {err}"
-    );
-    assert!(
-        err.contains("attested-ingress"),
-        "the refusal must name the offending mode, got: {err}"
-    );
+    err.assert_at_boundary(&["attested-ingress"]);
 }
 
 /// `app::run` refuses configs it cannot build BEFORE serving — the key-source and
@@ -534,86 +533,24 @@ fn mode_c_attested_ingress_is_refused_at_the_configuration_boundary() {
 )))]
 #[test]
 fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
-    // Imported here rather than at file scope: the whole test is `cfg`-ed out in the
-    // feature lane, and file-scope imports would then be unused — a hard error under
-    // the gate's `clippy -D warnings`.
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
-
-    use serving_fixtures::write_material;
-    use serving_fixtures::AUDIENCE;
-    use serving_fixtures::SERVER;
-    use serving_fixtures::SERVER_KEY_ID;
-    use serving_fixtures::TARGET_URI;
-    use serving_fixtures::TRUST_DOMAIN;
-
-    let m = write_material();
-    let seed = m.seed_path.to_string_lossy().into_owned();
-    let scert = m.server_cert_path.to_string_lossy().into_owned();
-    let skey = m.server_key_path.to_string_lossy().into_owned();
-    let cca = m.client_ca_path.to_string_lossy().into_owned();
-    let trust = m.trust_path.to_string_lossy().into_owned();
-
-    let mk = |case: &[&str]| -> Vec<String> {
-        let v: Vec<String> = [
-            "--bind",
-            "127.0.0.1:0",
-            "--allow-example-fixtures",
-            "--audience",
-            AUDIENCE,
-            "--server-signer",
-            SERVER,
-            "--server-key-id",
-            SERVER_KEY_ID,
-            // Required since ADR-MCPRE-052 §7: delegated signing is the only response
-            // mode, and every credential is minted under a coordinated trust epoch.
-            "--delegated-trust-epoch",
-            "epoch-1",
-            "--signing-key-seed",
-            seed.as_str(),
-            "--tls-cert",
-            &scert,
-            "--tls-key",
-            &skey,
-            "--client-ca",
-            &cca,
-            "--trust",
-            &trust,
-            "--target-uri",
-            TARGET_URI,
-            "--mcp-protocol-version",
-            "2026-07-28",
-            "--trust-domain",
-            TRUST_DOMAIN,
-            "--inner-http-url",
-            "http://127.0.0.1:9/mcp",
-            "--replay-redis-url",
-            "redis://127.0.0.1:1",
-            "--replay-durability-tier",
-            "redis-wait-quorum:2:2000",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        stated_once(v, case.iter().map(|s| s.to_string()).collect())
-    };
+    let m = serving_fixtures::write_material();
+    let argv = |case: &[&str]| stated_once(base_args(&m), owned(case));
     let app_err = |argv: Vec<String>| -> String {
         let config = mcp_re_proxy::cli::parse_args(&argv).expect("args parse");
-        let sd = Arc::new(AtomicBool::new(true));
-        mcp_re_proxy::app::run(config, sd).expect_err("config must be refused before serving")
+        mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+            .expect_err("config must be refused before serving")
     };
 
     // A non-file custody never reads a seed, so the argv names none.
     let without_seed = |mut argv: Vec<String>| -> Vec<String> {
-        let at = argv
-            .iter()
-            .position(|a| a == "--signing-key-seed")
-            .expect("the base names a seed");
-        argv.drain(at..at + 2);
+        assert!(
+            remove_flag(&mut argv, "--signing-key-seed"),
+            "the base names a seed"
+        );
         argv
     };
     // Cloud/HSM key sources that are not compiled into this build fail closed.
-    assert!(app_err(without_seed(mk(&[
+    assert!(app_err(without_seed(argv(&[
         "--key-source",
         "aws-kms",
         "--aws-kms-region",
@@ -622,14 +559,14 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
         "k"
     ])))
     .contains("aws_kms"));
-    assert!(app_err(without_seed(mk(&[
+    assert!(app_err(without_seed(argv(&[
         "--key-source",
         "gcp-kms",
         "--gcp-kms-key-version",
         "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
     ])))
     .contains("gcp_kms"));
-    assert!(app_err(without_seed(mk(&[
+    assert!(app_err(without_seed(argv(&[
         "--key-source",
         "pkcs11",
         "--pkcs11-module",
@@ -646,17 +583,16 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
     // The linearizable (CP) tier needs a cpstore_etcd build. The Redis replay locator is
     // dropped from the base first: it belongs to the OTHER replay state, and layer A now
     // refuses it beside a linearizable tier (CF-12), which would mask this build refusal.
-    let mut linearizable = mk(&[
+    let mut linearizable = argv(&[
         "--replay-durability-tier",
         "linearizable",
         "--cpstore-etcd-endpoint",
         "http://127.0.0.1:2379",
     ]);
-    let at = linearizable
-        .iter()
-        .position(|a| a == "--replay-redis-url")
-        .expect("the base names a redis replay store");
-    linearizable.drain(at..at + 2);
+    assert!(
+        remove_flag(&mut linearizable, "--replay-redis-url"),
+        "the base names a redis replay store"
+    );
     let refusal = app_err(linearizable);
     assert!(refusal.contains("cpstore_etcd"), "got: {refusal}");
 }
@@ -696,53 +632,25 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
 #[test]
 fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour() {
     let m = serving_fixtures::write_material();
-    let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m))
-        .expect("the base config parses")
-        .config()
-        .clone();
+    let parsed = parsed_base(&m);
 
     // Each case is a mutation the parser would have refused, applied afterwards — the
     // only shape an in-code caller has — with the substring the refusal must name.
-    #[allow(clippy::type_complexity)]
-    let cases: Vec<(
-        &str,
-        Box<dyn Fn(&mut mcp_re_proxy::deployment_request::DeploymentRequest)>,
-        &str,
-    )> = vec![
+    let cases: [(&str, Mutation, &str); 4] = [
         (
             "no trust epoch",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.delegated_signing.trust_epoch = None
-                },
-            ),
+            |c| c.delegated_signing.trust_epoch = None,
             "trust epoch",
         ),
-        (
-            "zero ttl",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.delegated_signing.ttl_secs = 0
-                },
-            ),
-            "ttl",
-        ),
+        ("zero ttl", |c| c.delegated_signing.ttl_secs = 0, "ttl"),
         (
             "negative overlap",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.delegated_signing.overlap_secs = -1
-                },
-            ),
+            |c| c.delegated_signing.overlap_secs = -1,
             "overlap",
         ),
         (
             "overlap at the ttl",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.delegated_signing.overlap_secs = c.delegated_signing.ttl_secs
-                },
-            ),
+            |c| c.delegated_signing.overlap_secs = c.delegated_signing.ttl_secs,
             "overlap",
         ),
     ];
@@ -799,14 +707,8 @@ fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour(
 /// where the refusal belongs — a config this shape must never reach a listener at all.
 #[test]
 fn a_programmatic_config_cannot_disable_the_request_target_reconstruction_check() {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
-
     let m = serving_fixtures::write_material();
-    let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m))
-        .expect("the base config parses")
-        .config()
-        .clone();
+    let parsed = parsed_base(&m);
 
     for (label, target) in [
         ("scheme-less", "proxy.internal:8600/mcp"),
@@ -816,8 +718,7 @@ fn a_programmatic_config_cannot_disable_the_request_target_reconstruction_check(
         let mut config = parsed.clone();
         config.target_uri = target.to_string();
 
-        let err = mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
-            .expect_err("a target of this shape must be refused however the config was built");
+        let err = run_refusal(config);
         assert!(
             err.contains("refuses unsafe configuration"),
             "a {label} target must be refused at the validation boundary, got: {err}"
@@ -831,12 +732,154 @@ fn a_programmatic_config_cannot_disable_the_request_target_reconstruction_check(
     // Negative control: the same fixture with its absolute target must NOT be refused for
     // this reason. Without it, a boundary that refused every config would satisfy the
     // assertions above.
-    let err = mcp_re_proxy::app::run_request(parsed, Arc::new(AtomicBool::new(true)))
-        .expect_err("this fixture stops at an environmental step, not a target-uri one");
-    assert!(
-        !err.contains("refuses unsafe configuration"),
-        "an absolute target is the supported shape and must not be refused, got: {err}"
-    );
+    let err = run_refusal(parsed);
+    err.assert_not_at_boundary("an absolute target is the supported shape and must not be refused");
+}
+
+/// Select AWS KMS response signing, with `shape` carrying what the case varies.
+fn aws_kms_source(shape: AwsKmsSigningSourceRequest) -> SigningSourceRequest {
+    SigningSourceRequest::AwsKms(AwsKmsSigningSourceRequest {
+        region: Some("eu-north-1".to_string()),
+        key_id: Some("alias/signing".to_string()),
+        ..shape
+    })
+}
+
+/// Select AWS KMS response signing with `endpoint` as its KMS endpoint override.
+///
+/// The endpoint is no longer a sibling of the selector: it belongs to the AWS payload, so
+/// naming one means selecting AWS. That is the point — a GCP deployment can no longer
+/// carry an AWS endpoint at all — and it does not weaken this test, whose subject is
+/// whether the boundary holds an endpoint a config built in code names.
+fn aws_endpoint(config: &mut DeploymentRequest, endpoint: String) {
+    config.response_signing.source = aws_kms_source(AwsKmsSigningSourceRequest {
+        endpoint: Some(endpoint),
+        ..Default::default()
+    });
+}
+
+/// Select AWS KMS response signing with `endpoint` as its STS endpoint override, under the
+/// web-identity mode that endpoint parameterizes.
+fn sts_endpoint(config: &mut DeploymentRequest, endpoint: String) {
+    config.response_signing.source = aws_kms_source(AwsKmsSigningSourceRequest {
+        use_web_identity: true,
+        sts_endpoint: Some(endpoint),
+        ..Default::default()
+    });
+}
+
+/// Select GCP Cloud KMS response signing with `endpoint` as its endpoint override.
+fn gcp_endpoint(config: &mut DeploymentRequest, endpoint: String) {
+    config.response_signing.source = SigningSourceRequest::GcpKms(GcpKmsSigningSourceRequest {
+        key_version: Some(
+            "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1".to_string(),
+        ),
+        endpoint: Some(endpoint),
+        use_metadata: false,
+    });
+}
+
+/// Selects a KMS or STS endpoint override on a configuration.
+type EndpointSelector = fn(&mut DeploymentRequest, String);
+
+/// Each hostile endpoint is refused by the boundary, naming its flag and giving its reason.
+///
+/// (flag, the REASON the refusal must give, selector, endpoint). The reason matters: three
+/// of these fields are also named by unrelated coherence rules, so asserting only that the
+/// flag appears would let a refusal for another cause stand in for this one.
+fn refuse_each_hostile_endpoint(parsed: &DeploymentRequest) {
+    let cases: [(&str, &str, EndpointSelector, &str); 9] = [
+        (
+            "--aws-kms-endpoint",
+            "loopback",
+            aws_endpoint,
+            "http://attacker.example/",
+        ),
+        (
+            "--gcp-kms-endpoint",
+            "loopback",
+            gcp_endpoint,
+            "http://attacker.example/v1",
+        ),
+        (
+            "--aws-kms-endpoint",
+            "absolute https:// URL",
+            aws_endpoint,
+            "ftp://kms.internal/",
+        ),
+        (
+            "--aws-kms-endpoint",
+            "has no host",
+            aws_endpoint,
+            "https://",
+        ),
+        // R9-C001: an authority whose userinfo re-points the request. `url::Url::parse`
+        // reads the host of every one of these as `evil.example.com`.
+        (
+            "--gcp-kms-endpoint",
+            "userinfo",
+            gcp_endpoint,
+            "https://cloudkms.googleapis.com@evil.example.com",
+        ),
+        (
+            "--gcp-kms-endpoint",
+            "userinfo",
+            gcp_endpoint,
+            "http://localhost:80@evil.example.com",
+        ),
+        (
+            "--aws-kms-endpoint",
+            "userinfo",
+            aws_endpoint,
+            "https://kms.us-east-1.amazonaws.com@evil.example.com",
+        ),
+        (
+            "--aws-kms-endpoint",
+            "userinfo",
+            aws_endpoint,
+            "http://127.0.0.1:4566@evil.example.com",
+        ),
+        (
+            "--aws-sts-endpoint",
+            "userinfo",
+            sts_endpoint,
+            "https://sts.eu-north-1.amazonaws.com@evil.example.com",
+        ),
+    ];
+
+    for (flag, reason, select, endpoint) in cases {
+        let mut config = parsed.clone();
+        select(&mut config, endpoint.to_string());
+        let err = run_refusal(config);
+        err.assert_at_boundary(&[flag, reason]);
+    }
+}
+
+/// The negative controls: the shapes the rule exists to KEEP working — the public hosts, a
+/// VPC endpoint, an emulator with a port, and the loopback `http://` lane with and without a
+/// port. A boundary that refused every endpoint would satisfy every assertion in
+/// `refuse_each_hostile_endpoint`, which is how round 8 shipped three fail-closed
+/// regressions.
+fn admit_each_legitimate_endpoint(parsed: &DeploymentRequest) {
+    for allowed in [
+        "https://kms.us-east-1.amazonaws.com/",
+        "https://cloudkms.googleapis.com",
+        "https://vpce-0abc123-xy1z.kms.us-east-1.vpce.amazonaws.com",
+        "https://kms.emulator.svc.cluster.local:8443",
+        "http://127.0.0.1:4566/",
+        "http://[::1]:4566",
+        "http://127.0.0.1",
+    ] {
+        for select in [aws_endpoint as EndpointSelector, gcp_endpoint, sts_endpoint] {
+            let mut config = parsed.clone();
+            select(&mut config, allowed.to_string());
+            let err = run_refusal(config);
+            assert!(
+                !err.contains("userinfo") && !err.contains("loopback"),
+                "{allowed} is an admissible endpoint and must not be refused as one, got: {err}"
+            );
+        }
+    }
 }
 
 /// R8-C014 / R8-C015 — the KMS/STS endpoint overrides carry the ROOT-KEY trust bootstrap,
@@ -863,214 +906,13 @@ fn a_programmatic_config_cannot_disable_the_request_target_reconstruction_check(
 /// The broken implementation this catches: consulting `validated_kms_endpoint` only from
 /// the argv match arms, or checking the scheme and the host's emptiness without checking
 /// what a URL parser reads the authority as.
-/// Select AWS KMS response signing with `endpoint` as its KMS endpoint override.
-///
-/// The endpoint is no longer a sibling of the selector: it belongs to the AWS payload, so
-/// naming one means selecting AWS. That is the point — a GCP deployment can no longer
-/// carry an AWS endpoint at all — and it does not weaken this test, whose subject is
-/// whether the boundary holds an endpoint a config built in code names.
-fn aws_endpoint(
-    config: &mut mcp_re_proxy::deployment_request::DeploymentRequest,
-    endpoint: String,
-) {
-    config.response_signing.source = mcp_re_proxy::deployment_request::SigningSourceRequest::AwsKms(
-        mcp_re_proxy::deployment_request::AwsKmsSigningSourceRequest {
-            region: Some("eu-north-1".to_string()),
-            key_id: Some("alias/signing".to_string()),
-            endpoint: Some(endpoint),
-            ..Default::default()
-        },
-    );
-}
-
-/// Select AWS KMS response signing with `endpoint` as its STS endpoint override, under the
-/// web-identity mode that endpoint parameterizes.
-fn sts_endpoint(
-    config: &mut mcp_re_proxy::deployment_request::DeploymentRequest,
-    endpoint: String,
-) {
-    config.response_signing.source = mcp_re_proxy::deployment_request::SigningSourceRequest::AwsKms(
-        mcp_re_proxy::deployment_request::AwsKmsSigningSourceRequest {
-            region: Some("eu-north-1".to_string()),
-            key_id: Some("alias/signing".to_string()),
-            use_web_identity: true,
-            sts_endpoint: Some(endpoint),
-            ..Default::default()
-        },
-    );
-}
-
-/// Select GCP Cloud KMS response signing with `endpoint` as its endpoint override.
-fn gcp_endpoint(
-    config: &mut mcp_re_proxy::deployment_request::DeploymentRequest,
-    endpoint: String,
-) {
-    config.response_signing.source = mcp_re_proxy::deployment_request::SigningSourceRequest::GcpKms(
-        mcp_re_proxy::deployment_request::GcpKmsSigningSourceRequest {
-            key_version: Some(
-                "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1".to_string(),
-            ),
-            endpoint: Some(endpoint),
-            use_metadata: false,
-        },
-    );
-}
-
 #[test]
 fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
-
     let m = serving_fixtures::write_material();
-    let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m))
-        .expect("the base config parses")
-        .config()
-        .clone();
+    let parsed = parsed_base(&m);
 
-    // (flag, the REASON the refusal must give, mutation). The reason matters: three of
-    // these fields are also named by unrelated coherence rules, so asserting only that the
-    // flag appears would let a refusal for another cause stand in for this one.
-    #[allow(clippy::type_complexity)]
-    let cases: Vec<(
-        &str,
-        &str,
-        Box<dyn Fn(&mut mcp_re_proxy::deployment_request::DeploymentRequest)>,
-    )> = vec![
-        (
-            "--aws-kms-endpoint",
-            "loopback",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    aws_endpoint(c, "http://attacker.example/".to_string())
-                },
-            ),
-        ),
-        (
-            "--gcp-kms-endpoint",
-            "loopback",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    gcp_endpoint(c, "http://attacker.example/v1".to_string())
-                },
-            ),
-        ),
-        (
-            "--aws-kms-endpoint",
-            "absolute https:// URL",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    aws_endpoint(c, "ftp://kms.internal/".to_string())
-                },
-            ),
-        ),
-        (
-            "--aws-kms-endpoint",
-            "has no host",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    aws_endpoint(c, "https://".to_string())
-                },
-            ),
-        ),
-        // R9-C001: an authority whose userinfo re-points the request. `url::Url::parse`
-        // reads the host of every one of these as `evil.example.com`.
-        (
-            "--gcp-kms-endpoint",
-            "userinfo",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    gcp_endpoint(
-                        c,
-                        "https://cloudkms.googleapis.com@evil.example.com".to_string(),
-                    )
-                },
-            ),
-        ),
-        (
-            "--gcp-kms-endpoint",
-            "userinfo",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    gcp_endpoint(c, "http://localhost:80@evil.example.com".to_string())
-                },
-            ),
-        ),
-        (
-            "--aws-kms-endpoint",
-            "userinfo",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    aws_endpoint(
-                        c,
-                        "https://kms.us-east-1.amazonaws.com@evil.example.com".to_string(),
-                    )
-                },
-            ),
-        ),
-        (
-            "--aws-kms-endpoint",
-            "userinfo",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    aws_endpoint(c, "http://127.0.0.1:4566@evil.example.com".to_string())
-                },
-            ),
-        ),
-        (
-            "--aws-sts-endpoint",
-            "userinfo",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    sts_endpoint(
-                        c,
-                        "https://sts.eu-north-1.amazonaws.com@evil.example.com".to_string(),
-                    )
-                },
-            ),
-        ),
-    ];
-
-    for (flag, reason, mutate) in cases {
-        let mut config = parsed.clone();
-        mutate(&mut config);
-        let err = mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
-            .expect_err("an unvalidated root-key endpoint must be refused");
-        assert!(
-            err.contains("refuses unsafe configuration")
-                && err.contains(flag)
-                && err.contains(reason),
-            "the boundary must refuse it, name {flag} and say {reason:?}, got: {err}"
-        );
-    }
-
-    // The negative controls: the shapes the rule exists to KEEP working — the public
-    // hosts, a VPC endpoint, an emulator with a port, and the loopback `http://` lane with
-    // and without a port. A boundary that refused every endpoint would satisfy every
-    // assertion above, which is how round 8 shipped three fail-closed regressions.
-    for allowed in [
-        "https://kms.us-east-1.amazonaws.com/",
-        "https://cloudkms.googleapis.com",
-        "https://vpce-0abc123-xy1z.kms.us-east-1.vpce.amazonaws.com",
-        "https://kms.emulator.svc.cluster.local:8443",
-        "http://127.0.0.1:4566/",
-        "http://[::1]:4566",
-        "http://127.0.0.1",
-    ] {
-        for select in [
-            aws_endpoint as fn(&mut mcp_re_proxy::deployment_request::DeploymentRequest, String),
-            gcp_endpoint,
-            sts_endpoint,
-        ] {
-            let mut config = parsed.clone();
-            select(&mut config, allowed.to_string());
-            let err = mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
-                .expect_err("this fixture stops at an environmental step");
-            assert!(
-                !err.contains("userinfo") && !err.contains("loopback"),
-                "{allowed} is an admissible endpoint and must not be refused as one, got: {err}"
-            );
-        }
-    }
+    refuse_each_hostile_endpoint(&parsed);
+    admit_each_legitimate_endpoint(&parsed);
 }
 
 /// R8-C108 — the custody-coherence and ingress-assertion clauses refuse a state, not a
@@ -1094,50 +936,30 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
 /// response-signing source, and X2a must still refuse it.
 #[test]
 fn a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector() {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
-
     let m = serving_fixtures::write_material();
-    let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m))
-        .expect("the base config parses")
-        .config()
-        .clone();
+    let parsed = parsed_base(&m);
 
-    #[allow(clippy::type_complexity)]
-    let cases: Vec<(
-        &str,
-        Box<dyn Fn(&mut mcp_re_proxy::deployment_request::DeploymentRequest)>,
-    )> = vec![
-        (
-            "--aws-kms-tls-key-id",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.channel_credential.key =
-                        mcp_re_proxy::deployment_request::ChannelKeyRequest::Delegated(
-                            mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::AwsKms(
-                                mcp_re_proxy::deployment_request::AwsKmsChannelKeyRequest {
-                                    key_id: "alias/tls".to_string(),
-                                },
-                            ),
-                        )
-                },
-            ),
-        ),
-        (
-            "--gcp-kms-tls-key-version",
-            Box::new(
-                |c: &mut mcp_re_proxy::deployment_request::DeploymentRequest| {
-                    c.channel_credential.key =
-                        mcp_re_proxy::deployment_request::ChannelKeyRequest::Delegated(
-                            mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::GcpKms(
-                                mcp_re_proxy::deployment_request::GcpKmsChannelKeyRequest {
-                                    key_version: "projects/p/..".to_string(),
-                                },
-                            ),
-                        )
-                },
-            ),
-        ),
+    let cases: [(&str, Mutation); 2] = [
+        ("--aws-kms-tls-key-id", |c| {
+            c.channel_credential.key =
+                mcp_re_proxy::deployment_request::ChannelKeyRequest::Delegated(
+                    mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::AwsKms(
+                        mcp_re_proxy::deployment_request::AwsKmsChannelKeyRequest {
+                            key_id: "alias/tls".to_string(),
+                        },
+                    ),
+                )
+        }),
+        ("--gcp-kms-tls-key-version", |c| {
+            c.channel_credential.key =
+                mcp_re_proxy::deployment_request::ChannelKeyRequest::Delegated(
+                    mcp_re_proxy::deployment_request::DelegatedChannelKeyRequest::GcpKms(
+                        mcp_re_proxy::deployment_request::GcpKmsChannelKeyRequest {
+                            key_version: "projects/p/..".to_string(),
+                        },
+                    ),
+                )
+        }),
         // The two ingress cases that used to be here — a dangling `--ingress-lb-key` and a
         // dangling `--ingress-identity` — are gone, and their absence is the result.
         // ADR-MCPRE-067 Phase 6 made `peer_identity` a tagged form, so material belonging
@@ -1148,22 +970,14 @@ fn a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector() {
     for (flag, mutate) in cases {
         let mut config = parsed.clone();
         mutate(&mut config);
-        let err = mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
-            .expect_err("a dangling custody/ingress selector must be refused");
-        assert!(
-            err.contains("refuses unsafe configuration") && err.contains(flag),
-            "the boundary must refuse it and name {flag}, got: {err}"
-        );
+        let err = run_refusal(config);
+        err.assert_at_boundary(&[flag]);
     }
 
     // Negative control: the untouched fixture carries none of these selectors and must
     // not be refused for this reason.
-    let err = mcp_re_proxy::app::run_request(parsed, Arc::new(AtomicBool::new(true)))
-        .expect_err("this fixture stops at an environmental step");
-    assert!(
-        !err.contains("refuses unsafe configuration"),
-        "a coherent custody/ingress configuration must not be refused, got: {err}"
-    );
+    let err = run_refusal(parsed);
+    err.assert_not_at_boundary("a coherent custody/ingress configuration must not be refused");
 }
 
 /// R8-C052 — a zero CRL reload cadence is a spin, not a disabled reloader.
@@ -1178,23 +992,13 @@ fn a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector() {
 /// match arm alone.
 #[test]
 fn a_programmatic_config_cannot_hot_spin_the_crl_reloader() {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
-
     let m = serving_fixtures::write_material();
-    let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m))
-        .expect("the base config parses")
-        .config()
-        .clone();
+    let parsed = parsed_base(&m);
 
     let mut config = parsed.clone();
     config.peer_revocation.lists.reload_secs = Some(0);
-    let err = mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
-        .expect_err("a zero reload cadence must be refused");
-    assert!(
-        err.contains("refuses unsafe configuration") && err.contains("--client-crl-reload-secs"),
-        "the boundary must refuse it and name the flag, got: {err}"
-    );
+    let err = run_refusal(config);
+    err.assert_at_boundary(&["--client-crl-reload-secs"]);
 
     // Negative controls: a positive cadence, and no cadence at all (load once), are both
     // supported and must not be refused.
@@ -1207,12 +1011,10 @@ fn a_programmatic_config_cannot_hot_spin_the_crl_reloader() {
         let mut config = parsed.clone();
         config.peer_revocation.lists.paths = vec![m.client_ca_path.to_string_lossy().into_owned()];
         config.peer_revocation.lists.reload_secs = cadence;
-        let err = mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
-            .expect_err("this fixture stops at an environmental step");
-        assert!(
-            !err.contains("refuses unsafe configuration"),
-            "cadence {cadence:?} is supported and must not be refused, got: {err}"
-        );
+        let err = run_refusal(config);
+        err.assert_not_at_boundary(&format!(
+            "cadence {cadence:?} is supported and must not be refused"
+        ));
     }
 }
 
@@ -1228,31 +1030,20 @@ fn a_programmatic_config_cannot_hot_spin_the_crl_reloader() {
 /// The broken implementation this catches: a TTL validated for positivity alone.
 #[test]
 fn a_programmatic_config_cannot_mint_an_unboundedly_long_lived_delegated_credential() {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
-
     let m = serving_fixtures::write_material();
-    let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m))
-        .expect("the base config parses")
-        .config()
-        .clone();
+    let parsed = parsed_base(&m);
     let ceiling = mcp_re_proxy::config_state::delegated_signing::MAX_DELEGATED_TTL_SECS;
 
     let mut config = parsed.clone();
     config.delegated_signing.ttl_secs = ceiling + 1;
     config.delegated_signing.overlap_secs = 60;
-    let err = mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
-        .expect_err("a TTL above the ceiling must be refused");
-    assert!(
-        err.contains("refuses unsafe configuration") && err.contains("--delegated-ttl-secs"),
-        "the boundary must refuse it and name the flag, got: {err}"
-    );
+    let err = run_refusal(config);
+    err.assert_at_boundary(&["--delegated-ttl-secs"]);
 
     // And the rotor's window rule holds at the boundary as well as in the wiring.
     let mut config = parsed.clone();
     config.delegated_signing.overlap_secs = config.delegated_signing.ttl_secs;
-    let err = mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
-        .expect_err("an overlap at the TTL must be refused");
+    let err = run_refusal(config);
     assert!(
         err.contains("--delegated-overlap-secs"),
         "the refusal must name the overlap, got: {err}"
@@ -1263,12 +1054,8 @@ fn a_programmatic_config_cannot_mint_an_unboundedly_long_lived_delegated_credent
     let mut config = parsed;
     config.delegated_signing.ttl_secs = ceiling;
     config.delegated_signing.overlap_secs = 60;
-    let err = mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
-        .expect_err("this fixture stops at an environmental step");
-    assert!(
-        !err.contains("refuses unsafe configuration"),
-        "a TTL at the ceiling is admissible and must not be refused, got: {err}"
-    );
+    let err = run_refusal(config);
+    err.assert_not_at_boundary("a TTL at the ceiling is admissible and must not be refused");
 }
 
 // --- ADR-MCPRE-065 production wiring: the authority the composition root installs -----
@@ -1397,19 +1184,12 @@ fn a_configured_profile_with_no_enrolled_authority_refuses_to_start() {
 /// than the parser: a caller that never meets a parser must meet the same rule.
 #[test]
 fn a_programmatic_config_cannot_carry_a_decision_scope_that_selects_nothing() {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
-
     let m = serving_fixtures::write_material();
-    let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m))
-        .expect("the base config parses")
-        .config()
-        .clone();
+    let mut config = parsed_base(&m);
     config.authorization.decision_scope =
         Some(mcp_re_http_profile::pdp_decision::DecisionScope::Principal);
 
-    let err = mcp_re_proxy::app::run_request(config, Arc::new(AtomicBool::new(true)))
-        .expect_err("a parameter that selects nothing must be refused however it was built");
+    let err = run_refusal(config);
 
     assert!(
         err.contains("--authz-decision-scope"),
@@ -1478,129 +1258,4 @@ fn a_required_audit_posture_without_an_observer_is_refused_as_configuration() {
 
 /// The commitment-provider seam, driven from OUTSIDE the crate: a provider an embedder
 /// compiled, implementing only the public contract.
-mod injected_provider {
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::Arc;
-
-    use mcp_re_proxy::{
-        AuditProviders, CommitFuture, CommitRequest, CommitmentAuthority, DurabilityTier,
-        EstablishFailure, EstablishFuture, ProviderFailure, ProviderId,
-    };
-
-    use super::*;
-
-    /// A provider that DECLARES the qualifying tier and answers its probe as told. It keeps
-    /// a secret of its own, which must never reach a diagnostic.
-    struct FakeProvider {
-        tier: DurabilityTier,
-        probe: Result<(), EstablishFailure>,
-        secret: &'static str,
-        probes: AtomicUsize,
-        tier_reads: AtomicUsize,
-    }
-
-    impl FakeProvider {
-        fn new(tier: DurabilityTier, probe: Result<(), EstablishFailure>) -> Arc<Self> {
-            Arc::new(FakeProvider {
-                tier,
-                probe,
-                secret: "redis://journal:SECRET-xyz@10.0.0.9:6379",
-                probes: AtomicUsize::new(0),
-                tier_reads: AtomicUsize::new(0),
-            })
-        }
-    }
-
-    impl CommitmentAuthority for FakeProvider {
-        fn provider_id(&self) -> ProviderId {
-            ProviderId::new("fake-journal").expect("a legal name")
-        }
-
-        fn declared_tier(&self) -> DurabilityTier {
-            self.tier_reads.fetch_add(1, Ordering::SeqCst);
-            self.tier
-        }
-
-        fn establish(&self) -> EstablishFuture<'_> {
-            self.probes.fetch_add(1, Ordering::SeqCst);
-            let (answer, _locator) = (self.probe, self.secret);
-            Box::pin(async move { answer })
-        }
-
-        fn commit<'a>(&'a self, _request: CommitRequest<'a>) -> CommitFuture<'a> {
-            Box::pin(async { Err(ProviderFailure::Unavailable) })
-        }
-    }
-
-    fn run_with(extra: &[&str], provider: Arc<FakeProvider>) -> String {
-        let m = serving_fixtures::write_material();
-        let deployment = mcp_re_proxy::cli::parse_args(&with(&m, extra)).expect("parses");
-        let registered: Arc<dyn CommitmentAuthority> = provider;
-        mcp_re_proxy::app::run_with(
-            deployment,
-            AuditProviders::with_commitment(registered),
-            Arc::new(AtomicBool::new(true)),
-        )
-        .expect_err("these fixtures never reach the serve loop")
-    }
-
-    /// The stop every hermetic config here reaches once the audit posture is established.
-    fn replay_refusal() -> &'static str {
-        if cfg!(feature = "redis_replay") {
-            "connect redis"
-        } else {
-            "redis_replay"
-        }
-    }
-
-    /// A fake-qualified provider whose probe fails is refused at startup, naming only the
-    /// provider and the class — and never its own text.
-    #[test]
-    fn a_fake_qualified_provider_that_fails_establishment_is_refused() {
-        let provider = FakeProvider::new(
-            DurabilityTier::SurvivesProxyProcessLoss,
-            Err(EstablishFailure::Unreachable),
-        );
-        let refused = run_with(&["--audit-commitment", "required"], provider.clone());
-        assert!(
-            refused.contains("provider fake-journal could not be established: UNREACHABLE"),
-            "{refused}"
-        );
-        assert!(!refused.contains("SECRET"), "{refused}");
-        assert!(
-            !refused.contains(replay_refusal()),
-            "refused before replay: {refused}"
-        );
-        assert_eq!(provider.probes.load(Ordering::SeqCst), 1);
-    }
-
-    /// A provider declaring a volatile tier is refused before it is asked anything (D3).
-    #[test]
-    fn a_volatile_provider_is_refused_without_being_probed() {
-        let provider = FakeProvider::new(DurabilityTier::ProcessVolatile, Ok(()));
-        let refused = run_with(&["--audit-commitment", "required"], provider.clone());
-        assert!(refused.contains("PROCESS_VOLATILE"), "{refused}");
-        assert_eq!(provider.probes.load(Ordering::SeqCst), 0);
-    }
-
-    /// A qualified provider that answers is established inside the real startup, reading
-    /// its tier once, and startup goes on to its next stop.
-    #[test]
-    fn a_qualified_provider_is_established_inside_the_real_startup() {
-        let provider = FakeProvider::new(DurabilityTier::SurvivesProxyProcessLoss, Ok(()));
-        let refused = run_with(&["--audit-commitment", "required"], provider.clone());
-        assert!(refused.contains(replay_refusal()), "{refused}");
-        assert_eq!(provider.probes.load(Ordering::SeqCst), 1);
-        assert_eq!(provider.tier_reads.load(Ordering::SeqCst), 1);
-    }
-
-    /// Registering a provider selects nothing: under best-effort it is never asked.
-    #[test]
-    fn a_registered_provider_is_not_promoted_under_best_effort() {
-        let provider = FakeProvider::new(DurabilityTier::SurvivesProxyProcessLoss, Ok(()));
-        let refused = run_with(&[], provider.clone());
-        assert!(refused.contains(replay_refusal()), "{refused}");
-        assert_eq!(provider.probes.load(Ordering::SeqCst), 0);
-        assert_eq!(provider.tier_reads.load(Ordering::SeqCst), 0);
-    }
-}
+mod injected_provider;
