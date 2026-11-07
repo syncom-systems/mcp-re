@@ -29,7 +29,7 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO / "scripts"))
 
-from _evidence import EvidenceRecord, decide_issuance, write_bundle  # noqa: E402
+from _evidence import Bundle, EvidenceRecord, IssuanceBasis, decide_issuance, write_bundle  # noqa: E402
 from _load_tool import load_tool  # noqa: E402
 import workflow_reader  # noqa: E402
 
@@ -50,7 +50,7 @@ def review(theorems, roots=("THM-A",), blocking=None):
 
 
 def bundle(directory: Path, aggregate="PASS", scope=None) -> Path:
-    write_bundle(directory, aggregate, {"test": aggregate}, "r", scope)
+    write_bundle(directory, Bundle(aggregate, {"test": aggregate}, "r", scope))
     return directory
 
 
@@ -131,11 +131,13 @@ def test_the_issuer_itself_refuses_a_scoped_runs_evidence():
     """The second wall: `attest` reads a scoped run's INCOMPLETE aggregate and refuses PASS
     issuance whatever the records say."""
     got = decide_issuance(
-        [{"id": "u", "evidence": ["test://t"]}],
-        [],
-        {"u": {"fingerprint": "sha256:X"}},
-        {"test": {"u": EvidenceRecord(unit_id="u", lane="test", result="pass", fingerprint="sha256:X")}},
-        "INCOMPLETE",
+        IssuanceBasis(
+            [{"id": "u", "evidence": ["test://t"]}],
+            [],
+            {"u": {"fingerprint": "sha256:X"}},
+            {"test": {"u": EvidenceRecord(unit_id="u", lane="test", result="pass", fingerprint="sha256:X")}},
+            "INCOMPLETE",
+        )
     )
     assert got["u"][0] == "REFUSE"
 
@@ -158,11 +160,13 @@ def test_a_complete_pass_attests_the_runs_own_evidence_into_a_fresh_store():
 
 def test_the_issuer_issues_a_complete_pass_at_the_measured_fingerprint():
     got = decide_issuance(
-        [{"id": "u", "evidence": ["test://t"]}],
-        [],
-        {"u": {"fingerprint": "sha256:X"}},
-        {"test": {"u": EvidenceRecord(unit_id="u", lane="test", result="pass", fingerprint="sha256:X")}},
-        "PASS",
+        IssuanceBasis(
+            [{"id": "u", "evidence": ["test://t"]}],
+            [],
+            {"u": {"fingerprint": "sha256:X"}},
+            {"test": {"u": EvidenceRecord(unit_id="u", lane="test", result="pass", fingerprint="sha256:X")}},
+            "PASS",
+        )
     )
     assert got["u"][0] == "ISSUE_PASS"
 
@@ -172,11 +176,13 @@ def test_the_issuer_issues_a_complete_pass_at_the_measured_fingerprint():
 
 def test_the_issuer_refuses_evidence_measured_at_another_fingerprint():
     got = decide_issuance(
-        [{"id": "u", "evidence": ["test://t"]}],
-        [],
-        {"u": {"fingerprint": "sha256:Y"}},
-        {"test": {"u": EvidenceRecord(unit_id="u", lane="test", result="pass", fingerprint="sha256:X")}},
-        "PASS",
+        IssuanceBasis(
+            [{"id": "u", "evidence": ["test://t"]}],
+            [],
+            {"u": {"fingerprint": "sha256:Y"}},
+            {"test": {"u": EvidenceRecord(unit_id="u", lane="test", result="pass", fingerprint="sha256:X")}},
+            "PASS",
+        )
     )
     assert got["u"][0] == "REFUSE"
     assert "do not match current fingerprint" in got["u"][2]

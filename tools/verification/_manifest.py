@@ -160,10 +160,7 @@ def _validate_gate_controls(uwhere: str, unit: dict) -> None:
     that starts perfectly well; the execute bit is `merge_path_gate.py`'s question, about
     scripts that ARE invoked by path.
     """
-    declared = [str(entry) for entry in unit.get("gate_controls", [])]
-    if not declared:
-        return
-    for control in declared:
+    for control in (str(entry) for entry in unit.get("gate_controls", [])):
         script = REPO_ROOT / control
         if not script.is_file():
             raise ManifestError(
@@ -196,18 +193,30 @@ def _validate_in_crate_selectors(uwhere: str, unit: dict) -> None:
     for symbol in unit.get("tested_symbols", []):
         label, _, path = str(symbol).partition("#")
         row = _rust_targets.target(label)
-        if row is None or not row["crate"]:
-            continue
-        root_dir = row["root"].rsplit("/", 1)[0]
-        # The crate root itself holds the modules it declares inline, `tests` among them.
-        candidates = _module_candidates(row["root"], path) + [row["root"]]
-        if not any(c in declared for c in candidates):
+        if _unmeasured_in_crate(row, declared, path):
             raise ManifestError(
-                f"{uwhere}: tested_symbol {symbol!r} executes code in {root_dir}, but no "
+                f"{uwhere}: tested_symbol {symbol!r} executes code in "
+                f"{row['root'].rsplit('/', 1)[0]}, but no "
                 f"prefix of its module path is among this unit's `paths`. An in-crate test "
                 f"whose source the unit does not measure can be rewritten under the same "
                 f"name without moving the fingerprint. Declare the module's file."
             )
+
+
+def _unmeasured_in_crate(row: dict | None, declared: set[str], symbol_path: str) -> bool:
+    """Whether the selector's target is built from a crate whose module the unit does not declare."""
+    if row is None or not row["crate"]:
+        return False
+    return not _measures_module(declared, row["root"], symbol_path)
+
+
+def _measures_module(declared: set[str], crate_root: str, symbol_path: str) -> bool:
+    """Whether a file of the selector's module path, or the crate root, is among `declared`.
+
+    The crate root itself holds the modules it declares inline, `tests` among them.
+    """
+    candidates = _module_candidates(crate_root, symbol_path) + [crate_root]
+    return any(c in declared for c in candidates)
 
 
 def _validate_rust_test_packages(uwhere: str, unit: dict) -> None:
@@ -283,21 +292,26 @@ def _require_runnable_target(uwhere: str, symbol: object, eco: Ecosystem | None)
         )
 
 
+def _validate_battery_members(uwhere: str, unit: dict) -> None:
+    """A unit claiming `test://` evidence names members, and each one is runnable."""
+    if not unit.get("tested_symbols"):
+        raise ManifestError(
+            f"{uwhere}: declares test:// evidence but no `tested_symbols`. A "
+            f"battery with no named members cannot be run, and an unrunnable "
+            f"claim is not evidence."
+        )
+    eco = unit_ecosystem(unit)
+    for symbol in unit["tested_symbols"]:
+        _require_runnable_target(uwhere, symbol, eco)
+
+
 def _validate_test_battery(uwhere: str, unit: dict) -> None:
     """`test://` evidence and `tested_symbols` agree, and every member is runnable."""
     # The same argument one class down. A `test://` URI names a battery, and a battery
     # with no declared members is a description: the lane would have nothing to select,
     # and "the tests passed" would mean "no test was asked for".
     if claims(unit, "test"):
-        if not unit.get("tested_symbols"):
-            raise ManifestError(
-                f"{uwhere}: declares test:// evidence but no `tested_symbols`. A "
-                f"battery with no named members cannot be run, and an unrunnable "
-                f"claim is not evidence."
-            )
-        eco = unit_ecosystem(unit)
-        for symbol in unit["tested_symbols"]:
-            _require_runnable_target(uwhere, symbol, eco)
+        _validate_battery_members(uwhere, unit)
     elif unit.get("tested_symbols"):
         # Declared members with no `test://` URI claiming them would run a battery
         # whose result no evidence entry reads — measurement nothing consumes.
@@ -318,10 +332,14 @@ def _validate_unit(uwhere: str, unit: dict, seen_ids: set[str], tree_checks: boo
         _validate_gate_controls(uwhere, unit)
         _validate_rust_test_packages(uwhere, unit)
         _validate_in_crate_selectors(uwhere, unit)
-    # `mutation://` is a claim about a NEGATIVE battery, which only exists on top of a
-    # positive one: the probes' `expect_red` names members of `tested_symbols`. A unit
-    # claiming mutation evidence without test evidence would declare controls that are
-    # not evidence for anything.
+    _validate_mutation_has_battery(uwhere, unit)
+
+
+def _validate_mutation_has_battery(uwhere: str, unit: dict) -> None:
+    """`mutation://` is a claim about a NEGATIVE battery, which only exists on top of a
+    positive one: the probes' `expect_red` names members of `tested_symbols`. A unit
+    claiming mutation evidence without test evidence would declare controls that are
+    not evidence for anything."""
     if claims(unit, "mutation") and not claims(unit, "test"):
         raise ManifestError(
             f"{uwhere}: declares mutation:// evidence without test:// evidence. A "

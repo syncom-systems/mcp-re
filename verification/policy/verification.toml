@@ -5822,7 +5822,12 @@ tested_symbols = [
 id = "sdk_python.bounded_read"
 class = "V0"
 description = "The response read is bounded by the aggregate deadline plus at most one per-recv timeout and by a byte ceiling, and the verifying channel it runs over is constructed against the configured CA with the hostname proved; exceeding either bound, or a channel that cannot be constructed, fails the exchange."
-paths = ["sdk/python/python/mcp_re_sdk/mtls.py"]
+paths = [
+  "sdk/python/python/mcp_re_sdk/mtls.py",
+  "sdk/python/python/mcp_re_sdk/mtls_exchange.py",
+  "sdk/python/python/mcp_re_sdk/mtls_options.py",
+  "sdk/python/python/mcp_re_sdk/mtls_tls.py",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"

@@ -188,6 +188,37 @@ def test_funnel_ledger_cli_under_six_concurrent_setters() -> None:
     _cli_concurrency(FUNNEL_LEDGER_PY, "security-audit-funnel CLI")
 
 
+EXTRA_ROW = {"id": "extra", "file": "z.py", "path": "z.py", "severity": "low", "category": "x",
+             "title": "t", "status": "open", "verified": {}, "refs": {}, "notes": ""}
+
+
+def _rewrite_ledger(path: str, edit) -> None:
+    """Rewrite the ledger atomically, under the lock, after `edit` changes its rows by id."""
+    with exclusive(path):
+        by_id = {x["id"]: x for x in read_jsonl(path)}
+        edit(by_id)
+        atomic_write_lines(path, [json.dumps(v, sort_keys=True) for v in by_id.values()])
+
+
+def _add_extra_row(by_id: dict) -> None:
+    by_id["extra"] = EXTRA_ROW
+
+
+def _drop_extra_row(by_id: dict) -> None:
+    by_id.pop("extra", None)
+
+
+def _watch_for_partial_ledger(path: str, stop: threading.Event, short_reads: list) -> None:
+    while not stop.is_set():
+        try:
+            n = len(read_jsonl(path))
+        except (ValueError, FileNotFoundError):
+            short_reads.append("unparseable")
+            continue
+        if n not in (N_ROWS, N_ROWS + 1):
+            short_reads.append(n)
+
+
 def test_reader_never_observes_a_partial_ledger() -> None:
     """A concurrent reader sees the whole old file or the whole new one — never half.
 
@@ -199,32 +230,12 @@ def test_reader_never_observes_a_partial_ledger() -> None:
         _seed(path)
         stop = threading.Event()
         short_reads = []
-
-        def reader() -> None:
-            while not stop.is_set():
-                try:
-                    n = len(read_jsonl(path))
-                except (ValueError, FileNotFoundError):
-                    short_reads.append("unparseable")
-                    continue
-                if n not in (N_ROWS, N_ROWS + 1):
-                    short_reads.append(n)
-
-        r = threading.Thread(target=reader)
+        r = threading.Thread(target=_watch_for_partial_ledger, args=(path, stop, short_reads))
         r.start()
         try:
             for _ in range(40):
-                with exclusive(path):
-                    by_id = {x["id"]: x for x in read_jsonl(path)}
-                    by_id["extra"] = {"id": "extra", "file": "z.py", "path": "z.py",
-                                      "severity": "low", "category": "x", "title": "t",
-                                      "status": "open", "verified": {}, "refs": {}, "notes": ""}
-                    atomic_write_lines(path, [json.dumps(v, sort_keys=True)
-                                              for v in by_id.values()])
-                with exclusive(path):
-                    by_id = {x["id"]: x for x in read_jsonl(path) if x["id"] != "extra"}
-                    atomic_write_lines(path, [json.dumps(v, sort_keys=True)
-                                              for v in by_id.values()])
+                _rewrite_ledger(path, _add_extra_row)
+                _rewrite_ledger(path, _drop_extra_row)
         finally:
             stop.set()
             r.join()

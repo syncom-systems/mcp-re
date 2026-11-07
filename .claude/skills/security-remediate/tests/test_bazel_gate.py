@@ -22,7 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.join(os.path.dirname(HERE), "scripts")
 sys.path.insert(0, SCRIPTS)
 
-from bazel_gate import compare, parse_output  # noqa: E402
+from bazel_gate import RunIdentity, compare, parse_output  # noqa: E402
 
 # Shaped after the real tick-1 output: tests pass, image/linux variants do not.
 BASELINE_OUTPUT = """
@@ -77,7 +77,7 @@ def test_golden_real_bazel_output_is_parsed_correctly() -> None:
     """
     with open(REAL_OUTPUT_FIXTURE, encoding="utf-8") as fh:
         real = fh.read()
-    d = parse_output(real, exit_code=1, tree="//components/demo/widgets/...")
+    d = parse_output(real, exit_code=1, run=RunIdentity(tree="//components/demo/widgets/..."))
 
     assert len(d["passing"]) == 4, "cached PASSED lines not parsed: %s" % d["passing"]
     assert "//components/demo/widgets:interfaces_test" in d["passing"]
