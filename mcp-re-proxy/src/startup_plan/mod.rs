@@ -14,8 +14,6 @@
 //! interchangeable claims, and every posture statement derived from them would inherit
 //! the confusion.
 
-use crate::config_state::validation::ValidatedDeployment;
-
 /// The replay plan and the store view materialization reads it through.
 ///
 /// Both are owned by the replay machine: the plan is that machine's projection of its own
@@ -38,200 +36,17 @@ pub use response_authority::{response_authority_plans, ResponseAuthority};
 pub use crate::trust_plan::TrustPlan;
 pub use crate::trust_plan::TrustReloadPlan;
 
-/// The shared trust-epoch mechanism, interpreted ONCE (CF-09).
-///
-/// Two planes act on this fact: trust flushes its cache when the epoch advances, and
-/// delegated signing mints under the resulting label so an operator's `mcp-re-proxy trust-epoch advance` revokes
-/// fleet-wide. They are consumers. Before this type they were two authorities — each
-/// reading `--trust-epoch-redis-url`, each defaulting `--trust-epoch-key`, each with its
-/// own build refusal — and the only reason they agreed was that they read the same fields
-/// in the same way. Nothing made them.
-///
-/// The key arrives already defaulted by the trust-revocation classification
-/// (`config_state::trust_revocation`, the one place `DEFAULT_TRUST_EPOCH_KEY` is applied),
-/// and the plan CARRIES that single decision to both consumers: a default applied at two
-/// sites is two decisions that happen to coincide.
-///
-/// The locator is readable only through [`TrustEpochPlan::networked_source`], which asks
-/// the build question first.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TrustEpochPlan {
-    /// No networked source. The trust cache runs at its declared bound, and delegated
-    /// signing mints under the bare `--delegated-trust-epoch` label — the honest
-    /// single-node shape, not a degraded one.
-    NoNetworkChannel,
-    /// A networked epoch counter at this location, under this key.
-    Redis {
-        /// Where the counter lives and the key holding it.
-        locator: EpochLocator,
-    },
-}
+/// The shared trust-epoch mechanism, interpreted once and carried to both planes that act
+/// on it, sealed in its own module.
+mod trust_epoch_plan;
 
-/// Where a networked epoch counter lives, and the key holding it (already defaulted).
-///
-/// Readable only through `TrustEpochPlan::networked_source`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EpochLocator {
-    url: String,
-    key: String,
-}
+pub use trust_epoch_plan::{EpochLocator, EstablishableEpochSource, TrustEpochPlan};
 
-/// A networked epoch source this build can establish.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EstablishableEpochSource<'a> {
-    url: &'a str,
-    key: &'a str,
-}
+/// What response-signing custody must establish, sealed in its own module: the response
+/// authority is its one producer.
+mod signing_plan;
 
-impl<'a> EstablishableEpochSource<'a> {
-    /// Where the counter lives.
-    pub fn url(&self) -> &'a str {
-        self.url
-    }
-
-    /// The key holding the counter.
-    pub fn key(&self) -> &'a str {
-        self.key
-    }
-}
-
-impl TrustEpochPlan {
-    /// Project the plan from the classified trust-revocation state and the validated
-    /// locator.
-    ///
-    /// Infallible: `PushNetworked` is the state that HAS a source, so layer A has already
-    /// established both that this deployment may carry one and that it does.
-    pub fn from_validated(config: &ValidatedDeployment) -> TrustEpochPlan {
-        match config.state().trust_revocation().epoch_source() {
-            Some(source) => TrustEpochPlan::Redis {
-                locator: EpochLocator {
-                    url: source.url().to_string(),
-                    key: source.key().to_string(),
-                },
-            },
-            None => TrustEpochPlan::NoNetworkChannel,
-        }
-    }
-
-    /// The networked source a consumer may connect to: `Err` with the build refusal when
-    /// this build cannot establish it, `None` when the plan has no networked source.
-    pub fn networked_source(&self) -> Result<Option<EstablishableEpochSource<'_>>, String> {
-        if let Some(refusal) = self.unsupported_by_build() {
-            return Err(refusal);
-        }
-        match self {
-            TrustEpochPlan::NoNetworkChannel => Ok(None),
-            TrustEpochPlan::Redis { locator } => Ok(Some(EstablishableEpochSource {
-                url: &locator.url,
-                key: &locator.key,
-            })),
-        }
-    }
-
-    /// A networked plan for in-crate tests.
-    #[cfg(test)]
-    pub(crate) fn redis(url: &str, key: &str) -> TrustEpochPlan {
-        TrustEpochPlan::Redis {
-            locator: EpochLocator {
-                url: url.to_string(),
-                key: key.to_string(),
-            },
-        }
-    }
-
-    /// Why THIS BUILD cannot establish the plan, if it cannot — layer B, stated once.
-    ///
-    /// Both planes refused a configured epoch source in a build without a Redis client,
-    /// in two places, with two different messages naming two different consequences. Each
-    /// message was true and neither was complete, and which one an operator met was decided
-    /// by materialization order. One refusal states both consequences.
-    pub fn unsupported_by_build(&self) -> Option<String> {
-        match self {
-            TrustEpochPlan::NoNetworkChannel => None,
-            TrustEpochPlan::Redis { .. } if cfg!(feature = "redis_replay") => None,
-            TrustEpochPlan::Redis { .. } => Some(
-                "--trust-epoch-redis-url requires a build with the `redis_replay` feature. \
-                 Without it the trust cache has no networked invalidation channel, and \
-                 delegated credentials would be minted under the bare --delegated-trust-epoch \
-                 label — which the trust-epoch kill switch (`mcp-re-proxy trust-epoch \
-                 advance`) cannot revoke. Refusing to start (fail closed, ADR-MCPRE-052 §7)"
-                    .to_string(),
-            ),
-        }
-    }
-}
-
-/// What response-signing custody must establish (ADR-MCPRE-052).
-///
-/// Delegated signing is the only response mode, so this is a STRUCT and not an enum: the
-/// layer A classifies it as guard-only, with one state. The plan holds the normalized
-/// custody policy, every default applied once.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SigningPlan {
-    /// The credential policy the rotor mints under, fully resolved.
-    custody: mcp_re_http_profile::CustodyConfig,
-    /// The shared epoch mechanism, the decision the trust plan holds (CF-09).
-    epoch: TrustEpochPlan,
-}
-
-impl SigningPlan {
-    /// Project the plan from the validated configuration and the response authority.
-    ///
-    /// Infallible: the epoch source and `0 < overlap < ttl` are layer A's clauses. Private
-    /// to this module and its descendants; [`response_authority_plans`] is the one caller.
-    fn from_validated(config: &ValidatedDeployment, authority: ResponseAuthority) -> SigningPlan {
-        let values = config.config();
-        let facts = config.state().delegated_signing();
-        let rotation = facts.rotation_window();
-        let identity = config.state().server_identity().actor();
-        SigningPlan {
-            custody: mcp_re_http_profile::CustodyConfig {
-                issuer_kid: authority.kid().to_string(),
-                iss: identity.subject.clone(),
-                profile: mcp_re_http_profile::PROFILE_TAG.to_string(),
-                aud: values.audience.clone(),
-                audience_hash: facts.audience_hash().to_string(),
-                trust_epoch: facts.trust_epoch().clone(),
-                // The three identity components come from the ONE derived identity.
-                server_role: identity.role.clone(),
-                server_trust_domain: identity.trust_domain.clone(),
-                server_subject: identity.subject.clone(),
-                // The owner's sealed TTL/overlap pair, projected whole.
-                window: rotation,
-            },
-            epoch: authority.epoch().clone(),
-        }
-    }
-
-    /// The credential policy the rotor mints under.
-    pub fn custody(&self) -> &mcp_re_http_profile::CustodyConfig {
-        &self.custody
-    }
-
-    /// The shared epoch mechanism, the same decision the trust plan holds.
-    pub fn epoch(&self) -> &TrustEpochPlan {
-        &self.epoch
-    }
-
-    /// This plan minting under `epoch`, the label the signing plane read from this
-    /// plan's own epoch source at startup; nothing else changes. `pub(crate)` for that one
-    /// consumer, a sibling subtree.
-    pub(crate) fn minting_under(&self, epoch: mcp_re_http_profile::custody::TrustEpoch) -> Self {
-        let mut minting = self.clone();
-        minting.custody.trust_epoch = epoch;
-        minting
-    }
-
-    /// A plan from parts, for in-crate tests of the signing plane's rotation loop, which
-    /// need windows and epoch sources no validated deployment states.
-    #[cfg(test)]
-    pub(crate) fn from_parts(
-        custody: mcp_re_http_profile::CustodyConfig,
-        epoch: TrustEpochPlan,
-    ) -> SigningPlan {
-        SigningPlan { custody, epoch }
-    }
-}
+pub use signing_plan::SigningPlan;
 
 /// What the TLS plane establishes for client revocation.
 ///
@@ -262,6 +77,7 @@ pub use crate::config_state::continuation_control::ContinuationControlPlan;
 mod tests {
     use super::*;
     use crate::communication_assurance::peer_identity_provenance::PeerIdentityProvenance;
+    use crate::config_state::validation::ValidatedDeployment;
     use crate::deployment_request::{
         AttestedIngressRequest, DeploymentRequest, IngressAssertionRequest,
         PeerIdentityEvidenceRequest, PinnedChannelAcknowledgement,
