@@ -117,55 +117,90 @@ def build(closure: dict, review: dict) -> dict:
     }
 
 
+def _is_row_list(value: object) -> bool:
+    return isinstance(value, list) and bool(value) and isinstance(value[0], dict)
+
+
+def _entry_lines(key: str, value: object, comma: str) -> list[str]:
+    if not _is_row_list(value):
+        return [f"  {json.dumps(key)}: {json.dumps(value, sort_keys=True)}{comma}"]
+    rows = [json.dumps(row, sort_keys=True) for row in value]
+    lines = [f"  {json.dumps(key)}: ["]
+    lines.extend(f"    {row}{',' if i < len(rows) - 1 else ''}" for i, row in enumerate(rows))
+    lines.append(f"  ]{comma}")
+    return lines
+
+
 def dumps(record: dict) -> str:
     """Sorted keys, one unit or theorem per line: compact, and a diff names the row."""
     lines = ["{"]
     keys = sorted(record)
     for index, key in enumerate(keys):
-        value = record[key]
         comma = "," if index < len(keys) - 1 else ""
-        if isinstance(value, list) and value and isinstance(value[0], dict):
-            rows = [json.dumps(row, sort_keys=True) for row in value]
-            lines.append(f"  {json.dumps(key)}: [")
-            lines.extend(f"    {row}{',' if i < len(rows) - 1 else ''}" for i, row in enumerate(rows))
-            lines.append(f"  ]{comma}")
-        else:
-            lines.append(f"  {json.dumps(key)}: {json.dumps(value, sort_keys=True)}{comma}")
+        lines.extend(_entry_lines(key, record[key], comma))
     lines.append("}")
     return "\n".join(lines) + "\n"
+
+
+def _identity_problems(record: dict) -> list[str]:
+    found = []
+    if record["schema_version"] != SCHEMA_VERSION or record["kind"] != KIND:
+        found.append(f"not a schema-{SCHEMA_VERSION} {KIND}")
+    if record["verdict"] != "PASS":
+        found.append(f"verdict is {record['verdict']!r}; only a PASS is recorded")
+    return found
+
+
+def _listing_problems(record: dict) -> list[str]:
+    found = []
+    units, theorems = record["units"], record["theorems"]
+    if canonical_digest(units) != record["units_digest"]:
+        found.append("units_digest is not the digest of the listed unit identities")
+    if canonical_digest(theorems) != record["theorems_digest"]:
+        found.append("theorems_digest is not the digest of the listed theorem identities")
+    for label, rows in (("unit", units), ("theorem", theorems)):
+        ids = [row[label] for row in rows]
+        if ids != sorted(set(ids)):
+            found.append(f"{label} ids are not unique and sorted")
+    return found
+
+
+def _count_problems(record: dict) -> list[str]:
+    found = []
+    counts, theorems = record["counts"], record["theorems"]
+    if counts["active"] != len(theorems) or not theorems:
+        found.append(f"counts.active {counts['active']} is not the {len(theorems)} listed theorem(s)")
+    for axis in ("review_current", "evidence_established", "currently_verified"):
+        if counts[axis] != counts["active"]:
+            found.append(f"counts.{axis} {counts[axis]} is not {counts['active']}; that is not a closure")
+    return found
+
+
+def _root_problems(record: dict) -> list[str]:
+    roots, counts = record["roots"], record["counts"]
+    all_established = (
+        roots["verdict"] == "COMPLETE"
+        and counts["roots"] == len(roots["declared"])
+        and counts["roots_established"] == counts["roots"]
+    )
+    return [] if all_established else ["the roots are not all declared and established"]
 
 
 def problems(record: object) -> list[str]:
     """Whether the record is well formed and agrees with itself. No repository access."""
     if not isinstance(record, dict):
         return ["the record is not a JSON object"]
-    found = []
     if set(record) != _KEYS:
-        found.append(f"keys differ from the schema: missing {sorted(_KEYS - set(record))}, unknown {sorted(set(record) - _KEYS)}")
-        return found
-    if record["schema_version"] != SCHEMA_VERSION or record["kind"] != KIND:
-        found.append(f"not a schema-{SCHEMA_VERSION} {KIND}")
-    if record["verdict"] != "PASS":
-        found.append(f"verdict is {record['verdict']!r}; only a PASS is recorded")
-    units, theorems = record["units"], record["theorems"]
-    if canonical_digest(units) != record["units_digest"]:
-        found.append("units_digest is not the digest of the listed unit identities")
-    if canonical_digest(theorems) != record["theorems_digest"]:
-        found.append("theorems_digest is not the digest of the listed theorem identities")
-    for label, rows, key in (("unit", units, "unit"), ("theorem", theorems, "theorem")):
-        ids = [row[key] for row in rows]
-        if ids != sorted(set(ids)):
-            found.append(f"{label} ids are not unique and sorted")
-    counts = record["counts"]
-    if counts["active"] != len(theorems) or not theorems:
-        found.append(f"counts.active {counts['active']} is not the {len(theorems)} listed theorem(s)")
-    for axis in ("review_current", "evidence_established", "currently_verified"):
-        if counts[axis] != counts["active"]:
-            found.append(f"counts.{axis} {counts[axis]} is not {counts['active']}; that is not a closure")
-    roots = record["roots"]
-    if roots["verdict"] != "COMPLETE" or counts["roots"] != len(roots["declared"]) or counts["roots_established"] != counts["roots"]:
-        found.append("the roots are not all declared and established")
-    return found
+        return [
+            f"keys differ from the schema: missing {sorted(_KEYS - set(record))}, "
+            f"unknown {sorted(set(record) - _KEYS)}"
+        ]
+    return [
+        *_identity_problems(record),
+        *_listing_problems(record),
+        *_count_problems(record),
+        *_root_problems(record),
+    ]
 
 
 def git(repo: Path, *args: str) -> tuple[int, str]:
