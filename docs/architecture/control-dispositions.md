@@ -221,6 +221,8 @@ the property.
 
 **Added 2026-10-11:** `scripts/install_pinned_verus.py` — downloads the Verus release the lock pins for the host and refuses any archive whose digest differs, so a runner with nothing installed reaches the state `verify-verus` then re-checks file by file. It makes the lane executable; it decides nothing about a proof.
 
+**Added 2026-11-07:** `sdk/typescript/test/native_loader.test.ts` — the TypeScript package's native loader (`native/loader/`) picks which prebuilt addon artifact to `require` for the host platform and reports which one loaded. Its tests pin that platform table and the load-failure aggregation, and they are the runner-wiring check that the artifact a host asks for is the one named for it. They decide nothing about admissibility, signing or verification, which stay with `sdk_typescript.native_binding` and the binding core.
+
 ## ND-005 — mirrored and documented values
 
 **Covers:** `jcs_vocabulary_gate.py`, `proxy_flag_doc_gate.py`, `check_port_registry.py`, and
