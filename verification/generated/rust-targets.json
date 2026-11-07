@@ -1298,7 +1298,10 @@
    "package": "mcp-re-http-profile",
    "root": "mcp-re-http-profile/tests/chain_reconstruction_test.rs",
    "srcs": [
-    "mcp-re-http-profile/tests/chain_reconstruction_test.rs"
+    "mcp-re-http-profile/tests/chain_reconstruction_test.rs",
+    "mcp-re-http-profile/tests/chain_reconstruction_test/fixtures.rs",
+    "mcp-re-http-profile/tests/chain_reconstruction_test/turns.rs",
+    "mcp-re-http-profile/tests/chain_reconstruction_test/verify.rs"
    ],
    "testonly": true,
    "verus_deps": []

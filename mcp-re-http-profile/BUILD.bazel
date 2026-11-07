@@ -229,7 +229,7 @@ nt_rust_test(
 
 nt_rust_test(
     name = "chain_reconstruction_test",
-    srcs = ["tests/chain_reconstruction_test.rs"],
+    srcs = ["tests/chain_reconstruction_test.rs"] + glob(["tests/chain_reconstruction_test/*.rs"]),
     edition = "2021",
     deps = [
         ":mcp_re_http_profile_pre052",  # keep
