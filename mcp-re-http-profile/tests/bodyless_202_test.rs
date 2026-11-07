@@ -18,6 +18,8 @@ use mcp_re_http_profile::verify_bodyless_request;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
+use mcp_re_http_profile::HttpResponse;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
@@ -87,19 +89,76 @@ fn notification(nonce: &str, method: &str) -> HttpRequest {
     r
 }
 
+/// The enforcement boundary's signed 202 for `note`, signed by `key`.
+fn acknowledgement_by(note: &HttpRequest, key: &SigningKey, key_id: &str) -> HttpResponse {
+    sign_pre_052_root_signed_202_for_negative_test(note, key, key_id, CREATED, EXPIRES)
+        .expect("signs")
+}
+
+/// The enforcement boundary's signed 202 for `note`, signed by the server key.
+fn acknowledgement(note: &HttpRequest) -> HttpResponse {
+    acknowledgement_by(note, &server_key(), SERVER_KEY_ID)
+}
+
+/// What the client's verifier makes of `ack` as the acknowledgement of `note`.
+fn verify_ack(ack: &HttpResponse, note: &HttpRequest) -> Result<ResolvedActor, HttpProfileError> {
+    verify_pre_052_root_signed_202_for_negative_test(
+        ack,
+        note,
+        &Verifier::new(&policy(), &resolver()),
+        NOW,
+    )
+}
+
+/// A `method` request with `headers`, signed by the bodyless request rules, with the
+/// evidence the signer states.
+fn sign_bodyless_as(
+    method: &str,
+    headers: Vec<(String, String)>,
+) -> (HttpRequest, RequestRoleEvidence) {
+    let mut req = HttpRequest {
+        method: method.into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers,
+        body: Vec::new(),
+    };
+    let evidence = sign_bodyless_request(
+        &mut req,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        &unique_test_nonce(),
+    )
+    .expect("a bodyless request signs");
+    (req, evidence)
+}
+
+/// A DELETE with `headers`, signed by the bodyless request rules.
+fn signed_bodyless(headers: Vec<(String, String)>) -> HttpRequest {
+    sign_bodyless_as("DELETE", headers).0
+}
+
+/// What the verifier makes of a bodyless request under `policy` at `now`.
+fn verify_bodyless_under(
+    req: &HttpRequest,
+    policy: &VerifierPolicy,
+    now: i64,
+) -> Result<(), HttpProfileError> {
+    verify_bodyless_request(req, &Verifier::new(policy, &resolver()), now).map(|_| ())
+}
+
+/// What the verifier makes of a bodyless request under the default policy.
+fn verify_bodyless(req: &HttpRequest) -> Result<(), HttpProfileError> {
+    verify_bodyless_under(req, &policy(), NOW)
+}
+
 // --- the signed 202 ----------------------------------------------------------
 
 #[test]
 fn signed_202_verifies_against_its_notification() {
     let note = notification(&unique_test_nonce(), "notifications/initialized");
-    let ack = sign_pre_052_root_signed_202_for_negative_test(
-        &note,
-        &server_key(),
-        SERVER_KEY_ID,
-        CREATED,
-        EXPIRES,
-    )
-    .expect("the PEP signs its acceptance");
+    let ack = acknowledgement(&note);
 
     assert_eq!(ack.status, STATUS_ACCEPTED);
     assert!(ack.body.is_empty(), "an accepted notification gets no body");
@@ -110,13 +169,7 @@ fn signed_202_verifies_against_its_notification() {
         "a bodyless response has no content-type: there is no content to describe"
     );
 
-    let actor = verify_pre_052_root_signed_202_for_negative_test(
-        &ack,
-        &note,
-        &Verifier::new(&policy(), &resolver()),
-        NOW,
-    )
-    .expect("the client verifies the acknowledgement");
+    let actor = verify_ack(&ack, &note).expect("the client verifies the acknowledgement");
     assert_eq!(actor.identity.keyid, SERVER_KEY_ID);
 }
 
@@ -144,30 +197,11 @@ fn signed_202_verifies_against_its_notification() {
 fn an_acknowledgement_binds_to_one_transmission_not_to_content() {
     let note_a = notification(&unique_test_nonce(), "notifications/initialized");
     let note_b = notification(&unique_test_nonce(), "notifications/cancelled");
-    let ack_a = sign_pre_052_root_signed_202_for_negative_test(
-        &note_a,
-        &server_key(),
-        SERVER_KEY_ID,
-        CREATED,
-        EXPIRES,
-    )
-    .expect("signs");
+    let ack_a = acknowledgement(&note_a);
 
-    verify_pre_052_root_signed_202_for_negative_test(
-        &ack_a,
-        &note_a,
-        &Verifier::new(&policy(), &resolver()),
-        NOW,
-    )
-    .expect("binds to A");
+    verify_ack(&ack_a, &note_a).expect("binds to A");
     assert_eq!(
-        verify_pre_052_root_signed_202_for_negative_test(
-            &ack_a,
-            &note_b,
-            &Verifier::new(&policy(), &resolver()),
-            NOW
-        )
-        .unwrap_err(),
+        verify_ack(&ack_a, &note_b).unwrap_err(),
         HttpProfileError::ResponseBindingMismatch,
         "A's acknowledgement must not acknowledge a DIFFERENT notification B"
     );
@@ -185,13 +219,7 @@ fn an_acknowledgement_binds_to_one_transmission_not_to_content() {
         "the two transmissions must genuinely be distinct request instances"
     );
     assert_eq!(
-        verify_pre_052_root_signed_202_for_negative_test(
-            &ack_a,
-            &note_a_again,
-            &Verifier::new(&policy(), &resolver()),
-            NOW
-        )
-        .unwrap_err(),
+        verify_ack(&ack_a, &note_a_again).unwrap_err(),
         HttpProfileError::ResponseBindingMismatch,
         "an acknowledgement for transmission A must NOT verify for a distinct \
          transmission A', even with identical method, target and body content"
@@ -204,27 +232,14 @@ fn an_acknowledgement_binds_to_one_transmission_not_to_content() {
 #[test]
 fn a_forged_request_evidence_header_is_refused() {
     let note_a = notification(&unique_test_nonce(), "notifications/initialized");
-    let mut ack = sign_pre_052_root_signed_202_for_negative_test(
-        &note_a,
-        &server_key(),
-        SERVER_KEY_ID,
-        CREATED,
-        EXPIRES,
-    )
-    .expect("signs");
+    let mut ack = acknowledgement(&note_a);
     for (name, value) in ack.headers.iter_mut() {
         if name.eq_ignore_ascii_case("mcp-re-request-evidence") {
             *value = "0".repeat(value.len());
         }
     }
     assert!(
-        verify_pre_052_root_signed_202_for_negative_test(
-            &ack,
-            &note_a,
-            &Verifier::new(&policy(), &resolver()),
-            NOW
-        )
-        .is_err(),
+        verify_ack(&ack, &note_a).is_err(),
         "a request-evidence value the verifier cannot re-derive must fail closed"
     );
 }
@@ -234,24 +249,11 @@ fn a_forged_request_evidence_header_is_refused() {
 #[test]
 fn a_missing_request_evidence_header_is_refused() {
     let note_a = notification(&unique_test_nonce(), "notifications/initialized");
-    let mut ack = sign_pre_052_root_signed_202_for_negative_test(
-        &note_a,
-        &server_key(),
-        SERVER_KEY_ID,
-        CREATED,
-        EXPIRES,
-    )
-    .expect("signs");
+    let mut ack = acknowledgement(&note_a);
     ack.headers
         .retain(|(name, _)| !name.eq_ignore_ascii_case("mcp-re-request-evidence"));
     assert_eq!(
-        verify_pre_052_root_signed_202_for_negative_test(
-            &ack,
-            &note_a,
-            &Verifier::new(&policy(), &resolver()),
-            NOW
-        )
-        .unwrap_err(),
+        verify_ack(&ack, &note_a).unwrap_err(),
         HttpProfileError::MissingEvidence("response request-evidence"),
         "there is no weaker content-level mode to fall back to"
     );
@@ -274,23 +276,10 @@ fn signature_input_of(request: &HttpRequest) -> String {
 #[test]
 fn content_injected_into_a_signed_202_is_caught() {
     let note = notification(&unique_test_nonce(), "notifications/initialized");
-    let mut ack = sign_pre_052_root_signed_202_for_negative_test(
-        &note,
-        &server_key(),
-        SERVER_KEY_ID,
-        CREATED,
-        EXPIRES,
-    )
-    .expect("signs");
+    let mut ack = acknowledgement(&note);
     ack.body = br#"{"cancelled":true}"#.to_vec();
     assert_eq!(
-        verify_pre_052_root_signed_202_for_negative_test(
-            &ack,
-            &note,
-            &Verifier::new(&policy(), &resolver()),
-            NOW
-        )
-        .unwrap_err(),
+        verify_ack(&ack, &note).unwrap_err(),
         HttpProfileError::MalformedEvidence("content on a bodyless message"),
     );
 }
@@ -301,24 +290,11 @@ fn content_injected_into_a_signed_202_is_caught() {
 #[test]
 fn content_type_on_a_bodyless_202_is_rejected() {
     let note = notification(&unique_test_nonce(), "notifications/initialized");
-    let mut ack = sign_pre_052_root_signed_202_for_negative_test(
-        &note,
-        &server_key(),
-        SERVER_KEY_ID,
-        CREATED,
-        EXPIRES,
-    )
-    .expect("signs");
+    let mut ack = acknowledgement(&note);
     ack.headers
         .push(("Content-Type".into(), "application/json".into()));
     assert_eq!(
-        verify_pre_052_root_signed_202_for_negative_test(
-            &ack,
-            &note,
-            &Verifier::new(&policy(), &resolver()),
-            NOW
-        )
-        .unwrap_err(),
+        verify_ack(&ack, &note).unwrap_err(),
         HttpProfileError::MalformedEvidence("content-type on a bodyless message"),
     );
 }
@@ -328,27 +304,14 @@ fn content_type_on_a_bodyless_202_is_rejected() {
 #[test]
 fn a_202_without_its_req_binding_is_rejected() {
     let note = notification(&unique_test_nonce(), "notifications/initialized");
-    let mut ack = sign_pre_052_root_signed_202_for_negative_test(
-        &note,
-        &server_key(),
-        SERVER_KEY_ID,
-        CREATED,
-        EXPIRES,
-    )
-    .expect("signs");
+    let mut ack = acknowledgement(&note);
     for h in ack.headers.iter_mut() {
         if h.0.eq_ignore_ascii_case("signature-input") {
             h.1 = h.1.replace(" \"@target-uri\";req", "");
         }
     }
     assert_eq!(
-        verify_pre_052_root_signed_202_for_negative_test(
-            &ack,
-            &note,
-            &Verifier::new(&policy(), &resolver()),
-            NOW
-        )
-        .unwrap_err(),
+        verify_ack(&ack, &note).unwrap_err(),
         HttpProfileError::MissingCoveredComponent("@target-uri"),
     );
 }
@@ -358,23 +321,10 @@ fn a_202_without_its_req_binding_is_rejected() {
 #[test]
 fn a_bodyless_response_that_is_not_202_is_rejected() {
     let note = notification(&unique_test_nonce(), "notifications/initialized");
-    let mut ack = sign_pre_052_root_signed_202_for_negative_test(
-        &note,
-        &server_key(),
-        SERVER_KEY_ID,
-        CREATED,
-        EXPIRES,
-    )
-    .expect("signs");
+    let mut ack = acknowledgement(&note);
     ack.status = 200;
     assert_eq!(
-        verify_pre_052_root_signed_202_for_negative_test(
-            &ack,
-            &note,
-            &Verifier::new(&policy(), &resolver()),
-            NOW
-        )
-        .unwrap_err(),
+        verify_ack(&ack, &note).unwrap_err(),
         HttpProfileError::MalformedEvidence("bodyless acknowledgement status"),
     );
 }
@@ -384,22 +334,9 @@ fn a_bodyless_response_that_is_not_202_is_rejected() {
 #[test]
 fn a_202_signed_by_a_request_key_fails_the_response_slot() {
     let note = notification(&unique_test_nonce(), "notifications/initialized");
-    let ack = sign_pre_052_root_signed_202_for_negative_test(
-        &note,
-        &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-    )
-    .expect("signs");
+    let ack = acknowledgement_by(&note, &client_key(), CLIENT_KEY_ID);
     assert_eq!(
-        verify_pre_052_root_signed_202_for_negative_test(
-            &ack,
-            &note,
-            &Verifier::new(&policy(), &resolver()),
-            NOW
-        )
-        .unwrap_err(),
+        verify_ack(&ack, &note).unwrap_err(),
         HttpProfileError::UnresolvedKeyId,
     );
 }
@@ -408,21 +345,7 @@ fn a_202_signed_by_a_request_key_fails_the_response_slot() {
 
 #[test]
 fn bodyless_request_round_trips() {
-    let mut req = HttpRequest {
-        method: "DELETE".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![],
-        body: Vec::new(),
-    };
-    let evidence = sign_bodyless_request(
-        &mut req,
-        &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
-    )
-    .expect("a bodyless request signs");
+    let (req, evidence) = sign_bodyless_as("DELETE", vec![]);
     assert!(
         !req.headers
             .iter()
@@ -439,45 +362,17 @@ fn bodyless_request_round_trips() {
 /// A GET is the other bodyless request shape §8.1 names.
 #[test]
 fn bodyless_get_request_round_trips() {
-    let mut req = HttpRequest {
-        method: "GET".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![],
-        body: Vec::new(),
-    };
-    sign_bodyless_request(
-        &mut req,
-        &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
-    )
-    .expect("signs");
-    verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).expect("verifies");
+    let (req, _) = sign_bodyless_as("GET", vec![]);
+    verify_bodyless(&req).expect("verifies");
 }
 
 #[test]
 fn content_type_on_a_bodyless_request_is_rejected() {
-    let mut req = HttpRequest {
-        method: "DELETE".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![],
-        body: Vec::new(),
-    };
-    sign_bodyless_request(
-        &mut req,
-        &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
-    )
-    .expect("signs");
+    let mut req = signed_bodyless(vec![]);
     req.headers
         .push(("Content-Type".into(), "application/json".into()));
     assert_eq!(
-        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
+        verify_bodyless(&req).unwrap_err(),
         HttpProfileError::MalformedEvidence("content-type on a bodyless message"),
     );
 }
@@ -514,28 +409,13 @@ fn the_bodied_request_set_still_requires_content_type() {
 /// must produce exactly that, or the two ends disagree.
 #[test]
 fn a_bodyless_request_covers_a_present_authorization_header() {
-    let mut req = HttpRequest {
-        method: "DELETE".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![("Authorization".into(), "Bearer token-abc".into())],
-        body: Vec::new(),
-    };
-    sign_bodyless_request(
-        &mut req,
-        &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
-    )
-    .expect("signs");
+    let req = signed_bodyless(vec![("Authorization".into(), "Bearer token-abc".into())]);
     assert!(
         signature_input_of(&req).contains("\"authorization\""),
         "the signer must cover a present authorization header: {}",
         signature_input_of(&req)
     );
-    verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW)
-        .expect("a bodyless request with a covered credential verifies");
+    verify_bodyless(&req).expect("a bodyless request with a covered credential verifies");
 }
 
 /// The attack the gap allowed: swap the presented bearer token. With the credential
@@ -543,28 +423,14 @@ fn a_bodyless_request_covers_a_present_authorization_header() {
 /// be left uncovered in the first place — see the sibling test below.
 #[test]
 fn swapping_a_covered_bearer_token_on_a_bodyless_request_is_caught() {
-    let mut req = HttpRequest {
-        method: "DELETE".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![("Authorization".into(), "Bearer token-abc".into())],
-        body: Vec::new(),
-    };
-    sign_bodyless_request(
-        &mut req,
-        &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
-    )
-    .expect("signs");
+    let mut req = signed_bodyless(vec![("Authorization".into(), "Bearer token-abc".into())]);
     for (name, value) in req.headers.iter_mut() {
         if name.eq_ignore_ascii_case("authorization") {
             *value = "Bearer token-ATTACKER".into();
         }
     }
     assert!(
-        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).is_err(),
+        verify_bodyless(&req).is_err(),
         "a swapped bearer token must invalidate the signature"
     );
 }
@@ -574,26 +440,12 @@ fn swapping_a_covered_bearer_token_on_a_bodyless_request_is_caught() {
 /// Before the fix this verified, because the bodyless verifier never asked.
 #[test]
 fn an_uncovered_authorization_header_on_a_bodyless_request_is_rejected() {
-    let mut req = HttpRequest {
-        method: "DELETE".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![],
-        body: Vec::new(),
-    };
-    sign_bodyless_request(
-        &mut req,
-        &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
-    )
-    .expect("signs");
+    let mut req = signed_bodyless(vec![]);
     // An intermediary attaches a credential the signature says nothing about.
     req.headers
         .push(("Authorization".into(), "Bearer token-INJECTED".into()));
     assert_eq!(
-        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
+        verify_bodyless(&req).unwrap_err(),
         HttpProfileError::MissingCoveredComponent("authorization"),
         "a present-but-uncovered credential must fail closed, not ride along"
     );
@@ -617,24 +469,10 @@ fn uncovered_dpop_and_mcp_transport_headers_on_a_bodyless_request_are_rejected()
             DuplicateHeader("mcp-protocol-version"),
         ),
     ] {
-        let mut req = HttpRequest {
-            method: "DELETE".into(),
-            target_uri: "https://mcp.example.com/mcp".into(),
-            headers: vec![],
-            body: Vec::new(),
-        };
-        sign_bodyless_request(
-            &mut req,
-            &client_key(),
-            CLIENT_KEY_ID,
-            CREATED,
-            EXPIRES,
-            &unique_test_nonce(),
-        )
-        .expect("signs");
+        let mut req = signed_bodyless(vec![]);
         req.headers.push((header.into(), "injected".into()));
         assert_eq!(
-            verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
+            verify_bodyless(&req).unwrap_err(),
             expected,
             "an injected {header} must fail closed on the bodyless path"
         );
@@ -646,27 +484,13 @@ fn uncovered_dpop_and_mcp_transport_headers_on_a_bodyless_request_are_rejected()
 /// them after the signature, while the same request without them verifies.
 #[test]
 fn the_bodyless_signer_covers_every_conditionally_mandatory_header() {
-    let mut req = HttpRequest {
-        method: "DELETE".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![
-            ("Authorization".into(), "Bearer t".into()),
-            ("DPoP".into(), "proof".into()),
-            ("Mcp-Method".into(), "notifications/cancelled".into()),
-            ("Mcp-Name".into(), "tool-a".into()),
-            ("Mcp-Protocol-Version".into(), "2026-07-28".into()),
-        ],
-        body: Vec::new(),
-    };
-    sign_bodyless_request(
-        &mut req,
-        &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
-    )
-    .expect("signs");
+    let req = signed_bodyless(vec![
+        ("Authorization".into(), "Bearer t".into()),
+        ("DPoP".into(), "proof".into()),
+        ("Mcp-Method".into(), "notifications/cancelled".into()),
+        ("Mcp-Name".into(), "tool-a".into()),
+        ("Mcp-Protocol-Version".into(), "2026-07-28".into()),
+    ]);
     let input = signature_input_of(&req);
     for name in [
         "authorization",
@@ -681,30 +505,16 @@ fn the_bodyless_signer_covers_every_conditionally_mandatory_header() {
         );
     }
     assert_eq!(
-        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
+        verify_bodyless(&req).unwrap_err(),
         HttpProfileError::McpTransportDivergence("mcp-method"),
     );
 
-    let mut unrouted = HttpRequest {
-        method: "DELETE".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![
-            ("Authorization".into(), "Bearer t".into()),
-            ("DPoP".into(), "proof".into()),
-        ],
-        body: Vec::new(),
-    };
-    sign_bodyless_request(
-        &mut unrouted,
-        &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
-    )
-    .expect("signs");
+    let unrouted = signed_bodyless(vec![
+        ("Authorization".into(), "Bearer t".into()),
+        ("DPoP".into(), "proof".into()),
+    ]);
     assert!(signature_input_of(&unrouted).contains("\"mcp-protocol-version\""));
-    verify_bodyless_request(&unrouted, &Verifier::new(&policy(), &resolver()), NOW)
+    verify_bodyless(&unrouted)
         .expect("the signer states the version, and nothing else needs a body");
 }
 
@@ -724,60 +534,32 @@ fn the_bodyless_signer_covers_every_conditionally_mandatory_header() {
 /// is covered.
 #[test]
 fn a_configured_transport_contract_is_refused_rather_than_ignored() {
-    let mut req = HttpRequest {
-        method: "DELETE".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![(
-            "Mcp-Protocol-Version".into(),
-            // A version NO deployment below declares support for. Under the old
-            // behaviour this verified: the version set was never consulted.
-            "1999-01-01".into(),
-        )],
-        body: Vec::new(),
-    };
-    sign_bodyless_request(
-        &mut req,
-        &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
-    )
-    .expect("signs");
+    let req = signed_bodyless(vec![(
+        "Mcp-Protocol-Version".into(),
+        // A version NO deployment below declares support for. Under the old
+        // behaviour this verified: the version set was never consulted.
+        "1999-01-01".into(),
+    )]);
 
     let strict = VerifierPolicy::default().with_mcp_transport(
         mcp_re_http_profile::McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"]),
     );
     assert_eq!(
-        verify_bodyless_request(&req, &Verifier::new(&strict, &resolver()), NOW).unwrap_err(),
+        verify_bodyless_under(&req, &strict, NOW).unwrap_err(),
         HttpProfileError::McpProtocolVersionUnsupported,
         "the deployment's supported-version set must gate this shape too",
     );
 
     // A version the deployment DOES declare passes the same gate — the contract is
     // applied, not a blanket refusal of every bodyless request under a policy.
-    let mut ok_req = HttpRequest {
-        method: "DELETE".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![("Mcp-Protocol-Version".into(), "2026-07-28".into())],
-        body: Vec::new(),
-    };
-    sign_bodyless_request(
-        &mut ok_req,
-        &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
-    )
-    .expect("signs");
-    verify_bodyless_request(&ok_req, &Verifier::new(&strict, &resolver()), NOW)
+    let ok_req = signed_bodyless(vec![("Mcp-Protocol-Version".into(), "2026-07-28".into())]);
+    verify_bodyless_under(&ok_req, &strict, NOW)
         .expect("a supported version must verify under the same contract");
 
     // There is no policy without a contract: the default carries this profile's own
     // version, so the same message is refused there too.
     assert_eq!(
-        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
+        verify_bodyless(&req).unwrap_err(),
         HttpProfileError::McpProtocolVersionUnsupported,
         "a policy that names no versions still has a contract",
     );
@@ -787,24 +569,10 @@ fn a_configured_transport_contract_is_refused_rather_than_ignored() {
 /// this path admits only because the path asks `check_params`, and this is the witness.
 #[test]
 fn a_bodyless_request_outside_its_signature_window_is_refused() {
-    let mut req = HttpRequest {
-        method: "DELETE".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![],
-        body: Vec::new(),
-    };
-    sign_bodyless_request(
-        &mut req,
-        &client_key(),
-        CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
-        &unique_test_nonce(),
-    )
-    .expect("a bodyless request signs");
+    let req = signed_bodyless(vec![]);
     let stale = EXPIRES + policy().max_clock_skew() + 1;
     assert_eq!(
-        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), stale).unwrap_err(),
+        verify_bodyless_under(&req, &policy(), stale).unwrap_err(),
         HttpProfileError::StaleWindow,
     );
 }

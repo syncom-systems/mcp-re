@@ -15,9 +15,13 @@ use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
+use mcp_re_http_profile::McpTransportPolicy;
+use mcp_re_http_profile::RequestRoleEvidence;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_test_paths::unique_test_nonce;
 
 const CREATED: i64 = 1_700_000_000;
@@ -47,18 +51,30 @@ fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> {
 
 const BODY: &[u8] = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#;
 
-fn signed(extra: &[(&str, &str)]) -> HttpRequest {
-    let mut headers = vec![("Content-Type".to_string(), "application/json".to_string())];
-    for (k, v) in extra {
-        headers.push(((*k).to_string(), (*v).to_string()));
-    }
-    let mut r = HttpRequest {
+/// An unsigned POST of `body` carrying `headers`.
+fn post(headers: &[(&str, &str)], body: &[u8]) -> HttpRequest {
+    HttpRequest {
         method: "POST".into(),
         target_uri: "https://mcp.example.com/mcp".into(),
-        headers,
-        body: BODY.to_vec(),
-    };
-    sign_request(
+        headers: headers
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect(),
+        body: body.to_vec(),
+    }
+}
+
+/// The signer under test: the profile's signer or the as-given one.
+type Signer = fn(
+    &mut HttpRequest,
+    &SigningKey,
+    &RequestSignature<'_>,
+) -> Result<RequestRoleEvidence, HttpProfileError>;
+
+/// A POST signed by `sign` as the client.
+fn signed_by(sign: Signer, headers: &[(&str, &str)], body: &[u8]) -> HttpRequest {
+    let mut r = post(headers, body);
+    sign(
         &mut r,
         &client_key(),
         &RequestSignature {
@@ -68,8 +84,46 @@ fn signed(extra: &[(&str, &str)]) -> HttpRequest {
             nonce: &unique_test_nonce(),
         },
     )
-    .expect("signing succeeds");
+    .expect("signs");
     r
+}
+
+/// A POST signed through the profile, which derives and covers the routing headers.
+fn signed_post(headers: &[(&str, &str)], body: &[u8]) -> HttpRequest {
+    signed_by(sign_request, headers, body)
+}
+
+/// A POST signed with exactly the headers it was given.
+fn signed_post_as_given(headers: &[(&str, &str)], body: &[u8]) -> HttpRequest {
+    signed_by(sign_request_as_given, headers, body)
+}
+
+/// The standard tools/call POST with `extra` headers beside its content type.
+fn signed(extra: &[(&str, &str)]) -> HttpRequest {
+    let mut headers = vec![("Content-Type", "application/json")];
+    headers.extend_from_slice(extra);
+    signed_post(&headers, BODY)
+}
+
+/// What the verifier's floor makes of `r` under `policy`.
+fn verify_floor(r: &HttpRequest, policy: &VerifierPolicy) -> Result<(), HttpProfileError> {
+    Verifier::new(policy, &resolver())
+        .verify_request_floor(r, NOW)
+        .map(|_| ())
+}
+
+/// The refusal the verifier's floor gives `r` under `policy`.
+fn floor_error(r: &HttpRequest, policy: &VerifierPolicy) -> HttpProfileError {
+    verify_floor(r, policy).unwrap_err()
+}
+
+/// Rewrite the request's `Signature-Input` value, leaving every other header on the wire.
+fn replace_in_signature_input(r: &mut HttpRequest, from: &str, to: &str) {
+    for (name, value) in r.headers.iter_mut() {
+        if name.eq_ignore_ascii_case("signature-input") {
+            *value = value.replace(from, to);
+        }
+    }
 }
 
 fn signature_input(r: &HttpRequest) -> String {
@@ -97,9 +151,7 @@ fn mcp_transport_headers_are_covered_when_present() {
             "the signer must cover {expected} when it is present: {input}"
         );
     }
-    Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_request_floor(&r, NOW)
-        .expect("covered-and-matching verifies");
+    verify_floor(&r, &VerifierPolicy::default()).expect("covered-and-matching verifies");
 }
 
 /// A deployment whose protocol version does not define these headers never sends
@@ -117,33 +169,16 @@ fn the_signer_derives_and_covers_the_headers_and_a_request_omitting_them_is_refu
             "{covered} must be covered: {input}"
         );
     }
-    Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_request_floor(&r, NOW)
+    verify_floor(&r, &VerifierPolicy::default())
         .expect("a request the profile signed verifies under the mandatory contract");
 
     // Signed as given, with none of them: the contract is not optional, so it is refused.
-    let mut bare = HttpRequest {
-        method: "POST".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
-            .to_vec(),
-    };
-    sign_request_as_given(
-        &mut bare,
-        &client_key(),
-        &RequestSignature {
-            key_id: CLIENT_KEY_ID,
-            created: CREATED,
-            expires: EXPIRES,
-            nonce: &unique_test_nonce(),
-        },
-    )
-    .expect("signs");
+    let bare = signed_post_as_given(
+        &[("Content-Type", "application/json")],
+        br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#,
+    );
     assert_eq!(
-        Verifier::new(&VerifierPolicy::default(), &resolver())
-            .verify_request_floor(&bare, NOW)
-            .unwrap_err(),
+        floor_error(&bare, &VerifierPolicy::default()),
         HttpProfileError::McpTransportHeaderMissing("mcp-method"),
     );
 }
@@ -158,15 +193,9 @@ fn the_signer_derives_and_covers_the_headers_and_a_request_omitting_them_is_refu
 fn present_but_uncovered_mcp_method_is_rejected() {
     let mut r = signed(&[("Mcp-Method", "tools/call")]);
     // Strip it from the covered set post-signing, leaving the header on the wire.
-    for h in r.headers.iter_mut() {
-        if h.0.eq_ignore_ascii_case("signature-input") {
-            h.1 = h.1.replace(" \"mcp-method\"", "");
-        }
-    }
+    replace_in_signature_input(&mut r, " \"mcp-method\"", "");
     assert_eq!(
-        Verifier::new(&VerifierPolicy::default(), &resolver())
-            .verify_request_floor(&r, NOW)
-            .unwrap_err(),
+        floor_error(&r, &VerifierPolicy::default()),
         HttpProfileError::MissingCoveredComponent("mcp-method"),
     );
 }
@@ -174,15 +203,9 @@ fn present_but_uncovered_mcp_method_is_rejected() {
 #[test]
 fn present_but_uncovered_mcp_name_is_rejected() {
     let mut r = signed(&[("Mcp-Method", "tools/call"), ("Mcp-Name", "read")]);
-    for h in r.headers.iter_mut() {
-        if h.0.eq_ignore_ascii_case("signature-input") {
-            h.1 = h.1.replace(" \"mcp-name\"", "");
-        }
-    }
+    replace_in_signature_input(&mut r, " \"mcp-name\"", "");
     assert_eq!(
-        Verifier::new(&VerifierPolicy::default(), &resolver())
-            .verify_request_floor(&r, NOW)
-            .unwrap_err(),
+        floor_error(&r, &VerifierPolicy::default()),
         HttpProfileError::MissingCoveredComponent("mcp-name"),
     );
 }
@@ -194,31 +217,16 @@ fn present_but_uncovered_mcp_name_is_rejected() {
 /// different methods, and the verifier refuses rather than picking one.
 #[test]
 fn header_body_method_divergence_is_rejected() {
-    let mut r = HttpRequest {
-        method: "POST".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![
-            ("Content-Type".into(), "application/json".into()),
+    let r = signed_post(
+        &[
+            ("Content-Type", "application/json"),
             // The header says tools/list; the body below says tools/call.
-            ("Mcp-Method".into(), "tools/list".into()),
+            ("Mcp-Method", "tools/list"),
         ],
-        body: BODY.to_vec(),
-    };
-    sign_request(
-        &mut r,
-        &client_key(),
-        &RequestSignature {
-            key_id: CLIENT_KEY_ID,
-            created: CREATED,
-            expires: EXPIRES,
-            nonce: &unique_test_nonce(),
-        },
-    )
-    .expect("the client really does sign the contradiction");
+        BODY,
+    );
 
-    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_request_floor(&r, NOW)
-        .unwrap_err();
+    let err = floor_error(&r, &VerifierPolicy::default());
     assert_eq!(err, HttpProfileError::McpMethodDivergence);
     assert_eq!(err.wire_code(), "mcp-re.malformed_envelope");
 }
@@ -229,8 +237,7 @@ fn header_body_method_divergence_is_rejected() {
 #[test]
 fn the_divergent_request_is_otherwise_valid() {
     let r = signed(&[("Mcp-Method", "tools/call")]);
-    Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_request_floor(&r, NOW)
+    verify_floor(&r, &VerifierPolicy::default())
         .expect("the same request with an agreeing header verifies");
 }
 
@@ -244,29 +251,14 @@ fn the_divergent_request_is_otherwise_valid() {
 /// header may only accompany the `method` it mirrors.
 #[test]
 fn an_mcp_method_header_with_no_body_method_is_rejected() {
-    let mut r = HttpRequest {
-        method: "POST".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![
-            ("Content-Type".into(), "application/json".into()),
-            ("Mcp-Method".into(), "tools/call".into()),
+    let r = signed_post(
+        &[
+            ("Content-Type", "application/json"),
+            ("Mcp-Method", "tools/call"),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
-    };
-    sign_request(
-        &mut r,
-        &client_key(),
-        &RequestSignature {
-            key_id: CLIENT_KEY_ID,
-            created: CREATED,
-            expires: EXPIRES,
-            nonce: &unique_test_nonce(),
-        },
-    )
-    .expect("signing succeeds");
-    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_request_floor(&r, NOW)
-        .unwrap_err();
+        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#,
+    );
+    let err = floor_error(&r, &VerifierPolicy::default());
     assert_eq!(err, HttpProfileError::McpMethodDivergence);
     assert_eq!(err.wire_code(), "mcp-re.malformed_envelope");
 }
@@ -275,27 +267,12 @@ fn an_mcp_method_header_with_no_body_method_is_rejected() {
 /// the mandatory contract refuses it: a request the verifier admits names its method.
 #[test]
 fn a_result_shaped_body_carries_no_method_and_is_refused() {
-    let mut r = HttpRequest {
-        method: "POST".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
-    };
-    sign_request(
-        &mut r,
-        &client_key(),
-        &RequestSignature {
-            key_id: CLIENT_KEY_ID,
-            created: CREATED,
-            expires: EXPIRES,
-            nonce: &unique_test_nonce(),
-        },
-    )
-    .expect("signing succeeds");
+    let r = signed_post(
+        &[("Content-Type", "application/json")],
+        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#,
+    );
     assert_eq!(
-        Verifier::new(&VerifierPolicy::default(), &resolver())
-            .verify_request_floor(&r, NOW)
-            .unwrap_err(),
+        floor_error(&r, &VerifierPolicy::default()),
         HttpProfileError::McpTransportHeaderMissing("mcp-method"),
     );
 }
@@ -313,16 +290,13 @@ fn mcp_session_id_is_not_a_coverable_component() {
     // The signer did not cover it (it is not in the coverable set)...
     assert!(!signature_input(&r).contains("mcp-session-id"));
     // ...and a sender that hand-crafts it into the covered set is rejected.
-    for h in r.headers.iter_mut() {
-        if h.0.eq_ignore_ascii_case("signature-input") {
-            h.1 =
-                h.1.replace("\"content-type\"", "\"content-type\" \"mcp-session-id\"");
-        }
-    }
+    replace_in_signature_input(
+        &mut r,
+        "\"content-type\"",
+        "\"content-type\" \"mcp-session-id\"",
+    );
     assert_eq!(
-        Verifier::new(&VerifierPolicy::default(), &resolver())
-            .verify_request_floor(&r, NOW)
-            .unwrap_err(),
+        floor_error(&r, &VerifierPolicy::default()),
         HttpProfileError::MalformedEvidence("unknown covered component"),
     );
 }
@@ -332,16 +306,13 @@ fn mcp_session_id_is_not_a_coverable_component() {
 #[test]
 fn the_component_allowlist_is_still_closed() {
     let mut r = signed(&[]);
-    for h in r.headers.iter_mut() {
-        if h.0.eq_ignore_ascii_case("signature-input") {
-            h.1 =
-                h.1.replace("\"content-type\"", "\"content-type\" \"x-acme-custom\"");
-        }
-    }
+    replace_in_signature_input(
+        &mut r,
+        "\"content-type\"",
+        "\"content-type\" \"x-acme-custom\"",
+    );
     assert_eq!(
-        Verifier::new(&VerifierPolicy::default(), &resolver())
-            .verify_request_floor(&r, NOW)
-            .unwrap_err(),
+        floor_error(&r, &VerifierPolicy::default()),
         HttpProfileError::MalformedEvidence("unknown covered component"),
     );
 }
@@ -352,44 +323,29 @@ fn the_component_allowlist_is_still_closed() {
 // presence, the supported-version set, protocol-version/body agreement, and
 // mcp-name agreement — all enforced AFTER the signature, against protected bytes.
 
-use mcp_re_http_profile::McpTransportPolicy;
-use mcp_re_http_profile::RequestSignature;
-use mcp_re_http_profile::VerifierPolicy;
-
 fn strict_transport() -> VerifierPolicy {
     VerifierPolicy::default()
         .with_mcp_transport(McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"]))
 }
 
+/// The tools/call request for `read`, with an `Mcp-Name` header naming `named`.
+fn strict_call_naming(named: &str) -> HttpRequest {
+    signed_post(
+        &[
+            ("Content-Type", "application/json"),
+            ("Mcp-Method", "tools/call"),
+            ("Mcp-Name", named),
+            ("MCP-Protocol-Version", "2026-07-28"),
+        ],
+        BODY,
+    )
+}
+
 /// A fully-conforming 2026-07-28 request verifies under the strict contract.
 #[test]
 fn conforming_2026_request_verifies_under_the_transport_contract() {
-    let mut r = HttpRequest {
-        method: "POST".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![
-            ("Content-Type".into(), "application/json".into()),
-            ("Mcp-Method".into(), "tools/call".into()),
-            ("Mcp-Name".into(), "read".into()),
-            ("MCP-Protocol-Version".into(), "2026-07-28".into()),
-        ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
-            .to_vec(),
-    };
-    sign_request(
-        &mut r,
-        &client_key(),
-        &RequestSignature {
-            key_id: CLIENT_KEY_ID,
-            created: CREATED,
-            expires: EXPIRES,
-            nonce: &unique_test_nonce(),
-        },
-    )
-    .expect("signs");
-    Verifier::new(&strict_transport(), &resolver())
-        .verify_request_floor(&r, NOW)
-        .expect("a conforming request verifies");
+    let r = strict_call_naming("read");
+    verify_floor(&r, &strict_transport()).expect("a conforming request verifies");
 }
 
 /// A required header ABSENT is rejected — the gap the narrowed claim left open.
@@ -397,29 +353,14 @@ fn conforming_2026_request_verifies_under_the_transport_contract() {
 /// signature is valid.
 #[test]
 fn a_required_header_absent_is_rejected_through_verify() {
-    let mut r = HttpRequest {
-        method: "POST".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![
-            ("Content-Type".into(), "application/json".into()),
-            ("MCP-Protocol-Version".into(), "2026-07-28".into()),
+    let r = signed_post_as_given(
+        &[
+            ("Content-Type", "application/json"),
+            ("MCP-Protocol-Version", "2026-07-28"),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#.to_vec(),
-    };
-    sign_request_as_given(
-        &mut r,
-        &client_key(),
-        &RequestSignature {
-            key_id: CLIENT_KEY_ID,
-            created: CREATED,
-            expires: EXPIRES,
-            nonce: &unique_test_nonce(),
-        },
-    )
-    .expect("signs");
-    let err = Verifier::new(&strict_transport(), &resolver())
-        .verify_request_floor(&r, NOW)
-        .unwrap_err();
+        br#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+    );
+    let err = floor_error(&r, &strict_transport());
     assert_eq!(
         err,
         HttpProfileError::McpTransportHeaderMissing("mcp-method")
@@ -430,30 +371,15 @@ fn a_required_header_absent_is_rejected_through_verify() {
 /// An unsupported protocol version is rejected — a client's claim is not consent.
 #[test]
 fn an_unsupported_protocol_version_is_rejected_through_verify() {
-    let mut r = HttpRequest {
-        method: "POST".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![
-            ("Content-Type".into(), "application/json".into()),
-            ("Mcp-Method".into(), "initialize".into()),
-            ("MCP-Protocol-Version".into(), "1999-01-01".into()),
+    let r = signed_post(
+        &[
+            ("Content-Type", "application/json"),
+            ("Mcp-Method", "initialize"),
+            ("MCP-Protocol-Version", "1999-01-01"),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#.to_vec(),
-    };
-    sign_request(
-        &mut r,
-        &client_key(),
-        &RequestSignature {
-            key_id: CLIENT_KEY_ID,
-            created: CREATED,
-            expires: EXPIRES,
-            nonce: &unique_test_nonce(),
-        },
-    )
-    .expect("signs");
-    let err = Verifier::new(&strict_transport(), &resolver())
-        .verify_request_floor(&r, NOW)
-        .unwrap_err();
+        br#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+    );
+    let err = floor_error(&r, &strict_transport());
     assert_eq!(err, HttpProfileError::McpProtocolVersionUnsupported);
     assert_eq!(err.wire_code(), "mcp-re.unsupported_version");
 }
@@ -462,30 +388,10 @@ fn an_unsupported_protocol_version_is_rejected_through_verify() {
 /// versions. Both are protected; the verifier refuses rather than picking one.
 #[test]
 fn protocol_version_header_body_divergence_is_rejected_through_verify() {
-    let mut r = HttpRequest {
-        method: "POST".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![
-            ("Content-Type".into(), "application/json".into()),
-            ("Mcp-Method".into(), "initialize".into()),
-            ("MCP-Protocol-Version".into(), "2026-07-28".into()),
-        ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"initialize","_meta":{"io.modelcontextprotocol/protocolVersion":"2025-06-18"}}"#.to_vec(),
-    };
-    sign_request(
-        &mut r,
-        &client_key(),
-        &RequestSignature {
-            key_id: CLIENT_KEY_ID,
-            created: CREATED,
-            expires: EXPIRES,
-            nonce: &unique_test_nonce(),
-        },
-    )
-    .expect("signs");
-    let err = Verifier::new(&strict_transport(), &resolver())
-        .verify_request_floor(&r, NOW)
-        .unwrap_err();
+    let r = signed_post(&[("Content-Type", "application/json"),
+            ("Mcp-Method", "initialize"),
+            ("MCP-Protocol-Version", "2026-07-28"),], br#"{"jsonrpc":"2.0","id":1,"method":"initialize","_meta":{"io.modelcontextprotocol/protocolVersion":"2025-06-18"}}"#);
+    let err = floor_error(&r, &strict_transport());
     assert_eq!(
         err,
         HttpProfileError::McpTransportDivergence("mcp-protocol-version")
@@ -496,32 +402,8 @@ fn protocol_version_header_body_divergence_is_rejected_through_verify() {
 /// name a different tool than the signed body invokes.
 #[test]
 fn mcp_name_body_divergence_is_rejected_through_verify() {
-    let mut r = HttpRequest {
-        method: "POST".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![
-            ("Content-Type".into(), "application/json".into()),
-            ("Mcp-Method".into(), "tools/call".into()),
-            ("Mcp-Name".into(), "delete".into()),
-            ("MCP-Protocol-Version".into(), "2026-07-28".into()),
-        ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
-            .to_vec(),
-    };
-    sign_request(
-        &mut r,
-        &client_key(),
-        &RequestSignature {
-            key_id: CLIENT_KEY_ID,
-            created: CREATED,
-            expires: EXPIRES,
-            nonce: &unique_test_nonce(),
-        },
-    )
-    .expect("signs");
-    let err = Verifier::new(&strict_transport(), &resolver())
-        .verify_request_floor(&r, NOW)
-        .unwrap_err();
+    let r = strict_call_naming("delete");
+    let err = floor_error(&r, &strict_transport());
     assert_eq!(err, HttpProfileError::McpTransportDivergence("mcp-name"));
 }
 
@@ -530,25 +412,10 @@ fn mcp_name_body_divergence_is_rejected_through_verify() {
 /// headers only). This pins that the contract is opt-in and additive.
 #[test]
 fn absent_headers_verify_when_no_transport_policy_is_attached() {
-    let mut r = HttpRequest {
-        method: "POST".into(),
-        target_uri: "https://mcp.example.com/mcp".into(),
-        headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
-            .to_vec(),
-    };
-    sign_request(
-        &mut r,
-        &client_key(),
-        &RequestSignature {
-            key_id: CLIENT_KEY_ID,
-            created: CREATED,
-            expires: EXPIRES,
-            nonce: &unique_test_nonce(),
-        },
-    )
-    .expect("signs");
-    Verifier::new(&VerifierPolicy::default(), &resolver())
-        .verify_request_floor(&r, NOW)
+    let r = signed_post(
+        &[("Content-Type", "application/json")],
+        br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#,
+    );
+    verify_floor(&r, &VerifierPolicy::default())
         .expect("no transport policy: present-header integrity only, absence allowed");
 }

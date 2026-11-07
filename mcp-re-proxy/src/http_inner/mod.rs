@@ -111,6 +111,8 @@ use crate::async_inner::PreparedInnerDispatch;
 mod response_budget;
 mod selection;
 
+use selection::Claim;
+
 /// A cap on the inner response body read into memory, so a hostile/broken backend
 /// streaming an unbounded body cannot exhaust the proxy. A response exceeding it
 /// fails closed (synthesized inner error). Generous relative to real MCP responses.
@@ -318,10 +320,10 @@ impl HttpInnerPool {
     }
 
     /// Fold one dispatch outcome into the chosen backend's breaker state.
-    fn record_outcome(&self, idx: usize, is_probe: bool, ok: bool, now_nanos: u64) {
+    fn record_outcome(&self, claim: Claim, ok: bool, now_nanos: u64) {
         // Read through `get`: an outcome that cannot be attributed is one this breaker
         // must not fold into some OTHER backend's state.
-        let Some(b) = self.backends.get(idx) else {
+        let Some(b) = self.backends.get(claim.index) else {
             return;
         };
         if ok {
@@ -335,7 +337,7 @@ impl HttpInnerPool {
         // An unrepresentable cooldown saturates at the most-ejected end, never a short one.
         let cooldown = u64::try_from(self.breaker.ejection_duration.as_nanos()).unwrap_or(u64::MAX);
         let reopen = now_nanos.saturating_add(cooldown);
-        if is_probe {
+        if claim.is_probe {
             // A failed recovery trial re-ejects for another full cooldown.
             b.reopen_at_nanos.store(reopen, Ordering::Release);
             b.state.store(STATE_OPEN, Ordering::Release);
@@ -526,7 +528,7 @@ impl AsyncInnerServer for HttpInnerPool {
         // and WITHOUT queuing (bounded fail-closed, ADR-MCPRE-051 §3). The selection
         // yields the backend alongside its index, so neither is looked back up from the
         // other — and, once taken, neither is selected again at the dispatch.
-        let Some((idx, is_probe, backend)) = self.select_backend(self.now_nanos()) else {
+        let Some((claim, backend)) = self.select_backend(self.now_nanos()) else {
             return Err(NotAdmitted("every inner backend is ejected"));
         };
         // A claimed recovery probe MUST be released even if this dispatch never happens.
@@ -537,7 +539,7 @@ impl AsyncInnerServer for HttpInnerPool {
         // slot permanently claimed, never re-probed and never recovered, for the life of
         // the process. The guard releases on drop, and the drop now covers the
         // never-dispatched path too.
-        let probe = is_probe.then_some(ProbeGuard { backend });
+        let probe = claim.is_probe.then_some(ProbeGuard { backend });
         let req = Self::build_request(backend.uri.clone(), Bytes::copy_from_slice(request))?;
         let client = self.client.clone();
         let timeout = self.request_timeout;
@@ -565,7 +567,7 @@ impl AsyncInnerServer for HttpInnerPool {
                 // A budget refusal is a fact about this process, so it is not recorded; an
                 // unrecorded probe is released by `ProbeGuard` and stays re-probeable.
                 if attributable {
-                    self.record_outcome(idx, is_probe, healthy, done);
+                    self.record_outcome(claim, healthy, done);
                 }
                 outcome
             }) as InnerResponseFuture<'a>
@@ -586,28 +588,29 @@ mod tests {
     }
 
     fn pool(backends: usize, threshold: u32) -> HttpInnerPool {
-        let uris = (0..backends).map(|i| uri(9000 + i as u16)).collect();
-        HttpInnerPool::with_breaker_config(
-            uris,
-            Duration::from_secs(1),
-            BreakerConfig {
-                failure_threshold: threshold,
-                ejection_duration: Duration::from_secs(30),
-            },
-        )
-        .expect("pool")
+        pool_with(9000, backends, threshold, Duration::from_secs(30))
     }
 
     /// A pool whose ejected backends become probe-eligible immediately, so `prepare`'s
     /// use of the real monotonic clock still lands past the cooldown.
     fn pool_no_cooldown(backends: usize, threshold: u32) -> HttpInnerPool {
-        let uris = (0..backends).map(|i| uri(9100 + i as u16)).collect();
+        pool_with(9100, backends, threshold, Duration::ZERO)
+    }
+
+    /// A pool of `backends` loopback backends from `first_port`, ejecting for `cooldown`.
+    fn pool_with(
+        first_port: u16,
+        backends: usize,
+        threshold: u32,
+        cooldown: Duration,
+    ) -> HttpInnerPool {
+        let uris = (0..backends).map(|i| uri(first_port + i as u16)).collect();
         HttpInnerPool::with_breaker_config(
             uris,
             Duration::from_secs(1),
             BreakerConfig {
                 failure_threshold: threshold,
-                ejection_duration: Duration::ZERO,
+                ejection_duration: cooldown,
             },
         )
         .expect("pool")
@@ -616,8 +619,8 @@ mod tests {
     #[test]
     fn preparing_claims_the_recovery_probe_and_dropping_it_gives_the_probe_back() {
         let p = pool_no_cooldown(1, 1);
-        let (i, pr, _) = p.select_backend(0).unwrap();
-        p.record_outcome(i, pr, false, 0); // ejected, reopen_at = now
+        let (claim, _) = p.select_backend(0).unwrap();
+        p.record_outcome(claim, false, 0); // ejected, reopen_at = now
         assert_eq!(p.ejected_backend_count(), 1);
 
         // Preparing takes the single trial slot — it does not predict that the slot will
@@ -647,11 +650,11 @@ mod tests {
         );
 
         // And the probe is still there for the next attempt to claim and recover on.
-        let (pi, is_probe, _) = p
+        let (claim, _) = p
             .select_backend(p.now_nanos())
             .expect("the probe survives a preparation that never dispatched");
-        assert!(is_probe, "the claim is a Half-Open trial");
-        p.record_outcome(pi, is_probe, true, p.now_nanos());
+        assert!(claim.is_probe, "the claim is a Half-Open trial");
+        p.record_outcome(claim, true, p.now_nanos());
         assert_eq!(p.ejected_backend_count(), 0, "the backend recovered");
     }
 
@@ -659,8 +662,8 @@ mod tests {
     fn preparing_refuses_only_while_every_backend_is_ejected() {
         let p = pool(1, 1); // 30s cooldown: stays ejected for the whole test
         assert!(p.prepare(b"{}").is_ok(), "healthy backend is admissible");
-        let (i, pr, _) = p.select_backend(0).unwrap();
-        p.record_outcome(i, pr, false, 0);
+        let (claim, _) = p.select_backend(0).unwrap();
+        p.record_outcome(claim, false, 0);
         assert!(
             p.prepare(b"{}").is_err(),
             "an Open backend inside its cooldown is not admissible"
@@ -704,23 +707,26 @@ mod tests {
         let cooldown = DEFAULT_EJECTION_DURATION.as_nanos() as u64;
         // Eject both backends.
         for _ in 0..2 {
-            let (i, pr, _) = p.select_backend(0).unwrap();
-            p.record_outcome(i, pr, false, 0);
+            let (claim, _) = p.select_backend(0).unwrap();
+            p.record_outcome(claim, false, 0);
         }
         assert_eq!(p.ejected_backend_count(), 2);
         assert!(
             p.select_backend(1).is_none(),
             "inside the cooldown nothing is dispatchable"
         );
-        let (first, is_probe, _) = p
+        let (first, _) = p
             .select_backend(cooldown + 1)
             .expect("past the cooldown a probe is available");
-        assert!(is_probe);
-        let (second, is_probe, _) = p
+        assert!(first.is_probe);
+        let (second, _) = p
             .select_backend(cooldown + 1)
             .expect("the OTHER backend is still probe-eligible");
-        assert!(is_probe);
-        assert_ne!(first, second, "one probe slot per backend, not per call");
+        assert!(second.is_probe);
+        assert_ne!(
+            first.index, second.index,
+            "one probe slot per backend, not per call"
+        );
         assert!(
             p.select_backend(cooldown + 1).is_none(),
             "both trial slots are claimed, so there is nothing left to take"
@@ -730,10 +736,13 @@ mod tests {
     #[test]
     fn healthy_backend_selected_and_closed_stays_closed_on_success() {
         let p = pool(1, 3);
-        let (idx, is_probe, _) = p.select_backend(0).expect("dispatchable");
-        assert_eq!(idx, 0);
-        assert!(!is_probe, "a Closed backend is normal traffic, not a probe");
-        p.record_outcome(idx, is_probe, true, 0);
+        let (claim, _) = p.select_backend(0).expect("dispatchable");
+        assert_eq!(claim.index, 0);
+        assert!(
+            !claim.is_probe,
+            "a Closed backend is normal traffic, not a probe"
+        );
+        p.record_outcome(claim, true, 0);
         assert_eq!(p.ejected_backend_count(), 0);
     }
 
@@ -743,7 +752,7 @@ mod tests {
         p.backends[0]
             .consecutive_failures
             .store(u32::MAX, Ordering::Release);
-        p.record_outcome(0, false, false, 0);
+        p.record_outcome(Claim::closed(0), false, 0);
         assert_eq!(
             p.backends[0].consecutive_failures.load(Ordering::Acquire),
             u32::MAX
@@ -762,8 +771,8 @@ mod tests {
             },
         )
         .expect("pool");
-        let (idx, probe, _) = p.select_backend(0).expect("selectable");
-        p.record_outcome(idx, probe, false, 0);
+        let (claim, _) = p.select_backend(0).expect("selectable");
+        p.record_outcome(claim, false, 0);
         assert!(p.select_backend(1).is_none());
     }
 
@@ -772,15 +781,15 @@ mod tests {
         let p = pool(1, 3);
         // Two failures: still Closed (below threshold), still selectable.
         for _ in 0..2 {
-            let (idx, probe, _) = p.select_backend(0).expect("still selectable");
-            p.record_outcome(idx, probe, false, 0);
+            let (claim, _) = p.select_backend(0).expect("still selectable");
+            p.record_outcome(claim, false, 0);
         }
         assert_eq!(p.ejected_backend_count(), 0, "below threshold stays Closed");
         // Third failure trips it Open (ejected).
-        let (idx, probe, _) = p
+        let (claim, _) = p
             .select_backend(0)
             .expect("still selectable at threshold-1");
-        p.record_outcome(idx, probe, false, 0);
+        p.record_outcome(claim, false, 0);
         assert_eq!(
             p.ejected_backend_count(),
             1,
@@ -792,15 +801,15 @@ mod tests {
     fn a_success_resets_the_failure_run() {
         let p = pool(1, 3);
         for _ in 0..2 {
-            let (i, pr, _) = p.select_backend(0).unwrap();
-            p.record_outcome(i, pr, false, 0);
+            let (claim, _) = p.select_backend(0).unwrap();
+            p.record_outcome(claim, false, 0);
         }
-        let (i, pr, _) = p.select_backend(0).unwrap();
-        p.record_outcome(i, pr, true, 0); // success resets the run
-                                          // Two more failures must NOT eject (run restarted at the success).
+        let (claim, _) = p.select_backend(0).unwrap();
+        // A success resets the run, so two more failures must NOT eject.
+        p.record_outcome(claim, true, 0);
         for _ in 0..2 {
-            let (i, pr, _) = p.select_backend(0).unwrap();
-            p.record_outcome(i, pr, false, 0);
+            let (claim, _) = p.select_backend(0).unwrap();
+            p.record_outcome(claim, false, 0);
         }
         assert_eq!(
             p.ejected_backend_count(),
@@ -812,9 +821,10 @@ mod tests {
     #[test]
     fn all_open_selection_returns_none_before_cooldown() {
         let p = pool(1, 1); // one failure ejects
-        let (i, pr, _) = p.select_backend(0).unwrap();
-        p.record_outcome(i, pr, false, 0); // now Open with reopen_at = ejection_duration
-                                           // Before cooldown elapses, nothing is dispatchable — caller fails closed.
+        let (claim, _) = p.select_backend(0).unwrap();
+        // Now Open with reopen_at = ejection_duration; before the cooldown elapses nothing
+        // is dispatchable, so the caller fails closed.
+        p.record_outcome(claim, false, 0);
         assert!(
             p.select_backend(1).is_none(),
             "an Open backend is not dispatched to before cooldown"
@@ -825,25 +835,28 @@ mod tests {
     #[test]
     fn open_backend_readmitted_as_probe_after_cooldown_then_closes_on_success() {
         let p = pool(1, 1);
-        let (i, pr, _) = p.select_backend(0).unwrap();
-        p.record_outcome(i, pr, false, 0);
+        let (claim, _) = p.select_backend(0).unwrap();
+        p.record_outcome(claim, false, 0);
         let cooldown = DEFAULT_EJECTION_DURATION.as_nanos() as u64;
         // After the cooldown, selection admits exactly one Half-Open probe.
-        let (pi, is_probe, _) = p
+        let (probe, _) = p
             .select_backend(cooldown + 1)
             .expect("probe admitted after cooldown");
-        assert!(is_probe, "post-cooldown re-admission is a trial probe");
+        assert!(
+            probe.is_probe,
+            "post-cooldown re-admission is a trial probe"
+        );
         // A concurrent second request finds the probe in flight and is turned away.
         assert!(
             p.select_backend(cooldown + 1).is_none(),
             "only one probe in flight at a time"
         );
         // Probe success fully closes the breaker → back to normal traffic.
-        p.record_outcome(pi, is_probe, true, cooldown + 2);
+        p.record_outcome(probe, true, cooldown + 2);
         assert_eq!(p.ejected_backend_count(), 0);
-        let (_, back_to_normal, _) = p.select_backend(cooldown + 3).expect("healthy again");
+        let (normal, _) = p.select_backend(cooldown + 3).expect("healthy again");
         assert!(
-            !back_to_normal,
+            !normal.is_probe,
             "a recovered backend takes normal (non-probe) traffic"
         );
     }
@@ -851,11 +864,11 @@ mod tests {
     #[test]
     fn failed_probe_reopens_for_another_cooldown() {
         let p = pool(1, 1);
-        let (i, pr, _) = p.select_backend(0).unwrap();
-        p.record_outcome(i, pr, false, 0);
+        let (claim, _) = p.select_backend(0).unwrap();
+        p.record_outcome(claim, false, 0);
         let cooldown = DEFAULT_EJECTION_DURATION.as_nanos() as u64;
-        let (pi, is_probe, _) = p.select_backend(cooldown + 1).expect("probe admitted");
-        p.record_outcome(pi, is_probe, false, cooldown + 1); // probe fails
+        let (probe, _) = p.select_backend(cooldown + 1).expect("probe admitted");
+        p.record_outcome(probe, false, cooldown + 1); // probe fails
         assert_eq!(p.ejected_backend_count(), 1, "a failed probe re-ejects");
         assert!(
             p.select_backend(cooldown + 2).is_none(),
@@ -874,14 +887,17 @@ mod tests {
         // Fail backend 0 into Open; leave backend 1 healthy.
         // Force selection onto index 0 first by draining the round-robin cursor.
         // With 2 backends the cursor alternates; eject whichever we hit until one is Open.
-        let (i0, pr0, _) = p.select_backend(0).unwrap();
-        p.record_outcome(i0, pr0, false, 0);
+        let (first, _) = p.select_backend(0).unwrap();
+        p.record_outcome(first, false, 0);
         assert_eq!(p.ejected_backend_count(), 1);
         // Every subsequent selection must avoid the Open backend and pick the healthy one.
         for _ in 0..8 {
-            let (i, is_probe, _) = p.select_backend(0).expect("a healthy backend remains");
-            assert_ne!(i, i0, "LB must not route to the ejected backend");
-            assert!(!is_probe, "the healthy backend is normal traffic");
+            let (claim, _) = p.select_backend(0).expect("a healthy backend remains");
+            assert_ne!(
+                claim.index, first.index,
+                "LB must not route to the ejected backend"
+            );
+            assert!(!claim.is_probe, "the healthy backend is normal traffic");
         }
     }
 
