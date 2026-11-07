@@ -35,6 +35,7 @@ import json
 import pathlib
 import sys
 import time
+from typing import NamedTuple
 
 import anyio
 import httpx
@@ -118,193 +119,216 @@ def base_config(target: str, created: int, poster_nonce, **over) -> McpReConfig:
     return McpReConfig(**args)
 
 
-async def record(target: str, created: int) -> dict:
-    exchanges = []
-    elicitation = {}
+def _exchange_entry(body: bytes, response) -> dict:
+    """One recorded exchange: the request bytes the adapter signed and the reply they drew."""
+    return {
+        # The exact bytes the adapter signed. Replay asserts it reproduces these, which is
+        # what makes serving the recorded reply legitimate.
+        "request_body_b64": b64(body),
+        "status": response.status_code,
+        "headers": [[k, v] for k, v in response.headers.items()],
+        "body_b64": b64(response.content),
+    }
 
-    async with httpx.AsyncClient(timeout=15) as http:
 
-        async def poster(method, target_uri, headers, body) -> HttpReply:
-            r = await http.request(method, target_uri, headers=dict(headers), content=body)
-            exchanges.append(
-                {
-                    # The exact bytes the adapter signed. Replay asserts it reproduces
-                    # these, which is what makes serving the recorded reply legitimate.
-                    "request_body_b64": b64(body),
-                    "status": r.status_code,
-                    "headers": [[k, v] for k, v in r.headers.items()],
-                    "body_b64": b64(r.content),
-                }
-            )
-            # 202 is the accepted-notification acknowledgement (#418 §3.4); 200 is an
-            # ordinary bodied reply. Anything else means the proxy refused a message
-            # this recording depends on.
-            if r.status_code not in (200, 202):
-                raise SystemExit(f"proxy refused a recording request: {r.status_code} {r.text[:200]}")
-            return HttpReply(status=r.status_code, headers=list(r.headers.items()), body=r.content)
+def _http_reply(response) -> HttpReply:
+    return HttpReply(
+        status=response.status_code, headers=list(response.headers.items()), body=response.content
+    )
 
-        config = base_config(target, created, nonce_sequence())
 
-        # Drive the script EXPLICITLY rather than through `ClientSession`. The recording
-        # pins exact request bytes, and the JSON-RPC id counter belongs to the session
-        # layer: at MCP 2.0 the two official SDKs disagree about it (`mcp` numbers from 1
-        # and adds an empty `params._meta`; `@modelcontextprotocol/client` numbers from 0
-        # and adds neither), so a recording captured through either session could not be
-        # replayed by the other. Both SDKs replay THIS fixture, so what it records has to
-        # be the bytes the ADAPTER produces for a fixed script.
-        async with mcp_re_http_transport(config, poster) as (read, write):
-            await write.send(
-                SessionMessage(
-                    JSONRPCRequest(
-                        jsonrpc="2.0",
-                        id=0,
-                        method="initialize",
-                        params={
-                            "capabilities": {},
-                            "clientInfo": CLIENT_INFO,
-                            "protocolVersion": PROTOCOL_VERSION,
-                        },
-                    )
+def _session_poster(http, exchanges: list):
+    async def poster(method, target_uri, headers, body) -> HttpReply:
+        r = await http.request(method, target_uri, headers=dict(headers), content=body)
+        exchanges.append(_exchange_entry(body, r))
+        # 202 is the accepted-notification acknowledgement (#418 §3.4); 200 is an
+        # ordinary bodied reply. Anything else means the proxy refused a message
+        # this recording depends on.
+        if r.status_code not in (200, 202):
+            raise SystemExit(f"proxy refused a recording request: {r.status_code} {r.text[:200]}")
+        return _http_reply(r)
+
+    return poster
+
+
+async def _record_session(http, target: str, created: int) -> list:
+    """The accepted session: `initialize`, the initialized notification, one tool call.
+
+    Driven EXPLICITLY rather than through `ClientSession`. The recording pins exact request
+    bytes, and the JSON-RPC id counter belongs to the session layer: at MCP 2.0 the two
+    official SDKs disagree about it (`mcp` numbers from 1 and adds an empty `params._meta`;
+    `@modelcontextprotocol/client` numbers from 0 and adds neither), so a recording captured
+    through either session could not be replayed by the other. Both SDKs replay THIS fixture,
+    so what it records has to be the bytes the ADAPTER produces for a fixed script.
+    """
+    exchanges: list = []
+    config = base_config(target, created, nonce_sequence())
+    async with mcp_re_http_transport(config, _session_poster(http, exchanges)) as (read, write):
+        await write.send(
+            SessionMessage(
+                JSONRPCRequest(
+                    jsonrpc="2.0",
+                    id=0,
+                    method="initialize",
+                    params={
+                        "capabilities": {},
+                        "clientInfo": CLIENT_INFO,
+                        "protocolVersion": PROTOCOL_VERSION,
+                    },
                 )
             )
-            await read.receive()
-            await write.send(
-                SessionMessage(
-                    JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized")
-                )
-            )
-            await write.send(
-                SessionMessage(
-                    JSONRPCRequest(
-                        jsonrpc="2.0", id=1, method="tools/call",
-                        params={"name": TOOL, "arguments": TOOL_ARGS},
-                    )
-                )
-            )
-            await read.receive()
-
-        # --- the ADR-MCPS-047 chain: open leg + answer leg -------------------------
-        #
-        # An `InputRequiredResult` is not a `CallToolResult`, so `ClientSession` cannot
-        # carry it: the elicitation convention lives BELOW the session layer, which is
-        # where the adapter implements it. Drive the transport's streams directly, with
-        # its own nonces and a fresh correlation store.
-        #
-        # The adapter answers the elicitation itself and continues to a TERMINAL result,
-        # so both legs are recorded: the open leg the proxy pauses on, and the answer leg
-        # signed over its verified handles. A replay of the pair proves the whole chain —
-        # including that the answer leg's continuation binding is what the proxy accepts.
-        handles = []
-        elicit_nonces = iter([ELICIT_NONCE, ELICIT_ANSWER_NONCE])
-        elicit_config = base_config(
-            target,
-            created,
-            lambda: next(elicit_nonces),
-            on_input_required=handles.append,
-            answer_input_required=lambda prompt: ELICIT_ANSWERS,
         )
-        elicit_legs = []
-
-        # The OPEN leg's signed request is kept whole, so the rejection recording below
-        # can re-send the very same bytes rather than a reconstruction of them.
-        sent = {}
-
-        async def elicit_poster(method, target_uri, headers, body) -> HttpReply:
-            r = await http.request(method, target_uri, headers=dict(headers), content=body)
-            if not sent:
-                sent.update(method=method, target_uri=target_uri, headers=list(headers), body=body)
-            elicit_legs.append(
-                {
-                    "request_body_b64": b64(body),
-                    "status": r.status_code,
-                    "headers": [[k, v] for k, v in r.headers.items()],
-                    "body_b64": b64(r.content),
-                }
-            )
-            if r.status_code != 200:
-                leg = "open" if len(elicit_legs) == 1 else "answer"
-                raise SystemExit(f"proxy refused the elicitation {leg} leg: {r.status_code} {r.text[:200]}")
-            return HttpReply(status=r.status_code, headers=list(r.headers.items()), body=r.content)
-
-        async with mcp_re_http_transport(elicit_config, elicit_poster) as (read, write):
-            await write.send(
-                SessionMessage(
-                    JSONRPCRequest(
-                        jsonrpc="2.0",
-                        id=0,
-                        method="tools/call",
-                        params={"name": ELICIT_TOOL, "arguments": {}},
-                    )
+        await read.receive()
+        await write.send(
+            SessionMessage(JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized"))
+        )
+        await write.send(
+            SessionMessage(
+                JSONRPCRequest(
+                    jsonrpc="2.0", id=1, method="tools/call",
+                    params={"name": TOOL, "arguments": TOOL_ARGS},
                 )
             )
-            terminal = await read.receive()
-
-        if len(elicit_legs) != 2:
-            raise SystemExit(
-                f"expected an open leg and an answer leg, recorded {len(elicit_legs)}: "
-                "the adapter did not drive the ADR-MCPS-047 continuation to a terminal result"
-            )
-        elicit_exchange, answer_exchange = elicit_legs
-        if not hasattr(terminal.message, "result"):
-            raise SystemExit(f"the answer leg did not terminate the call: {terminal.message}")
-
-        if not handles:
-            raise SystemExit(
-                f"the backend did not elicit: {ELICIT_TOOL} returned no InputRequiredResult. "
-                "Start it via its direct-run entry point (python tools/fastmcp_inner_backend.py), "
-                "not `fastmcp run` — the latter bypasses the ConfirmActionShim."
-            )
-        # --- a signed REJECTION receipt, recorded ---------------------------------
-        #
-        # Re-send the open leg's exact bytes. Its nonce is spent, so the proxy refuses the
-        # replay with a DELEGATED rejection receipt: genuine evidence, but NOT an
-        # acceptance. The adapter must deliver it as an error — a path no accepted
-        # response can exercise.
-        rr = await http.request(
-            sent["method"], sent["target_uri"], headers=dict(sent["headers"]), content=sent["body"]
         )
-        if rr.status_code == 200:
-            raise SystemExit("the proxy accepted a replayed nonce; it should have refused it")
-        rejection = {
-            "request_body_b64": b64(sent["body"]),
-            "status": rr.status_code,
-            "headers": [[k, v] for k, v in rr.headers.items()],
-            "body_b64": b64(rr.content),
-            # Read from the TRUSTED body by the verifier, not from the HTTP status.
-            "expect_wire_code": "mcp-re.replay_detected",
-        }
+        await read.receive()
+    return exchanges
 
-        h = handles[0]
-        elicitation = {
-            "nonce": ELICIT_NONCE,
-            "tool": ELICIT_TOOL,
-            "exchange": elicit_exchange,
-            # The two evidence handles + opaque state the answer leg must sign over.
-            # `prev` is the OPEN leg's request evidence; `irr` is the input-required
-            # response's. Frozen so a replay proves the adapter surfaces the right pair.
-            "expect_handles": {
-                "prev_alg": h.prev_alg,
-                "prev_value": h.prev_value,
-                "irr_alg": h.irr_alg,
-                "irr_value": h.irr_value,
-                "request_state": h.request_state,
-            },
-            # The ANSWER leg, signed over those handles and accepted by the proxy. Its
-            # request bytes carry the continuation binding, the echoed `requestState` and
-            # the `inputResponses` — so a replay that reproduces them proves the adapter
-            # builds the continuation turn the profile specifies, not merely that it
-            # surfaced the handles.
-            "answer": {
-                "nonce": ELICIT_ANSWER_NONCE,
-                "responses": ELICIT_ANSWERS,
-                "exchange": answer_exchange,
-                # The terminal result the chain resolves to, as the application sees it:
-                # relabelled to the id the CALLER issued, not the answer leg's own.
-                "expect_result": terminal.message.result,
-                "expect_id": terminal.message.id,
-            },
-        }
 
+class _ElicitationRun(NamedTuple):
+    """What driving the elicitation chain left behind."""
+
+    legs: list
+    #: The OPEN leg's signed request, kept whole so the rejection recording can re-send the
+    #: very same bytes rather than a reconstruction of them.
+    sent: dict
+    handles: list
+    terminal: object
+
+
+def _elicit_poster(http, legs: list, sent: dict):
+    async def poster(method, target_uri, headers, body) -> HttpReply:
+        r = await http.request(method, target_uri, headers=dict(headers), content=body)
+        if not sent:
+            sent.update(method=method, target_uri=target_uri, headers=list(headers), body=body)
+        legs.append(_exchange_entry(body, r))
+        if r.status_code != 200:
+            leg = "open" if len(legs) == 1 else "answer"
+            raise SystemExit(f"proxy refused the elicitation {leg} leg: {r.status_code} {r.text[:200]}")
+        return _http_reply(r)
+
+    return poster
+
+
+async def _record_elicitation(http, target: str, created: int) -> _ElicitationRun:
+    """The ADR-MCPS-047 chain: open leg + answer leg.
+
+    An `InputRequiredResult` is not a `CallToolResult`, so `ClientSession` cannot carry it:
+    the elicitation convention lives BELOW the session layer, which is where the adapter
+    implements it. Drive the transport's streams directly, with its own nonces and a fresh
+    correlation store.
+
+    The adapter answers the elicitation itself and continues to a TERMINAL result, so both
+    legs are recorded: the open leg the proxy pauses on, and the answer leg signed over its
+    verified handles. A replay of the pair proves the whole chain — including that the
+    answer leg's continuation binding is what the proxy accepts.
+    """
+    handles: list = []
+    nonces = iter([ELICIT_NONCE, ELICIT_ANSWER_NONCE])
+    config = base_config(
+        target,
+        created,
+        lambda: next(nonces),
+        on_input_required=handles.append,
+        answer_input_required=lambda prompt: ELICIT_ANSWERS,
+    )
+    legs: list = []
+    sent: dict = {}
+    async with mcp_re_http_transport(config, _elicit_poster(http, legs, sent)) as (read, write):
+        await write.send(
+            SessionMessage(
+                JSONRPCRequest(
+                    jsonrpc="2.0",
+                    id=0,
+                    method="tools/call",
+                    params={"name": ELICIT_TOOL, "arguments": {}},
+                )
+            )
+        )
+        terminal = await read.receive()
+    return _ElicitationRun(legs, sent, handles, terminal)
+
+
+def _require_complete(run: _ElicitationRun) -> None:
+    if len(run.legs) != 2:
+        raise SystemExit(
+            f"expected an open leg and an answer leg, recorded {len(run.legs)}: "
+            "the adapter did not drive the ADR-MCPS-047 continuation to a terminal result"
+        )
+    if not hasattr(run.terminal.message, "result"):
+        raise SystemExit(f"the answer leg did not terminate the call: {run.terminal.message}")
+    if not run.handles:
+        raise SystemExit(
+            f"the backend did not elicit: {ELICIT_TOOL} returned no InputRequiredResult. "
+            "Start it via its direct-run entry point (python tools/fastmcp_inner_backend.py), "
+            "not `fastmcp run` — the latter bypasses the ConfirmActionShim."
+        )
+
+
+async def _record_rejection(http, sent: dict) -> dict:
+    """A signed REJECTION receipt, recorded.
+
+    Re-send the open leg's exact bytes. Its nonce is spent, so the proxy refuses the replay
+    with a DELEGATED rejection receipt: genuine evidence, but NOT an acceptance. The adapter
+    must deliver it as an error — a path no accepted response can exercise.
+    """
+    rr = await http.request(
+        sent["method"], sent["target_uri"], headers=dict(sent["headers"]), content=sent["body"]
+    )
+    if rr.status_code == 200:
+        raise SystemExit("the proxy accepted a replayed nonce; it should have refused it")
+    return {
+        **_exchange_entry(sent["body"], rr),
+        # Read from the TRUSTED body by the verifier, not from the HTTP status.
+        "expect_wire_code": "mcp-re.replay_detected",
+    }
+
+
+def _elicitation_section(run: _ElicitationRun) -> dict:
+    h = run.handles[0]
+    open_leg, answer_leg = run.legs
+    return {
+        "nonce": ELICIT_NONCE,
+        "tool": ELICIT_TOOL,
+        "exchange": open_leg,
+        # The two evidence handles + opaque state the answer leg must sign over.
+        # `prev` is the OPEN leg's request evidence; `irr` is the input-required
+        # response's. Frozen so a replay proves the adapter surfaces the right pair.
+        "expect_handles": {
+            "prev_alg": h.prev_alg,
+            "prev_value": h.prev_value,
+            "irr_alg": h.irr_alg,
+            "irr_value": h.irr_value,
+            "request_state": h.request_state,
+        },
+        # The ANSWER leg, signed over those handles and accepted by the proxy. Its
+        # request bytes carry the continuation binding, the echoed `requestState` and
+        # the `inputResponses` — so a replay that reproduces them proves the adapter
+        # builds the continuation turn the profile specifies, not merely that it
+        # surfaced the handles.
+        "answer": {
+            "nonce": ELICIT_ANSWER_NONCE,
+            "responses": ELICIT_ANSWERS,
+            "exchange": answer_leg,
+            # The terminal result the chain resolves to, as the application sees it:
+            # relabelled to the id the CALLER issued, not the answer leg's own.
+            "expect_result": run.terminal.message.result,
+            "expect_id": run.terminal.message.id,
+        },
+    }
+
+
+def _identity_fields(target: str, created: int) -> dict:
+    """The recorded session's own configuration: who signed, for whom, under which root."""
     return {
         "_comment": (
             "RECORDED delegated exchanges from the real http_profile_proxy, captured "
@@ -343,6 +367,32 @@ async def record(target: str, created: int) -> dict:
         # The delegated kid the credential authorizes, for the revocation test.
         "delegated_key_id": "server-key-1/delegated/1",
         "tool": {"name": TOOL, "arguments": TOOL_ARGS},
+    }
+
+
+def _expectations() -> dict:
+    return {
+        "server_name": "mcp-re-inner-backend",
+        "structured_content": {"result": 42},
+        "text": "42",
+        # `initialize` params carry the MCP client LIBRARY's identity and the
+        # negotiated protocol revision, not MCP-RE's. Recorded so BOTH languages'
+        # replays announce the same thing and the request bytes stay comparable — a
+        # difference here would say nothing about either SDK.
+        "client_info": CLIENT_INFO,
+        "protocol_version": PROTOCOL_VERSION,
+    }
+
+
+async def record(target: str, created: int) -> dict:
+    async with httpx.AsyncClient(timeout=15) as http:
+        exchanges = await _record_session(http, target, created)
+        run = await _record_elicitation(http, target, created)
+        _require_complete(run)
+        rejection = await _record_rejection(http, run.sent)
+        elicitation = _elicitation_section(run)
+    return {
+        **_identity_fields(target, created),
         # In order: initialize, the client->server notifications/initialized (answered
         # with a signed bodyless 202), tools/call, then the tools/list the MCP SDK issues
         # to validate structuredContent.
@@ -351,17 +401,7 @@ async def record(target: str, created: int) -> dict:
         "elicitation": elicitation,
         # A delegated rejection receipt for the open leg's replayed bytes.
         "rejection": rejection,
-        "expect": {
-            "server_name": "mcp-re-inner-backend",
-            "structured_content": {"result": 42},
-            "text": "42",
-            # `initialize` params carry the MCP client LIBRARY's identity and the
-            # negotiated protocol revision, not MCP-RE's. Recorded so BOTH languages'
-            # replays announce the same thing and the request bytes stay comparable — a
-            # difference here would say nothing about either SDK.
-            "client_info": CLIENT_INFO,
-            "protocol_version": PROTOCOL_VERSION,
-        },
+        "expect": _expectations(),
     }
 
 
