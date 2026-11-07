@@ -559,6 +559,8 @@ _PROXY_LIB_SRCS = [
     "src/startup_plan/channel_establishment_plan.rs",
     "src/startup_plan/mod.rs",
     "src/startup_plan/response_authority.rs",
+    "src/startup_plan/signing_plan.rs",
+    "src/startup_plan/trust_epoch_plan.rs",
     # ADR-MCPRE-056 §5.4: the optional-capability posture vocabulary — every seam
     # states ON or OFF, and an undeclared seam fails the debug build. Crate-internal.
     "src/startup_posture.rs",

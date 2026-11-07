@@ -584,22 +584,6 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/startup_plan/mod.rs"
-# MCPRE-197: the inner-plane ceiling and raise left with the `Option` x `Option` interface they
-# projected: 385 (measured at bff0cb9) -> 340.
-# MCPRE-209: the response-authority plans have one producer here and the signing plan's
-# fields are private behind projections: 340 (measured at c939c2f) -> 338.
-# MCPRE-208: the peer-identity provenance is part of the channel-binding state's projection,
-# so its second exhaustive match here goes: 338 (measured at 132f448) -> 312.
-# MCPRE-210: the clock-fault rule moves to the clock owner: 312 (measured at a36c92f) -> 292.
-# #1249: the channel-establishment plan is sealed in its own file, and `startup_plan.rs`
-# becomes `startup_plan/mod.rs` to declare it: 292 (measured at 099787cbf) -> 259.
-# `baseline_sha` names that parent.
-baseline_prod_loc = 259
-baseline_sha = "099787cbf"
-status = "unreviewed"
-
-[[debt]]
 path = "mcp-re-proxy/src/config_state/validation/mod.rs"
 # MCPRE-204: the three residue calls become one owner's splice. With MCPRE-203's X10 clause
 # already spliced on main: 374 (measured at 0ba3db2) -> 362. `baseline_sha` names that parent.
