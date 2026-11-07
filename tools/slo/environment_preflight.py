@@ -65,21 +65,29 @@ BUILTIN_NETWORKS = frozenset({"bridge", "host", "none"})
 EXIT_OK, EXIT_REFUSED, EXIT_UNAVAILABLE = 0, 1, 2
 
 
-def declared_class(name: str | None = None) -> dict:
-    """The class entry, read from the one declaration. Never a literal in a second place."""
-    declared = tomllib.loads(SURFACE_TOML.read_text(encoding="utf-8"))["context"]["class"]
-    if name is None:
-        claimed = [e for e in declared if e.get("github_actions_runner")]
-        if len(claimed) != 1:
-            raise SystemExit(
-                f"error: exactly one [[context.class]] must set github_actions_runner = "
-                f"true; {len(claimed)} do"
-            )
-        return claimed[0]
+def _the_runner_class(declared: list[dict]) -> dict:
+    claimed = [e for e in declared if e.get("github_actions_runner")]
+    if len(claimed) != 1:
+        raise SystemExit(
+            f"error: exactly one [[context.class]] must set github_actions_runner = "
+            f"true; {len(claimed)} do"
+        )
+    return claimed[0]
+
+
+def _named_class(declared: list[dict], name: str) -> dict:
     for entry in declared:
         if entry["name"] == name:
             return entry
     raise SystemExit(f"error: no [[context.class]] named {name!r}")
+
+
+def declared_class(name: str | None = None) -> dict:
+    """The class entry, read from the one declaration. Never a literal in a second place."""
+    declared = tomllib.loads(SURFACE_TOML.read_text(encoding="utf-8"))["context"]["class"]
+    if name is None:
+        return _the_runner_class(declared)
+    return _named_class(declared, name)
 
 
 def declared_environment(entry: dict) -> dict:
@@ -156,6 +164,56 @@ def observed_vm_storage(profile: str) -> str:
     return "<undetermined>"
 
 
+COMPARED = ("docker_server_version", "vm_cpus", "vm_memory_gib", "vm_arch",
+            "vm_storage", "redis_image_digest")
+
+
+def _unreachable(host: str, reachable: subprocess.CompletedProcess) -> dict:
+    return {"verified": False, "reachable": False, "observed": {},
+            "mismatches": [f"the declared endpoint {host} is not reachable: "
+                           f"{(reachable.stderr or '').strip()[:160]}"]}
+
+
+def _observed_vm_facts(profile: str) -> dict[str, object] | None:
+    """CPUs, memory and architecture of the colima VM, or None if they cannot be read."""
+    vm = colima(profile, "sh", "-c",
+                "echo $(nproc);"
+                " echo $(grep MemTotal /proc/meminfo | tr -dc 0-9);"
+                " echo $(uname -m)", timeout=90)
+    lines = [x for x in (vm.stdout or "").split() if x]
+    if len(lines) < 3:
+        return None
+    # /proc/meminfo is kB and the guest never sees quite the whole allocation, so this
+    # rounds up to the nearest GiB rather than comparing raw bytes -- a strict equality
+    # here would fail on every host for a reason that says nothing about drift.
+    return {"vm_cpus": int(lines[0]),
+            "vm_memory_gib": int(lines[1]) // 1024 // 1024 + 1,
+            "vm_arch": lines[2]}
+
+
+def _observed_redis_digest(host: str, image: str) -> str:
+    digests = docker(host, "images", "--digests", "--format", "{{.Repository}}:{{.Tag}} {{.Digest}}",
+                     image, timeout=60)
+    parts = (digests.stdout or "").split()
+    return parts[1] if len(parts) >= 2 else "<absent>"
+
+
+def _drift(want: dict, observed: dict) -> list[str]:
+    return [f"{field}: declared {want.get(field)!r}, observed {observed[field]!r}"
+            for field in COMPARED
+            if field in observed and observed[field] != want.get(field)]
+
+
+def _unaccounted_fields(want: dict) -> list[str]:
+    """Declared fields that are neither compared nor enforced by use.
+
+    No fourth category. Every declared field must be compared above or enforced by use;
+    anything else is an authoritative claim with nothing establishing it, which reads as
+    a guarantee while permitting the drift it names.
+    """
+    return sorted(set(want) - set(COMPARED) - ENFORCED_BY_USE)
+
+
 def verify_environment(entry: dict) -> dict:
     """Compare every declared environment field against the live plane.
 
@@ -167,49 +225,24 @@ def verify_environment(entry: dict) -> dict:
     want = declared_environment(entry)
     host = want["docker_endpoint"]
     profile = want["colima_profile"]
-    observed: dict[str, object] = {}
     mismatches: list[str] = []
 
     reachable = docker(host, "version", "--format", "{{.Server.Version}}", timeout=60)
     if reachable.returncode != 0:
-        return {"verified": False, "reachable": False, "observed": {},
-                "mismatches": [f"the declared endpoint {host} is not reachable: "
-                               f"{(reachable.stderr or '').strip()[:160]}"]}
-    observed["docker_server_version"] = reachable.stdout.strip()
+        return _unreachable(host, reachable)
+    observed: dict[str, object] = {"docker_server_version": reachable.stdout.strip()}
 
-    vm = colima(profile, "sh", "-c",
-                "echo $(nproc);"
-                " echo $(grep MemTotal /proc/meminfo | tr -dc 0-9);"
-                " echo $(uname -m)", timeout=90)
-    lines = [x for x in (vm.stdout or "").split() if x]
-    if len(lines) >= 3:
-        observed["vm_cpus"] = int(lines[0])
-        # /proc/meminfo is kB and the guest never sees quite the whole allocation, so this
-        # rounds up to the nearest GiB rather than comparing raw bytes -- a strict equality
-        # here would fail on every host for a reason that says nothing about drift.
-        observed["vm_memory_gib"] = int(lines[1]) // 1024 // 1024 + 1
-        observed["vm_arch"] = lines[2]
-    else:
+    vm_facts = _observed_vm_facts(profile)
+    if vm_facts is None:
         mismatches.append(f"could not read VM facts from colima profile {profile!r}")
+    else:
+        observed.update(vm_facts)
 
-    digests = docker(host, "images", "--digests", "--format", "{{.Repository}}:{{.Tag}} {{.Digest}}",
-                     want["redis_image"], timeout=60)
-    parts = (digests.stdout or "").split()
-    observed["redis_image_digest"] = parts[1] if len(parts) >= 2 else "<absent>"
-
+    observed["redis_image_digest"] = _observed_redis_digest(host, want["redis_image"])
     observed["vm_storage"] = observed_vm_storage(profile)
 
-    compared = ("docker_server_version", "vm_cpus", "vm_memory_gib", "vm_arch",
-                "vm_storage", "redis_image_digest")
-    for field in compared:
-        if field in observed and observed[field] != want.get(field):
-            mismatches.append(
-                f"{field}: declared {want.get(field)!r}, observed {observed[field]!r}")
-
-    # No fourth category. Every declared field must be compared above or enforced by use;
-    # anything else is an authoritative claim with nothing establishing it, which reads as
-    # a guarantee while permitting the drift it names.
-    unaccounted = sorted(set(want) - set(compared) - ENFORCED_BY_USE)
+    mismatches += _drift(want, observed)
+    unaccounted = _unaccounted_fields(want)
     if unaccounted:
         mismatches.append(
             f"declared environment field(s) {unaccounted} are neither mechanically "
@@ -219,7 +252,7 @@ def verify_environment(entry: dict) -> dict:
 
     return {"verified": not mismatches, "reachable": True,
             "endpoint": host, "declared": want, "observed": observed,
-            "compared": list(compared), "enforced_by_use": sorted(ENFORCED_BY_USE),
+            "compared": list(COMPARED), "enforced_by_use": sorted(ENFORCED_BY_USE),
             "unaccounted": unaccounted, "mismatches": mismatches}
 
 
@@ -228,24 +261,32 @@ def verify_environment(entry: dict) -> dict:
 # ==========================================================================================
 
 
+def _listed(host: str, *command: str) -> list[str]:
+    return [x for x in (docker(host, *command).stdout or "").split() if x]
+
+
+def _containers(host: str) -> list[dict]:
+    listing = docker(host, "ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Labels}}")
+    rows = []
+    for line in (listing.stdout or "").splitlines():
+        if not line.strip():
+            continue
+        cid, name, image, labels = (line.split("\t") + ["", "", ""])[:4]
+        rows.append({"id": cid, "name": name, "image": image, "labels": labels})
+    return rows
+
+
 def inspect_plane(entry: dict) -> dict:
     """Everything on the daemon, sorted into the baseline and what falls outside it."""
     want = declared_environment(entry)
     host = want["docker_endpoint"]
     approved_images = {want["redis_image"]}
 
-    containers = []
-    listing = docker(host, "ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Labels}}")
-    for line in (listing.stdout or "").splitlines():
-        if not line.strip():
-            continue
-        cid, name, image, labels = (line.split("\t") + ["", "", ""])[:4]
-        containers.append({"id": cid, "name": name, "image": image, "labels": labels})
-
-    networks = [n for n in (docker(host, "network", "ls", "--format", "{{.Name}}").stdout or "").split()
+    containers = _containers(host)
+    networks = [n for n in _listed(host, "network", "ls", "--format", "{{.Name}}")
                 if n not in BUILTIN_NETWORKS]
-    volumes = [v for v in (docker(host, "volume", "ls", "-q").stdout or "").split() if v]
-    images = [i for i in (docker(host, "images", "--format", "{{.Repository}}:{{.Tag}}").stdout or "").split() if i]
+    volumes = _listed(host, "volume", "ls", "-q")
+    images = _listed(host, "images", "--format", "{{.Repository}}:{{.Tag}}")
     unapproved_images = [i for i in images if i not in approved_images]
 
     return {

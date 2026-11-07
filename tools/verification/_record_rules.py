@@ -26,7 +26,7 @@ def load_registry(path: Path) -> dict:
 
 
 #: Keys a unit may no longer declare because the fact has ONE authority elsewhere. Named
-#: rather than merely unknown, for the reason `_theorems._DUPLICATED_AUTHORITY` exists: the
+#: rather than merely unknown, for the reason `_theorem_entries._DUPLICATED_AUTHORITY` exists: the
 #: generic message sends a reader looking for a typo when the real answer is "that fact is
 #: declared elsewhere, and declaring it twice is how the two disagree".
 _MOVED_AUTHORITY = {
