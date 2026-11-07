@@ -418,7 +418,7 @@ reason had not yet become true.
 
 ## ND-011 — a carrier the legality model admits no deployment to reach
 
-**Covers:** every control in `mcp-re-proxy/src/ocsp.rs` (38).
+**Covers:** every control in `mcp-re-proxy/src/ocsp.rs` and in its child modules, `mcp-re-proxy/src/ocsp/*.rs`.
 **Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 11.
 **Scope:** `carrier-scope: admitted`.
 

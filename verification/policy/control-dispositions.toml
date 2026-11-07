@@ -3905,6 +3905,78 @@ carrier = "mcp-re-proxy/src/ocsp.rs"
 reason_family = "ND-011"
 recorded = "2026-09-19"
 
+[[disposition]]
+id = "CD-9002"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "mcp-re-proxy/src/ocsp/cert_id.rs"
+reason_family = "ND-011"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9003"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "mcp-re-proxy/src/ocsp/delegated_responder.rs"
+reason_family = "ND-011"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9004"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "mcp-re-proxy/src/ocsp/fetch.rs"
+reason_family = "ND-011"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9005"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "mcp-re-proxy/src/ocsp/freshness.rs"
+reason_family = "ND-011"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9006"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "mcp-re-proxy/src/ocsp/issuer.rs"
+reason_family = "ND-011"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9007"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "mcp-re-proxy/src/ocsp/pipeline.rs"
+reason_family = "ND-011"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9008"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "mcp-re-proxy/src/ocsp/request.rs"
+reason_family = "ND-011"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9009"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "mcp-re-proxy/src/ocsp/sha1.rs"
+reason_family = "ND-011"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9010"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "mcp-re-proxy/src/ocsp/signer.rs"
+reason_family = "ND-011"
+recorded = "2026-09-19"
+
 
 
 [[disposition]]
