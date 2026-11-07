@@ -144,12 +144,24 @@ def test_an_unavailable_probe_is_named_in_the_verdict_line():
     assert "unavailable.append" in body
 
 
-def test_the_fast_job_declares_what_it_skips():
-    """The workflow step was called "Apply every registered probe". With the flag that
-    sentence is false, and a step name is what a reader takes the job to have measured."""
+def test_the_probe_job_prepares_the_matrix_it_measures_in():
+    """The SDK shards prepare their matrix and the lane then runs WITHOUT the skip flag.
+
+    A shard that selects SDK probes without preparing the matrix they run in reads every one
+    of them UNAVAILABLE, and a shard that selected only those has measured nothing: red, for
+    a lane that was supposed to have a prepared environment. So the workflow prepares each
+    matrix with the same script the complete run uses, in a step the lane cannot precede,
+    and passes no flag that would turn an absent environment back into a skipped probe.
+    """
     workflow = (lane.REPO_ROOT / ".github/workflows/mutation-probe.yml").read_text()
-    assert "--skip-unprepared" in workflow
+    assert "--skip-unprepared" not in workflow
     assert "Apply every registered probe" not in workflow
+    prepare_python = workflow.index("./scripts/prepare_python_matrix.sh")
+    prepare_node = workflow.index("./scripts/prepare_node_matrix.sh")
+    applied = workflow.index("tools/verification/verify-mutations ${{ matrix.args }}")
+    assert prepare_python < applied and prepare_node < applied
+    assert "if: matrix.prepare == 'python'" in workflow
+    assert "if: matrix.prepare == 'typescript'" in workflow
 
 
 def test_skipping_every_probe_is_not_a_pass():
