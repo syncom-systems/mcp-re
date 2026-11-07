@@ -36,7 +36,10 @@
 # so one job applies at most 20 units' probes only when they are few. The selected units are
 # packed, in id order so a shard's units share their crate's build, into shards of at most 25
 # probes, each its own job under the same 30 minute bound. The weekly complete run is sharded
-# the same way, which is the only way its 568 probes fit the bound at all. The check the
+# the same way, which is the only way its 568 probes fit the bound at all. The SDK units'
+# probes are the exception to the packing: each SDK is a shard of its own that prepares its
+# matrix first (the Python wheel environment, or the pinned Node runtimes), beside the Rust
+# shards rather than in front of them. The check the
 # merge-readiness gate reads is `verdict`, which composes every shard's verdict line and is
 # green only when each of the shards the scope decided on reported PASS.
 
@@ -153,9 +156,11 @@ jobs:
             exit 0
           fi
           # The shards: the selected units in id order, so the units of one crate share a shard
-          # and its build, packed into shards of at most 25 probes. An SDK unit's probes are
-          # UNAVAILABLE here (no SDK matrix is built), so they ride with the first shard rather
-          # than forming a shard that would measure nothing.
+          # and its build, packed into shards of at most 25 probes. The SDK units are the
+          # exception: each SDK's probes form a shard of their own, marked with the matrix that
+          # shard must prepare (`prepare`), so the wheel build and the Node install run in
+          # parallel with the Rust shards rather than in front of them, and no Rust shard waits
+          # on a matrix it does not use.
           python3 - "$units" >> "$GITHUB_OUTPUT" <<'EOF'
           import json, math, sys, tomllib
           probes = tomllib.load(open("verification/policy/mutation-probes.toml", "rb"))["probe"]
@@ -163,20 +168,24 @@ jobs:
           for probe in probes:
               weight[probe["unit"]] = weight.get(probe["unit"], 0) + 1
           units = sorted(set(open(sys.argv[1]).read().split()))
-          sdk = [u for u in units if u.startswith(("sdk_python.", "sdk_typescript."))]
-          rest = [u for u in units if u not in sdk]
+          sdk_python = [u for u in units if u.startswith("sdk_python.")]
+          sdk_typescript = [u for u in units if u.startswith("sdk_typescript.")]
+          rest = [u for u in units if u not in sdk_python and u not in sdk_typescript]
           load = sum(weight.get(u, 0) for u in rest)
           per = math.ceil(load / math.ceil(load / 25)) if load else 0
-          bins = [[0, []]]
+          bins = [[0, [], ""]]
           for unit in rest:
               if bins[-1][1] and bins[-1][0] + weight.get(unit, 0) > per:
-                  bins.append([0, []])
+                  bins.append([0, [], ""])
               bins[-1][0] += weight.get(unit, 0)
               bins[-1][1].append(unit)
-          bins[0][1] += sdk
+          bins = [b for b in bins if b[1]]
+          for prepare, group in (("python", sdk_python), ("typescript", sdk_typescript)):
+              if group:
+                  bins.append([sum(weight.get(u, 0) for u in group), group, prepare])
           for i, b in enumerate(bins):
-              print(f"shard {i}: {b[0]} probe(s) over {len(b[1])} unit(s)", file=sys.stderr)
-          shards = [{"shard": i, "args": " ".join(f"--unit {u}" for u in b[1])} for i, b in enumerate(bins)]
+              print(f"shard {i}: {b[0]} probe(s) over {len(b[1])} unit(s)" + (f", prepares the {b[2]} matrix" if b[2] else ""), file=sys.stderr)
+          shards = [{"shard": i, "args": " ".join(f"--unit {u}" for u in b[1]), "prepare": b[2]} for i, b in enumerate(bins)]
           print("shards=" + json.dumps(shards, separators=(",", ":")))
           print(f"shard-count={len(shards)}")
           EOF
@@ -216,24 +225,47 @@ jobs:
       - name: Mutation-lane self-tests
         run: python3 tools/verification/test_mutation_lane.py
 
+      # THE SDK MATRICES, PREPARED BY THE SHARD THAT NEEDS THEM. A probe over an `sdk_python.*`
+      # unit needs the Bazel-built abi3 wheel installed into a pinned-interpreter environment,
+      # and one over an `sdk_typescript.*` unit needs the pinned Node runtimes and the built
+      # native binding. They are PREPARED here, by the same scripts the complete run uses
+      # (`verification.yml`), and the lane only MEASURES: a preparation failure stops the job
+      # before the lane can state a verdict, so a matrix that did not build is a red job and
+      # never a measured one. A shard that carries no SDK unit prepares nothing and pays
+      # nothing; the SDK shards run beside the Rust shards, not in front of them.
+      - name: Install uv at a pinned version
+        if: matrix.prepare == 'python'
+        run: pipx install uv==0.12.3 && uv --version
+
+      - name: Prepare the Python SDK matrix
+        if: matrix.prepare == 'python'
+        run: ./scripts/prepare_python_matrix.sh
+
+      - name: Prepare the TypeScript SDK matrix
+        if: matrix.prepare == 'typescript'
+        run: |
+          set -euo pipefail
+          # The mTLS cases mint their X.509 material with tools/gen_mtls_test_material.py on
+          # this job's `python3`, the pinned interpreter, which carries no `cryptography`;
+          # without it every such case is skipped and the battery FAILS.
+          python3 -m pip install --quiet -r tools/requirements-mtls-test-material.txt
+          ./scripts/prepare_node_matrix.sh
+
       # Unpiped, and the verdict line is read from the exit status: a gate read through a
       # pipe reports the pipe's status, which has already turned a failed gate green once
       # in this repository. The output also goes to a file, which `verdict` composes.
       #
-      # `--skip-unprepared` because this job deliberately builds no SDK matrix. A probe over
-      # an `sdk_python.*` or `sdk_typescript.*` unit needs a maturin wheel and a four-runtime
-      # Node install, which is the umbrella run's job and is most of why it takes an hour.
-      # Those probes are reported UNAVAILABLE BY NAME and counted in the verdict line, so
-      # this job's green cannot be read as "every probe was applied" — which is why the step
-      # is no longer called that. Without the flag they FAIL here, and correctly: an absent
-      # prepared environment in a lane that was supposed to have one is a defect.
-      - name: Apply every probe this environment can run
+      # No skip-unprepared flag: every probe a shard selects is measured in the environment the
+      # shard prepared, and a probe whose environment is absent FAILS. An absent prepared
+      # environment in a lane that was supposed to have one is a defect, not a missing
+      # measurement, so it must not be reported UNAVAILABLE and passed over.
+      - name: Apply every probe this shard selected
         if: needs.scope.outputs.measure == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/shard"
           log="$RUNNER_TEMP/shard/shard-${{ matrix.shard }}.log"
           status=0
-          tools/verification/verify-mutations --skip-unprepared ${{ matrix.args }} > "$log" 2>&1 || status=$?
+          tools/verification/verify-mutations ${{ matrix.args }} > "$log" 2>&1 || status=$?
           cat "$log"
           exit "$status"
       - name: Keep this shard's output for the verdict
