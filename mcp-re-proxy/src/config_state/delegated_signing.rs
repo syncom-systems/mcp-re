@@ -297,6 +297,16 @@ mod tests {
         classify_and_validate(&config)
     }
 
+    /// The mutated request resolves no facts and reports a violation naming `needle`.
+    fn assert_refused(mutate: impl FnOnce(&mut DeploymentRequest), needle: &str, why: &str) {
+        let (facts, violations) = run(mutate);
+        assert!(facts.is_none(), "{why}");
+        assert!(
+            violations.iter().any(|v| v.contains(needle)),
+            "{violations:?}"
+        );
+    }
+
     #[test]
     fn a_legal_request_resolves_every_fact_and_reports_nothing() {
         let (facts, violations) = run(|_| {});
@@ -310,16 +320,10 @@ mod tests {
     /// The §7 hard gate. It has no default, so there is no posture to describe without it.
     #[test]
     fn an_absent_trust_epoch_names_no_posture() {
-        let (facts, violations) = run(|c| c.delegated_signing.trust_epoch = None);
-        assert!(
-            facts.is_none(),
-            "there is nothing to resolve without an epoch"
-        );
-        assert!(
-            violations
-                .iter()
-                .any(|v| v.contains("--delegated-trust-epoch")),
-            "{violations:?}"
+        assert_refused(
+            |c| c.delegated_signing.trust_epoch = None,
+            "--delegated-trust-epoch",
+            "there is nothing to resolve without an epoch",
         );
     }
 
@@ -481,16 +485,10 @@ mod tests {
     /// their defects in one run.
     #[test]
     fn a_range_defect_is_reported_and_resolves_no_facts() {
-        let (facts, violations) = run(|c| c.delegated_signing.ttl_secs = 0);
-        assert!(
-            facts.is_none(),
-            "a fact set cannot carry a window the guard refused"
-        );
-        assert!(
-            violations
-                .iter()
-                .any(|v| v.contains("--delegated-ttl-secs must be greater than 0")),
-            "{violations:?}"
+        assert_refused(
+            |c| c.delegated_signing.ttl_secs = 0,
+            "--delegated-ttl-secs must be greater than 0",
+            "a fact set cannot carry a window the guard refused",
         );
     }
 

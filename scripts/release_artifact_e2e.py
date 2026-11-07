@@ -29,6 +29,7 @@ boundary only. Needs docker (compose), openssl, and the backend's requirements
 
 import argparse
 import base64
+import dataclasses
 import http.client
 import json
 import os
@@ -139,20 +140,28 @@ def publish_trust(work, secrets):
     return b64url(org_pub)
 
 
-def write_client_config(work, secrets, client_port, tap_port, org_pub):
+@dataclasses.dataclass(frozen=True)
+class Ports:
+    """The loopback ports the client listens on and the tap terminates the client's mTLS on."""
+
+    client: int
+    tap: int
+
+
+def write_client_config(work, secrets, ports, org_pub):
     der = openssl("pkey", "-in", str(secrets / "client" / "client-signing.key"), "-outform", "DER")
     write_secret(work / "client.seed", b64url(der[-32:]))
     audience = {"audience_id": AUDIENCE, "target_uri": TARGET_URI, "route": None}
     config = {
         "local": {
-            "bind": f"127.0.0.1:{client_port}",
+            "bind": f"127.0.0.1:{ports.client}",
             "default_route": "primary",
             "request_lifetime_secs": 60,
             "max_in_flight": 8,
         },
         "identity": {"key_id": CLIENT_KEY_ID, "signing_key_seed_path": str(work / "client.seed")},
         "remote": {
-            "addr": f"127.0.0.1:{tap_port}",
+            "addr": f"127.0.0.1:{ports.tap}",
             "expected_server_name": SERVER_NAME,
             "client_cert_path": str(secrets / "client" / "client-tls.pem"),
             "client_key_path": str(secrets / "client" / "client-tls.key"),
@@ -189,27 +198,33 @@ def write_client_config(work, secrets, client_port, tap_port, org_pub):
     return path
 
 
-def read_http(sock):
-    """One HTTP/1.1 message: (head, body). The client sends `Connection: close` and the proxy
-    answers with a length, so a read to EOF or to Content-Length is complete."""
-    data = b""
-    while b"\r\n\r\n" not in data:
-        chunk = sock.recv(65536)
-        if not chunk:
-            break
-        data += chunk
-    head, _, body = data.partition(b"\r\n\r\n")
+def _content_length(head):
+    """The Content-Length the head states, or 0."""
     length = 0
     for line in head.split(b"\r\n")[1:]:
         name, _, value = line.partition(b":")
         if name.strip().lower() == b"content-length":
             length = int(value.strip())
-    while len(body) < length:
+    return length
+
+
+def _recv_until(sock, data, done):
+    """`data` extended with what the socket sends until `done(data)` or the peer closes."""
+    while not done(data):
         chunk = sock.recv(65536)
         if not chunk:
             break
-        body += chunk
-    return head, body
+        data += chunk
+    return data
+
+
+def read_http(sock):
+    """One HTTP/1.1 message: (head, body). The client sends `Connection: close` and the proxy
+    answers with a length, so a read to EOF or to Content-Length is complete."""
+    data = _recv_until(sock, b"", lambda received: b"\r\n\r\n" in received)
+    head, _, body = data.partition(b"\r\n\r\n")
+    length = _content_length(head)
+    return head, _recv_until(sock, body, lambda received: len(received) >= length)
 
 
 def proxy_connection(secrets):
@@ -383,7 +398,7 @@ class Run:
         org_pub = publish_trust(self.work, self.secrets)
         self.client_port = registry_port("mcp_re_client")
         config = write_client_config(
-            self.work, self.secrets, self.client_port, self.tap.server_address[1], org_pub
+            self.work, self.secrets, Ports(self.client_port, self.tap.server_address[1]), org_pub
         )
         checked = subprocess.run([self.args.client, "--config", str(config), "--check"],
                                  capture_output=True, text=True, timeout=STEP_TIMEOUT)
@@ -392,37 +407,49 @@ class Run:
         self.spawn([self.args.client, "--config", str(config)], log="client")
         self.wait_port(self.client_port)
 
+    def expect_backend(self, name, counts):
+        self.check(name, self.counter() == counts, str(self.counter()))
+
     def scenario(self):
         self.check("backend has seen nothing yet", self.counter() == {"posts": 0, "tools_call": 0})
+        admitted = self.admitted_call()
+        self.tampered_call()
+        for when, restarts in (
+            ("", ()),
+            (" after the proxy restarted", ("proxy",)),
+            (" after Redis restarted", ("redis", "proxy")),
+        ):
+            self.replayed_call(admitted, when, restarts)
+        self.fresh_call_after_restarts()
 
+    def admitted_call(self):
+        """A signed call, admitted and answered; the raw request the tap recorded for it."""
         status, body = self.call()
         self.check("a signed call is admitted and answered by the backend",
                    status == 200 and "hello" in body, f"{status} {body}")
-        self.check("the backend received exactly that call",
-                   self.counter() == {"posts": 1, "tools_call": 1}, str(self.counter()))
-        admitted = self.tap.recorded[-1]
+        self.expect_backend("the backend received exactly that call", {"posts": 1, "tools_call": 1})
+        return self.tap.recorded[-1]
 
+    def tampered_call(self):
         before = self.refusals("mcp-re.digest_mismatch")
         self.tap.tamper = True
         status, body = self.call()
         self.tap.tamper = False
         self.check("a call modified in flight is not answered", '"error"' in body and "hello" not in body.lower(), f"{status} {body}")
         self.check("the proxy refused it as a digest mismatch", self.refusals("mcp-re.digest_mismatch") == before + 1)
-        self.check("the backend received nothing for it",
-                   self.counter() == {"posts": 1, "tools_call": 1}, str(self.counter()))
+        self.expect_backend("the backend received nothing for it", {"posts": 1, "tools_call": 1})
 
-        for when in ("", " after the proxy restarted", " after Redis restarted"):
-            if "proxy" in when:
-                self.restart("proxy")
-            elif "Redis" in when:
-                self.restart("redis", "proxy")
-            before = self.refusals("mcp-re.replay_detected")
-            exchange_with_proxy(self.secrets, admitted)
-            self.check(f"the admitted request, replayed{when}, is refused as a replay",
-                       self.refusals("mcp-re.replay_detected") == before + 1)
-            self.check(f"the backend received nothing for it{when}",
-                       self.counter() == {"posts": 1, "tools_call": 1}, str(self.counter()))
+    def replayed_call(self, admitted, when, restarts):
+        """Replay the admitted request after restarting `restarts`; it must be refused."""
+        if restarts:
+            self.restart(*restarts)
+        before = self.refusals("mcp-re.replay_detected")
+        exchange_with_proxy(self.secrets, admitted)
+        self.check(f"the admitted request, replayed{when}, is refused as a replay",
+                   self.refusals("mcp-re.replay_detected") == before + 1)
+        self.expect_backend(f"the backend received nothing for it{when}", {"posts": 1, "tools_call": 1})
 
+    def fresh_call_after_restarts(self):
         # A restarted primary needs a few seconds to resync its replica; until the replay quorum
         # acknowledges, the proxy refuses (fail closed), and a refused call never reaches the
         # backend, which the exact counts below confirm.
@@ -433,8 +460,8 @@ class Run:
             time.sleep(2)
         self.check("a fresh signed call is admitted after the restarts",
                    status == 200 and "hello" in body, f"{status} {body}")
-        self.check("the backend received exactly the two admitted calls",
-                   self.counter() == {"posts": 2, "tools_call": 2}, str(self.counter()))
+        self.expect_backend("the backend received exactly the two admitted calls",
+                            {"posts": 2, "tools_call": 2})
 
     def teardown(self):
         for child in self.children:

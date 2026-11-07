@@ -140,13 +140,32 @@ def load_records(store: Path, lane: str) -> dict[str, EvidenceRecord]:
     return out
 
 
-def write_bundle(
-    store: Path,
-    aggregate: str,
-    lanes: dict[str, str],
-    policy_revision: str,
-    scope: tuple[str, ...] | None = None,
-) -> Path:
+@dataclass(frozen=True)
+class Bundle:
+    """The run's aggregate verdict, the lanes that carried it, and the policy it ran under.
+
+    `scope` names the units a scoped run was confined to, so a reader of the bundle can see
+    that the run was partial; the caller passes INCOMPLETE as the aggregate for such a run.
+    Omitted for a full run, which keeps a full run's bundle byte-identical to before.
+    """
+
+    aggregate: str
+    lanes: dict[str, str]
+    policy_revision: str
+    scope: tuple[str, ...] | None = None
+
+    def to_json(self) -> dict:
+        body: dict = {
+            "aggregate": self.aggregate,
+            "lanes": self.lanes,
+            "policy_revision": self.policy_revision,
+        }
+        if self.scope is not None:
+            body["scope"] = list(self.scope)
+        return body
+
+
+def write_bundle(store: Path, bundle: Bundle) -> Path:
     """The run's aggregate verdict, as a record the issuer can consume.
 
     Phase 3 of the pipeline, and the reason it is a file rather than an exit code: the
@@ -161,17 +180,10 @@ def write_bundle(
     worse a run failed, the earlier it exited and the more certainly the stale record
     survived. `verify` now writes on every path, which is what makes the file's meaning
     the one the issuer assumes.
-
-    `scope` names the units a scoped run was confined to, so a reader of the bundle can see
-    that the run was partial; the caller passes INCOMPLETE as the aggregate for such a run.
-    Omitted for a full run, which keeps a full run's bundle byte-identical to before.
     """
     store.mkdir(parents=True, exist_ok=True)
     path = store / "bundle.json"
-    body: dict = {"aggregate": aggregate, "lanes": lanes, "policy_revision": policy_revision}
-    if scope is not None:
-        body["scope"] = list(scope)
-    path.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(bundle.to_json(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
 
 
@@ -208,13 +220,126 @@ def required_lanes(unit: dict) -> set[str]:
     return lanes
 
 
-def decide_issuance(
-    units: list[dict],
-    edges: list[dict],
-    current: dict[str, dict],
-    records: dict[str, dict[str, EvidenceRecord]],
-    aggregate: str | None = None,
-) -> dict[str, tuple[str, dict, str]]:
+@dataclass(frozen=True)
+class IssuanceBasis:
+    """Everything `decide_issuance` judges: the declared graph, and what was measured.
+
+    `records` is keyed by lane, then unit. `aggregate` is the run's verdict, if one was
+    supplied; it gates PASS issuance only.
+    """
+
+    units: list[dict]
+    edges: list[dict]
+    current: dict[str, dict]
+    records: dict[str, dict[str, EvidenceRecord]]
+    aggregate: str | None = None
+
+
+Decision = tuple[str, dict, str]
+
+
+def _refusal(reason: str) -> Decision:
+    return ("REFUSE", {}, reason)
+
+
+def _missing_record(lane: str) -> str:
+    return (
+        f"the unit claims {lane} evidence but no {lane} record exists for it; "
+        "absence of measurement is not measurement"
+    )
+
+
+def _stale_record(lane: str, record: EvidenceRecord, current_fingerprint: str) -> str:
+    return (
+        f"the {lane} record was measured at {record.fingerprint[:23]} but the "
+        f"unit now fingerprints {current_fingerprint[:23]}; "
+        "evidence inputs do not match current fingerprint"
+    )
+
+
+def _decide_unit(unit: dict, basis: IssuanceBasis) -> Decision:
+    """One unit's decision from its own lanes, before any prerequisite is consulted."""
+    unit_id = unit["id"]
+    wanted = required_lanes(unit)
+    if not wanted:
+        # A unit that declares no evidence has had nothing measured about it. Issuing a
+        # PASS here is the emptiest false green available: the attestation would carry
+        # an empty evidence map and the graph would print the unit FRESH on the
+        # strength of a manifest declaration alone.
+        return _refusal(
+            "the unit declares no evidence, so no lane measured it; absence of "
+            "measurement is not measurement"
+        )
+    evidence: dict[str, str] = {}
+    failed_lane: str | None = None
+    for lane in sorted(wanted):
+        record = basis.records.get(lane, {}).get(unit_id)
+        if record is None:
+            return _refusal(_missing_record(lane))
+        current_fingerprint = basis.current[unit_id]["fingerprint"]
+        if record.fingerprint != current_fingerprint:
+            return _refusal(_stale_record(lane, record, current_fingerprint))
+        evidence[lane] = record.result
+        if record.result != "pass":
+            failed_lane = lane
+    if failed_lane is not None:
+        return (
+            "ISSUE_FAIL",
+            evidence,
+            f"the {failed_lane} lane failed at this fingerprint; the attestation "
+            "records the failure so it propagates as BLOCKED",
+        )
+    return ("ISSUE_PASS", evidence, "every claimed lane passed at this fingerprint")
+
+
+def _blocked_consumer(edge: dict, decisions: dict[str, Decision]) -> str | None:
+    """The consumer of `edge`, if a failed or unissuable producer denies it a PASS."""
+    if edge["kind"] not in PREREQUISITE_KINDS:
+        return None
+    producer, consumer = edge["from"], edge["to"]
+    if consumer not in decisions or producer not in decisions:
+        return None
+    if decisions[producer][0] == "ISSUE_PASS" or decisions[consumer][0] != "ISSUE_PASS":
+        return None
+    return consumer
+
+
+def _apply_prerequisites(edges: list[dict], decisions: dict[str, Decision]) -> None:
+    """Prerequisites, to a fixpoint. A locally passing theorem may not be issued freshness
+    over a prerequisite that failed or was never measured — that is the issuer-side twin of
+    BLOCKED propagation, and without it the issuer is the way around the graph."""
+    changed = True
+    while changed:
+        changed = False
+        for edge in edges:
+            consumer = _blocked_consumer(edge, decisions)
+            if consumer is None:
+                continue
+            producer = edge["from"]
+            cause = "failed" if decisions[producer][0] == "ISSUE_FAIL" else "has no issuable evidence"
+            decisions[consumer] = _refusal(
+                f"required prerequisite {producer} {cause} over a {edge['kind']} edge; "
+                "a locally passing theorem may not issue freshness over a broken one"
+            )
+            changed = True
+
+
+def _apply_aggregate(aggregate: str | None, decisions: dict[str, Decision]) -> None:
+    """The aggregate verdict, if one was supplied, gates PASS issuance only. A run whose
+    hygiene or Lean lane failed may not stamp freshness anywhere — but a unit whose own
+    proof demonstrably failed at this exact fingerprint still gets its failure recorded,
+    because withholding THAT would leave its last passing attestation standing."""
+    if aggregate is None or aggregate == "PASS":
+        return
+    for unit_id, (decision, _evidence, _reason) in list(decisions.items()):
+        if decision == "ISSUE_PASS":
+            decisions[unit_id] = _refusal(
+                f"the aggregate evidence verdict for this run is {aggregate}, not "
+                "PASS; no freshness may be issued from an incomplete or failed run"
+            )
+
+
+def decide_issuance(basis: IssuanceBasis) -> dict[str, Decision]:
     """Who may be issued what.
 
     Returns `{unit_id: (decision, evidence, reason)}` where decision is one of:
@@ -225,102 +350,10 @@ def decide_issuance(
         REFUSE       no attestation may be written; the previous one, whatever it said,
                      is left alone for the graph to judge
 
-    `records` is keyed by lane, then unit.
-
     The prerequisite pass runs to a fixpoint, so a refusal propagates down a chain: if the
     bottom theorem is unmeasured, nothing standing on it may be issued either.
     """
-    decisions: dict[str, tuple[str, dict, str]] = {}
-
-    for unit in units:
-        unit_id = unit["id"]
-        wanted = required_lanes(unit)
-        evidence: dict[str, str] = {}
-        refusal: str | None = None
-        failed_lane: str | None = None
-
-        if not wanted:
-            # A unit that declares no evidence has had nothing measured about it. Issuing a
-            # PASS here is the emptiest false green available: the attestation would carry
-            # an empty evidence map and the graph would print the unit FRESH on the
-            # strength of a manifest declaration alone.
-            decisions[unit_id] = (
-                "REFUSE",
-                {},
-                "the unit declares no evidence, so no lane measured it; absence of "
-                "measurement is not measurement",
-            )
-            continue
-
-        for lane in sorted(wanted):
-            record = records.get(lane, {}).get(unit_id)
-            if record is None:
-                refusal = (
-                    f"the unit claims {lane} evidence but no {lane} record exists for it; "
-                    "absence of measurement is not measurement"
-                )
-                break
-            if record.fingerprint != current[unit_id]["fingerprint"]:
-                refusal = (
-                    f"the {lane} record was measured at {record.fingerprint[:23]} but the "
-                    f"unit now fingerprints {current[unit_id]['fingerprint'][:23]}; "
-                    "evidence inputs do not match current fingerprint"
-                )
-                break
-            evidence[lane] = record.result
-            if record.result != "pass":
-                failed_lane = lane
-
-        if refusal is not None:
-            decisions[unit_id] = ("REFUSE", {}, refusal)
-        elif failed_lane is not None:
-            decisions[unit_id] = (
-                "ISSUE_FAIL",
-                evidence,
-                f"the {failed_lane} lane failed at this fingerprint; the attestation "
-                "records the failure so it propagates as BLOCKED",
-            )
-        else:
-            decisions[unit_id] = ("ISSUE_PASS", evidence, "every claimed lane passed at this fingerprint")
-
-    # Prerequisites. A locally passing theorem may not be issued freshness over a
-    # prerequisite that failed or was never measured — that is the issuer-side twin of
-    # BLOCKED propagation, and without it the issuer is the way around the graph.
-    changed = True
-    while changed:
-        changed = False
-        for edge in edges:
-            if edge["kind"] not in PREREQUISITE_KINDS:
-                continue
-            producer, consumer = edge["from"], edge["to"]
-            if consumer not in decisions or producer not in decisions:
-                continue
-            producer_decision = decisions[producer][0]
-            if producer_decision == "ISSUE_PASS":
-                continue
-            if decisions[consumer][0] != "ISSUE_PASS":
-                continue
-            cause = "failed" if producer_decision == "ISSUE_FAIL" else "has no issuable evidence"
-            decisions[consumer] = (
-                "REFUSE",
-                {},
-                f"required prerequisite {producer} {cause} over a {edge['kind']} edge; "
-                "a locally passing theorem may not issue freshness over a broken one",
-            )
-            changed = True
-
-    # The aggregate verdict, if one was supplied, gates PASS issuance only. A run whose
-    # hygiene or Lean lane failed may not stamp freshness anywhere — but a unit whose own
-    # proof demonstrably failed at this exact fingerprint still gets its failure recorded,
-    # because withholding THAT would leave its last passing attestation standing.
-    if aggregate is not None and aggregate != "PASS":
-        for unit_id, (decision, _evidence, _reason) in list(decisions.items()):
-            if decision == "ISSUE_PASS":
-                decisions[unit_id] = (
-                    "REFUSE",
-                    {},
-                    f"the aggregate evidence verdict for this run is {aggregate}, not "
-                    "PASS; no freshness may be issued from an incomplete or failed run",
-                )
-
+    decisions = {unit["id"]: _decide_unit(unit, basis) for unit in basis.units}
+    _apply_prerequisites(basis.edges, decisions)
+    _apply_aggregate(basis.aggregate, decisions)
     return decisions

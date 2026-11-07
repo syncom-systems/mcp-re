@@ -190,6 +190,30 @@ impl RevocationTier {
 mod tests {
     use super::RevocationTier;
 
+    /// `text` contains every phrase in `phrases`.
+    fn assert_states(text: &str, phrases: &[&str]) {
+        for phrase in phrases {
+            assert!(text.contains(phrase), "missing {phrase:?} in {text:?}");
+        }
+    }
+
+    /// `text` contains none of `phrases`.
+    fn assert_omits(text: &str, phrases: &[&str]) {
+        for phrase in phrases {
+            assert!(!text.contains(phrase), "unexpected {phrase:?} in {text:?}");
+        }
+    }
+
+    /// `RevocationTier::parse` refuses every spelling in `spellings`.
+    fn assert_refused(spellings: &[&str]) {
+        for spelling in spellings {
+            assert!(
+                RevocationTier::parse(spelling).is_err(),
+                "{spelling:?} must be refused"
+            );
+        }
+    }
+
     fn all_tiers() -> Vec<RevocationTier> {
         vec![
             RevocationTier::BoundedCache { t_secs: 60 },
@@ -213,18 +237,14 @@ mod tests {
 
     #[test]
     fn parse_rejects_unknown_and_malformed() {
-        assert!(RevocationTier::parse("ocsp").is_err());
+        assert_refused(&["ocsp"]);
         // Missing window suffix.
-        assert!(RevocationTier::parse("bounded-cache").is_err());
-        assert!(RevocationTier::parse("push").is_err());
+        assert_refused(&["bounded-cache", "push"]);
         // ADR-MCPS-021: reject T <= 0 — a malformed window must never widen or
         // disable the exposure bound.
-        assert!(RevocationTier::parse("bounded-cache:0").is_err());
-        assert!(RevocationTier::parse("push:0").is_err());
-        assert!(RevocationTier::parse("bounded-cache:-5").is_err());
+        assert_refused(&["bounded-cache:0", "push:0", "bounded-cache:-5"]);
         // Trailing garbage.
-        assert!(RevocationTier::parse("push:30:9").is_err());
-        assert!(RevocationTier::parse("bounded-cache:two").is_err());
+        assert_refused(&["push:30:9", "bounded-cache:two"]);
     }
 
     #[test]
@@ -259,10 +279,8 @@ mod tests {
         assert_ne!(bounded, push);
         assert_ne!(live, push);
         // Tier 1 explicitly disclaims the stronger postures.
-        assert!(bounded.contains("NOT zero-window"));
-        assert!(bounded.contains("NOT live"));
-        assert!(!bounded.contains("fleet-wide"));
-        assert!(bounded.contains("CACHING"));
+        assert_states(bounded, &["NOT zero-window", "NOT live", "CACHING"]);
+        assert_omits(bounded, &["fleet-wide"]);
     }
 
     #[test]
@@ -288,33 +306,43 @@ mod tests {
         // The load-bearing Push honesty assertion: the surfaced string is the re-read
         // bound with bounded fallback, never the bare zero-window claim.
         let push = RevocationTier::Push { t_secs: 60 }.guarantee();
-        assert!(!push.contains("near-zero"));
-        assert!(push.contains("5 x R + T at worst"));
-        assert!(push.contains("durations of the re-reads involved"));
-        assert!(push.contains("bounded-T fallback"));
-        assert!(push.contains("NOT zero-window"));
-        assert!(push.contains("store-change-cadence"));
+        assert_omits(push, &["near-zero"]);
+        assert_states(
+            push,
+            &[
+                "5 x R + T at worst",
+                "durations of the re-reads involved",
+                "bounded-T fallback",
+                "NOT zero-window",
+                "store-change-cadence",
+            ],
+        );
     }
 
     #[test]
     fn live_guarantee_states_its_worst_case_and_hard_availability_dependency() {
         let live = RevocationTier::Live.guarantee();
-        assert!(!live.contains("near-zero"));
-        assert!(live.contains("5 x R at worst (up to 300s"));
-        assert!(live.contains("durations of the re-reads involved"));
-        assert!(live.contains("every verification"));
-        assert!(live.contains("fails closed"));
-        assert!(live.contains("store-change-cadence"));
+        assert_omits(live, &["near-zero"]);
+        assert_states(
+            live,
+            &[
+                "5 x R at worst (up to 300s",
+                "durations of the re-reads involved",
+                "every verification",
+                "fails closed",
+                "store-change-cadence",
+            ],
+        );
     }
 
     #[test]
     fn startup_audit_line_carries_backend_tier_and_guarantee_no_key_material() {
         let line = RevocationTier::Live.startup_audit_line("redis");
-        assert!(line.contains("backend=redis"));
-        assert!(line.contains("revocation-tier=LIVE"));
-        assert!(line.contains("guarantee="));
+        assert_states(
+            &line,
+            &["backend=redis", "revocation-tier=LIVE", "guarantee="],
+        );
         // No key/secret material may leak into the startup line.
-        assert!(!line.to_lowercase().contains("key-"));
-        assert!(!line.to_lowercase().contains("secret"));
+        assert_omits(&line.to_lowercase(), &["key-", "secret"]);
     }
 }

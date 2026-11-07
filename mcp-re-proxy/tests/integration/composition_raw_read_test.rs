@@ -94,19 +94,19 @@ const ORDINARY: &[(&str, &str)] = &[
 fn joined(source: &str) -> String {
     let production = mcp_re_test_paths::rust_source::production_half(source);
     let code = mcp_re_test_paths::rust_source::code_only(&production);
+    close_dot_gaps(&code)
+}
+
+/// `code` with the whitespace on both sides of every `.` removed.
+fn close_dot_gaps(code: &str) -> String {
     let mut out = String::with_capacity(code.len());
     let mut after_dot = false;
     for c in code.chars() {
-        if c.is_whitespace() {
-            if !after_dot {
-                out.push(c);
-            }
+        if after_dot && c.is_whitespace() {
             continue;
         }
         if c == '.' {
-            while out.ends_with(char::is_whitespace) {
-                out.pop();
-            }
+            trim_trailing_whitespace(&mut out);
         }
         after_dot = c == '.';
         out.push(c);
@@ -114,8 +114,19 @@ fn joined(source: &str) -> String {
     out
 }
 
+fn trim_trailing_whitespace(text: &mut String) {
+    while text.ends_with(char::is_whitespace) {
+        text.pop();
+    }
+}
+
 fn is_ident(c: char) -> bool {
     c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'
+}
+
+/// Whether `before` is the end of a longer name or path that a marker would be a suffix of.
+fn continues_a_path(before: Option<char>) -> bool {
+    before.is_some_and(|c| is_ident(c) || c.is_ascii_uppercase() || c == '.')
 }
 
 /// The field named after each `marker` in `text`. A marker that starts with a name must
@@ -123,9 +134,7 @@ fn is_ident(c: char) -> bool {
 fn fields_after(text: &str, marker: &str, found: &mut BTreeSet<String>) {
     for (index, _) in text.match_indices(marker) {
         let before = text.get(..index).and_then(|head| head.chars().last());
-        if !marker.starts_with('.')
-            && before.is_some_and(|c| is_ident(c) || c.is_ascii_uppercase() || c == '.')
-        {
+        if !marker.starts_with('.') && continues_a_path(before) {
             continue;
         }
         let rest = text.get(index + marker.len()..).unwrap_or_default();
@@ -165,26 +174,43 @@ fn raw_reads(source: &str) -> BTreeSet<String> {
 /// starts reading, not the day someone adds it to a list.
 fn composition_sources() -> Vec<(std::path::PathBuf, String)> {
     let app = mcp_re_test_paths::resolve_runfile("MCP_RE_APP_SRC");
-    let src = app.parent().expect("app.rs lives in src/").to_path_buf();
-    let mut pending = vec![src];
-    let mut found = Vec::new();
-    while let Some(dir) = pending.pop() {
-        for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {dir:?}: {e}")) {
-            let path = entry.expect("directory entry").path();
-            if path.is_dir() {
-                pending.push(path);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                let source =
-                    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
-                let text = joined(&source);
-                if text.contains(".config();") || text.contains(".config().") {
-                    found.push((path, source));
-                }
-            }
-        }
-    }
+    let src = app.parent().expect("app.rs lives in src/");
+    let mut found: Vec<(std::path::PathBuf, String)> = rust_files_under(src)
+        .into_iter()
+        .map(|path| {
+            let source =
+                std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+            (path, source)
+        })
+        .filter(|(_, source)| reads_config(source))
+        .collect();
     found.sort();
     found
+}
+
+/// Whether the production half of `source` calls `config()` on something.
+fn reads_config(source: &str) -> bool {
+    let text = joined(source);
+    text.contains(".config();") || text.contains(".config().")
+}
+
+/// Every `.rs` file below `root`, at any depth.
+fn rust_files_under(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(dir) = pending.pop() {
+        let entries = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {dir:?}: {e}"));
+        let (dirs, others): (Vec<_>, Vec<_>) = entries
+            .map(|entry| entry.expect("directory entry").path())
+            .partition(|path| path.is_dir());
+        pending.extend(dirs);
+        files.extend(
+            others
+                .into_iter()
+                .filter(|path| path.extension().is_some_and(|ext| ext == "rs")),
+        );
+    }
+    files
 }
 
 /// The root reads exactly the inventory, and nothing else.

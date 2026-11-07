@@ -22,16 +22,16 @@
 //! without a comparable epoch is unrevokable.
 
 use std::sync::Arc;
-use std::time::Duration;
-
-use crate::clock::now_unix;
 
 use super::mint_successor::attempt_rotation;
 use super::mint_successor::RotationStep;
-use super::trust_epoch_advance::epoch_moved;
 use super::trust_epoch_advance::observe_trust_epoch;
 use super::trust_epoch_advance::EpochStep;
 use super::DelegatedEpochWatch;
+use wait::wait_for_window;
+pub(super) use wait::RotationScope;
+
+mod wait;
 
 /// The cold-path delegated-key rotation thread (ADR-MCPRE-052 §4/§6, ADR-MCPRE-051 §5): a
 /// single owner drives the rotor OFF the per-core serving runtimes, so the root issuer's
@@ -51,7 +51,13 @@ pub(super) fn spawn_delegated_rotation_task(
     workers.spawn(
         "delegated key rotation",
         supervise_delegated_rotation(Arc::clone(&signer), retirement, move || {
-            rotation_loop(&mut rotor, &signer, overlap, epoch_watch.as_ref(), &halt);
+            let scope = RotationScope {
+                signer: &signer,
+                overlap,
+                epoch_watch: epoch_watch.as_ref(),
+                halt: &halt,
+            };
+            rotation_loop(&mut rotor, &scope);
         }),
     )
 }
@@ -103,10 +109,7 @@ fn supervise_delegated_rotation(
 /// supervisor above can catch a panic from anywhere inside it.
 pub(super) fn rotation_loop(
     rotor: &mut crate::delegated_wiring::ProdDelegatedRotor,
-    signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
-    overlap: i64,
-    epoch_watch: Option<&DelegatedEpochWatch>,
-    halt: &crate::managed_worker::Halt,
+    scope: &RotationScope<'_>,
 ) {
     // Failures since the last success drive the backoff schedule; 0 in steady state.
     let mut consecutive_failures: u32 = 0;
@@ -114,85 +117,48 @@ pub(super) fn rotation_loop(
     // label from the startup issuance). An advance of the shared counter moves it;
     // verifiers pinned to the old label then reject across replicas.
     let mut last_epoch = rotor.trust_epoch().clone();
-    // A permanently retired signer ends the loop like a halt: nothing it mints is
-    // published, so every later attempt would only count a failure against a dead signer.
-    let stopped = || halt.requested() || signer.is_retired_permanently();
-    loop {
-        if stopped() {
-            return;
-        }
-        // Skipped while retrying after a failure: the backoff below is the wait then, and
-        // waiting for the window as well would delay a recovery the window has passed.
-        if consecutive_failures == 0
-            && wait_for_window(signer, overlap, epoch_watch, &last_epoch, halt)
-        {
-            return;
-        }
-        if stopped() {
-            return;
-        }
-        match observe_trust_epoch(rotor, signer, epoch_watch, &mut last_epoch, halt) {
-            EpochStep::Halt => return,
-            EpochStep::Retry(failures) => {
-                consecutive_failures = failures;
-                continue;
-            }
-            EpochStep::Proceed => {}
-        }
-        match attempt_rotation(rotor, signer, overlap, halt) {
-            RotationStep::Halt => return,
-            RotationStep::Continue(failures) => consecutive_failures = failures,
-        }
+    while let Some(failures) = rotation_pass(rotor, scope, &mut last_epoch, consecutive_failures) {
+        consecutive_failures = failures;
     }
 }
 
-/// Wait until the overlap window opens, or until the shared trust epoch moves.
-///
-/// In steady state the loop sleeps until `exp - overlap`, so a successor is minted while
-/// the predecessor is still valid. The wait ALSO breaks early when the shared trust epoch
-/// advances, which is what bounds cross-replica revocation by the ~500ms epoch poll rather
-/// than by a full TTL. With no current key — startup edge, or post-retirement — it rotates
-/// at once.
-///
-/// An unreadable epoch is not an advance: the wait keeps polling, and records a failure
-/// once per wait when it first sees one so the metric stops reading healthy.
-///
-/// Returns `true` when a halt was requested.
-fn wait_for_window(
-    signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
-    overlap: i64,
-    epoch_watch: Option<&DelegatedEpochWatch>,
-    last_epoch: &mcp_re_http_profile::custody::TrustEpoch,
-    halt: &crate::managed_worker::Halt,
-) -> bool {
-    let wake_at = match signer.current(now_unix()) {
-        // Class R: a window start that cannot be computed wakes the worker NOW. Wrapping
-        // parks this worker for the life of the process, so the key is never rotated.
-        Some(a) => a
-            .exp()
-            .checked_sub(overlap)
-            .unwrap_or(i64::MIN)
-            .max(now_unix()),
-        None => now_unix(),
-    };
-    let mut ticks = 0u32;
-    let mut unreadable_seen = false;
-    while now_unix() < wake_at {
-        if halt.requested() {
-            return true;
-        }
-        // Poll the shared trust epoch ~every 500ms (10 * 50ms).
-        if let Some(watch) = epoch_watch.filter(|_| ticks.is_multiple_of(10)) {
-            if epoch_moved(signer, watch, last_epoch, &mut unreadable_seen) {
-                break;
-            }
-        }
-        // Wrapping IS the algebra: a phase counter read only through `is_multiple_of(10)`
-        // names a position in a cycle and has no largest value to overflow past.
-        ticks = ticks.wrapping_add(1);
-        std::thread::sleep(Duration::from_millis(50));
+/// One pass of the loop: wait, observe the epoch, rotate. Returns the failure count the
+/// next pass starts from, or `None` when the loop is over.
+fn rotation_pass(
+    rotor: &mut crate::delegated_wiring::ProdDelegatedRotor,
+    scope: &RotationScope<'_>,
+    last_epoch: &mut mcp_re_http_profile::custody::TrustEpoch,
+    consecutive_failures: u32,
+) -> Option<u32> {
+    if scope.stopped() {
+        return None;
     }
-    false
+    // Skipped while retrying after a failure: the backoff is the wait then, and waiting
+    // for the window as well would delay a recovery the window has passed.
+    if consecutive_failures == 0 && wait_for_window(scope, last_epoch) {
+        return None;
+    }
+    if scope.stopped() {
+        return None;
+    }
+    rotate_once(rotor, scope, last_epoch)
+}
+
+/// The epoch observation and, unless that asks to retry or halt, the rotation attempt.
+fn rotate_once(
+    rotor: &mut crate::delegated_wiring::ProdDelegatedRotor,
+    scope: &RotationScope<'_>,
+    last_epoch: &mut mcp_re_http_profile::custody::TrustEpoch,
+) -> Option<u32> {
+    match observe_trust_epoch(rotor, scope, last_epoch) {
+        EpochStep::Halt => return None,
+        EpochStep::Retry(failures) => return Some(failures),
+        EpochStep::Proceed => {}
+    }
+    match attempt_rotation(rotor, scope.signer, scope.overlap, scope.halt) {
+        RotationStep::Halt => None,
+        RotationStep::Continue(failures) => Some(failures),
+    }
 }
 
 // Everything below is test code. The `#[cfg(test)]` marker lives HERE because it is the
@@ -200,6 +166,8 @@ fn wait_for_window(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clock::now_unix;
+    use std::time::Duration;
 
     const NOW: i64 = 1_700_000_100;
 
@@ -335,7 +303,13 @@ mod tests {
         let last = "epoch-1"
             .parse::<mcp_re_http_profile::custody::TrustEpoch>()
             .expect("base");
-        let halted = wait_for_window(&signer, 60, Some(&watch), &last.at(0), &halt);
+        let scope = RotationScope {
+            signer: &signer,
+            overlap: 60,
+            epoch_watch: Some(&watch),
+            halt: &halt,
+        };
+        let halted = wait_for_window(&scope, &last.at(0));
         stopper.join().expect("stopper thread");
 
         assert!(
@@ -361,7 +335,13 @@ mod tests {
         let worker = std::thread::spawn({
             let signer = Arc::clone(&signer);
             move || {
-                rotation_loop(&mut rotor, &signer, 60, None, &halt);
+                let scope = RotationScope {
+                    signer: &signer,
+                    overlap: 60,
+                    epoch_watch: None,
+                    halt: &halt,
+                };
+                rotation_loop(&mut rotor, &scope);
                 let _ = ended_tx.send(());
             }
         });

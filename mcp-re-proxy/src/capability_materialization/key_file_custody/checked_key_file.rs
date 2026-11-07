@@ -39,6 +39,8 @@ use std::fmt;
 
 use zeroize::Zeroizing;
 
+use crate::config_state::key_file_access::FileFacts;
+use crate::config_state::key_file_access::ProcessIdentity;
 use crate::config_state::KeyFileAccessPolicy;
 
 /// Key material read from the very object the access policy admitted.
@@ -114,7 +116,12 @@ pub(super) fn observe(
     let gids = super::process_groups::process_gids();
     // SAFETY: `geteuid` takes no arguments, touches no memory and cannot fail.
     let euid = unsafe { libc::geteuid() };
-    if let Some(reason) = policy.violation(mode, meta.uid(), meta.gid(), euid, &gids) {
+    let facts = FileFacts {
+        mode,
+        uid: meta.uid(),
+        gid: meta.gid(),
+    };
+    if let Some(reason) = policy.violation(facts, ProcessIdentity { euid, gids: &gids }) {
         return Err(format!(
             "mcp-re-proxy refuses unsafe configuration:\n  - key file {path} \
              is {reason} (mode {:o}); restrict to 0600",

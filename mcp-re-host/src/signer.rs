@@ -13,11 +13,11 @@
 //! RFC 9421 HTTP Message Signature + RFC 9530 Content-Digest; the signature rides in
 //! the HTTP headers, not a JSON-RPC `_meta` block.
 
-use mcp_re_client_core::build_signed_request;
-use mcp_re_client_core::build_signed_tool_call;
+use mcp_re_client_core::build_signed_message;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::AudienceTuple;
 use mcp_re_client_core::HttpProfileError;
+use mcp_re_client_core::McpMessage;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::SignedRequest;
 use mcp_re_core::SigningKey;
@@ -89,7 +89,12 @@ impl HostSigner {
             created,
             expires,
         );
-        build_signed_request(id, method, params, target_uri, &inputs, &self.signing_key)
+        build_signed_message(
+            McpMessage::new(Some(id), method, params),
+            target_uri,
+            &inputs,
+            &self.signing_key,
+        )
     }
 
     /// Convenience for the common `tools/call` case.
@@ -114,10 +119,8 @@ impl HostSigner {
             created,
             expires,
         );
-        build_signed_tool_call(
-            id,
-            tool_name,
-            arguments,
+        build_signed_message(
+            McpMessage::tool_call(id, tool_name, arguments),
             target_uri,
             &inputs,
             &self.signing_key,

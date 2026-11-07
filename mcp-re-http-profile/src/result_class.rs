@@ -153,6 +153,17 @@ mod tests {
         s.as_bytes().to_vec()
     }
 
+    /// Every body must be refused with `expected`, never read as a terminal reply.
+    fn assert_each_refused(bodies: &[&str], expected: &HttpProfileError, why: &str) {
+        for text in bodies {
+            let err = input_required_state(&body(text)).expect_err(why);
+            assert_eq!(
+                &err, expected,
+                "{text} must not be reported as a terminal reply"
+            );
+        }
+    }
+
     #[test]
     fn a_terminal_reply_has_no_continuation_state() {
         let b = body(r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#);
@@ -175,20 +186,16 @@ mod tests {
     /// completed.
     #[test]
     fn input_required_without_a_usable_state_is_refused_not_read_as_terminal() {
-        for missing in [
-            r#"{"result":{"resultType":"input_required"}}"#,
-            r#"{"result":{"resultType":"input_required","requestState":null}}"#,
-            r#"{"result":{"resultType":"input_required","requestState":42}}"#,
-            r#"{"result":{"resultType":"input_required","requestState":{"a":1}}}"#,
-        ] {
-            let err = input_required_state(&body(missing))
-                .expect_err("a non-terminal leg with no usable state is malformed");
-            assert_eq!(
-                err,
-                HttpProfileError::MalformedEvidence("input_required requestState"),
-                "{missing} must not be reported as a terminal reply"
-            );
-        }
+        assert_each_refused(
+            &[
+                r#"{"result":{"resultType":"input_required"}}"#,
+                r#"{"result":{"resultType":"input_required","requestState":null}}"#,
+                r#"{"result":{"resultType":"input_required","requestState":42}}"#,
+                r#"{"result":{"resultType":"input_required","requestState":{"a":1}}}"#,
+            ],
+            &HttpProfileError::MalformedEvidence("input_required requestState"),
+            "a non-terminal leg with no usable state is malformed",
+        );
     }
 
     #[test]
@@ -212,20 +219,16 @@ mod tests {
     /// the silent completion this module exists to prevent.
     #[test]
     fn a_near_miss_discriminator_is_refused_not_read_as_terminal() {
-        for other in [
-            r#"{"result":{"resultType":"input_required_extra","requestState":"s"}}"#,
-            r#"{"result":{"resultType":"Input_Required","requestState":"s"}}"#,
-            r#"{"result":{"resultType":"","requestState":"s"}}"#,
-            r#"{"result":{"resultType":"inputRequired","requestState":"s"}}"#,
-        ] {
-            let err = input_required_state(&body(other))
-                .expect_err("an unrecognized resultType is invalid, not terminal");
-            assert_eq!(
-                err,
-                HttpProfileError::UnrecognizedResultType,
-                "{other} must not be reported as a terminal reply"
-            );
-        }
+        assert_each_refused(
+            &[
+                r#"{"result":{"resultType":"input_required_extra","requestState":"s"}}"#,
+                r#"{"result":{"resultType":"Input_Required","requestState":"s"}}"#,
+                r#"{"result":{"resultType":"","requestState":"s"}}"#,
+                r#"{"result":{"resultType":"inputRequired","requestState":"s"}}"#,
+            ],
+            &HttpProfileError::UnrecognizedResultType,
+            "an unrecognized resultType is invalid, not terminal",
+        );
     }
 
     /// The two values the core protocol defines, plus the compatibility rule for

@@ -259,69 +259,9 @@ mod tests {
     /// configuration over them with two routes.
     fn fixture(scratch: &Scratch) -> ValidatedClientConfig {
         std::fs::write(scratch.join("seed"), b64url_encode(&[11u8; 32])).expect("seed");
-
         let org_key = SigningKey::from_seed_bytes(&[7u8; 32]);
-        let manifest = TrustAnchorManifest {
-            profile: "mcp-re-http-v1".into(),
-            manifest_version: 1,
-            current_issuers: vec![ManifestIssuer {
-                issuer_kid: "root-kid".into(),
-                public_key: SigningKey::from_seed_bytes(&[33u8; 32])
-                    .public_key()
-                    .to_b64url(),
-                role: "server".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:server".into(),
-            }],
-            retiring_issuers: vec![],
-            revoked_issuers: vec![],
-            issued_at: NOW - 100,
-            expires_at: NOW + 3600,
-        };
-        let signed = mcp_re_client_core::sign_manifest(&manifest, &org_key, "org-kid");
-        std::fs::write(
-            scratch.join("manifest.json"),
-            serde_json::to_vec(&signed).expect("serialize"),
-        )
-        .expect("manifest");
-
-        let ca_key = KeyPair::generate().expect("ca key");
-        let mut ca_params = CertificateParams::new(Vec::new()).expect("ca params");
-        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-        ca_params
-            .distinguished_name
-            .push(DnType::CommonName, "mcp-re-test-ca");
-        let ca_cert = ca_params.self_signed(&ca_key).expect("ca self-signed");
-        let leaf_key = KeyPair::generate().expect("leaf key");
-        let mut leaf_params = CertificateParams::new(Vec::new()).expect("leaf params");
-        leaf_params.subject_alt_names = vec![rcgen::SanType::URI(
-            "spiffe://example.org/agent-1".try_into().expect("ia5 uri"),
-        )];
-        leaf_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
-        let leaf_cert = leaf_params
-            .signed_by(&leaf_key, &rcgen::Issuer::from_params(&ca_params, &ca_key))
-            .expect("leaf signed");
-        std::fs::write(scratch.join("ca.pem"), ca_cert.pem()).expect("ca pem");
-        std::fs::write(scratch.join("client.pem"), leaf_cert.pem()).expect("cert pem");
-        std::fs::write(scratch.join("client.key"), leaf_key.serialize_pem()).expect("key pem");
-
-        let route = |id: &str, host: &str| {
-            serde_json::json!({
-                "route_id": id,
-                "target_uri": format!("https://{host}/mcp"),
-                "audience": {
-                    "audience_id": "v1",
-                    "target_uri": format!("https://{host}/mcp"),
-                    "route": id,
-                },
-                "extra_headers": [{ "name": "Authorization", "value": "Bearer tok" }],
-                "artifact_bindings": [{
-                    "artifact_type": "oauth-dpop",
-                    "source": { "kind": "header", "name": "Authorization" },
-                }],
-            })
-        };
+        write_signed_manifest(scratch, &org_key);
+        write_mtls_material(scratch);
         let document = serde_json::json!({
             "local": { "bind": "127.0.0.1:8640" },
             "identity": {
@@ -353,6 +293,76 @@ mod tests {
             "routes": [route("r1", "a.example.com"), route("r2", "b.example.com")],
         });
         ValidatedClientConfig::from_json(document.to_string().as_bytes()).expect("fixture config")
+    }
+
+    /// A manifest naming one server issuer, signed by `org_key` and written to
+    /// `manifest.json`.
+    fn write_signed_manifest(scratch: &Scratch, org_key: &SigningKey) {
+        let manifest = TrustAnchorManifest {
+            profile: "mcp-re-http-v1".into(),
+            manifest_version: 1,
+            current_issuers: vec![ManifestIssuer {
+                issuer_kid: "root-kid".into(),
+                public_key: SigningKey::from_seed_bytes(&[33u8; 32])
+                    .public_key()
+                    .to_b64url(),
+                role: "server".into(),
+                trust_domain: "example.com".into(),
+                subject: "did:example:server".into(),
+            }],
+            retiring_issuers: vec![],
+            revoked_issuers: vec![],
+            issued_at: NOW - 100,
+            expires_at: NOW + 3600,
+        };
+        let signed = mcp_re_client_core::sign_manifest(&manifest, org_key, "org-kid");
+        std::fs::write(
+            scratch.join("manifest.json"),
+            serde_json::to_vec(&signed).expect("serialize"),
+        )
+        .expect("manifest");
+    }
+
+    /// A CA and a client leaf it signs, written as `ca.pem`, `client.pem` and `client.key`.
+    fn write_mtls_material(scratch: &Scratch) {
+        let ca_key = KeyPair::generate().expect("ca key");
+        let mut ca_params = CertificateParams::new(Vec::new()).expect("ca params");
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        ca_params
+            .distinguished_name
+            .push(DnType::CommonName, "mcp-re-test-ca");
+        let ca_cert = ca_params.self_signed(&ca_key).expect("ca self-signed");
+        let leaf_key = KeyPair::generate().expect("leaf key");
+        let mut leaf_params = CertificateParams::new(Vec::new()).expect("leaf params");
+        leaf_params.subject_alt_names = vec![rcgen::SanType::URI(
+            "spiffe://example.org/agent-1".try_into().expect("ia5 uri"),
+        )];
+        leaf_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+        let leaf_cert = leaf_params
+            .signed_by(&leaf_key, &rcgen::Issuer::from_params(&ca_params, &ca_key))
+            .expect("leaf signed");
+        std::fs::write(scratch.join("ca.pem"), ca_cert.pem()).expect("ca pem");
+        std::fs::write(scratch.join("client.pem"), leaf_cert.pem()).expect("cert pem");
+        std::fs::write(scratch.join("client.key"), leaf_key.serialize_pem()).expect("key pem");
+    }
+
+    /// One route over `host`, carrying an `Authorization` header bound as an artifact.
+    fn route(id: &str, host: &str) -> serde_json::Value {
+        serde_json::json!({
+            "route_id": id,
+            "target_uri": format!("https://{host}/mcp"),
+            "audience": {
+                "audience_id": "v1",
+                "target_uri": format!("https://{host}/mcp"),
+                "route": id,
+            },
+            "extra_headers": [{ "name": "Authorization", "value": "Bearer tok" }],
+            "artifact_bindings": [{
+                "artifact_type": "oauth-dpop",
+                "source": { "kind": "header", "name": "Authorization" },
+            }],
+        })
     }
 
     /// Every route reads THE snapshot the refresher publishes into.

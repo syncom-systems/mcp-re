@@ -149,31 +149,42 @@ class Register:
 
     def problems(self, entries: dict[str, dict]) -> list[str]:
         """Every way `entries` departs from the schema, one sentence each."""
-        schema, table = self.schema, self.schema.table
         out: list[str] = []
         for key, entry in sorted(entries.items()):
-            for name in sorted(schema.required - set(entry)):
-                out.append(f"{key}: {table} entry is missing `{name}`")
-            if schema.fields is not None:
-                unknown = sorted(set(entry) - schema.fields)
-                if unknown:
-                    out.append(
-                        f"{key}: unknown {table} field(s) {unknown}{schema.unknown_hint}"
-                    )
-            if schema.statuses is None:
-                continue
-            status = entry.get("status")
-            if status is not None and status not in schema.statuses:
-                out.append(f"{key}: status `{status}` is not one of {sorted(schema.statuses)}")
-            ref = str(entry.get("review_ref") or "").strip()
-            if status in schema.reviewed and not ref:
-                out.append(
-                    f"{key}: status is `{status}` but no `review_ref` names the record that "
-                    f"adjudicated it"
-                )
-            if ref:
-                out.extend(f"{key}: {p}" for p in review_ref_problems(ref, self.root))
+            out.extend(self._shape_problems(key, entry))
+            if self.schema.statuses is not None:
+                out.extend(self._status_problems(key, entry))
         return out
+
+    def _shape_problems(self, key: str, entry: dict) -> list[str]:
+        schema, table = self.schema, self.schema.table
+        out = [
+            f"{key}: {table} entry is missing `{name}`"
+            for name in sorted(schema.required - set(entry))
+        ]
+        unknown = sorted(set(entry) - schema.fields) if schema.fields is not None else []
+        if unknown:
+            out.append(f"{key}: unknown {table} field(s) {unknown}{schema.unknown_hint}")
+        return out
+
+    def _status_problems(self, key: str, entry: dict) -> list[str]:
+        status = entry.get("status")
+        ref = str(entry.get("review_ref") or "").strip()
+        out = self._vocabulary_problems(key, status)
+        if status in self.schema.reviewed and not ref:
+            out.append(
+                f"{key}: status is `{status}` but no `review_ref` names the record that "
+                f"adjudicated it"
+            )
+        if ref:
+            out.extend(f"{key}: {p}" for p in review_ref_problems(ref, self.root))
+        return out
+
+    def _vocabulary_problems(self, key: str, status: object) -> list[str]:
+        statuses = self.schema.statuses or ()
+        if status is None or status in statuses:
+            return []
+        return [f"{key}: status `{status}` is not one of {sorted(statuses)}"]
 
 
 def review_ref_problems(ref: str, root: Path) -> list[str]:
@@ -226,128 +237,9 @@ def unreadable_problem(name: str, ref: str, baseline: Unreadable) -> str:
     )
 
 
-# ------------------------------------------------------------------------------ selftest
-
-
-def selftest() -> int:
-    import subprocess
-    import tempfile
-
-    failures = 0
-
-    def case(label: str, ok: bool, detail: object = None) -> None:
-        nonlocal failures
-        print(f"  {'ok  ' if ok else 'FAIL'}  {label}")
-        if not ok:
-            failures += 1
-            if detail is not None:
-                print(f"        got {detail!r}")
-
-    schema = Schema(
-        table="debt",
-        key="path",
-        required=frozenset({"path", "status"}),
-        fields=frozenset({"path", "status", "review_ref", "n"}),
-        statuses=("unreviewed", "reviewed-exception"),
-        reviewed=frozenset({"reviewed-exception"}),
-    )
-    body = '[[debt]]\npath = "a"\nstatus = "unreviewed"\nn = 1\n'
-
-    def git(root: Path, *args: str) -> None:
-        subprocess.run(
-            ["git", *args], cwd=root, check=True, capture_output=True,
-            env={"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "HOME": str(root),
-                 "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "selftest",
-                 "GIT_AUTHOR_EMAIL": "selftest@example.invalid", "GIT_COMMITTER_NAME": "selftest",
-                 "GIT_COMMITTER_EMAIL": "selftest@example.invalid"},
-        )
-
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        reg = Register("config/debt.toml", schema, root)
-        case("an absent register file is empty", reg.current() == {}, reg.current())
-
-        not_a_repo = reg.at("HEAD")
-        case("outside a repository the baseline is Unreadable, not Absent",
-             isinstance(not_a_repo, Unreadable), not_a_repo)
-
-        git(root, "init", "-q")
-        (root / "README.md").write_text("x\n")
-        git(root, "add", "-A")
-        git(root, "commit", "-q", "-m", "first")
-        absent = reg.at("HEAD")
-        case("a resolving revision without the register is Absent", isinstance(absent, Absent), absent)
-        bad_ref = reg.at("no-such-ref")
-        case("a revision that does not resolve is Unreadable", isinstance(bad_ref, Unreadable), bad_ref)
-
-        (root / "config").mkdir()
-        reg.path.write_text(body)
-        git(root, "add", "-A")
-        git(root, "commit", "-q", "-m", "second")
-        present = reg.at("HEAD")
-        case("a revision holding the register is Present with its entries",
-             isinstance(present, Present) and present.entries == {"a": {"path": "a", "status": "unreviewed", "n": 1}},
-             present)
-        reg.path.write_text("[[debt]\n")
-        git(root, "add", "-A")
-        git(root, "commit", "-q", "-m", "third")
-        torn = reg.at("HEAD")
-        case("an unparsable register at the revision is Unreadable", isinstance(torn, Unreadable), torn)
-
-        reg.path.write_text(body + body)
-        try:
-            reg.current()
-            case("two entries under one key are refused", False)
-        except RegisterError:
-            case("two entries under one key are refused", True)
-
-        (root / "docs").mkdir()
-        (root / "docs" / "r.md").write_text("EX-1 the record\n")
-        entries = {
-            "ok": {"path": "ok", "status": "reviewed-exception", "review_ref": "EX-1 in docs/r.md"},
-            "bare": {"path": "bare", "status": "reviewed-exception", "review_ref": "docs/r.md"},
-            "noref": {"path": "noref", "status": "reviewed-exception"},
-            "gone": {"path": "gone", "status": "reviewed-exception", "review_ref": "EX-1 in docs/x.md"},
-            "norecord": {"path": "norecord", "status": "reviewed-exception", "review_ref": "EX-9 in docs/r.md"},
-            "status": {"path": "status", "status": "bogus"},
-            "field": {"path": "field", "status": "unreviewed", "exception_ref": "x"},
-            "missing": {"path": "missing"},
-        }
-        found = reg.problems(entries)
-        flagged = {p.split(":", 1)[0] for p in found}
-        case("a resolving review_ref, record or bare document, passes", not flagged & {"ok", "bare"}, found)
-        for key in ("noref", "gone", "norecord", "status", "field", "missing"):
-            case(f"schema refuses `{key}`", key in flagged, found)
-
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        reg = Register("config/debt.toml", schema, root)
-        git(root, "init", "-q")
-        (root / "config").mkdir()
-        reg.path.write_text(body)
-        git(root, "add", "-A")
-        git(root, "commit", "-q", "-m", "first")
-        blob = subprocess.run(
-            ["git", "rev-parse", "HEAD:config/debt.toml"], cwd=root, check=True,
-            capture_output=True, text=True,
-        ).stdout.strip()
-        (root / ".git" / "objects" / blob[:2] / blob[2:]).unlink()
-        lost = reg.at("HEAD")
-        case("a register the revision names but whose blob is unreadable is Unreadable, not Absent",
-             isinstance(lost, Unreadable), lost)
-
-    case(
-        "transitions pair only the entries both registers hold",
-        transitions({"a": {"s": 1}, "b": {"s": 2}}, {"b": {"s": 3}, "c": {"s": 4}})
-        == [("b", {"s": 2}, {"s": 3})],
-    )
-
-    if failures:
-        print(f"ratchet register: SELFTEST FAILED ({failures})")
-        return 1
-    print("ratchet register: selftest passed")
-    return 0
-
-
 if __name__ == "__main__":
-    sys.exit(selftest() if "--selftest" in sys.argv else 0)
+    if "--selftest" in sys.argv:
+        from _ratchet_selftest import selftest
+
+        sys.exit(selftest())
+    sys.exit(0)

@@ -254,12 +254,10 @@ fn run_validated(
     // waiting on a replay backend. The evaluator itself is installed further down, once
     // the proxy it decides for exists; `Established` keeps the artifact and the posture
     // together so the two cannot come from different readings.
-    let (authorization, authorization_state) = crate::authorization::capability::evaluator(
-        config.state().authorization(),
-        config.state().trust_document(),
+    let (authorization, authorization_state) = crate::authorization::capability::evaluator_for(
+        config.state(),
         trust_plan.response_kid(),
         &values.audience,
-        config.state().freshness().max_clock_skew(),
     )?
     .into_parts();
     posture.declare(Seam::Authorization, authorization_state);

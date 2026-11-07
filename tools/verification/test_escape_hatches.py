@@ -450,6 +450,37 @@ def test_prose_mentioning_a_mechanism_is_not_a_site():
     assert seams.code_of("let x = 1; // uninterp").strip() == "let x = 1;"
 
 
+def _declared_files() -> set:
+    """Every file some `[[unit]]` declares, resolved."""
+    from _manifest import REPO_ROOT, load_verification
+
+    return {
+        p.resolve()
+        for unit in load_verification()["unit"]
+        for pattern in unit["paths"]
+        for p in REPO_ROOT.glob(pattern)
+        if p.is_file()
+    }
+
+
+def _in_unscanned_tree(rel: str) -> bool:
+    return rel.startswith(("target/", "verification/", ".git/")) or "/target/" in rel
+
+
+def _seam_files_no_unit_declares(declared: set) -> list[str]:
+    from _manifest import REPO_ROOT
+    from _seams import seam_lines
+
+    hidden = []
+    for source in REPO_ROOT.rglob("*.rs"):
+        rel = source.relative_to(REPO_ROOT).as_posix()
+        if _in_unscanned_tree(rel) or source.resolve() in declared:
+            continue
+        if seam_lines(source):
+            hidden.append(rel)
+    return hidden
+
+
 def test_no_seam_hides_in_a_file_no_unit_declares():
     """THE CENSUS PROPERTY, and the one the site count depends on.
 
@@ -464,23 +495,7 @@ def test_no_seam_hides_in_a_file_no_unit_declares():
     from pathlib import Path as _Path
 
     _sys.path.insert(0, str(_Path(__file__).resolve().parent))
-    from _seams import seam_lines
-    from _manifest import REPO_ROOT, load_verification
-
-    declared = set()
-    for unit in load_verification()["unit"]:
-        for pattern in unit["paths"]:
-            declared.update(p.resolve() for p in REPO_ROOT.glob(pattern) if p.is_file())
-
-    hidden = []
-    for source in REPO_ROOT.rglob("*.rs"):
-        rel = source.relative_to(REPO_ROOT).as_posix()
-        if rel.startswith(("target/", "verification/", ".git/")) or "/target/" in rel:
-            continue
-        if source.resolve() in declared:
-            continue
-        if seam_lines(source):
-            hidden.append(rel)
+    hidden = _seam_files_no_unit_declares(_declared_files())
     assert not hidden, (
         "escape hatches in files no [[unit]] declares — invisible to check-assumptions, "
         f"so its PASS is over a set that excludes them: {sorted(hidden)}"

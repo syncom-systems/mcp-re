@@ -7,7 +7,7 @@
 //! listener over many concurrent rustls **mTLS** clients: accept → TLS/mTLS →
 //! RFC 9421 + RFC 9530 verify → inner → sign → respond. Every measured number
 //! includes the full PEP path. The request is signed with the audited
-//! `mcp-re-client-core` `build_signed_request` (the signature rides in the HTTP
+//! `mcp-re-client-core` `build_signed_message` (the signature rides in the HTTP
 //! `Signature`/`Signature-Input`/`Content-Digest` headers, not a JSON-RPC body
 //! `_meta` block), and the response is verified with `verify_delegated_response`
 //! (ADR-MCPRE-052 delegated-required) bound to the request.
@@ -79,7 +79,8 @@ use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use hyper_util::server::conn::auto;
 
-use mcp_re_client_core::build_signed_request;
+use mcp_re_client_core::build_signed_message;
+use mcp_re_client_core::McpMessage;
 use mcp_re_client_core::verify_delegated_response;
 use mcp_re_client_core::ActorIdentity;
 use mcp_re_client_core::ArtifactBinding;

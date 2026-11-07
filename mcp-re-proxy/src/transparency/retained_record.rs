@@ -177,22 +177,37 @@ mod tests {
     use mcp_re_http_profile::HttpRequest;
     use mcp_re_http_profile::HttpResponse;
 
+    /// The headers a signed message carries: the signature input, the signature, the content digest, and one header that is not covered and must not be
+    /// retained.
+    fn signed_headers(
+        signature_input: String,
+        signature: &str,
+        digest: &str,
+        uncovered: &str,
+    ) -> Vec<(String, String)> {
+        [
+            ("signature-input", signature_input),
+            ("signature", signature.to_owned()),
+            ("content-digest", format!("sha-256=:{digest}:")),
+            (uncovered, "session=secret".to_owned()),
+        ]
+        .map(|(name, value)| (name.to_owned(), value))
+        .to_vec()
+    }
+
     fn request() -> HttpRequest {
         HttpRequest {
             method: "POST".to_owned(),
             target_uri: "https://example.test/mcp".to_owned(),
-            headers: vec![
-                (
-                    "signature-input".to_owned(),
-                    format!(
-                        "{}=(\"@method\" \"content-digest\")",
-                        mcp_re_http_profile::REQUEST_LABEL
-                    ),
+            headers: signed_headers(
+                format!(
+                    "{}=(\"@method\" \"content-digest\")",
+                    mcp_re_http_profile::REQUEST_LABEL
                 ),
-                ("signature".to_owned(), "abc".to_owned()),
-                ("content-digest".to_owned(), "sha-256=:AAAA:".to_owned()),
-                ("cookie".to_owned(), "session=secret".to_owned()),
-            ],
+                "abc",
+                "AAAA",
+                "cookie",
+            ),
             body: b"{\"jsonrpc\":\"2.0\"}".to_vec(),
         }
     }
@@ -200,18 +215,15 @@ mod tests {
     fn response() -> HttpResponse {
         HttpResponse {
             status: 200,
-            headers: vec![
-                (
-                    "signature-input".to_owned(),
-                    format!(
-                        "{}=(\"@status\" \"content-digest\")",
-                        mcp_re_http_profile::RESPONSE_LABEL
-                    ),
+            headers: signed_headers(
+                format!(
+                    "{}=(\"@status\" \"content-digest\")",
+                    mcp_re_http_profile::RESPONSE_LABEL
                 ),
-                ("signature".to_owned(), "def".to_owned()),
-                ("content-digest".to_owned(), "sha-256=:BBBB:".to_owned()),
-                ("set-cookie".to_owned(), "session=secret".to_owned()),
-            ],
+                "def",
+                "BBBB",
+                "set-cookie",
+            ),
             body: b"{\"result\":1}".to_vec(),
         }
     }

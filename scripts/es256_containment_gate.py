@@ -84,37 +84,57 @@ def crate_dirs(root: Path) -> list[Path]:
     return sorted(p.parent for p in root.glob("*/Cargo.toml"))
 
 
-def check(root: Path) -> list[str]:
+def _crate_problems(crate: Path) -> list[str]:
+    """What this crate's manifest and sources do with p256 that the containment forbids."""
+    name = crate.name
+    declares = bool(P256_DEP.search((crate / "Cargo.toml").read_text(encoding="utf-8")))
     problems: list[str] = []
+    if declares and name != ALLOWED_CRATE:
+        problems.append(
+            f"{name}/Cargo.toml declares a p256 dependency; only {ALLOWED_CRATE} may. "
+            "ES256 is verified for RECEIPTS, not adopted as a signing algorithm."
+        )
+    if name == SIGNING_CORE and declares:
+        problems.append(
+            f"{SIGNING_CORE} must never depend on p256: every request/response "
+            "signing path goes through it, and it refuses ES256 by name."
+        )
+    problems.extend(_source_problems(crate))
+    return problems
 
-    for crate in crate_dirs(root):
-        name = crate.name
-        manifest = (crate / "Cargo.toml").read_text(encoding="utf-8")
-        declares = bool(P256_DEP.search(manifest))
 
-        if declares and name != ALLOWED_CRATE:
+def _source_problems(crate: Path) -> list[str]:
+    """Sources of `crate` that reference p256 outside the modules permitted to."""
+    problems: list[str] = []
+    for src in sorted((crate / "src").rglob("*.rs")):
+        rel = src.relative_to(crate).as_posix()
+        if not P256_USE.search(src.read_text(encoding="utf-8")):
+            continue
+        if crate.name != ALLOWED_CRATE or rel not in ALLOWED_MODULES:
             problems.append(
-                f"{name}/Cargo.toml declares a p256 dependency; only {ALLOWED_CRATE} may. "
-                "ES256 is verified for RECEIPTS, not adopted as a signing algorithm."
+                f"{crate.name}/{rel} references p256; permitted only in "
+                f"{ALLOWED_CRATE}/{{{', '.join(sorted(ALLOWED_MODULES))}}}."
             )
-        if name == SIGNING_CORE and declares:
-            problems.append(
-                f"{SIGNING_CORE} must never depend on p256: every request/response "
-                "signing path goes through it, and it refuses ES256 by name."
-            )
+    return problems
 
-        for src in sorted((crate / "src").rglob("*.rs")):
-            rel = src.relative_to(crate).as_posix()
-            if not P256_USE.search(src.read_text(encoding="utf-8")):
-                continue
-            if name != ALLOWED_CRATE or rel not in ALLOWED_MODULES:
-                problems.append(
-                    f"{name}/{rel} references p256; permitted only in "
-                    f"{ALLOWED_CRATE}/{{{', '.join(sorted(ALLOWED_MODULES))}}}."
-                )
 
+def check(root: Path) -> list[str]:
+    problems = [p for crate in crate_dirs(root) for p in _crate_problems(crate)]
     problems.extend(check_registry(root))
     return problems
+
+
+def _balanced_body(text: str) -> str | None:
+    """What lies inside the brace pair `text` opens with, nested braces dropped, or `None`."""
+    depth = 0
+    body: list[str] = []
+    for ch in text:
+        depth += (ch == "{") - (ch == "}")
+        if depth == 0 and ch == "}":
+            return "".join(body)
+        if depth >= 1 and ch not in "{}":
+            body.append(ch)
+    return None
 
 
 def _enum_body(prod: str) -> str | None:
@@ -125,24 +145,35 @@ def _enum_body(prod: str) -> str | None:
     open_at = prod.find("{", at)
     if open_at < 0:
         return None
-    depth, i, n = 0, open_at, len(prod)
-    body: list[str] = []
-    while i < n:
-        if prod.startswith("//", i):
-            j = prod.find("\n", i)
-            i = n if j < 0 else j
-            continue
-        ch = prod[i]
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return "".join(body)
-        elif depth >= 1:
-            body.append(ch)
-        i += 1
-    return None
+    return _balanced_body(re.sub(r"//[^\n]*", "", prod[open_at:]))
+
+
+def _enum_problems(prod: str) -> list[str]:
+    """The registry enum is present and names no variant but the one with a verifier."""
+    body = _enum_body(prod)
+    if body is None:
+        return [
+            f"`{REGISTRY_ENUM}` was not found in {REGISTRY_FILE.as_posix()}'s production "
+            "region; the algorithm registry has moved or been renamed."
+        ]
+    extra = sorted(set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", body)) - {REGISTRY_VARIANT})
+    if not extra:
+        return []
+    return [
+        f"`{REGISTRY_ENUM}` names {', '.join(extra)} besides {REGISTRY_VARIANT}; "
+        "a variant is a commitment that MCP-RE's own signatures may use that "
+        "algorithm. ES256 is verified for RECEIPTS, not adopted for signing."
+    ]
+
+
+def _token_problems(prod: str) -> list[str]:
+    return [
+        f"{REGISTRY_FILE.as_posix()} names {token!r} in its production region; "
+        "an ECDSA P-256 token in the algorithm registry widens the signing "
+        "policy. Receipt verification is not a signing policy."
+        for token in P256_TOKENS
+        if token in prod
+    ]
 
 
 def check_registry(root: Path) -> list[str]:
@@ -161,36 +192,8 @@ def check_registry(root: Path) -> list[str]:
             f"{REGISTRY_FILE.as_posix()} is absent; the algorithm registry this gate "
             "measures has moved or gone, so the gate is measuring nothing."
         ]
-
     prod = production_view(path).text()
-    problems: list[str] = []
-
-    body = _enum_body(prod)
-    if body is None:
-        problems.append(
-            f"`{REGISTRY_ENUM}` was not found in {REGISTRY_FILE.as_posix()}'s production "
-            "region; the algorithm registry has moved or been renamed."
-        )
-    else:
-        extra = sorted(
-            set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", body)) - {REGISTRY_VARIANT}
-        )
-        if extra:
-            problems.append(
-                f"`{REGISTRY_ENUM}` names {', '.join(extra)} besides {REGISTRY_VARIANT}; "
-                "a variant is a commitment that MCP-RE's own signatures may use that "
-                "algorithm. ES256 is verified for RECEIPTS, not adopted for signing."
-            )
-
-    for token in P256_TOKENS:
-        if token in prod:
-            problems.append(
-                f"{REGISTRY_FILE.as_posix()} names {token!r} in its production region; "
-                "an ECDSA P-256 token in the algorithm registry widens the signing "
-                "policy. Receipt verification is not a signing policy."
-            )
-
-    return problems
+    return _enum_problems(prod) + _token_problems(prod)
 
 
 PERMITTED_POLICY = """\
@@ -231,6 +234,73 @@ MUTATION_B = PERMITTED_POLICY.replace(
 )
 
 
+def _write_tree(
+    root: Path, policy: str | None, *, serve: str | None = None, core_dependency: bool = False
+) -> None:
+    """A scratch workspace: the permitted p256 user, plus whatever the case adds."""
+    manifest = f'[package]\nname = "{{}}"\n'
+    with_p256 = manifest + '\n[dependencies]\np256 = "0.13"\n'
+    for name in (ALLOWED_CRATE, SIGNING_CORE, "mcp-re-proxy"):
+        (root / name / "src").mkdir(parents=True)
+        declares = name == ALLOWED_CRATE or (name == SIGNING_CORE and core_dependency)
+        (root / name / "Cargo.toml").write_text((with_p256 if declares else manifest).format(name))
+    verifier = root / ALLOWED_CRATE / "src" / "scitt" / "cose_key" / "verify.rs"
+    verifier.parent.mkdir(parents=True)
+    verifier.write_text("use p256::ecdsa;\n")
+    if serve is not None:
+        (root / "mcp-re-proxy" / "src" / "serve.rs").write_text(serve)
+    if policy is not None:
+        (root / REGISTRY_FILE).parent.mkdir(parents=True, exist_ok=True)
+        (root / REGISTRY_FILE).write_text(policy)
+
+
+#: (what the case shows, the tree it builds, whether `check` must object, the failure line).
+SELFTEST_CASES = (
+    (
+        "a one-variant production enum, both ES256 spellings test-region only",
+        {"policy": PERMITTED_POLICY},
+        False,
+        "the permitted arrangement was rejected",
+    ),
+    (
+        "a signing path pulling in the verifier",
+        {"policy": PERMITTED_POLICY, "serve": "let k = p256::foo();\n"},
+        True,
+        "p256 on a serving path was not caught",
+    ),
+    (
+        "core gaining the dependency",
+        {"policy": PERMITTED_POLICY, "core_dependency": True},
+        True,
+        "p256 in the signing core was not caught",
+    ),
+    (
+        "A — a second variant in the production enum",
+        {"policy": MUTATION_A},
+        True,
+        "an ECDSA P-256 algorithm variant was not caught",
+    ),
+    (
+        "B — a production `from_token` arm for the P-256 token",
+        {"policy": MUTATION_B},
+        True,
+        "an ECDSA P-256 token arm was not caught",
+    ),
+    (
+        "C — production restored; both literals live only in the test region",
+        {"policy": PERMITTED_POLICY},
+        False,
+        "a test-region ES256 string changed the verdict",
+    ),
+    (
+        "D — the target vanishes; absence must not pass vacuously",
+        {"policy": None},
+        True,
+        "a vanished target passed vacuously",
+    ),
+)
+
+
 def selftest() -> int:
     """Every clause must be shown to catch the edit it exists to catch.
 
@@ -240,76 +310,14 @@ def selftest() -> int:
     a region-blind check would be satisfied by the tests and say nothing about
     production.
     """
-    cases = 0
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        for name in (ALLOWED_CRATE, SIGNING_CORE, "mcp-re-proxy"):
-            (root / name / "src").mkdir(parents=True)
-            (root / name / "Cargo.toml").write_text(f'[package]\nname = "{name}"\n')
-        (root / ALLOWED_CRATE / "Cargo.toml").write_text(
-            f'[package]\nname = "{ALLOWED_CRATE}"\n\n[dependencies]\np256 = "0.13"\n'
-        )
-        (root / ALLOWED_CRATE / "src" / "scitt" / "cose_key").mkdir(parents=True)
-        (root / ALLOWED_CRATE / "src" / "scitt" / "cose_key" / "verify.rs").write_text(
-            "use p256::ecdsa;\n"
-        )
-        policy_rs = root / REGISTRY_FILE
-        policy_rs.parent.mkdir(parents=True, exist_ok=True)
-        policy_rs.write_text(PERMITTED_POLICY)
-
-        # Permitted: a one-variant production enum, both ES256 spellings test-region only.
-        cases += 1
-        if check(root):
-            print("selftest FAIL: the permitted arrangement was rejected")
-            return 1
-
-        # A signing path pulling in the verifier.
-        cases += 1
-        (root / "mcp-re-proxy" / "src" / "serve.rs").write_text("let k = p256::foo();\n")
-        if not check(root):
-            print("selftest FAIL: p256 on a serving path was not caught")
-            return 1
-        (root / "mcp-re-proxy" / "src" / "serve.rs").unlink()
-
-        # Core gaining the dependency.
-        cases += 1
-        (root / SIGNING_CORE / "Cargo.toml").write_text(
-            f'[package]\nname = "{SIGNING_CORE}"\n\n[dependencies]\np256 = "0.13"\n'
-        )
-        if not check(root):
-            print("selftest FAIL: p256 in the signing core was not caught")
-            return 1
-        (root / SIGNING_CORE / "Cargo.toml").write_text(f'[package]\nname = "{SIGNING_CORE}"\n')
-
-        # A — a second variant in the production enum.
-        cases += 1
-        policy_rs.write_text(MUTATION_A)
-        if not check(root):
-            print("selftest FAIL: an ECDSA P-256 algorithm variant was not caught")
-            return 1
-
-        # B — a production `from_token` arm for the P-256 token.
-        cases += 1
-        policy_rs.write_text(MUTATION_B)
-        if not check(root):
-            print("selftest FAIL: an ECDSA P-256 token arm was not caught")
-            return 1
-
-        # C — production restored; both literals live only in the test region.
-        cases += 1
-        policy_rs.write_text(PERMITTED_POLICY)
-        if check(root):
-            print("selftest FAIL: a test-region ES256 string changed the verdict")
-            return 1
-
-        # D — the target vanishes. Absence must not pass vacuously.
-        cases += 1
-        policy_rs.unlink()
-        if not check(root):
-            print("selftest FAIL: a vanished target passed vacuously")
-            return 1
-
-    print(f"es256 containment gate selftest: PASS — {cases} cases, all caught")
+    for _label, tree, must_object, failure in SELFTEST_CASES:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_tree(root, **tree)
+            if bool(check(root)) != must_object:
+                print(f"selftest FAIL: {failure}")
+                return 1
+    print(f"es256 containment gate selftest: PASS — {len(SELFTEST_CASES)} cases, all caught")
     return 0
 
 

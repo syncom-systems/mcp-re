@@ -39,6 +39,7 @@ import socket
 import ssl
 import sys
 import time
+from typing import NamedTuple
 
 import mcp_re_sdk
 
@@ -46,25 +47,25 @@ def _b64url_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
 
+def _text_at_file(spec: str) -> str:
+    """A value given inline or as ``@<path>`` (the CLI's ``@file`` convention), as text."""
+    if not spec.startswith("@"):
+        return spec
+    with open(spec[1:], "r", encoding="utf-8") as fh:
+        return fh.read().strip()
+
+
 def _b64url_text_at_file(spec: str) -> str:
-    """Return a Base64URL value that may be given inline or as ``@<path>`` (the CLI's
-    ``@file`` convention) as the RAW b64url STRING — used for ``--server-pubkey`` (the
-    root ISSUER key). The SDK's ``verify_response`` takes it as a Base64URL string (it
-    calls ``VerificationKey::from_b64url`` itself), so the client must NOT pre-decode it."""
-    raw = spec
-    if spec.startswith("@"):
-        with open(spec[1:], "r", encoding="utf-8") as fh:
-            raw = fh.read().strip()
-    return raw
+    """Return a Base64URL value that may be given inline or as ``@<path>`` as the RAW
+    b64url STRING — used for ``--server-pubkey`` (the root ISSUER key). The SDK's
+    ``verify_response`` takes it as a Base64URL string (it calls
+    ``VerificationKey::from_b64url`` itself), so the client must NOT pre-decode it."""
+    return _text_at_file(spec)
 
 
 def _read_seed(spec: str) -> bytes:
     """Resolve ``--signing-key-seed`` (a Base64URL seed, or ``@<path>``) to 32 bytes."""
-    raw = spec
-    if spec.startswith("@"):
-        with open(spec[1:], "r", encoding="utf-8") as fh:
-            raw = fh.read().strip()
-    seed = _b64url_decode(raw)
+    seed = _b64url_decode(_text_at_file(spec))
     if len(seed) != 32:
         raise ValueError(f"signing key seed must be 32 bytes, got {len(seed)}")
     return seed
@@ -78,6 +79,23 @@ def _classify(reason: "str | None") -> str:
     if any(k in r for k in ("trust", "epoch", "revok", "actor_binding", "untrusted", "unknown_signer")):
         return "revoked"
     return f"rejected:{reason or 'unknown'}"
+
+
+def _reason_from_error(err: dict) -> "str | None":
+    data = err.get("data")
+    me = data.get("mcp_re_error") if isinstance(data, dict) else None
+    # The proxy's signed rejection carries the reason as an object.
+    if isinstance(me, dict) and isinstance(me.get("wire_code"), str):
+        return me["wire_code"]
+    # Some pre-evidence errors carry it as a bare string.
+    if isinstance(me, str):
+        return me
+    # Last resort: the embedded reason in the human-readable message
+    # (e.g. "mcp-re http-profile proxy rejected: mcp-re.replay_detected").
+    msg = err.get("message")
+    if isinstance(msg, str) and "mcp-re." in msg:
+        return msg
+    return None
 
 
 def _body_reject_reason(body: bytes) -> "str | None":
@@ -95,23 +113,9 @@ def _body_reject_reason(body: bytes) -> "str | None":
     generic rejection. Returns None if the body is not such an error."""
     try:
         err = json.loads(body).get("error")
-        if isinstance(err, dict):
-            data = err.get("data")
-            me = data.get("mcp_re_error") if isinstance(data, dict) else None
-            # The proxy's signed rejection carries the reason as an object.
-            if isinstance(me, dict) and isinstance(me.get("wire_code"), str):
-                return me["wire_code"]
-            # Some pre-evidence errors carry it as a bare string.
-            if isinstance(me, str):
-                return me
-            # Last resort: the embedded reason in the human-readable message
-            # (e.g. "mcp-re http-profile proxy rejected: mcp-re.replay_detected").
-            msg = err.get("message")
-            if isinstance(msg, str) and "mcp-re." in msg:
-                return msg
+        return _reason_from_error(err) if isinstance(err, dict) else None
     except (ValueError, AttributeError):
-        pass
-    return None
+        return None
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -190,6 +194,57 @@ def _origin_form(target_uri: str) -> str:
     return authority[slash:] if slash >= 0 else "/"
 
 
+class _Endpoint(NamedTuple):
+    """Where one signed request goes: the TLS context, the address and the name to verify."""
+
+    ctx: ssl.SSLContext
+    host: str
+    port: int
+    server_name: str
+
+
+def _connect(endpoint: _Endpoint) -> ssl.SSLSocket:
+    raw = socket.create_connection((endpoint.host, endpoint.port), timeout=15)
+    try:
+        return endpoint.ctx.wrap_socket(raw, server_hostname=endpoint.server_name)
+    except Exception:
+        raw.close()
+        raise
+
+
+def _read_until_close(tls: ssl.SSLSocket) -> bytes:
+    chunks = []
+    while True:
+        chunk = tls.recv(65536)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def _parse_http_response(raw_resp: bytes):
+    """(status, headers, body) of one HTTP/1.1 response read to connection close."""
+    head_bytes, _, resp_body = raw_resp.partition(b"\r\n\r\n")
+    lines = head_bytes.split(b"\r\n")
+    status_line = lines[0].split(b" ")
+    status = int(status_line[1]) if len(status_line) > 1 else 0
+    resp_headers = []
+    for line in lines[1:]:
+        if b":" in line:
+            k, _, v = line.partition(b":")
+            resp_headers.append((k.decode().strip(), v.decode().strip()))
+    return status, resp_headers, resp_body
+
+
+def _request_bytes(endpoint: _Endpoint, request_target: str, headers, body: bytes) -> bytes:
+    hdr_lines = "".join(f"{k}: {v}\r\n" for k, v in headers)
+    head = (
+        f"POST {request_target} HTTP/1.1\r\nHost: {endpoint.server_name}\r\n"
+        f"{hdr_lines}"
+        f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
+    ).encode()
+    return head + body
+
+
 def _make_post(args: argparse.Namespace):
     """One mTLS HTTP/1.1 POST per call (Connection: close) — the proxy's wire."""
     host, port_s = args.remote_addr.rsplit(":", 1)
@@ -197,41 +252,17 @@ def _make_post(args: argparse.Namespace):
     request_target = _origin_form(args.target_uri)
     ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=args.server_ca)
     ctx.load_cert_chain(args.tls_cert, args.tls_key)
+    endpoint = _Endpoint(ctx, host, port, args.server_name)
 
     def post(headers: "list[tuple[str, str]]", body: bytes):
         """Send the RFC 9421 signed request; return (status, response_headers, body)."""
-        raw = socket.create_connection((host, port), timeout=15)
+        tls = _connect(endpoint)
         try:
-            tls = ctx.wrap_socket(raw, server_hostname=args.server_name)
-        except Exception:
-            raw.close()
-            raise
-        try:
-            hdr_lines = "".join(f"{k}: {v}\r\n" for k, v in headers)
-            head = (
-                f"POST {request_target} HTTP/1.1\r\nHost: {args.server_name}\r\n"
-                f"{hdr_lines}"
-                f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
-            ).encode()
-            tls.sendall(head + body)
-            chunks = []
-            while True:
-                chunk = tls.recv(65536)
-                if not chunk:
-                    break
-                chunks.append(chunk)
+            tls.sendall(_request_bytes(endpoint, request_target, headers, body))
+            raw_resp = _read_until_close(tls)
         finally:
             tls.close()
-        raw_resp = b"".join(chunks)
-        head_bytes, _, resp_body = raw_resp.partition(b"\r\n\r\n")
-        lines = head_bytes.split(b"\r\n")
-        status = int(lines[0].split(b" ")[1]) if len(lines[0].split(b" ")) > 1 else 0
-        resp_headers = []
-        for line in lines[1:]:
-            if b":" in line:
-                k, _, v = line.partition(b":")
-                resp_headers.append((k.decode().strip(), v.decode().strip()))
-        return status, resp_headers, resp_body
+        return _parse_http_response(raw_resp)
 
     return post
 
@@ -252,39 +283,40 @@ def _strip_envelope(obj: dict) -> dict:
     return obj
 
 
-def main(argv: "list[str] | None" = None) -> int:
-    args = _parse_args(sys.argv[1:] if argv is None else argv)
+def _load_continuation(path: "str | None") -> "dict | None":
+    """ADR-MCPS-047 answer leg: with --load-cont, the binding this request answers.
 
-    seed = _read_seed(args.signing_key_seed)
-    server_pub = _b64url_text_at_file(args.server_pubkey)  # b64url STRING; SDK decodes it
-    post = _make_post(args)
+    The saved file holds the two evidence-handle digests recorded on the OPEN leg (the
+    previous-request handle and the input-required-response handle); the opaque
+    `requestState` is carried in this request's own `params.requestState` (the harness
+    places it there), so the proxy forwards it to the inner AND the continuation digest
+    binds the exact same bytes."""
+    if not path:
+        return None
+    with open(path, "r", encoding="utf-8") as fh:
+        return json.load(fh)
 
-    request = json.loads(sys.stdin.readline())
-    rid = request.get("id")
-    method = request.get("method")
+
+def _continuation_operands(cont: "dict | None") -> tuple:
+    """The four evidence-handle operands the answer leg binds to, or four Nones."""
+    if not cont:
+        return (None, None, None, None)
+    return (cont["prev_alg"], cont["prev_value"], cont["irr_alg"], cont["irr_value"])
+
+
+def _sign(args: argparse.Namespace, seed: bytes, request: dict, cont: "dict | None"):
+    """Sign the RFC 9421 + RFC 9530 request (with the MRTR continuation on the answer leg)."""
     params = request.get("params", {})
-
-    # ADR-MCPS-047 answer leg: with --load-cont, bind this request to the
-    # InputRequiredResult it answers. The saved file holds the two evidence-handle
-    # digests recorded on the OPEN leg (the previous-request handle and the input-
-    # required-response handle); the opaque `requestState` is carried in this request's
-    # own `params.requestState` (the harness places it there), so the proxy forwards it
-    # to the inner AND the continuation digest binds the exact same bytes.
-    cont = None
-    if args.load_cont:
-        with open(args.load_cont, "r", encoding="utf-8") as fh:
-            cont = json.load(fh)
-
     # `created_at` is what the request CLAIMS; `time.time()` stays the clock for response
-    # verification below. They are deliberately separate: a stale request must be signed in
+    # verification. They are deliberately separate: a stale request must be signed in
     # the past and then judged against the real now, which is the whole shape of the check.
     now = int(time.time()) + args.created_offset
-    # Sign the RFC 9421 + RFC 9530 request (with the MRTR continuation on the answer leg).
-    signed = mcp_re_sdk.sign_request(
+    state = params.get("requestState")
+    return mcp_re_sdk.sign_request(
         seed,
         args.key_id,
-        json.dumps(rid),
-        method,
+        json.dumps(request.get("id")),
+        request.get("method"),
         json.dumps(params),
         args.sign_target_uri or args.target_uri,
         args.sign_audience or args.audience,
@@ -293,25 +325,25 @@ def main(argv: "list[str] | None" = None) -> int:
         args.nonce or secrets.token_urlsafe(16),
         now,
         now + 300,
-        cont["prev_alg"] if cont else None,
-        cont["prev_value"] if cont else None,
-        cont["irr_alg"] if cont else None,
-        cont["irr_value"] if cont else None,
-        (str(params.get("requestState")) if (cont and params.get("requestState") is not None) else None),
+        *_continuation_operands(cont),
+        str(state) if (cont and state is not None) else None,
     )
-    status, resp_headers, resp_body = post(signed.headers, signed.body())
 
-    reason = ""
+
+def _verify(args: argparse.Namespace, signed, response, server_pub: str):
+    """Verify the delegated-required response bound to THIS request (ADR-MCPRE-052):
+    the inline credential must chain to the ROOT ISSUER (server-* trio), be scoped to
+    --audience at one of --trust-epoch, and carry no revoked identifier. An unsigned /
+    direct-root / stale-epoch / revoked response fails closed.
+
+    A verified result is genuine evidence but NOT necessarily an acceptance: a
+    delegated-SIGNED fail-closed answer (replay / trust rejection) verifies as a
+    `rejection` outcome carrying the server's wire_code. Acceptance is
+    outcome == "success"; a verified rejection classifies from its wire_code.
+
+    Returns (accepted, reason, result); `result` is None when nothing verified."""
+    status, resp_headers, resp_body = response
     try:
-        # Verify the delegated-required response bound to THIS request (ADR-MCPRE-052):
-        # the inline credential must chain to the ROOT ISSUER (server-* trio), be
-        # scoped to --audience at one of --trust-epoch, and carry no revoked identifier.
-        # An unsigned / direct-root / stale-epoch / revoked response fails closed.
-        #
-        # A verified result is genuine evidence but NOT necessarily an acceptance: a
-        # delegated-SIGNED fail-closed answer (replay / trust rejection) verifies as a
-        # `rejection` outcome carrying the server's wire_code. Acceptance is
-        # outcome == "success"; a verified rejection classifies from its wire_code.
         result = mcp_re_sdk.verify_response(
             status,
             resp_headers,
@@ -340,46 +372,67 @@ def main(argv: "list[str] | None" = None) -> int:
             args.revoked,            # revoked identifiers denylist
             int(time.time()),
         )
-        accepted = result.outcome == "success"
-        # A verified rejection carries the server's frozen wire_code (the authoritative
-        # reason); fall back to the body reason only for a pre-evidence failure.
-        if not accepted:
-            reason = result.wire_code or ""
     except ValueError as exc:
         # The response did NOT verify (unsigned / direct-root / stale-epoch / revoked /
         # forged / pre-evidence transport error) — fail closed.
-        accepted = False
-        reason = str(exc)
-        result = None
+        return False, str(exc), None
+    accepted = result.outcome == "success"
+    # A verified rejection carries the server's frozen wire_code (the authoritative
+    # reason); fall back to the body reason only for a pre-evidence failure.
+    return accepted, ("" if accepted else (result.wire_code or "")), result
 
-    # ADR-MCPS-047 open leg: with --save-cont, after a VERIFIED InputRequiredResult,
-    # record the two evidence-handle digests the answer leg will bind to — the
-    # previous-request handle (this OPEN-leg request's evidence) and the input-required-
-    # response handle (the verified response's evidence). Both come from the audited
-    # core; the raw signature bases are never retained. Only when the verified reply
-    # actually carried a `requestState` (i.e. it IS an InputRequiredResult).
-    if args.save_cont and accepted and getattr(result, "request_state", None):
-        with open(args.save_cont, "w", encoding="utf-8") as fh:
-            json.dump(
-                {
-                    "prev_alg": signed.evidence_digest_alg,
-                    "prev_value": signed.evidence_digest_value,
-                    "irr_alg": result.resp_evidence_digest_alg,
-                    "irr_value": result.resp_evidence_digest_value,
-                    "request_state": result.request_state,
-                },
-                fh,
-            )
 
+def _carries_request_state(args: argparse.Namespace, accepted: bool, result) -> bool:
+    """Only a VERIFIED reply that actually carried a `requestState` IS an InputRequiredResult."""
+    return bool(args.save_cont and accepted and getattr(result, "request_state", None))
+
+
+def _save_continuation(path: str, signed, result) -> None:
+    """ADR-MCPS-047 open leg: record the two evidence-handle digests the answer leg will
+    bind to — the previous-request handle (this OPEN-leg request's evidence) and the
+    input-required-response handle (the verified response's evidence). Both come from the
+    audited core; the raw signature bases are never retained."""
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "prev_alg": signed.evidence_digest_alg,
+                "prev_value": signed.evidence_digest_value,
+                "irr_alg": result.resp_evidence_digest_alg,
+                "irr_value": result.resp_evidence_digest_value,
+                "request_state": result.request_state,
+            },
+            fh,
+        )
+
+
+def _report(accepted: bool, reason: str, resp_body: bytes) -> str:
+    """Print the response (plain MCP when accepted, the signed rejection otherwise); the verdict."""
     if accepted:
-        verdict = "accepted"
         plain = _strip_envelope(json.loads(resp_body))
         sys.stdout.write(json.dumps(plain, separators=(",", ":")) + "\n")
-    else:
-        verdict = _classify(reason or _body_reject_reason(resp_body))
-        # Echo the proxy's signed-rejection body so the harness can still inspect it.
-        sys.stdout.write(resp_body.decode("utf-8", "replace") + "\n")
+        return "accepted"
+    # Echo the proxy's signed-rejection body so the harness can still inspect it.
+    sys.stdout.write(resp_body.decode("utf-8", "replace") + "\n")
+    return _classify(reason or _body_reject_reason(resp_body))
 
+
+def main(argv: "list[str] | None" = None) -> int:
+    args = _parse_args(sys.argv[1:] if argv is None else argv)
+
+    seed = _read_seed(args.signing_key_seed)
+    server_pub = _b64url_text_at_file(args.server_pubkey)  # b64url STRING; SDK decodes it
+    post = _make_post(args)
+
+    request = json.loads(sys.stdin.readline())
+    cont = _load_continuation(args.load_cont)
+    signed = _sign(args, seed, request, cont)
+    response = post(signed.headers, signed.body())
+
+    accepted, reason, result = _verify(args, signed, response, server_pub)
+    if _carries_request_state(args, accepted, result):
+        _save_continuation(args.save_cont, signed, result)
+
+    verdict = _report(accepted, reason, response[2])
     sys.stderr.write(f"verdict={verdict}\n")
     if args.expect and verdict != args.expect:
         sys.stderr.write(f"verdict mismatch: expected {args.expect}, got {verdict}\n")

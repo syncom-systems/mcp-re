@@ -40,35 +40,10 @@ use crate::error::HttpProfileError;
 /// caused it. Every construction traced from there still failed closed downstream,
 /// but "the parser recovers by erroring" is not the same as splitting the
 /// dictionary the way every other RFC 8941 implementation does.
-// Class C: the cursor is a byte offset from `char_indices` at a separator that is ASCII and
-// one byte wide, so `i + 1` is a char boundary at most `value.len()`. The wire chooses
-// where the separators fall, never how large the offset becomes.
-#[allow(clippy::arithmetic_side_effects)]
 pub(super) fn split_dictionary(value: &str) -> Vec<&str> {
-    let mut members = Vec::new();
-    let mut start = 0usize;
-    let mut in_quotes = false;
-    let mut escaped = false;
-    for (i, c) in value.char_indices() {
-        if escaped {
-            // Inside a string, `\` escapes exactly one following character; it never
-            // ends the string.
-            escaped = false;
-            continue;
-        }
-        match c {
-            '\\' if in_quotes => escaped = true,
-            '"' => in_quotes = !in_quotes,
-            ',' if !in_quotes => {
-                members.push(value[start..i].trim());
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    members.push(value[start..].trim());
-    members
+    split_top_level(value, ',')
 }
+
 /// Split a signature-input's parameter section at top-level `;` — semicolons inside
 /// a quoted string are part of the value, not separators.
 ///
@@ -76,33 +51,55 @@ pub(super) fn split_dictionary(value: &str) -> Vec<&str> {
 /// value in half and produce a parameter list that was never on the wire. The halves
 /// then failed to unquote, so this was fail-closed too, but the parse disagreed with
 /// a conforming one before it got there.
+pub(super) fn split_parameters(value: &str) -> Vec<&str> {
+    split_top_level(value, ';')
+}
+
+/// Where a scan of a Structured Fields string is: inside a quoted string, and whether the
+/// previous character was the `\` that escapes the next one.
+#[derive(Default)]
+struct QuoteScan {
+    in_quotes: bool,
+    escaped: bool,
+}
+
+impl QuoteScan {
+    /// Consume `c`; true when it is a top-level occurrence of `separator`.
+    fn is_top_level_separator(&mut self, c: char, separator: char) -> bool {
+        if self.escaped {
+            // Inside a string, `\` escapes exactly one following character; it never
+            // ends the string.
+            self.escaped = false;
+            return false;
+        }
+        match c {
+            '\\' if self.in_quotes => self.escaped = true,
+            '"' => self.in_quotes = !self.in_quotes,
+            _ => return c == separator && !self.in_quotes,
+        }
+        false
+    }
+}
+
+/// Split `value` at every `separator` outside a quoted string, trimming each part.
 // Class C: the cursor is a byte offset from `char_indices` at a separator that is ASCII and
 // one byte wide, so `i + 1` is a char boundary at most `value.len()`. The wire chooses
 // where the separators fall, never how large the offset becomes.
 #[allow(clippy::arithmetic_side_effects)]
-pub(super) fn split_parameters(value: &str) -> Vec<&str> {
+fn split_top_level(value: &str, separator: char) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut start = 0usize;
-    let mut in_quotes = false;
-    let mut escaped = false;
+    let mut scan = QuoteScan::default();
     for (i, c) in value.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match c {
-            '\\' if in_quotes => escaped = true,
-            '"' => in_quotes = !in_quotes,
-            ';' if !in_quotes => {
-                parts.push(value[start..i].trim());
-                start = i + 1;
-            }
-            _ => {}
+        if scan.is_top_level_separator(c, separator) {
+            parts.push(value[start..i].trim());
+            start = i + 1;
         }
     }
     parts.push(value[start..].trim());
     parts
 }
+
 /// Find the member value for `label` in a `Signature-Input`/`Signature`
 /// dictionary header, fail-closed on absence, duplication, or whitespace the
 /// dictionary grammar does not permit.
@@ -123,36 +120,8 @@ pub(crate) fn member_value<'a>(
 ) -> Result<&'a str, HttpProfileError> {
     let mut found: Option<&'a str> = None;
     for member in split_dictionary(header_value) {
-        // RFC 8941 §3.2's `dict-member` cannot be empty, so a leading, trailing or
-        // doubled comma is not a spelling of the same dictionary — it is not a
-        // dictionary. Skipping it silently, as an unparseable member, is the same
-        // wire-spelling collapse the `=` rule above refuses: `mcp-re=(...)` and
-        // `,mcp-re=(...),` would rebuild one signature base and verify under one
-        // signature, so an intermediary could add or strip a comma in the raw header
-        // and every consumer that logs, hashes, caches or diffs it would hold bytes
-        // other than the ones that were signed.
-        if member.is_empty() {
-            return Err(HttpProfileError::MalformedEvidence(
-                "empty dictionary member",
-            ));
-        }
-        let Some(rest) = member.strip_prefix(label) else {
+        let Some(v) = labelled_value(member, label)? else {
             continue;
-        };
-        // A longer key that merely shares the label as a prefix, e.g. `mcp-rex`, is a
-        // neighbour.
-        if rest.starts_with(|c: char| {
-            c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-' | '.' | '*')
-        }) {
-            continue;
-        }
-        // RFC 8941 reads `mcp-re` / `mcp-re;p=1` as boolean true and a conforming parser
-        // resolves a repeated key to its LAST instance, so skipping it would let
-        // `mcp-re=(..), mcp-re` verify here while meaning something else elsewhere.
-        let Some(v) = rest.strip_prefix('=') else {
-            return Err(HttpProfileError::MalformedEvidence(
-                "signature label without a value",
-            ));
         };
         if found.is_some() {
             return Err(HttpProfileError::MalformedEvidence(
@@ -169,6 +138,42 @@ pub(crate) fn member_value<'a>(
         found = Some(v);
     }
     found.ok_or(HttpProfileError::MissingEvidence("signature label"))
+}
+
+/// The value of one dictionary member when it carries `label`, `None` for a neighbour.
+fn labelled_value<'a>(member: &'a str, label: &str) -> Result<Option<&'a str>, HttpProfileError> {
+    // RFC 8941 §3.2's `dict-member` cannot be empty, so a leading, trailing or
+    // doubled comma is not a spelling of the same dictionary — it is not a
+    // dictionary. Skipping it silently, as an unparseable member, is the same
+    // wire-spelling collapse the `=` rule above refuses: `mcp-re=(...)` and
+    // `,mcp-re=(...),` would rebuild one signature base and verify under one
+    // signature, so an intermediary could add or strip a comma in the raw header
+    // and every consumer that logs, hashes, caches or diffs it would hold bytes
+    // other than the ones that were signed.
+    if member.is_empty() {
+        return Err(HttpProfileError::MalformedEvidence(
+            "empty dictionary member",
+        ));
+    }
+    let Some(rest) = member.strip_prefix(label) else {
+        return Ok(None);
+    };
+    // A longer key that merely shares the label as a prefix, e.g. `mcp-rex`, is a
+    // neighbour.
+    if rest.starts_with(|c: char| {
+        c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-' | '.' | '*')
+    }) {
+        return Ok(None);
+    }
+    // RFC 8941 reads `mcp-re` / `mcp-re;p=1` as boolean true and a conforming parser
+    // resolves a repeated key to its LAST instance, so skipping it would let
+    // `mcp-re=(..), mcp-re` verify here while meaning something else elsewhere.
+    let Some(v) = rest.strip_prefix('=') else {
+        return Err(HttpProfileError::MalformedEvidence(
+            "signature label without a value",
+        ));
+    };
+    Ok(Some(v))
 }
 
 #[cfg(test)]

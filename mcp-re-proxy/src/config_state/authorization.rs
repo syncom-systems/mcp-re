@@ -207,56 +207,40 @@ mod tests {
         assert!(state.expect("off is a state").enforced().is_none());
     }
 
+    /// The configuration is refused with no recognised state, and a violation names `flag`.
+    fn assert_refused_naming(config: &DeploymentRequest, flag: &str) {
+        let (state, violations) = classify_and_validate(config);
+        assert!(state.is_none(), "{violations:?}");
+        assert!(
+            violations.iter().any(|v| v.contains(flag)),
+            "{violations:?}"
+        );
+    }
+
     #[test]
     fn a_scope_with_no_authority_installed_is_refused_rather_than_ignored() {
         let mut config = legal_config();
         config.authorization.decision_scope = Some(DecisionScope::Credential);
-        let (state, violations) = classify_and_validate(&config);
-        assert!(state.is_none(), "a dangling parameter recognises no state");
-        assert!(
-            violations
-                .iter()
-                .any(|v| v.contains("--authz-decision-scope")),
-            "{violations:?}"
-        );
+        assert_refused_naming(&config, "--authz-decision-scope");
     }
 
     #[test]
     fn a_staleness_bound_with_no_authority_installed_is_refused() {
         let mut config = legal_config();
         config.authorization.max_decision_age_secs = Some(600);
-        let (state, violations) = classify_and_validate(&config);
-        assert!(state.is_none());
-        assert!(
-            violations
-                .iter()
-                .any(|v| v.contains("--authz-max-decision-age-secs")),
-            "{violations:?}"
-        );
+        assert_refused_naming(&config, "--authz-max-decision-age-secs");
     }
 
     #[test]
     fn a_profile_missing_its_scope_is_refused_rather_than_defaulted() {
-        let (state, violations) =
-            classify_and_validate(&pdp(|c| c.authorization.decision_scope = None));
-        assert!(state.is_none());
-        assert!(
-            violations
-                .iter()
-                .any(|v| v.contains("--authz-decision-scope")),
-            "{violations:?}"
-        );
+        let config = pdp(|c| c.authorization.decision_scope = None);
+        assert_refused_naming(&config, "--authz-decision-scope");
     }
 
     #[test]
     fn a_zero_staleness_bound_is_refused_because_it_accepts_no_decision() {
-        let (state, violations) =
-            classify_and_validate(&pdp(|c| c.authorization.max_decision_age_secs = Some(0)));
-        assert!(state.is_none());
-        assert!(
-            violations.iter().any(|v| v.contains("positive")),
-            "{violations:?}"
-        );
+        let config = pdp(|c| c.authorization.max_decision_age_secs = Some(0));
+        assert_refused_naming(&config, "positive");
     }
 
     #[test]

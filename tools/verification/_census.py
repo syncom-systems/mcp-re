@@ -129,16 +129,19 @@ def _resolve(index: dict[str, Control], selector: str) -> Control | None:
     if exact is not None:
         return exact
     if selector.startswith("pytest#"):
-        base = re.sub(r"\[[^\]]*\]\Z", "", selector)
-        parametrised = index.get(base)
+        parametrised = index.get(re.sub(r"\[[^\]]*\]\Z", "", selector))
         if parametrised is not None:
             return parametrised
+    return _template_match(index, selector)
+
+
+def _template_match(index: dict[str, Control], selector: str) -> Control | None:
+    """The control whose wildcard identity, in the selector's scheme, matches the selector."""
     scheme = selector.split("#", 1)[0]
     for identity, control in index.items():
-        if not identity.startswith(f"{scheme}#") or not _WILDCARD.search(identity):
-            continue
-        if template_to_regex(identity).match(selector):
-            return control
+        if identity.startswith(f"{scheme}#") and _WILDCARD.search(identity):
+            if template_to_regex(identity).match(selector):
+                return control
     return None
 
 
@@ -174,17 +177,26 @@ def join(controls: list[Control] | None = None) -> tuple[list[Claim], list[tuple
     claims: list[Claim] = []
     stale: list[tuple[str, str, str]] = []
     for unit in units():
-        project = test_project_for(unit)
-        for selector in unit.get("tested_symbols", []):
-            where, identity = rust_identity(selector) or (project or "", selector)
-            found = _resolve(index.get(where, {}), identity)
-            if found is None:
-                stale.append((unit["id"], where or "(no project)", selector))
-            else:
-                claims.append(Claim(unit=unit["id"], control=found, selector=selector))
+        claims.extend(_selected_claims(unit, index, stale))
         claims.extend(_gate_claims(unit, index.get("", {}), stale))
     claims.extend(_registry_claims(index.get("", {})))
     return claims, stale
+
+
+def _selected_claims(
+    unit: dict, index: dict[str, dict[str, Control]], stale: list[tuple[str, str, str]]
+) -> list[Claim]:
+    """A unit's `tested_symbols`, resolved to controls; a selector naming none is stale."""
+    project = test_project_for(unit)
+    out: list[Claim] = []
+    for selector in unit.get("tested_symbols", []):
+        where, identity = rust_identity(selector) or (project or "", selector)
+        found = _resolve(index.get(where, {}), identity)
+        if found is None:
+            stale.append((unit["id"], where or "(no project)", selector))
+        else:
+            out.append(Claim(unit=unit["id"], control=found, selector=selector))
+    return out
 
 
 def _gate_claims(unit: dict, index: dict[str, Control], stale: list) -> list[Claim]:
@@ -242,15 +254,12 @@ def _measurement_selected(entry: dict, owner: str) -> list[Claim]:
     libtest filter rather than a `target#path` selector: each `--test_arg=<name>` Bazel
     passes to the test binary.
     """
-    wanted: set[str] = set()
-    for key in ("protocol", "control"):
-        for token in entry.get(key, []):
-            text = str(token)
-            if not text.startswith("--test_arg="):
-                continue
-            name = text[len("--test_arg="):]
-            if name and not name.startswith("-"):
-                wanted.add(name)
+    wanted = {
+        name
+        for key in ("protocol", "control")
+        for token in entry.get(key, [])
+        if (name := _libtest_filter(str(token)))
+    }
     if not wanted:
         return []
     out: list[Claim] = []
@@ -259,6 +268,14 @@ def _measurement_selected(entry: dict, owner: str) -> list[Claim]:
         if tail in wanted:
             out.append(Claim(unit=owner, control=control, selector=f"measured-argv:{tail}"))
     return out
+
+
+def _libtest_filter(token: str) -> str:
+    """The libtest name an argv token passes through `--test_arg=`, or "" for any other token."""
+    if not token.startswith("--test_arg="):
+        return ""
+    name = token[len("--test_arg="):]
+    return "" if name.startswith("-") else name
 
 
 #: Filled once per process. A measurement's argv is matched against every control, and

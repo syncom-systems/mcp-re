@@ -71,22 +71,45 @@ PERMITTED = {"review_requirement", "reviewed_fingerprint", "reviewer", "subject"
 EXEMPT_KEYS: dict[str, set[str]] = {"toolchains.lock.toml": {"state"}}
 
 
+def _dict_offences(value: dict, path: str, exempt: set[str]) -> list[str]:
+    found: list[str] = []
+    for key, sub in value.items():
+        if key in PERMITTED or key in exempt:
+            continue
+        where = f"{path}.{key}" if path else str(key)
+        if key in FORBIDDEN:
+            found.append(where)
+        found.extend(offending_keys(sub, where, exempt))
+    return found
+
+
 def offending_keys(value, path: str = "", exempt: set[str] | None = None) -> list[str]:
     """Every forbidden key in a parsed document, as dotted paths."""
     exempt = exempt or set()
-    found: list[str] = []
     if isinstance(value, dict):
-        for key, sub in value.items():
-            where = f"{path}.{key}" if path else str(key)
-            if key in PERMITTED or key in exempt:
-                continue
-            if key in FORBIDDEN:
-                found.append(where)
-            found.extend(offending_keys(sub, where, exempt))
-    elif isinstance(value, list):
-        for index, item in enumerate(value):
-            found.extend(offending_keys(item, f"{path}[{index}]", exempt))
-    return found
+        return _dict_offences(value, path, exempt)
+    if isinstance(value, list):
+        return [
+            found
+            for index, item in enumerate(value)
+            for found in offending_keys(item, f"{path}[{index}]", exempt)
+        ]
+    return []
+
+
+def _measurement_defects(doc: dict, where: Path) -> list[str]:
+    defects = []
+    if "re_derived_against" not in doc:
+        defects.append(
+            f"{where}: a measurement record must name the tree it measured "
+            f"(`re_derived_against`)."
+        )
+    if "reviewed_fingerprint" in doc:
+        defects.append(
+            f"{where}: a measurement record carries a `reviewed_fingerprint`. "
+            f"Measuring is not approving; one of the two facts is misdeclared."
+        )
+    return defects
 
 
 def naming_defects(doc: dict, path: Path) -> list[str]:
@@ -105,61 +128,117 @@ def naming_defects(doc: dict, path: Path) -> list[str]:
     """
     kind = doc.get("record_kind", "approval")
     where = path.relative_to(REPO)
-    if kind == "approval":
-        if "reviewed_fingerprint" not in doc:
-            return [
-                f"{where}: no `reviewed_fingerprint`. A review that does not name what it "
-                f"reviewed approves nothing in particular."
-            ]
-        return []
     if kind == "measurement":
-        defects = []
-        if "re_derived_against" not in doc:
-            defects.append(
-                f"{where}: a measurement record must name the tree it measured "
-                f"(`re_derived_against`)."
-            )
-        if "reviewed_fingerprint" in doc:
-            defects.append(
-                f"{where}: a measurement record carries a `reviewed_fingerprint`. "
-                f"Measuring is not approving; one of the two facts is misdeclared."
-            )
-        return defects
-    return [f"{where}: unknown `record_kind` {kind!r}. Expected approval or measurement."]
+        return _measurement_defects(doc, where)
+    if kind != "approval":
+        return [f"{where}: unknown `record_kind` {kind!r}. Expected approval or measurement."]
+    if "reviewed_fingerprint" in doc:
+        return []
+    return [
+        f"{where}: no `reviewed_fingerprint`. A review that does not name what it "
+        f"reviewed approves nothing in particular."
+    ]
+
+
+def _policy_failures(path: Path) -> list[str]:
+    """The stored approval/status fields one policy registry carries."""
+    try:
+        doc = _registries.read(path, path.relative_to(REPO).as_posix())
+    except _registries.ManifestError as exc:
+        return [str(exc)]
+    exempt = EXEMPT_KEYS.get(path.name, set())
+    return [
+        f"{path.relative_to(REPO)}: `{key}` is a stored approval/status field. "
+        f"An approval is evidence ABOUT a fingerprint (ADR-MCPRE-059 §14.7); "
+        f"record it in verification/reviews/ keyed by reviewed_fingerprint."
+        for key in offending_keys(doc, exempt=exempt)
+    ]
+
+
+def _review_failures(path: Path) -> list[str]:
+    """The stored approval bits, and the naming defects, of one review record."""
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"{path.relative_to(REPO)}: unparsable: {exc}"]
+    failures = [
+        f"{path.relative_to(REPO)}: `{key}` is a stored approval bit. A review "
+        f"record says which fingerprint was reviewed and nothing else."
+        for key in offending_keys(doc)
+    ]
+    failures.extend(naming_defects(doc, path))
+    return failures
 
 
 def scan() -> tuple[list[str], int]:
     """(failures, files examined). An empty scope is a failure, not a pass."""
-    failures: list[str] = []
-    examined = 0
-    for path in _registries.policy_files(REPO):
-        examined += 1
-        try:
-            doc = _registries.read(path, path.relative_to(REPO).as_posix())
-        except _registries.ManifestError as exc:
-            failures.append(str(exc))
-            continue
-        exempt = EXEMPT_KEYS.get(path.name, set())
-        for key in offending_keys(doc, exempt=exempt):
-            failures.append(
-                f"{path.relative_to(REPO)}: `{key}` is a stored approval/status field. "
-                f"An approval is evidence ABOUT a fingerprint (ADR-MCPRE-059 §14.7); "
-                f"record it in verification/reviews/ keyed by reviewed_fingerprint."
-            )
-    for path in sorted(REVIEWS_DIR.rglob("*.json")) if REVIEWS_DIR.exists() else []:
-        examined += 1
-        try:
-            doc = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            failures.append(f"{path.relative_to(REPO)}: unparsable: {exc}")
-            continue
-        for key in offending_keys(doc):
-            failures.append(
-                f"{path.relative_to(REPO)}: `{key}` is a stored approval bit. A review "
-                f"record says which fingerprint was reviewed and nothing else."
-            )
-        failures.extend(naming_defects(doc, path))
-    return failures, examined
+    policies = list(_registries.policy_files(REPO))
+    reviews = sorted(REVIEWS_DIR.rglob("*.json")) if REVIEWS_DIR.exists() else []
+    failures = [f for path in policies for f in _policy_failures(path)]
+    failures.extend(f for path in reviews for f in _review_failures(path))
+    return failures, len(policies) + len(reviews)
+
+
+#: (document, a substring of the key that must be reported): the shapes the gate forbids.
+FORBIDDEN_CASES = (
+    ({"theorem": [{"id": "THM-0001", "approved": True}]}, "theorem[0].approved"),
+    ({"assumption": [{"id": "ASM-0001", "review_status": "ok"}]}, "review_status"),
+    ({"unit": [{"id": "u", "nested": {"clean": True}}]}, "clean"),
+)
+
+#: (document, why the gate must accept it): the mechanism itself, which must keep working.
+PERMITTED_CASES = (
+    (
+        {"theorem": [{"id": "THM-0001", "review_requirement": "Owner security-specification review"}]},
+        "the gate refused `review_requirement`, which is the mechanism, not a violation",
+    ),
+    (
+        {"reviewed_fingerprint": "sha256:abc", "reviewer": "x", "axis": "specification"},
+        "the gate refused a well-formed review record",
+    ),
+)
+
+#: (record, the defect it must produce or None, what it is).
+NAMING_CASES = (
+    ({"reviewer": "x"}, "reviewed_fingerprint", "an approval naming no fingerprint"),
+    (
+        {"record_kind": "measurement", "re_derived_against": "main @ abc"},
+        None,
+        "a well-formed measurement record",
+    ),
+    (
+        {"record_kind": "measurement", "reviewed_fingerprint": "sha256:abc"},
+        "Measuring is not approving",
+        "a measurement claiming to be a review",
+    ),
+    ({"record_kind": "audit"}, "unknown `record_kind`", "an undeclared third kind"),
+)
+
+
+def _forbidden_failure() -> str | None:
+    for doc, needle in FORBIDDEN_CASES:
+        if not any(needle in entry for entry in offending_keys(doc)):
+            return f"{needle} not caught in {doc}"
+    return None
+
+
+def _permitted_failure() -> str | None:
+    return next((refusal for doc, refusal in PERMITTED_CASES if offending_keys(doc)), None)
+
+
+def _naming_failure(doc: dict, needle: str | None, label: str) -> str | None:
+    defects = naming_defects(doc, REPO / "verification" / "reviews" / "selftest.json")
+    if needle is None:
+        return f"the gate refused {label}: {defects}" if defects else None
+    return None if any(needle in entry for entry in defects) else f"{label} was accepted"
+
+
+def _first_selftest_failure() -> str | None:
+    """The first way the gate misjudges one of its own cases, or None."""
+    failure = _forbidden_failure() or _permitted_failure()
+    for doc, needle, label in NAMING_CASES:
+        failure = failure or _naming_failure(doc, needle, label)
+    return failure
 
 
 def selftest() -> int:
@@ -167,60 +246,10 @@ def selftest() -> int:
 
     A gate whose only evidence is that a clean tree passes has never been shown to fail.
     """
-    cases = [
-        ({"theorem": [{"id": "THM-0001", "approved": True}]}, "theorem[0].approved"),
-        ({"assumption": [{"id": "ASM-0001", "review_status": "ok"}]}, "review_status"),
-        ({"unit": [{"id": "u", "nested": {"clean": True}}]}, "clean"),
-    ]
-    for doc, needle in cases:
-        found = offending_keys(doc)
-        if not any(needle in entry for entry in found):
-            print(f"SELFTEST FAIL: {needle} not caught in {doc}", file=sys.stderr)
-            return 1
-    permitted = {
-        "theorem": [
-            {
-                "id": "THM-0001",
-                "review_requirement": "Owner security-specification review",
-            }
-        ]
-    }
-    if offending_keys(permitted):
-        print(
-            "SELFTEST FAIL: the gate refused `review_requirement`, which is the "
-            "mechanism, not a violation",
-            file=sys.stderr,
-        )
+    failure = _first_selftest_failure()
+    if failure is not None:
+        print(f"SELFTEST FAIL: {failure}", file=sys.stderr)
         return 1
-    record = {"reviewed_fingerprint": "sha256:abc", "reviewer": "x", "axis": "specification"}
-    if offending_keys(record):
-        print("SELFTEST FAIL: the gate refused a well-formed review record", file=sys.stderr)
-        return 1
-    here = REPO / "verification" / "reviews" / "selftest.json"
-    naming_cases = [
-        ({"reviewer": "x"}, "reviewed_fingerprint", "an approval naming no fingerprint"),
-        (
-            {"record_kind": "measurement", "re_derived_against": "main @ abc"},
-            None,
-            "a well-formed measurement record",
-        ),
-        (
-            {"record_kind": "measurement", "reviewed_fingerprint": "sha256:abc"},
-            "Measuring is not approving",
-            "a measurement claiming to be a review",
-        ),
-        ({"record_kind": "audit"}, "unknown `record_kind`", "an undeclared third kind"),
-    ]
-    for doc, needle, label in naming_cases:
-        defects = naming_defects(doc, here)
-        if needle is None:
-            if defects:
-                print(f"SELFTEST FAIL: the gate refused {label}: {defects}", file=sys.stderr)
-                return 1
-            continue
-        if not any(needle in entry for entry in defects):
-            print(f"SELFTEST FAIL: {label} was accepted", file=sys.stderr)
-            return 1
     print("registry_approval_gate selftest: OK")
     return 0
 

@@ -17,6 +17,11 @@ from _assumption_scope import unit_assumptions
 from _view_format import header, one_line, table
 
 
+def _listed(items, none: str) -> str:
+    """The items comma-joined, or the placeholder naming what is absent."""
+    return ", ".join(items) or none
+
+
 def _supporters(theorems: dict) -> dict[str, list[str]]:
     """unit id → the theorems it supports. Derived; never stored (§8.2)."""
     supporters: dict[str, list[str]] = {}
@@ -33,6 +38,30 @@ def _scoped_units(entry: dict, units: list[dict]) -> list[str]:
     )
 
 
+def _consumer_row(entry: dict, units: list[dict], supporters: dict[str, list[str]]) -> tuple:
+    """One assumption's row: what it is, and the units and theorems it reaches."""
+    scoped = _scoped_units(entry, units)
+    reached = sorted({tid for unit in scoped for tid in supporters.get(unit, [])})
+    return (
+        entry["id"],
+        # ADR-MCPRE-068 §7. WHY the chain terminates here, beside WHAT is trusted
+        # and WHERE it reaches. A view that shows a premise's blast radius without
+        # its class invites the reading the typing exists to end: an
+        # external-boundary premise under a root is a supply-chain statement and an
+        # open review obligation under the same root is a DEBT, and untyped they
+        # read alike. A withdrawn record has no class and says so.
+        entry.get("premise_class") or "_withdrawn_",
+        # Not truncated. A shortened description in a table reads as the whole of
+        # what is trusted, and the one assumption whose wording matters most is the
+        # long one. Nothing in these views bounds what it shows, so there is no
+        # limit to disclose — and if one is ever added, it must be stated on the
+        # page, because silent truncation reads as coverage.
+        one_line(entry["description"]),
+        _listed(scoped, "_no unit_"),
+        _listed(reached, "_no theorem_"),
+    )
+
+
 def assumption_consumers(theorems: dict, verification: dict, assumptions: dict) -> str:
     """Which claims a trusted assumption reaches — the derived `consumed_by` view (§8.2).
 
@@ -41,30 +70,10 @@ def assumption_consumers(theorems: dict, verification: dict, assumptions: dict) 
     """
     units = verification.get("unit", [])
     supporters = _supporters(theorems)
-    rows = []
-    for entry in sorted(assumptions.get("assumption", []), key=lambda row: row["id"]):
-        scoped = _scoped_units(entry, units)
-        reached = sorted({tid for unit in scoped for tid in supporters.get(unit, [])})
-        rows.append(
-            (
-                entry["id"],
-                # ADR-MCPRE-068 §7. WHY the chain terminates here, beside WHAT is trusted
-                # and WHERE it reaches. A view that shows a premise's blast radius without
-                # its class invites the reading the typing exists to end: an
-                # external-boundary premise under a root is a supply-chain statement and an
-                # open review obligation under the same root is a DEBT, and untyped they
-                # read alike. A withdrawn record has no class and says so.
-                entry.get("premise_class") or "_withdrawn_",
-                # Not truncated. A shortened description in a table reads as the whole of
-                # what is trusted, and the one assumption whose wording matters most is the
-                # long one. Nothing in these views bounds what it shows, so there is no
-                # limit to disclose — and if one is ever added, it must be stated on the
-                # page, because silent truncation reads as coverage.
-                one_line(entry["description"]),
-                ", ".join(scoped) or "_no unit_",
-                ", ".join(reached) or "_no theorem_",
-            )
-        )
+    rows = [
+        _consumer_row(entry, units, supporters)
+        for entry in sorted(assumptions.get("assumption", []), key=lambda row: row["id"])
+    ]
 
     body = header(
         "Assumption consumers",
@@ -85,6 +94,37 @@ def assumption_consumers(theorems: dict, verification: dict, assumptions: dict) 
     return body
 
 
+def _crossing(boundary: dict, assumptions: dict) -> list[dict]:
+    """The assumptions whose scope names this boundary."""
+    return [
+        entry
+        for entry in sorted(assumptions.get("assumption", []), key=lambda row: row["id"])
+        if f"boundary://{boundary['id']}" in [str(t) for t in entry.get("scope", [])]
+    ]
+
+
+def _boundary_row(
+    boundary: dict, units: list[dict], supporters: dict[str, list[str]], assumptions: dict
+) -> tuple:
+    """One boundary's row: its kind and cap, the premises crossing it, the theorems reached."""
+    crossing = _crossing(boundary, assumptions)
+    reached = sorted(
+        {
+            tid
+            for entry in crossing
+            for unit in _scoped_units(entry, units)
+            for tid in supporters.get(unit, [])
+        }
+    )
+    return (
+        boundary["id"],
+        boundary["kind"],
+        str(boundary.get("max_class_without_assumption") or "_no cap_"),
+        _listed((entry["id"] for entry in crossing), "_no premise_"),
+        _listed(reached, "_no theorem_"),
+    )
+
+
 def trust_boundaries(
     theorems: dict, verification: dict, assumptions: dict, boundaries: dict
 ) -> str:
@@ -102,30 +142,10 @@ def trust_boundaries(
     """
     units = verification.get("unit", [])
     supporters = _supporters(theorems)
-    rows = []
-    for boundary in sorted(boundaries.get("boundary", []), key=lambda row: row["id"]):
-        crossing = [
-            entry
-            for entry in sorted(assumptions.get("assumption", []), key=lambda row: row["id"])
-            if f"boundary://{boundary['id']}" in [str(t) for t in entry.get("scope", [])]
-        ]
-        reached = sorted(
-            {
-                tid
-                for entry in crossing
-                for unit in _scoped_units(entry, units)
-                for tid in supporters.get(unit, [])
-            }
-        )
-        rows.append(
-            (
-                boundary["id"],
-                boundary["kind"],
-                str(boundary.get("max_class_without_assumption") or "_no cap_"),
-                ", ".join(entry["id"] for entry in crossing) or "_no premise_",
-                ", ".join(reached) or "_no theorem_",
-            )
-        )
+    rows = [
+        _boundary_row(boundary, units, supporters, assumptions)
+        for boundary in sorted(boundaries.get("boundary", []), key=lambda row: row["id"])
+    ]
 
     body = header(
         "Trust boundaries",
@@ -165,7 +185,7 @@ def owner_view(theorems: dict, verification: dict, assumptions: dict) -> str:
         (
             unit_id,
             unit["class"],
-            ", ".join(sorted(row["id"] for row in by_owner.get(unit_id, []))) or "_none_",
+            _listed(sorted(row["id"] for row in by_owner.get(unit_id, [])), "_none_"),
             str(len(unit_assumptions(unit_id, assumptions))),
         )
         for unit_id, unit in sorted(units.items())
@@ -216,8 +236,8 @@ def _unit_radius(theorems: dict, verification: dict) -> str:
             (
                 f"unit://{unit['id']}",
                 "source, contracts or evidence",
-                ", ".join(sorted(supporters.get(unit["id"], []))) or "_no theorem_",
-                ", ".join(downstream) or "_no consumer_",
+                _listed(sorted(supporters.get(unit["id"], [])), "_no theorem_"),
+                _listed(downstream, "_no consumer_"),
             )
         )
     return table(
@@ -235,7 +255,7 @@ def _theorem_radius(theorems: dict) -> str:
             row["id"],
             "statement, consequence, scope or review requirement",
             "specification review",
-            ", ".join(sorted(dependents.get(row["id"], []))) or "_no dependent_",
+            _listed(sorted(dependents.get(row["id"], [])), "_no dependent_"),
         )
         for row in sorted(theorems.get("theorem", []), key=lambda row: row["id"])
     ]
@@ -248,7 +268,7 @@ def _assumption_radius(verification: dict, assumptions: dict) -> str:
         (
             entry["id"],
             "description, justification, scope or mechanism",
-            ", ".join(_scoped_units(entry, units)) or "_no unit_",
+            _listed(_scoped_units(entry, units), "_no unit_"),
             "assumption review",
         )
         for entry in sorted(assumptions.get("assumption", []), key=lambda row: row["id"])

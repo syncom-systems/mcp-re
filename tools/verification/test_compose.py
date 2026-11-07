@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _compose import compose, contradictions, requirements  # noqa: E402
+from _compose import ManifestInputs, compose, contradictions, requirements  # noqa: E402
 from _lanes import EXTRACTION_LANES, FORMAL, HOST_LANES, HYGIENE, PHASES  # noqa: E402
 from _evidence import EvidenceRecord, write_record  # noqa: E402
 
@@ -97,7 +97,9 @@ def store_for(doc, toolchains, assumptions, *, omit=(), mutate=None) -> Path:
 
 
 def verdict(store: Path, doc, toolchains, assumptions, hygiene=None):
-    return compose(store, doc, toolchains, assumptions, hygiene or {"assumptions": "PASS"})
+    return compose(
+        store, ManifestInputs(doc, toolchains, assumptions), hygiene or {"assumptions": "PASS"}
+    )
 
 
 # ---------------------------------------------------------------------------

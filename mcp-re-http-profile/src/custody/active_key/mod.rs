@@ -13,14 +13,24 @@ use std::sync::Arc;
 use mcp_re_core::SigningKey;
 
 use crate::block::ActorIdentity;
-use crate::delegation::delegated_key_of;
 use crate::delegation::parse_credential;
 use crate::delegation::DelegationClaims;
 use crate::delegation::DelegationHeader;
 use crate::error::HttpProfileError;
 
 use super::IssuanceRefusal;
+mod attestation;
 mod stated;
+
+/// What an issuance asked the root to attest, with the holder's side of it: the key it will
+/// hold, the identity naming that key, and the root whose signature is the only one believed.
+pub(super) struct IssuanceRequest<'a> {
+    pub(super) key: Arc<SigningKey>,
+    pub(super) server_signer: ActorIdentity,
+    pub(super) header: &'a DelegationHeader,
+    pub(super) claims: &'a DelegationClaims,
+    pub(super) root: &'a mcp_re_core::VerificationKey,
+}
 
 /// An owned, cheaply-cloned snapshot of the current delegated key and the delegation
 /// credential the issuance seam returned (ADR-MCPRE-052 §4). A hot-path response signer publishes one and signs per
@@ -61,16 +71,20 @@ impl ActiveDelegatedKey {
     /// statement of what this issuance was to establish, so everything else must come back
     /// unchanged.
     pub(super) fn issued(
-        key: Arc<SigningKey>,
-        server_signer: ActorIdentity,
-        requested: (&DelegationHeader, &DelegationClaims),
+        request: IssuanceRequest<'_>,
         credential: String,
-        root: &mcp_re_core::VerificationKey,
     ) -> Result<Self, IssuanceRefusal> {
+        let IssuanceRequest {
+            key,
+            server_signer,
+            header,
+            claims,
+            root,
+        } = request;
         // Before any claim is read: the configured root, under the requested name, signed it.
-        crate::delegation::root_signed(&credential, &requested.0.kid, root)
+        crate::delegation::root_signed(&credential, &header.kid, root)
             .map_err(|_| IssuanceRefusal::RootKeyMismatch)?;
-        Self::attested(key, server_signer, requested.1, credential)
+        Self::attested(key, server_signer, claims, credential)
             .map_err(|_| IssuanceRefusal::NotAsRequested)
     }
 
@@ -85,60 +99,10 @@ impl ActiveDelegatedKey {
         credential: String,
     ) -> Result<Self, HttpProfileError> {
         let (_, claims) = parse_credential(&credential)?;
-
-        // The delegated key identity and its binding to the key actually held. `cnf` is the
-        // rule that a wrong key type, a wrong curve, or a `jwk.kid` that is not the
-        // credential's own `delegated_kid` is an invalid credential; it belongs to the
-        // verifier and is borrowed rather than restated. What is added here is the half a
-        // verifier cannot check: that the attested key is the one in this process.
-        if delegated_key_of(&claims)?.to_bytes() != key.public_key().to_bytes() {
-            return Err(HttpProfileError::DelegationCredentialInvalid);
-        }
-
-        // The identity the response block will carry is the one the credential states, and its
-        // `keyid` is the delegated key's own id, not merely whatever the join spells.
-        if claims.mcp_re_server_signer != server_signer.actor_id()
-            || server_signer.keyid != claims.delegated_kid
-        {
-            return Err(HttpProfileError::DelegationCredentialInvalid);
-        }
-
-        // The static delegation context: issuer, audience, profile, scope, epoch, key use,
-        // `jti`, `cnf`. Exempt are the window (`nbf`/`exp`), which the root owns within the
-        // bounds below, and `iat`, the root's own issuance stamp: no verifier stores or
-        // consumes it. The header needs no comparison: `root_signed` pinned `typ` and `alg`
-        // and resolved its `kid` as the requested root's.
-        let mut as_requested = requested_claims.clone();
-        as_requested.iat = claims.iat;
-        as_requested.nbf = claims.nbf;
-        as_requested.exp = claims.exp;
-        if claims != as_requested {
-            return Err(HttpProfileError::DelegationCredentialInvalid);
-        }
-
-        // The temporal relation itself. A credential whose window is empty or inverted is
-        // not a narrower credential, it is an incoherent one, and `exp` is what the whole
-        // fail-closed path is decided on.
-        if claims.nbf >= claims.exp {
-            return Err(HttpProfileError::DelegationCredentialInvalid);
-        }
-
-        // Activation. The root owns the window's edges, but a key whose `nbf` is later than the
-        // instant it was requested at would be published and served at once while every
-        // verifier still refuses it. A root whose clock runs ahead therefore FAILS the
-        // issuance, and the predecessor keeps serving through the overlap.
-        if claims.nbf > requested_claims.nbf {
-            return Err(HttpProfileError::DelegationCredentialInvalid);
-        }
-
-        // The root may clamp the window, never extend it: an `exp` past the one requested
-        // would serve this key beyond the TTL the deployment chose. And the window must be
-        // open at the instant it was requested, or the issuance adopts a key that is
-        // already expired.
-        if claims.exp > requested_claims.exp || claims.exp <= requested_claims.nbf {
-            return Err(HttpProfileError::DelegationCredentialInvalid);
-        }
-
+        attestation::holds_the_key(&claims, &key)?;
+        attestation::names_the_identity(&claims, &server_signer)?;
+        attestation::echoes_the_request(&claims, requested_claims)?;
+        attestation::window_is_admissible(&claims, requested_claims)?;
         Ok(ActiveDelegatedKey {
             key,
             server_signer,
@@ -266,22 +230,35 @@ mod tests {
         (header, claims, server_signer)
     }
 
+    /// Offer `credential` as the answer to the issuance `request` asked for, for a holder of
+    /// the standard delegated key under `signer`.
+    fn present(
+        request: &DelegationClaims,
+        header: &DelegationHeader,
+        signer: ActorIdentity,
+        credential: String,
+    ) -> Result<ActiveDelegatedKey, IssuanceRefusal> {
+        ActiveDelegatedKey::issued(
+            IssuanceRequest {
+                key: Arc::new(delegated()),
+                server_signer: signer,
+                header,
+                claims: request,
+                root: &root().public_key(),
+            },
+            credential,
+        )
+    }
+
     /// Mint `returned` over the root and offer it as the answer to `requested`.
     fn offer(
         requested_claims: &DelegationClaims,
         header: &DelegationHeader,
         returned: &DelegationClaims,
     ) -> Result<ActiveDelegatedKey, IssuanceRefusal> {
-        let key = delegated();
-        let (_, _, server_signer) = requested(&key);
+        let (_, _, server_signer) = requested(&delegated());
         let credential = issue_delegation_credential(&root(), header, returned);
-        ActiveDelegatedKey::issued(
-            Arc::new(key),
-            server_signer,
-            (header, requested_claims),
-            credential,
-            &root().public_key(),
-        )
+        present(requested_claims, header, server_signer, credential)
     }
 
     /// The row itself. The window is the CREDENTIAL's, not the request's — so a root that
@@ -336,14 +313,7 @@ mod tests {
         let other = SigningKey::from_seed_bytes(&[102u8; 32]);
         let (header, other_request, other_signer) = requested(&other);
         let credential = issue_delegation_credential(&root(), &header, &other_request);
-        let refused = ActiveDelegatedKey::issued(
-            Arc::new(delegated()),
-            other_signer,
-            (&header, &other_request),
-            credential,
-            &root().public_key(),
-        )
-        .err();
+        let refused = present(&other_request, &header, other_signer, credential).err();
         assert_eq!(refused, Some(IssuanceRefusal::NotAsRequested));
     }
 
@@ -387,14 +357,7 @@ mod tests {
         let (header, mut request, signer) = requested(&key);
         request.mcp_re_server_signer = "server:elsewhere".into();
         let credential = issue_delegation_credential(&root(), &header, &request);
-        assert!(ActiveDelegatedKey::issued(
-            Arc::new(delegated()),
-            signer,
-            (&header, &request),
-            credential,
-            &root().public_key(),
-        )
-        .is_err());
+        assert!(present(&request, &header, signer, credential).is_err());
     }
 
     /// The header is part of what was asked for: a credential minted under another
@@ -406,14 +369,7 @@ mod tests {
         let mut other_header = header.clone();
         other_header.kid = "another-root".into();
         let credential = issue_delegation_credential(&root(), &other_header, &request);
-        let refused = ActiveDelegatedKey::issued(
-            Arc::new(delegated()),
-            server_signer,
-            (&header, &request),
-            credential,
-            &root().public_key(),
-        )
-        .err();
+        let refused = present(&request, &header, server_signer, credential).err();
         assert_eq!(refused, Some(IssuanceRefusal::RootKeyMismatch));
     }
 
@@ -425,14 +381,7 @@ mod tests {
         let (header, request, server_signer) = requested(&key);
         let impostor = SigningKey::from_seed_bytes(&[34u8; 32]);
         let credential = issue_delegation_credential(&impostor, &header, &request);
-        let refused = ActiveDelegatedKey::issued(
-            Arc::new(delegated()),
-            server_signer,
-            (&header, &request),
-            credential,
-            &root().public_key(),
-        )
-        .err();
+        let refused = present(&request, &header, server_signer, credential).err();
         assert_eq!(refused, Some(IssuanceRefusal::RootKeyMismatch));
     }
 
@@ -526,15 +475,7 @@ mod tests {
             .as_object_mut()
             .expect("claims are an object")
             .insert("x_extra".into(), "1".into());
-        let offer_jws = |jws: String| {
-            ActiveDelegatedKey::issued(
-                Arc::new(delegated()),
-                signer.clone(),
-                (&header, &request),
-                jws,
-                &root().public_key(),
-            )
-        };
+        let offer_jws = |jws: String| present(&request, &header, signer.clone(), jws);
         assert!(offer_jws(compact(&plain)).is_ok(), "positive control");
         assert!(offer_jws(compact(&extra)).is_err());
     }
@@ -549,14 +490,7 @@ mod tests {
         signer.keyid = "another-kid".into();
         request.mcp_re_server_signer = signer.actor_id();
         let credential = issue_delegation_credential(&root(), &header, &request);
-        assert!(ActiveDelegatedKey::issued(
-            Arc::new(delegated()),
-            signer,
-            (&header, &request),
-            credential,
-            &root().public_key(),
-        )
-        .is_err());
+        assert!(present(&request, &header, signer, credential).is_err());
     }
 
     /// Bytes that are not a credential at all.
@@ -566,14 +500,7 @@ mod tests {
         let (header, request, server_signer) = requested(&key);
         for bad in ["", "cred", "a.b", "a.b.c", "....."] {
             assert!(
-                ActiveDelegatedKey::issued(
-                    Arc::new(delegated()),
-                    server_signer.clone(),
-                    (&header, &request),
-                    bad.to_owned(),
-                    &root().public_key(),
-                )
-                .is_err(),
+                present(&request, &header, server_signer.clone(), bad.to_owned()).is_err(),
                 "{bad:?} was accepted as a credential"
             );
         }

@@ -498,17 +498,26 @@ mod tests {
         assert_eq!(super::validate_routing_headers(&headers), Ok(()));
     }
 
-    #[test]
-    fn duplicate_routing_header_fails_closed() {
-        let headers = super::RequestHeaders::from_pairs([
-            ("Mcp-Method", "tools/call"),
-            ("mcp-method", "tools/list"),
-        ]);
+    /// Validation of `pairs` rejects with `expected`.
+    fn assert_routing_rejected<const N: usize>(
+        pairs: [(&str, &str); N],
+        expected: super::RoutingHeaderRejection,
+    ) {
+        let headers = super::RequestHeaders::from_pairs(pairs);
         assert_eq!(
             super::validate_routing_headers(&headers),
-            Err(super::RoutingHeaderRejection::Duplicate {
-                header: super::MCP_METHOD_HEADER
-            })
+            Err(expected),
+            "{pairs:?}"
+        );
+    }
+
+    #[test]
+    fn duplicate_routing_header_fails_closed() {
+        assert_routing_rejected(
+            [("Mcp-Method", "tools/call"), ("mcp-method", "tools/list")],
+            super::RoutingHeaderRejection::Duplicate {
+                header: super::MCP_METHOD_HEADER,
+            },
         );
     }
 
@@ -516,23 +525,21 @@ mod tests {
     fn malformed_routing_header_fails_closed() {
         // A CRLF-laced routing header is a smuggling vector — fail closed even
         // though the proxy never routes on it.
-        let headers = super::RequestHeaders::from_pairs([("Mcp-Name", "echo\r\nX-Spoof: evil")]);
-        assert_eq!(
-            super::validate_routing_headers(&headers),
-            Err(super::RoutingHeaderRejection::Malformed {
-                header: super::MCP_NAME_HEADER
-            })
+        assert_routing_rejected(
+            [("Mcp-Name", "echo\r\nX-Spoof: evil")],
+            super::RoutingHeaderRejection::Malformed {
+                header: super::MCP_NAME_HEADER,
+            },
         );
     }
 
     #[test]
     fn empty_routing_header_fails_closed() {
-        let headers = super::RequestHeaders::from_pairs([("Mcp-Method", "   ")]);
-        assert_eq!(
-            super::validate_routing_headers(&headers),
-            Err(super::RoutingHeaderRejection::Malformed {
-                header: super::MCP_METHOD_HEADER
-            })
+        assert_routing_rejected(
+            [("Mcp-Method", "   ")],
+            super::RoutingHeaderRejection::Malformed {
+                header: super::MCP_METHOD_HEADER,
+            },
         );
     }
 }

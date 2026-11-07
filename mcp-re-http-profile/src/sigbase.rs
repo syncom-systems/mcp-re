@@ -185,6 +185,32 @@ fn component_value(
     Ok(value)
 }
 
+/// The one message a component resolves against: the request for `;req`, else the message.
+enum Origin<'a> {
+    Request(&'a HttpRequest),
+    Response(&'a HttpResponse),
+}
+
+impl<'a> Origin<'a> {
+    /// The message `component` resolves against; `None` for a `;req` with no request context.
+    fn of(component: &CoveredComponent, source: &'a SourceMessage<'_>) -> Option<Self> {
+        match (source, component.req) {
+            (SourceMessage::Request(_), true) | (SourceMessage::ResponseOnly(_), true) => None,
+            (SourceMessage::Request(r), false) => Some(Origin::Request(r)),
+            (SourceMessage::Response { request, .. }, true) => Some(Origin::Request(request)),
+            (SourceMessage::Response { response, .. }, false)
+            | (SourceMessage::ResponseOnly(response), false) => Some(Origin::Response(response)),
+        }
+    }
+
+    fn headers(&self) -> &'a [(String, String)] {
+        match *self {
+            Origin::Request(r) => &r.headers,
+            Origin::Response(r) => &r.headers,
+        }
+    }
+}
+
 /// Resolve one covered component's value, fail-closed: an absent field or an
 /// unsupported derived component is a missing covered component, never a
 /// blank line.
@@ -192,68 +218,41 @@ fn resolve_component_value(
     component: &CoveredComponent,
     source: &SourceMessage<'_>,
 ) -> Result<String, HttpProfileError> {
-    // `;req` components resolve against the originating request.
-    let (request, response): (Option<&HttpRequest>, Option<&HttpResponse>) = match source {
-        SourceMessage::Request(r) => {
-            if component.req {
-                return Err(HttpProfileError::MissingCoveredComponent(component.name));
-            }
-            (Some(*r), None)
-        }
-        SourceMessage::Response { response, request } => {
-            if component.req {
-                (Some(*request), None)
-            } else {
-                (None, Some(*response))
-            }
-        }
-        SourceMessage::ResponseOnly(response) => {
-            if component.req {
-                // No request context: a `;req` component cannot be resolved.
-                return Err(HttpProfileError::MissingCoveredComponent(component.name));
-            }
-            (None, Some(*response))
-        }
-    };
-
-    if let Some(name) = component.name.strip_prefix('@') {
-        return match (name, request, response) {
-            // RFC 9421 §2.2.1: the method name is case-sensitive and "no
-            // transformation to the method's case is performed". Uppercasing it
-            // here collapsed `post` and `POST` onto one signature base, so an
-            // intermediary could rewrite the request line's method case and the
-            // signature still verified — the audited bytes then differ from the
-            // signed ones.
-            ("method", Some(r), _) => Ok(r.method.clone()),
-            ("target-uri", Some(r), _) => Ok(r.target_uri.clone()),
-            ("authority", Some(r), _) => authority_of(&r.target_uri)
-                .ok_or(HttpProfileError::MissingCoveredComponent(component.name)),
-            ("path", Some(r), _) => path_of(&r.target_uri)
-                .ok_or(HttpProfileError::MissingCoveredComponent(component.name)),
-            ("status", _, Some(rsp)) => Ok(rsp.status.to_string()),
-            _ => Err(HttpProfileError::MissingCoveredComponent(component.name)),
-        };
+    let missing = || HttpProfileError::MissingCoveredComponent(component.name);
+    let origin = Origin::of(component, source).ok_or_else(missing)?;
+    match component.name.strip_prefix('@') {
+        Some(name) => derived_value(name, &origin).ok_or_else(missing),
+        None => field_value(component.name, origin.headers()).ok_or_else(missing),
     }
+}
 
-    // A field component: exact-once lookup; only OWS (SP/HTAB) is trimmed, so CR/LF reaches the guard.
-    let headers = match (request, response) {
-        (Some(r), None) => &r.headers,
-        (None, Some(rsp)) => &rsp.headers,
-        _ => return Err(HttpProfileError::MissingCoveredComponent(component.name)),
-    };
-    let mut found: Option<&str> = None;
-    for (k, v) in headers {
-        if k.eq_ignore_ascii_case(component.name) {
-            if found.is_some() {
-                // RFC 9421 would join duplicates; this profile fails closed on
-                // duplicated covered fields (v0.11 grill B.1 exactly-once rule).
-                return Err(HttpProfileError::MissingCoveredComponent(component.name));
-            }
-            found = Some(v.trim_matches([' ', '\t']));
-        }
+/// A derived component's value, or `None` when the message does not carry it.
+///
+/// RFC 9421 §2.2.1: the method name is case-sensitive and "no transformation to the
+/// method's case is performed". Uppercasing it here collapsed `post` and `POST` onto one
+/// signature base, so an intermediary could rewrite the request line's method case and the
+/// signature still verified — the audited bytes then differ from the signed ones.
+fn derived_value(name: &str, origin: &Origin<'_>) -> Option<String> {
+    match (name, origin) {
+        ("method", Origin::Request(r)) => Some(r.method.clone()),
+        ("target-uri", Origin::Request(r)) => Some(r.target_uri.clone()),
+        ("authority", Origin::Request(r)) => authority_of(&r.target_uri),
+        ("path", Origin::Request(r)) => path_of(&r.target_uri),
+        ("status", Origin::Response(rsp)) => Some(rsp.status.to_string()),
+        _ => None,
     }
-    let value = found.ok_or(HttpProfileError::MissingCoveredComponent(component.name))?;
-    Ok(value.to_owned())
+}
+
+/// A field component's value: exact-once lookup; only OWS (SP/HTAB) is trimmed, so CR/LF
+/// reaches the guard. RFC 9421 would join duplicates; this profile fails closed on
+/// duplicated covered fields (v0.11 grill B.1 exactly-once rule).
+fn field_value(name: &str, headers: &[(String, String)]) -> Option<String> {
+    let mut matching = headers.iter().filter(|(k, _)| k.eq_ignore_ascii_case(name));
+    let (_, value) = matching.next()?;
+    matching
+        .next()
+        .is_none()
+        .then(|| value.trim_matches([' ', '\t']).to_owned())
 }
 
 /// `host[:port]` from an absolute URI, lowercased; userinfo is refused (RFC 9421 `@authority`).
@@ -294,13 +293,14 @@ pub fn signature_base(
 ) -> Result<Vec<u8>, HttpProfileError> {
     let mut lines = Vec::with_capacity(components.len().saturating_add(1));
     for c in components {
-        let value = component_value(c, source)?;
-        lines.push(format!("{}: {}", c.identifier(), value));
+        lines.push(format!(
+            "{}: {}",
+            c.identifier(),
+            component_value(c, source)?
+        ));
     }
-    lines.push(format!(
-        "\"@signature-params\": {}",
-        params.serialize_with(components)?
-    ));
+    let signature_params = params.serialize_with(components)?;
+    lines.push(format!("\"@signature-params\": {signature_params}"));
     Ok(lines.join("\n").into_bytes())
 }
 
@@ -343,18 +343,20 @@ mod tests {
         ));
     }
 
+    /// The error `signature_base` returns for covering `component` over `r` as a request.
+    fn request_base_error(r: &HttpRequest, component: CoveredComponent) -> HttpProfileError {
+        signature_base(
+            &[component],
+            &SignatureParams::default(),
+            &SourceMessage::Request(r),
+        )
+        .unwrap_err()
+    }
+
     #[test]
     fn missing_covered_field_fails_closed() {
-        let r = request();
-        let src = SourceMessage::Request(&r);
-        let err = signature_base(
-            &[CoveredComponent::new("content-digest")],
-            &SignatureParams::default(),
-            &src,
-        )
-        .unwrap_err();
         assert_eq!(
-            err,
+            request_base_error(&request(), CoveredComponent::new("content-digest")),
             HttpProfileError::MissingCoveredComponent("content-digest")
         );
     }
@@ -363,15 +365,8 @@ mod tests {
     fn duplicated_covered_field_fails_closed() {
         let mut r = request();
         r.headers.push(("content-type".into(), "text/plain".into()));
-        let src = SourceMessage::Request(&r);
-        let err = signature_base(
-            &[CoveredComponent::new("content-type")],
-            &SignatureParams::default(),
-            &src,
-        )
-        .unwrap_err();
         assert_eq!(
-            err,
+            request_base_error(&r, CoveredComponent::new("content-type")),
             HttpProfileError::MissingCoveredComponent("content-type")
         );
     }
@@ -618,14 +613,7 @@ mod tests {
 
     #[test]
     fn req_component_on_request_fails_closed() {
-        let r = request();
-        let src = SourceMessage::Request(&r);
-        let err = signature_base(
-            &[CoveredComponent::req("content-digest")],
-            &SignatureParams::default(),
-            &src,
-        )
-        .unwrap_err();
+        let err = request_base_error(&request(), CoveredComponent::req("content-digest"));
         assert!(matches!(err, HttpProfileError::MissingCoveredComponent(_)));
     }
 

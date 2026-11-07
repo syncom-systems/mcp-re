@@ -851,14 +851,15 @@ async fn the_client_facing_crate_can_verify_the_202_the_server_emits() {
 ///
 /// The tests above hand-build the notification with `sign_request_full`. That proves the
 /// profile, not the client: what the SDKs actually send comes out of
-/// `mcp_re_client_core::build_signed_notification`, and the serving path classifies a
+/// `mcp_re_client_core::build_signed_message`, and the serving path classifies a
 /// notification by the ABSENCE of `id` — a client that emitted `"id": null` instead
 /// would be dispatched as a request and answered with a bodied reply nothing awaits.
 /// Nothing else in the tree checks that the two ends agree on that, and the demo proxy
 /// the SDK e2e tests run against had in fact drifted from the serving path here.
 #[tokio::test]
 async fn the_client_cores_own_notification_envelope_earns_a_202() {
-    use mcp_re_client_core::build_signed_notification;
+    use mcp_re_client_core::build_signed_message;
+    use mcp_re_client_core::McpMessage;
     use mcp_re_client_core::RequestSigningInputs;
 
     let mut rotor = make_rotor();
@@ -881,9 +882,8 @@ async fn the_client_cores_own_notification_envelope_earns_a_202() {
         "Authorization".to_owned(),
         format!("Bearer {ACCESS_TOKEN}"),
     )]);
-    let signed = build_signed_notification(
-        "notifications/initialized",
-        serde_json::Map::new(),
+    let signed = build_signed_message(
+        McpMessage::new(None, "notifications/initialized", serde_json::Map::new()),
         TARGET,
         &inputs,
         &client_key(),

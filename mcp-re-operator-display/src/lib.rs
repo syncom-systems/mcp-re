@@ -38,4 +38,7 @@
 /// The projection itself, and the only constructor that performs it.
 mod locator;
 
+/// The components `locator` decomposes a reference into.
+mod locator_parts;
+
 pub use locator::RedactedLocator;

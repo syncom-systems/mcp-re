@@ -47,7 +47,7 @@ from _load_tool import load_tool  # noqa: E402
 
 verify_tool = load_tool('verify', 'verify_tool')
 
-from _evidence import EVIDENCE_ENV, load_bundle, write_bundle  # noqa: E402
+from _evidence import EVIDENCE_ENV, Bundle, load_bundle, write_bundle  # noqa: E402
 
 
 def test_a_failed_run_never_exits_zero():
@@ -153,7 +153,7 @@ def test_a_partial_run_is_recorded_as_incomplete_not_left_stale():
     # restores it afterwards is one interrupted run away from leaving a forged bundle
     # behind.
     store = Path(tempfile.mkdtemp(prefix="bundle-store-"))
-    write_bundle(store, "PASS", {"verus": "PASS"}, "stale-revision")
+    write_bundle(store, Bundle("PASS", {"verus": "PASS"}, "stale-revision"))
     completed = subprocess.run(
         [sys.executable, str(HERE / "verify"), "--manifests"],
         capture_output=True,
@@ -186,7 +186,7 @@ def test_an_unreadable_policy_revision_does_not_skip_the_write():
         verify_tool.load_verification = saved
     with tempfile.TemporaryDirectory() as tmp:
         store = Path(tmp)
-        write_bundle(store, outcome.aggregate, outcome.lanes, "<unreadable>")
+        write_bundle(store, Bundle(outcome.aggregate, outcome.lanes, "<unreadable>"))
         assert json.loads((store / "bundle.json").read_text())["aggregate"] == "FAIL"
 
 

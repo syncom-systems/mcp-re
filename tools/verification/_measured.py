@@ -84,15 +84,29 @@ def load_measurements(registry: Path) -> list[dict]:
 
 
 def _validate(where: str, measurement: dict, seen: set[str]) -> None:
+    _check_keys(where, measurement)
+    _check_identity(where, measurement, seen)
+    _check_apparatus(where, measurement)
+    _check_control(where, measurement)
+    _check_pattern(where, measurement)
+
+
+def _check_keys(where: str, measurement: dict) -> None:
     unknown = set(measurement) - _KEYS
     if unknown:
         raise ManifestError(f"{where}: unknown key(s) {sorted(unknown)}")
     missing = _KEYS - _OPTIONAL - set(measurement)
     if missing:
         raise ManifestError(f"{where}: missing required key(s) {sorted(missing)}")
+
+
+def _check_identity(where: str, measurement: dict, seen: set[str]) -> None:
     if measurement["id"] in seen:
         raise ManifestError(f"{where}: duplicate measurement id {measurement['id']!r}")
     seen.add(measurement["id"])
+
+
+def _check_apparatus(where: str, measurement: dict) -> None:
     if not measurement["protocol"]:
         raise ManifestError(
             f"{where}: `protocol` is empty. The protocol is an argv the lane executes; a "
@@ -104,22 +118,33 @@ def _validate(where: str, measurement: dict, seen: set[str]) -> None:
             f"is a number the reader has to guess the meaning of, and it cannot be compared "
             f"against the next one."
         )
+
+
+def _check_control(where: str, measurement: dict) -> None:
     kind = measurement.get("control_kind")
     if kind not in CONTROL_KINDS:
         raise ManifestError(
             f"{where}: `control_kind` is {kind!r}, not one of {list(CONTROL_KINDS)}."
         )
-    if kind == "sensitivity" and not measurement.get("control"):
+    has_argv = bool(measurement.get("control"))
+    if kind == "sensitivity" and not has_argv:
         raise ManifestError(
             f"{where}: `control_kind = 'sensitivity'` requires a `control` argv that "
             f"perturbs the apparatus and reports `APPARATUS-MOVED: <n>`."
         )
-    if kind == "reproducibility" and measurement.get("control"):
+    _check_no_extra_control(where, kind, has_argv)
+
+
+def _check_no_extra_control(where: str, kind: str, has_argv: bool) -> None:
+    if kind == "reproducibility" and has_argv:
         raise ManifestError(
             f"{where}: `control_kind = 'reproducibility'` takes no `control` argv — the "
             f"control IS the second run of the protocol, and a third command here would be "
             f"an apparatus check nothing adjudicates."
         )
+
+
+def _check_pattern(where: str, measurement: dict) -> None:
     try:
         re.compile(str(measurement["artifact_pattern"]))
     except re.error as exc:
@@ -226,6 +251,41 @@ def _declared(unit: dict, key: str):
     return value
 
 
+def _unit_problems(uid: str, unit: dict, found: list[dict]) -> list[str]:
+    """One unit's declaration problems against the rows registered for it."""
+    declares = any(str(e).startswith("measured://") for e in unit.get("evidence", []))
+    if not declares:
+        return [
+            f"measurement {row['id']}: unit {uid!r} declares no measured:// evidence, so "
+            f"the number is one no claim rests on"
+            for row in found
+        ]
+    if not found:
+        return [
+            f"unit {uid}: declares measured:// evidence but no measurement is registered "
+            f"for it. A declared evidence class nothing measures is unmeasured evidence."
+        ]
+    if len(found) > 1:
+        return [
+            f"unit {uid}: {len(found)} measurements are registered for it "
+            f"({sorted(r['id'] for r in found)}); its declaration names one"
+        ]
+    return _field_disagreements(uid, unit, found[0])
+
+
+def _field_disagreements(uid: str, unit: dict, row: dict) -> list[str]:
+    out: list[str] = []
+    for key, field in DECLARED_AS:
+        declared, registered = _declared(unit, key), _registered(row, field)
+        if declared != registered:
+            out.append(
+                f"unit {uid}: declares {key} {declared!r} but measurement {row['id']} "
+                f"registers {field} {registered!r}. The declaration and the registered "
+                f"apparatus are checked against each other, and they disagree."
+            )
+    return out
+
+
 def declaration_problems(units: dict[str, dict], measurements: list[dict]) -> list[str]:
     """Every `measured://` declaration that does not resolve to, or does not agree with, ONE row.
 
@@ -234,40 +294,10 @@ def declaration_problems(units: dict[str, dict], measurements: list[dict]) -> li
     one, each of the four declared fields must equal the row's. A row whose unit declares no
     `measured://` evidence is a number no claim rests on.
     """
-    out: list[str] = []
     rows: dict[str, list[dict]] = {}
     for row in measurements:
         rows.setdefault(row["unit"], []).append(row)
+    out: list[str] = []
     for uid in sorted(units):
-        unit = units[uid]
-        declares = any(str(e).startswith("measured://") for e in unit.get("evidence", []))
-        found = rows.get(uid, [])
-        if not declares:
-            out.extend(
-                f"measurement {row['id']}: unit {uid!r} declares no measured:// evidence, so "
-                f"the number is one no claim rests on"
-                for row in found
-            )
-            continue
-        if not found:
-            out.append(
-                f"unit {uid}: declares measured:// evidence but no measurement is registered "
-                f"for it. A declared evidence class nothing measures is unmeasured evidence."
-            )
-            continue
-        if len(found) > 1:
-            out.append(
-                f"unit {uid}: {len(found)} measurements are registered for it "
-                f"({sorted(r['id'] for r in found)}); its declaration names one"
-            )
-            continue
-        row = found[0]
-        for key, field in DECLARED_AS:
-            declared, registered = _declared(unit, key), _registered(row, field)
-            if declared != registered:
-                out.append(
-                    f"unit {uid}: declares {key} {declared!r} but measurement {row['id']} "
-                    f"registers {field} {registered!r}. The declaration and the registered "
-                    f"apparatus are checked against each other, and they disagree."
-                )
+        out.extend(_unit_problems(uid, units[uid], rows.get(uid, [])))
     return out

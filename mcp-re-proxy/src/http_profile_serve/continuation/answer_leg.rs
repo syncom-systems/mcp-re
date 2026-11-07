@@ -375,18 +375,35 @@ pub(in crate::http_profile_serve) mod tests {
         Consume(ContinuationKey),
     }
 
+    /// How a [`RecordingStore`] answers: no live entry, a live entry, or an outage.
+    #[derive(Default, PartialEq, Eq)]
+    enum Tier {
+        #[default]
+        Miss,
+        Hit,
+        Outage,
+    }
+
     /// A store that records every method it is asked for, and answers every read with a
-    /// miss or, when built with [`RecordingStore::hit`], a live entry.
+    /// miss, a live entry ([`RecordingStore::hit`]) or an outage ([`RecordingStore::outage`]).
     #[derive(Default)]
     struct RecordingStore {
         calls: std::sync::Mutex<Vec<StoreCall>>,
-        live: bool,
+        tier: Tier,
     }
 
     impl RecordingStore {
         fn hit() -> Self {
             Self {
-                live: true,
+                tier: Tier::Hit,
+                ..Self::default()
+            }
+        }
+
+        /// A tier that answers nothing it is asked: every operation reports an outage.
+        fn outage() -> Self {
+            Self {
+                tier: Tier::Outage,
                 ..Self::default()
             }
         }
@@ -411,6 +428,20 @@ pub(in crate::http_profile_serve) mod tests {
                 })
                 .collect()
         }
+
+        /// Records `call` and answers it with `ok`, or with the outage.
+        fn reply<'a, T: Send + 'a>(
+            &self,
+            call: StoreCall,
+            ok: T,
+        ) -> crate::continuation_store::ContinuationFuture<'a, T> {
+            self.record(call);
+            let result = match self.tier {
+                Tier::Outage => Err(unreachable_tier()),
+                Tier::Miss | Tier::Hit => Ok(ok),
+            };
+            Box::pin(async move { result })
+        }
     }
 
     impl AsyncContinuationStore for RecordingStore {
@@ -421,17 +452,18 @@ pub(in crate::http_profile_serve) mod tests {
             _ttl_secs: i64,
         ) -> crate::continuation_store::ContinuationFuture<'a, crate::continuation_store::Creation>
         {
-            self.record(StoreCall::Create(key.to_owned()));
-            Box::pin(async { Ok(crate::continuation_store::Creation::Stored) })
+            self.reply(
+                StoreCall::Create(key.to_owned()),
+                crate::continuation_store::Creation::Stored,
+            )
         }
 
         fn peek<'a>(
             &'a self,
             key: &'a ContinuationKey,
         ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedHandles>> {
-            self.record(StoreCall::Peek(key.to_owned()));
-            let live = self.live.then(|| RetainedHandles::over(b"req", b"resp"));
-            Box::pin(async { Ok(live) })
+            let live = (self.tier == Tier::Hit).then(|| RetainedHandles::over(b"req", b"resp"));
+            self.reply(StoreCall::Peek(key.to_owned()), live)
         }
 
         fn consume<'a>(
@@ -439,8 +471,10 @@ pub(in crate::http_profile_serve) mod tests {
             key: &'a ContinuationKey,
         ) -> crate::continuation_store::ContinuationFuture<'a, crate::continuation_store::Consumption>
         {
-            self.record(StoreCall::Consume(key.to_owned()));
-            Box::pin(async { Ok(crate::continuation_store::Consumption::NoLiveEntry) })
+            self.reply(
+                StoreCall::Consume(key.to_owned()),
+                crate::continuation_store::Consumption::NoLiveEntry,
+            )
         }
     }
 
@@ -530,36 +564,6 @@ pub(in crate::http_profile_serve) mod tests {
         assert!(hit.is_some(), "the positive control: a hit binds");
     }
 
-    /// A tier that answers nothing it is asked: every operation reports an outage.
-    struct UnreachableStore;
-
-    impl AsyncContinuationStore for UnreachableStore {
-        fn create<'a>(
-            &'a self,
-            _key: &'a ContinuationKey,
-            _bases: &'a RetainedHandles,
-            _ttl_secs: i64,
-        ) -> crate::continuation_store::ContinuationFuture<'a, crate::continuation_store::Creation>
-        {
-            Box::pin(async { Err(unreachable_tier()) })
-        }
-
-        fn peek<'a>(
-            &'a self,
-            _key: &'a ContinuationKey,
-        ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedHandles>> {
-            Box::pin(async { Err(unreachable_tier()) })
-        }
-
-        fn consume<'a>(
-            &'a self,
-            _key: &'a ContinuationKey,
-        ) -> crate::continuation_store::ContinuationFuture<'a, crate::continuation_store::Consumption>
-        {
-            Box::pin(async { Err(unreachable_tier()) })
-        }
-    }
-
     fn unreachable_tier() -> ContinuationStoreError {
         ContinuationStoreError::Unavailable {
             details: "the shared tier did not answer".into(),
@@ -576,7 +580,7 @@ pub(in crate::http_profile_serve) mod tests {
     #[tokio::test]
     async fn an_answer_leg_reaching_an_unreachable_tier_is_refused_as_unavailable() {
         let plane = ContinuationPlane::wired(
-            Arc::new(UnreachableStore),
+            Arc::new(RecordingStore::outage()),
             crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
         );
         let verified = verified_as("did:example:host-a", "key-1");

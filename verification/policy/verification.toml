@@ -2793,6 +2793,12 @@ description = "The credential a communication-establishment mechanism associated
 paths = [
   "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mod.rs",
   "mcp-re-proxy/src/communication_assurance/channel_associated_credential/rustls_adapter.rs",
+  "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mechanism_harness/authority.rs",
+  "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mechanism_harness/handshake.rs",
+  "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mechanism_harness/leaf.rs",
+  "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mechanism_harness/mod.rs",
+  "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mechanism_harness/peers.rs",
+  "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mechanism_harness/tls_config.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -5816,7 +5822,12 @@ tested_symbols = [
 id = "sdk_python.bounded_read"
 class = "V0"
 description = "The response read is bounded by the aggregate deadline plus at most one per-recv timeout and by a byte ceiling, and the verifying channel it runs over is constructed against the configured CA with the hostname proved; exceeding either bound, or a channel that cannot be constructed, fails the exchange."
-paths = ["sdk/python/python/mcp_re_sdk/mtls.py"]
+paths = [
+  "sdk/python/python/mcp_re_sdk/mtls.py",
+  "sdk/python/python/mcp_re_sdk/mtls_exchange.py",
+  "sdk/python/python/mcp_re_sdk/mtls_options.py",
+  "sdk/python/python/mcp_re_sdk/mtls_tls.py",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
@@ -6637,6 +6648,7 @@ paths = [
   # one of them — so a supervisor that stopped retiring the snapshot would have left this
   # claim standing on a fingerprint that never moved.
   "mcp-re-proxy/src/signing_plane/rotation.rs",
+  "mcp-re-proxy/src/signing_plane/rotation/wait.rs",
   # r11 R11-571, and the same argument one level down. `rotation.rs` was registered; the two
   # modules the loop was SPLIT INTO were not, so the mint-honesty rule and the epoch-advance
   # rule sat in no fingerprint at all. Both are transitions of this credential:
@@ -8921,6 +8933,7 @@ paths = [
   "mcp-re-http-profile/src/custody/issuance_terms.rs",
   "mcp-re-http-profile/src/custody/key_window.rs",
   "mcp-re-http-profile/src/custody/lifecycle_event.rs",
+  "mcp-re-http-profile/src/custody/active_key/attestation.rs",
   "mcp-re-http-profile/src/custody/active_key/mod.rs",
   "mcp-re-http-profile/src/custody/active_key/stated.rs",
   "mcp-re-http-profile/src/custody/issuance_refusal.rs",
@@ -9442,6 +9455,7 @@ paths = [
   # itself lives beside it. Both, so neither can move under a standing attestation.
   "mcp-re-operator-display/src/lib.rs",
   "mcp-re-operator-display/src/locator.rs",
+  "mcp-re-operator-display/src/locator_parts.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -11176,6 +11190,7 @@ paths = [
   # production, which is how this control would pass over a producer it never read.
   "mcp-re-test-paths/src/rust_source.rs",
   "mcp-re-test-paths/src/rust_source/brace_scan.rs",
+  "mcp-re-test-paths/src/rust_source/test_file.rs",
   # The resolver each walked tree's key goes through.
   "mcp-re-test-paths/src/lib.rs",
   # The build graph's crate set, which the scope-identity control holds the scanned set to.
@@ -11252,7 +11267,7 @@ measurement_control = { kind = "sensitivity", argv = [
 #
 # `signer.rs` is DORMANT and is not here. `HostSigner` has no consumer anywhere — not the
 # deployable client, not the client proxy, not either SDK, not a test, not the demo surface.
-# Every real signing site calls `mcp_re_client_core::build_signed_request` directly, and the
+# Every real signing site calls `mcp_re_client_core::build_signed_message` directly, and the
 # ADR-MCPS-003 property `HostSigner` documents — a private key with no accessor — is held on
 # the live path by `mcp_re_client_proxy::McpReProxy`, whose `signing_key` field is private and
 # which `client.proxy_request_correspondence` owns. Excluded on the same precedent as
@@ -11525,6 +11540,7 @@ description = "The AWS KMS Ed25519 response signer: the key spec is read at cons
 paths = [
   "mcp-re-proxy/src/aws_kms_keysource.rs",
   "mcp-re-proxy/src/aws_kms_keysource/credential_refusal.rs",
+  "mcp-re-proxy/src/aws_kms_keysource/credential_refusal/suspension.rs",
   "mcp-re-proxy/src/aws_sigv4.rs",
   "mcp-re-proxy/src/aws_sigv4/amz_date.rs",
   "mcp-re-proxy/src/kms_keysource/handshake_control.rs",
@@ -13140,10 +13156,11 @@ tested_symbols = [
 [[unit]]
 id = "conformance.production_half_definition"
 class = "V0"
-description = "WHICH LINES OF A RUST SOURCE ARE PRODUCTION, DECIDED ONCE FOR EVERY GUARD THAT SCANS SOURCE TEXT: a test region opens at `#[cfg(test` or at the wide `#[cfg(all(test` spelling, matched over CODE characters so a literal or comment can neither open nor close a region, with `test` ending at a token boundary (`test_util` and `testing` open none), and a region the scan never sees close is a panic, not a test tail; it closes with the ITEM that attribute introduces — a braced item at its matching close, a `;`-terminated item at that semicolon — and counting RESUMES afterwards, so several regions are each closed, production below a test module survives, and a trailing test module does not end the scan. The brace count that closes a region is LEXICAL and is carried ACROSS lines: a `{` inside a string, a raw string, a character literal or a nested block comment is not a brace, a multi-line raw string cannot close a region early, a raw string closes only on its own hash count, an identifier ending in `r` opens none, a lifetime tick is not a character literal, nested braces do not close a region early, a file with no tests is wholly production, and the 1-indexed line numbers survive the elision so a guard that finds a violation can still name where it is. `code_only` exposes the same lexical answer — the CODE characters of a source, literals and comments blanked, one output line per input line — so a guard that strips comments asks this definition, and a `//` inside a string literal is the literal's rather than a comment that hides the code after it. Says NOTHING about WHICH files are walked: which crates have a source tree and whether a key names one is the corpus, owned next door by `conformance.scanned_tree_declaration`. Says nothing either about the PYTHON side — `scripts/module_size_gate.py::_BraceScan` is the same definition for the module-size ratchet, and that the two have not drifted is a cross-language correspondence no theorem in this registry states."
+description = "WHICH LINES OF A RUST SOURCE ARE PRODUCTION, DECIDED ONCE FOR EVERY GUARD THAT SCANS SOURCE TEXT: a test region opens at `#[cfg(test` or at the wide `#[cfg(all(test` spelling, matched over CODE characters so a literal or comment can neither open nor close a region, with `test` ending at a token boundary (`test_util` and `testing` open none), and a region the scan never sees close is a panic, not a test tail; it closes with the ITEM that attribute introduces — a braced item at its matching close, a `;`-terminated item at that semicolon — and counting RESUMES afterwards, so several regions are each closed, production below a test module survives, and a trailing test module does not end the scan. The brace count that closes a region is LEXICAL and is carried ACROSS lines: a `{` inside a string, a raw string, a character literal or a nested block comment is not a brace, a multi-line raw string cannot close a region early, a raw string closes only on its own hash count, an identifier ending in `r` opens none, a lifetime tick is not a character literal, nested braces do not close a region early, a file with no tests is wholly production, a file whose first code line is the inner `#![cfg(test)]` is test code throughout while the same attribute below code marks nothing, and the 1-indexed line numbers survive the elision so a guard that finds a violation can still name where it is. `code_only` exposes the same lexical answer — the CODE characters of a source, literals and comments blanked, one output line per input line — so a guard that strips comments asks this definition, and a `//` inside a string literal is the literal's rather than a comment that hides the code after it. Says NOTHING about WHICH files are walked: which crates have a source tree and whether a key names one is the corpus, owned next door by `conformance.scanned_tree_declaration`. Says nothing either about the PYTHON side — `scripts/module_size_gate.py::_BraceScan` is the same definition for the module-size ratchet, and that the two have not drifted is a cross-language correspondence no theorem in this registry states."
 paths = [
   "mcp-re-test-paths/src/rust_source.rs",
   "mcp-re-test-paths/src/rust_source/brace_scan.rs",
+  "mcp-re-test-paths/src/rust_source/test_file.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -13165,6 +13182,7 @@ tested_symbols = [
   "//mcp-re-test-paths:mcp_re_test_paths_test#rust_source::tests::a_brace_in_a_string_or_comment_does_not_close_a_region",
   "//mcp-re-test-paths:mcp_re_test_paths_test#rust_source::tests::a_cfg_merely_prefixed_by_test_opens_no_region",
   "//mcp-re-test-paths:mcp_re_test_paths_test#rust_source::tests::a_file_with_no_tests_is_wholly_production",
+  "//mcp-re-test-paths:mcp_re_test_paths_test#rust_source::tests::a_first_line_inner_cfg_test_makes_the_whole_file_test_code",
   "//mcp-re-test-paths:mcp_re_test_paths_test#rust_source::tests::a_multi_line_raw_string_does_not_close_a_region",
   "//mcp-re-test-paths:mcp_re_test_paths_test#rust_source::tests::a_raw_string_closes_only_on_its_own_hash_count",
   "//mcp-re-test-paths:mcp_re_test_paths_test#rust_source::tests::a_test_attribute_inside_a_literal_opens_no_region",
