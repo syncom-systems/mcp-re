@@ -6,24 +6,22 @@
 //! and re-signs ONCE with a fresh one. `AccessDeniedException`, throttling and every other
 //! name discard nothing and cost one call, because a fresh credential cannot fix them and
 //! evicting on them is a per-handshake STS exchange drivable by a peer. A refusal a fresh
-//! credential does not fix suspends the retry for [`CREDENTIAL_REFUSAL_RETRY_COOLDOWN`].
+//! credential does not fix suspends the retry for the cool-off `suspension` holds.
 
 use crate::aws_sigv4::AwsCredentials;
 use crate::aws_sts::AwsCredentialSource;
 use crate::key_source::KeyError;
 use crate::remote_signer_call::RemoteSignerFailure;
-use crate::remote_signer_call::NETWORK_TIMEOUT;
 use std::sync::atomic::Ordering;
-use std::sync::Mutex;
-use std::time::Duration;
 use std::time::Instant;
+
+mod suspension;
+
+use suspension::Suspension;
 
 /// The `__type` names with which KMS says it will not read the credential itself.
 const SESSION_CREDENTIAL_REFUSALS: &[&str] =
     &["ExpiredTokenException", "UnrecognizedClientException"];
-
-/// How long a refusal that a FRESH credential did not fix suspends the retry.
-const CREDENTIAL_REFUSAL_RETRY_COOLDOWN: Duration = NETWORK_TIMEOUT;
 
 /// Did KMS refuse the session credential itself? Reads only the `__type` of the body: the
 /// suffix after the last `#` and before any `:`.
@@ -91,15 +89,13 @@ impl<'a> Presentation<'a> {
 
 /// The refused-credential retry and its suspension.
 pub(super) struct RefusalRecovery {
-    /// When the last refusal that a fresh credential did not fix was observed. `None` in the
-    /// steady state. Held as a start rather than an end so no `Instant` arithmetic can overflow.
-    suspended_since: Mutex<Option<Instant>>,
+    suspension: Suspension,
 }
 
 impl RefusalRecovery {
     pub(super) fn new() -> Self {
         Self {
-            suspended_since: Mutex::new(None),
+            suspension: Suspension::new(),
         }
     }
 
@@ -124,7 +120,7 @@ impl RefusalRecovery {
         let fresh = match call.source.credentials() {
             Ok(fresh) => fresh,
             Err(error) => {
-                self.suspend(call.now);
+                self.suspension.begin(call.now);
                 return Err(reacquisition_failed(&error, refused, call.operation));
             }
         };
@@ -143,46 +139,17 @@ impl RefusalRecovery {
         presented: &str,
     ) -> bool {
         refused_the_session_credential(refused)
-            && !self.suspended_at(call.now)
+            && !self.suspension.holds_at(call.now)
             && call.source.invalidate(presented)
     }
 
     /// A fresh credential that works ends any suspension; one KMS refuses too starts it.
     fn record_outcome(&self, resent: &Result<Vec<u8>, RemoteSignerFailure>, now: Instant) {
         match resent {
-            Ok(_) => *self.since() = None,
-            Err(error) if refused_the_session_credential(error) => self.suspend(now),
+            Ok(_) => self.suspension.end(),
+            Err(error) if refused_the_session_credential(error) => self.suspension.begin(now),
             Err(_) => {}
         }
-    }
-
-    fn since(&self) -> std::sync::MutexGuard<'_, Option<Instant>> {
-        self.suspended_since
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-    }
-
-    /// Is the retry suspended at `now`? Clears a lapsed suspension.
-    fn suspended_at(&self, now: Instant) -> bool {
-        let mut since = self.since();
-        match *since {
-            Some(start)
-                if now.saturating_duration_since(start) < CREDENTIAL_REFUSAL_RETRY_COOLDOWN =>
-            {
-                true
-            }
-            Some(_) => {
-                *since = None;
-                false
-            }
-            None => false,
-        }
-    }
-
-    /// Never shortens: a straggler holding an older `now` leaves a later start in place.
-    fn suspend(&self, now: Instant) {
-        let mut since = self.since();
-        *since = Some(since.map_or(now, |current| current.max(now)));
     }
 }
 
@@ -210,6 +177,7 @@ impl super::UreqKmsClient {
 
 #[cfg(test)]
 mod tests {
+    use super::suspension::CREDENTIAL_REFUSAL_RETRY_COOLDOWN;
     use super::*;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
