@@ -37,17 +37,30 @@ def correction_records(out):
     return recs
 
 
+def _changed_components(rec):
+    return set(rec["components"] or ())
+
+
+def _corrected_fields(rec):
+    return set(rec["corrections"] or ())
+
+
+def _misdescribes_subject(rec):
+    return "theorem_claim" in _changed_components(rec)
+
+
+def _completes_graph(rec):
+    return "depends_on" in _corrected_fields(rec)
+
+
+def _propagates_premise_prose(rec):
+    return _changed_components(rec) == {"theorem_dependencies"} and bool(_corrected_fields(rec) & PROSE)
+
+
 def correction_shapes(out, recs) -> Shapes:
-    shape_graph, shape_subject_prose, shape_premise_prose = set(), set(), set()
-    for r in recs:
-        comps = set(r["components"] or ())
-        fields = set(r["corrections"] or ())
-        if "theorem_claim" in comps:
-            shape_subject_prose.add(r["theorem"])
-        if "depends_on" in fields:
-            shape_graph.add(r["theorem"])
-        if comps == {"theorem_dependencies"} and (fields & PROSE):
-            shape_premise_prose.add(r["theorem"])
+    shape_graph = {r["theorem"] for r in recs if _completes_graph(r)}
+    shape_subject_prose = {r["theorem"] for r in recs if _misdescribes_subject(r)}
+    shape_premise_prose = {r["theorem"] for r in recs if _propagates_premise_prose(r)}
     out["shape_graph_incomplete"] = sorted(shape_graph)
     out["shape_claim_misdescribed"] = sorted(shape_subject_prose)
     out["shape_premise_misdescribed"] = sorted(shape_premise_prose)
