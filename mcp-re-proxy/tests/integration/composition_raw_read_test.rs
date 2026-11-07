@@ -195,7 +195,7 @@ fn the_composition_root_reads_only_ordinary_validated_parameters() {
     let paths: Vec<&std::path::Path> = sources.iter().map(|(path, _)| path.as_path()).collect();
     for expected in [
         "app.rs",
-        "startup_plan/mod.rs",
+        "startup_plan/signing_plan.rs",
         "startup_plan/channel_establishment_plan.rs",
     ] {
         assert!(
