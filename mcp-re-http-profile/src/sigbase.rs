@@ -195,13 +195,13 @@ enum Origin<'a> {
 impl<'a> Origin<'a> {
     /// The message `component` resolves against, or `None` when it has none: a `;req`
     /// component on a request, or on a response with no request context, cannot be resolved.
-    fn of(component: &CoveredComponent, source: &SourceMessage<'a>) -> Option<Self> {
+    fn of(component: &CoveredComponent, source: &'a SourceMessage<'_>) -> Option<Self> {
         match (source, component.req) {
             (SourceMessage::Request(_), true) | (SourceMessage::ResponseOnly(_), true) => None,
-            (SourceMessage::Request(r), false) => Some(Origin::Request(*r)),
-            (SourceMessage::Response { request, .. }, true) => Some(Origin::Request(*request)),
+            (SourceMessage::Request(r), false) => Some(Origin::Request(r)),
+            (SourceMessage::Response { request, .. }, true) => Some(Origin::Request(request)),
             (SourceMessage::Response { response, .. }, false)
-            | (SourceMessage::ResponseOnly(response), false) => Some(Origin::Response(*response)),
+            | (SourceMessage::ResponseOnly(response), false) => Some(Origin::Response(response)),
         }
     }
 

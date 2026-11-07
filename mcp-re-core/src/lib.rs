@@ -91,6 +91,7 @@ pub use replay::ReplayCache;
 pub use replay::ReplayCacheError;
 pub use replay::ReplayDecision;
 pub use replay::ReplayDurabilityClass;
+pub use replay::ReplayTriple;
 pub use resolver::InMemoryTrustResolver;
 pub use resolver::TrustResolver;
 pub use resolver::TrustResolverError;
