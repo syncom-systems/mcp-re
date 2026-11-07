@@ -92,19 +92,24 @@ def sdk_files(root: Path) -> list[Path]:
     return sorted(out)
 
 
+def _file_problems(root: Path, path: Path, codes: set[str]) -> list[str]:
+    """Each `mcp-re.*` token in `path` that is not a frozen wire code, with its site."""
+    rel = path.relative_to(root).as_posix()
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return [
+        f"{rel}:{number}: `{token}` is not a frozen wire code (ALL_ERRORS)"
+        for number, line in enumerate(lines, start=1)
+        for token in TOKEN.findall(line)
+        if token not in codes
+    ]
+
+
 def problems(root: Path) -> list[str]:
     codes = frozen_codes((root / ERROR_RS).read_text(encoding="utf-8"))
-    found: list[str] = []
     files = sdk_files(root)
     if not files:
         raise MeasurementError(f"no client file found under {', '.join(str(t) for t in SDK_TREES)}")
-    for path in files:
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-            for token in TOKEN.findall(line):
-                if token not in codes:
-                    rel = path.relative_to(root).as_posix()
-                    found.append(f"{rel}:{number}: `{token}` is not a frozen wire code (ALL_ERRORS)")
-    return found
+    return [problem for path in files for problem in _file_problems(root, path, codes)]
 
 
 def run(root: Path) -> int:
@@ -208,6 +213,11 @@ def selftest() -> int:
     return 0
 
 
+def _is_planted_alone(got: list[str], planted: str, victim: Path) -> bool:
+    """The planted token is the one problem reported, and it names the victim file."""
+    return len(got) == 1 and planted in got[0] and str(victim) in got[0]
+
+
 def probe() -> int:
     """Inject a token outside ALL_ERRORS into a copy of a real SDK file and require red."""
     victim = Path("sdk/typescript/test/transport.test.ts")
@@ -215,7 +225,7 @@ def probe() -> int:
     text = (REPO / victim).read_text(encoding="utf-8")
     root = _tree({str(victim): text + f'// "{planted}"\n'}, (REPO / ERROR_RS).read_text(encoding="utf-8"))
     got = problems(root)
-    if len(got) == 1 and planted in got[0] and str(victim) in got[0]:
+    if _is_planted_alone(got, planted, victim):
         print(f"sdk wire-code probe: PASS — a planted `{planted}` in {victim} is reported against the real ALL_ERRORS")
         return 0
     print(f"sdk wire-code probe: FAIL — the planted token was not the one problem reported: {got!r}")
