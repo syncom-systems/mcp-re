@@ -12,6 +12,7 @@ from pathlib import Path
 from _review import (
     PREMISE_UNREVIEWED,
     UNBACKED,
+    Basis,
     theorem_assurance,
 )
 from _theorem_review_support import (
@@ -48,7 +49,8 @@ def test_a_specification_review_the_ledger_refutes_is_unbacked():
     digests = semantics(doc, no_premises(doc))
     reviews = {("specification", "THM-0001"): review_for(fps["THM-0001"], semantic=digests["THM-0001"])}
     state = theorem_assurance(
-        doc, fps, reviews, {UNIT: ("FRESH", "fixture")}, no_premises(doc), refuted, digests
+        doc,
+        Basis(fps, reviews, {UNIT: ("FRESH", "fixture")}, no_premises(doc), refuted, digests),
     )["THM-0001"]
     assert state["specification_review"][0] == UNBACKED
     assert state["currently_verified"] is False
@@ -60,7 +62,7 @@ def test_no_ledger_check_is_not_a_pass():
     digests = semantics(doc, no_premises(doc))
     reviews = {("specification", "THM-0001"): review_for(fps["THM-0001"], semantic=digests["THM-0001"])}
     state = theorem_assurance(
-        doc, fps, reviews, {UNIT: ("FRESH", "fixture")}, no_premises(doc), {}, digests
+        doc, Basis(fps, reviews, {UNIT: ("FRESH", "fixture")}, no_premises(doc), {}, digests)
     )["THM-0001"]
     assert state["specification_review"][0] == UNBACKED
 

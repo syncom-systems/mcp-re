@@ -38,6 +38,7 @@ from _assumptions import load_assumptions  # noqa: E402
 from _toolchain_lock import load_toolchains  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _fingerprint import Registries  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 
 DEFAULT_STORE = REPO_ROOT / ".verification" / "attestations"
@@ -97,7 +98,7 @@ def main() -> int:
     units = doc.get("unit", [])
     edges = doc.get("edge", [])
     current = {
-        unit["id"]: fingerprint_unit(unit, doc, toolchains, assumptions) for unit in units
+        unit["id"]: fingerprint_unit(unit, Registries(doc, toolchains, assumptions)) for unit in units
     }
     attestations: dict[str, Attestation] = load_attestations(args.attestations)
     result = evaluate(units, edges, current, attestations)

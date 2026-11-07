@@ -23,6 +23,7 @@ from _review import (
     NO_SEMANTIC_DIGEST,
     REVIEWED,
     STALE_SEMANTICS,
+    Basis,
     _valid,
     theorem_assurance,
 )
@@ -146,8 +147,11 @@ def test_a_review_without_a_semantic_digest_is_never_current():
     fps = fingerprints(doc)
     reviews = {("specification", "THM-0001"): review_for(fps["THM-0001"])}
     state = theorem_assurance(
-        doc, fps, reviews, {UNIT: ("FRESH", "fixture")}, no_premises(doc), BACKED,
-        semantics(doc, no_premises(doc)),
+        doc,
+        Basis(
+            fps, reviews, {UNIT: ("FRESH", "fixture")}, no_premises(doc), BACKED,
+            semantics(doc, no_premises(doc)),
+        ),
     )["THM-0001"]
     assert state["specification_review"][0] == REVIEWED
     assert state["review"][0] == NO_SEMANTIC_DIGEST

@@ -13,6 +13,7 @@ from _fingerprint import (
     theorem_review_digests,
 )
 from _review import (
+    Basis,
     root_completeness,
     theorem_assurance,
 )
@@ -139,7 +140,7 @@ def assurance(doc, *, unit_state="FRESH", reviewed=True, **kwargs):
         }
     states = {UNIT: (unit_state, "test fixture")}
     return theorem_assurance(
-        doc, fps, reviews, states, no_premises(doc), BACKED, digests, **kwargs
+        doc, Basis(fps, reviews, states, no_premises(doc), BACKED, digests), **kwargs
     )
 
 
@@ -170,8 +171,11 @@ def premise_assurance(*, premise_entry=ASM, record=True, backing=BACKED):
         reviews[("assumption", ASM["id"])] = assumption_review(ASM)
     premises = {"THM-0001": {premise_entry["id"]: assumption_digest(premise_entry)}}
     return theorem_assurance(
-        doc, fps, reviews, {UNIT: ("FRESH", "fixture")}, premises, backing,
-        semantics(doc, premises),
+        doc,
+        Basis(
+            fps, reviews, {UNIT: ("FRESH", "fixture")}, premises, backing,
+            semantics(doc, premises),
+        ),
     )["THM-0001"]
 
 
@@ -227,12 +231,14 @@ def two_axis(*, unit_state="FRESH", record=True, **scene):
     now_fps = fingerprints(now_doc)
     return theorem_assurance(
         now_doc,
-        now_fps,
-        reviews,
-        {UNIT: (unit_state, "fixture")},
-        now_premises,
-        BACKED,
-        theorem_review_digests(now_doc, now_fps, now_premises, now_units),
+        Basis(
+            now_fps,
+            reviews,
+            {UNIT: (unit_state, "fixture")},
+            now_premises,
+            BACKED,
+            theorem_review_digests(now_doc, now_fps, now_premises, now_units),
+        ),
     )["THM-0001"]
 
 

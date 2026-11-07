@@ -265,14 +265,14 @@ def test_each_ecosystem_selects_exactly_the_declared_symbols():
     for symbols nobody declared."""
     # A Rust battery is its Bazel test target, run fresh and streamed so libtest's own
     # result lines reach the lane, with each declared name passed to libtest as `--exact`.
-    assert test_argv(RUST, None, "//mcp-re-proxy:proxy_unit_test", ["a::b", "c::d"]) == [
+    assert test_argv(RUST, "//mcp-re-proxy:proxy_unit_test", ["a::b", "c::d"]) == [
         "bazel", "test", "//mcp-re-proxy:proxy_unit_test",
         "--nocache_test_results", "--test_output=streamed",
         "--test_arg=--exact", "--test_arg=a::b", "--test_arg=c::d",
     ]
     # A doctest's reported name embeds its line, so its target runs whole and the lane
     # matches the declared items against what ran.
-    assert test_argv(RUST, None, "//mcp-re-http-profile:mcp_re_http_profile_doc_test", ["x::Y"]) == [
+    assert test_argv(RUST, "//mcp-re-http-profile:mcp_re_http_profile_doc_test", ["x::Y"]) == [
         "bazel", "test", "//mcp-re-http-profile:mcp_re_http_profile_doc_test",
         "--nocache_test_results", "--test_output=streamed",
     ]
@@ -280,7 +280,7 @@ def test_each_ecosystem_selects_exactly_the_declared_symbols():
     # the interpreter a battery ran on is part of what the record describes, and the lane
     # neither resolves nor syncs one (issue #746).
     py = test_argv(
-        PYTHON, "sdk/python", "pytest", ["tests/test_correlation.py::test_probe"], "3.12.13",
+        PYTHON, "pytest", ["tests/test_correlation.py::test_probe"], "3.12.13",
     )
     assert py[:3] == [".venv-cp312/bin/python", "-m", "pytest"]
     assert py[-1] == "tests/test_correlation.py::test_probe"
@@ -290,7 +290,6 @@ def test_each_ecosystem_selects_exactly_the_declared_symbols():
     # the both-directions rule already lives.
     ts = test_argv(
         TYPESCRIPT,
-        "sdk/typescript",
         "vitest",
         ["test/x.test.ts > a probe", "test/x.test.ts > another", "test/y.test.ts > third"],
         "22.23.2",
@@ -397,11 +396,11 @@ def test_a_result_line_is_still_matched_from_its_start_only():
 
 
 def test_the_rust_command_asks_libtest_for_its_own_record_only_when_given_a_path():
-    from _ecosystems import test_argv
+    from _ecosystems import rust_argv
 
-    plain = test_argv(RUST, None, "//mcp-re-proxy:proxy_unit_test", ["s"])
+    plain = rust_argv("//mcp-re-proxy:proxy_unit_test", ["s"])
     assert not any("logfile" in a for a in plain)
-    withlog = test_argv(RUST, None, "//mcp-re-proxy:proxy_unit_test", ["s"], None, Path("/x/y/r"))
+    withlog = rust_argv("//mcp-re-proxy:proxy_unit_test", ["s"], Path("/x/y/r"))
     assert "--test_arg=--logfile=/x/y/r" in withlog and "--sandbox_writable_path=/x/y" in withlog
 
 

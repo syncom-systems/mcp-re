@@ -49,6 +49,7 @@ from _lean_model import (  # noqa: E402
     stamp_verdict,
 )
 from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
+from _fingerprint import Registries  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _lanes import claims  # noqa: E402
 from _manifest import REPO_ROOT, ManifestError, load_verification  # noqa: E402
@@ -124,7 +125,7 @@ def record_units(doc: dict, toolchains: dict, result: str, detail: str) -> None:
                 unit_id=unit["id"],
                 lane="generated-model",
                 result=result,
-                fingerprint=fingerprint_unit(unit, doc, toolchains, assumptions)[
+                fingerprint=fingerprint_unit(unit, Registries(doc, toolchains, assumptions))[
                     "fingerprint"
                 ],
                 detail=detail,

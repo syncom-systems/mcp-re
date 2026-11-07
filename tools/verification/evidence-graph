@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _fingerprint import Registries  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _graph import evaluate, load_attestations  # noqa: E402
 from _manifest import REPO_ROOT, ManifestError, load_verification  # noqa: E402
@@ -107,7 +108,7 @@ def main() -> int:
     edges = doc.get("edge", [])
     unresolved = unresolved_pins(toolchains)
     current = {
-        unit["id"]: fingerprint_unit(unit, doc, toolchains, assumptions) for unit in units
+        unit["id"]: fingerprint_unit(unit, Registries(doc, toolchains, assumptions)) for unit in units
     }
     derived = evaluate(units, edges, current, load_attestations(args.attestations))
 

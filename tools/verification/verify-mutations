@@ -55,6 +55,7 @@ from _ecosystems import (  # noqa: E402
     ReportUnreadable,
     parse_libtest_logfile,
     parse_results,
+    rust_argv,
     test_argv,
     unit_ecosystem,
     vitest_report_path,
@@ -67,6 +68,7 @@ from _unit_selection import (  # noqa: E402
     refuse,
     selection_error,
 )
+from _fingerprint import Registries  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _lanes import claims  # noqa: E402
 from _manifest import REPO_ROOT, ManifestError, load_verification  # noqa: E402
@@ -432,19 +434,19 @@ def run_battery(
     results: dict[str, str] = {}
     for target in sorted(grouped):
         if eco is RUST:
-            # THROUGH THE SEAM, like every other ecosystem below: `_ecosystems.test_argv` is
+            # THROUGH THE SEAM, like every other ecosystem below: `_ecosystems.rust_argv` is
             # the one statement of how a label is run, and a second implementation of it is
             # how the two lanes come to disagree about one declared symbol. Bazel runs in
             # the SCRATCH workspace, so it builds the weakened source.
             # The results are read from libtest's own record, not from the stream Bazel
-            # merges stdout and stderr into -- see `test_argv`. The scratch tree is
+            # merges stdout and stderr into -- see `rust_argv`. The scratch tree is
             # discarded with its directory.
             libtest_log = Path(tempfile.mkdtemp(prefix="libtest-", dir=tree.parent)).resolve() / "results"
-            argv = test_argv(eco, package, target, grouped[target], runtime, libtest_log)
+            argv = rust_argv(target, grouped[target], libtest_log)
             cwd = tree
             env = _env()
         else:
-            argv = test_argv(eco, package, target, grouped[target], runtime)
+            argv = test_argv(eco, target, grouped[target], runtime)
             # THE RUNTIME IS THE REAL PREPARED ONE; only the SOURCE is weakened. Both SDK
             # adapters name their runner by a path relative to the project -- a prepared
             # venv's interpreter, a pinned Node's vitest entry point -- and the scratch tree
@@ -938,9 +940,9 @@ def main() -> int:
                     unit_id=unit_id,
                     lane="mutation",
                     result="fail" if unit_failures else "pass",
-                    fingerprint=fingerprint_unit(unit, doc, toolchains, assumptions)[
-                        "fingerprint"
-                    ],
+                    fingerprint=fingerprint_unit(
+                        unit, Registries(doc, toolchains, assumptions)
+                    )["fingerprint"],
                     detail=(
                         f"{count} probe(s); failed: {', '.join(unit_failures)}"
                         if unit_failures

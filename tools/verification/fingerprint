@@ -15,6 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _fingerprint import Registries  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import ManifestError, load_verification  # noqa: E402
 from _assumptions import load_assumptions  # noqa: E402
@@ -46,7 +47,7 @@ def main() -> int:
             return 1
 
     results = [
-        fingerprint_unit(unit, doc, toolchains, assumptions) for unit in units
+        fingerprint_unit(unit, Registries(doc, toolchains, assumptions)) for unit in units
     ]
     if not args.components:
         for result in results:

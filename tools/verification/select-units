@@ -55,6 +55,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _tree  # noqa: E402
 from _affected import consumer_closure, platform_change  # noqa: E402
 from _compose import requirements  # noqa: E402
+from _fingerprint import Registries  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _lanes import FORMAL  # noqa: E402
 from _manifest import REPO_ROOT, ManifestError, load_verification  # noqa: E402
@@ -89,7 +90,7 @@ def fingerprints(tree: _tree.SourceTree | None = None) -> dict[str, str]:
         toolchains = load_toolchains()
         assumptions = load_assumptions(tree_checks=checks)
         return {
-            unit["id"]: fingerprint_unit(unit, doc, toolchains, assumptions)["fingerprint"]
+            unit["id"]: fingerprint_unit(unit, Registries(doc, toolchains, assumptions))["fingerprint"]
             for unit in doc.get("unit", [])
         }
 

@@ -36,6 +36,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _evidence import decide_issuance, evidence_store, load_bundle, load_records  # noqa: E402
+from _fingerprint import Registries  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import ManifestError, load_verification  # noqa: E402
 from _assumptions import load_assumptions  # noqa: E402
@@ -73,7 +74,7 @@ def main() -> int:
     units = doc.get("unit", [])
     edges = doc.get("edge", [])
     current = {
-        unit["id"]: fingerprint_unit(unit, doc, toolchains, assumptions) for unit in units
+        unit["id"]: fingerprint_unit(unit, Registries(doc, toolchains, assumptions)) for unit in units
     }
     # Every lane a unit can claim, not the subset that happened to be implemented first.
     # A lane missing from this tuple loads no records, so every unit claiming it refuses

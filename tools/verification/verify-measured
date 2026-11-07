@@ -52,6 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
 from _lanes import BY_NAME, claims  # noqa: E402
+from _fingerprint import Registries  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 import _registries  # noqa: E402
 from _manifest import REPO_ROOT, ManifestError, load_verification  # noqa: E402
@@ -245,7 +246,7 @@ def main() -> int:
                     unit_id=unit_id,
                     lane="measured",
                     result="fail" if failed else "pass",
-                    fingerprint=fingerprint_unit(unit, doc, toolchains, assumptions)["fingerprint"],
+                    fingerprint=fingerprint_unit(unit, Registries(doc, toolchains, assumptions))["fingerprint"],
                     detail=(
                         f"{len(mine)} measurement(s); failed: {', '.join(failed)}"
                         if failed
