@@ -725,7 +725,12 @@
    "package": "mcp-re-conformance",
    "root": "mcp-re-conformance/tests/scitt_vectors_test.rs",
    "srcs": [
-    "mcp-re-conformance/tests/scitt_vectors_test.rs"
+    "mcp-re-conformance/tests/scitt_vectors_test.rs",
+    "mcp-re-conformance/tests/scitt_vectors_test/bytes.rs",
+    "mcp-re-conformance/tests/scitt_vectors_test/manifest.rs",
+    "mcp-re-conformance/tests/scitt_vectors_test/material.rs",
+    "mcp-re-conformance/tests/scitt_vectors_test/vectors.rs",
+    "mcp-re-conformance/tests/scitt_vectors_test/verdict.rs"
    ],
    "testonly": true,
    "verus_deps": []
