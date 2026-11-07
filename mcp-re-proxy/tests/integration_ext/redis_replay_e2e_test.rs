@@ -13,117 +13,17 @@
 //! node A is rejected as a replay on node B.
 #![cfg(feature = "redis_replay")]
 
-use std::time::Duration;
-use std::time::Instant;
+mod harness;
+mod topology;
 
 use mcp_re_core::ReplayDecision;
-use mcp_re_proxy::async_replay::AsyncAtomicReplayStore;
-use mcp_re_proxy::async_replay::ReplayInsert;
 use mcp_re_proxy::shared_replay::ReplayStoreError;
-use mcp_re_proxy::RedisAsyncAtomicReplayStore;
 
-/// Every entry in this file is charged to one signer; the per-actor budget is
-/// exercised by its own test in `async_replay.rs`.
-const TEST_ACTOR: &str = "did:example:test-signer";
-
-const AUD: &str = "did:example:verifier";
-
-/// The current Unix time from the REAL system clock.
-fn now_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock after epoch")
-        .as_secs() as i64
-}
-
-/// A fresh retain-until a bounded window into the future from the REAL system clock.
-/// The Redis store derives its `PX` TTL from its own wall clock and rejects a past
-/// `retain_until` PRE-store (MCPS-08, fail closed), so a FIXED timestamp would make
-/// these tests fail on any date past it.
-fn expires_soon() -> i64 {
-    now_unix() + 3600
-}
-
-/// A per-run suffix for signer/nonce values, so each run of these tests targets a
-/// key space of its own.
-///
-/// An admitted nonce stays in Redis for its whole `retain_until` window (600s–1h
-/// here), and these tests assert a first insert is `Fresh`. A value fixed at compile
-/// time therefore only holds against a pristine Redis: the next run inside the window
-/// sees its own predecessor's key and gets `Replay`. Anchoring on the process clock
-/// keeps every run independent, and the lane can be re-run against a long-lived Redis.
-fn run_id() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock after epoch")
-        .as_nanos()
-}
-
-/// A per-exchange replay key: length-prefixed `(signer, audience, nonce)` then
-/// `sha256_hash_id` (lowercase hex). The PTTL test probes the SAME Redis key the store
-/// inserts.
-fn composite_key(signer: &str, audience: &str, nonce: &str) -> String {
-    let preimage = format!(
-        "{}:{}|{}:{}|{}:{}",
-        signer.len(),
-        signer,
-        audience.len(),
-        audience,
-        nonce.len(),
-        nonce,
-    );
-    mcp_re_core::sha256_hash_id(preimage.as_bytes())
-}
-
-/// Read the Redis URL the test should run against, or `None` to skip. A real
-/// shared backend is not present in every environment.
-fn redis_url() -> Option<String> {
-    let url = std::env::var("MCP_RE_TEST_REDIS_URL")
-        .ok()
-        .filter(|u| !u.trim().is_empty());
-    if url.is_none() && require_live_infra() {
-        panic!(
-            "MCP_RE_REQUIRE_LIVE_INFRA is set but MCP_RE_TEST_REDIS_URL is unavailable \
-             — this live e2e MUST run under CI, not skip"
-        );
-    }
-    url
-}
-
-/// CI opt-in: when `MCP_RE_REQUIRE_LIVE_INFRA` is set to any non-empty value, a
-/// missing-infra SKIP must HARD-FAIL instead of passing, so CI cannot score an
-/// unavailable backend as a green test. Unset (local dev) leaves skip behavior
-/// unchanged.
-fn require_live_infra() -> bool {
-    std::env::var("MCP_RE_REQUIRE_LIVE_INFRA").is_ok_and(|v| !v.is_empty())
-}
-
-/// A current-thread runtime the blocking test bodies drive the async store on.
-fn runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("tokio runtime")
-}
-
-/// A store over a fresh Redis connection to `url`. Each call is an independent "node"
-/// (its own connection) sharing the one Redis.
-fn node(rt: &tokio::runtime::Runtime, url: &str) -> RedisAsyncAtomicReplayStore {
-    rt.block_on(RedisAsyncAtomicReplayStore::connect(url))
-        .expect("connect to MCP_RE_TEST_REDIS_URL Redis")
-}
-
-/// Insert `(signer, AUD, nonce)` retained until `retain_until` through `store`.
-fn insert(
-    rt: &tokio::runtime::Runtime,
-    store: &RedisAsyncAtomicReplayStore,
-    signer: &str,
-    nonce: &str,
-    retain_until: i64,
-) -> Result<ReplayDecision, ReplayStoreError> {
-    let key = composite_key(signer, AUD, nonce);
-    rt.block_on(store.atomic_insert_if_absent(ReplayInsert::new(&key, TEST_ACTOR, retain_until, 0)))
-}
+use harness::{
+    composite_key, connect_pool, count, expires_soon, insert_concurrently, now_unix, raw_conn,
+    redis_url, replica_admin_url, runtime, skip, Missing, Node, Nonce, Signer,
+};
+use topology::{primary_connected_slaves, Topology};
 
 /// The load-bearing cross-node proof: a nonce accepted on node A is rejected as a
 /// replay on node B, where A and B are two separate stores over two separate
@@ -132,32 +32,24 @@ fn insert(
 #[test]
 fn cross_node_insert_via_a_is_replay_via_b() {
     let Some(url) = redis_url() else {
-        eprintln!(
-            "SKIP cross_node_insert_via_a_is_replay_via_b: MCP_RE_TEST_REDIS_URL unset \
-             (no Redis available in this environment)"
-        );
+        skip("cross_node_insert_via_a_is_replay_via_b", Missing::Redis);
         return;
     };
 
-    // Test-name-derived signer plus a per-run suffix, so this test owns its key space
-    // and never collides with a prior run's still-live entry (see `run_id`).
-    let signer = &format!(
-        "did:example:host#cross_node_insert_via_a_is_replay_via_b-{}",
-        run_id()
-    );
-    let nonce = &mcp_re_test_paths::unique_test_nonce();
+    let signer = &Signer::for_test("cross_node_insert_via_a_is_replay_via_b");
+    let nonce = &Nonce::fresh();
 
     let rt = runtime();
-    let node_a = node(&rt, &url);
-    let node_b = node(&rt, &url);
+    let node_a = Node::connect(&rt, &url);
+    let node_b = Node::connect(&rt, &url);
 
     assert_eq!(
-        insert(&rt, &node_a, signer, nonce, expires_soon()),
+        node_a.insert(signer, nonce, expires_soon()),
         Ok(ReplayDecision::Fresh),
         "first sight on node A must be Fresh"
     );
     assert_eq!(
-        insert(&rt, &node_b, signer, nonce, expires_soon()),
+        node_b.insert(signer, nonce, expires_soon()),
         Ok(ReplayDecision::Replay),
         "node B must reject a nonce first seen on node A — shared Redis replay state"
     );
@@ -168,28 +60,22 @@ fn cross_node_insert_via_a_is_replay_via_b() {
 #[test]
 fn single_node_fresh_then_replay() {
     let Some(url) = redis_url() else {
-        eprintln!(
-            "SKIP single_node_fresh_then_replay: MCP_RE_TEST_REDIS_URL unset \
-             (no Redis available in this environment)"
-        );
+        skip("single_node_fresh_then_replay", Missing::Redis);
         return;
     };
 
-    let signer = &format!(
-        "did:example:host#single_node_fresh_then_replay-{}",
-        run_id()
-    );
-    let nonce = &mcp_re_test_paths::unique_test_nonce();
+    let signer = &Signer::for_test("single_node_fresh_then_replay");
+    let nonce = &Nonce::fresh();
 
     let rt = runtime();
-    let store = node(&rt, &url);
+    let node = Node::connect(&rt, &url);
     assert_eq!(
-        insert(&rt, &store, signer, nonce, expires_soon()),
+        node.insert(signer, nonce, expires_soon()),
         Ok(ReplayDecision::Fresh),
         "first sight is Fresh"
     );
     assert_eq!(
-        insert(&rt, &store, signer, nonce, expires_soon()),
+        node.insert(signer, nonce, expires_soon()),
         Ok(ReplayDecision::Replay),
         "second sight on the same node is a Replay"
     );
@@ -203,45 +89,25 @@ fn single_node_fresh_then_replay() {
 #[test]
 fn a_maximal_pool_admits_each_nonce_exactly_once_under_concurrent_duplicates() {
     let Some(url) = redis_url() else {
-        eprintln!(
-            "SKIP a_maximal_pool_admits_each_nonce_exactly_once_under_concurrent_duplicates: \
-             MCP_RE_TEST_REDIS_URL unset (no Redis available in this environment)"
+        skip(
+            "a_maximal_pool_admits_each_nonce_exactly_once_under_concurrent_duplicates",
+            Missing::Redis,
         );
         return;
     };
-    let signer = &format!("did:example:host#pooled-exactly-once-{}", run_id());
+    let signer = &Signer::for_test("pooled-exactly-once");
     let rt = runtime();
-    let store = std::sync::Arc::new(
-        rt.block_on(RedisAsyncAtomicReplayStore::connect_pooled(
-            &url,
-            mcp_re_proxy::async_redis_store::system_clock(),
-            None,
-            128,
-        ))
-        .expect("connect a 128-connection pool to MCP_RE_TEST_REDIS_URL Redis"),
-    );
+    let store = connect_pool(&rt, &url, None, 128);
     let retain_until = expires_soon();
-    let duplicate = composite_key(signer, AUD, &mcp_re_test_paths::unique_test_nonce());
-    let distinct =
-        (0..256).map(|_| composite_key(signer, AUD, &mcp_re_test_paths::unique_test_nonce()));
-    let concurrently = |keys: Vec<String>| {
-        rt.block_on(async {
-            let mut set = tokio::task::JoinSet::new();
-            for key in keys {
-                let store = std::sync::Arc::clone(&store);
-                set.spawn(async move {
-                    let insert = ReplayInsert::new(&key, TEST_ACTOR, retain_until, 0);
-                    store.atomic_insert_if_absent(insert).await
-                });
-            }
-            set.join_all().await
-        })
-    };
-    let dup = concurrently(vec![duplicate; 256]);
-    let fresh = concurrently(distinct.collect());
-    let count = |rs: &[Result<ReplayDecision, ReplayStoreError>], d: &ReplayDecision| {
-        rs.iter().filter(|r| r.as_ref().ok() == Some(d)).count()
-    };
+    let fresh_key = || composite_key(signer, &Nonce::fresh());
+    let duplicate = fresh_key();
+    let dup = insert_concurrently(&rt, &store, vec![duplicate; 256], retain_until);
+    let fresh = insert_concurrently(
+        &rt,
+        &store,
+        (0..256).map(|_| fresh_key()).collect(),
+        retain_until,
+    );
     assert_eq!(
         count(&dup, &ReplayDecision::Fresh),
         1,
@@ -272,33 +138,30 @@ fn a_maximal_pool_admits_each_nonce_exactly_once_under_concurrent_duplicates() {
 #[test]
 fn live_pttl_is_bounded_window_not_absolute_epoch() {
     let Some(url) = redis_url() else {
-        eprintln!(
-            "SKIP live_pttl_is_bounded_window_not_absolute_epoch: MCP_RE_TEST_REDIS_URL \
-             unset (no Redis available in this environment)"
+        skip(
+            "live_pttl_is_bounded_window_not_absolute_epoch",
+            Missing::Redis,
         );
         return;
     };
 
-    let signer = &format!(
-        "did:example:host#live_pttl_is_bounded_window_not_absolute_epoch-{}",
-        run_id()
-    );
-    let nonce = &mcp_re_test_paths::unique_test_nonce();
+    let signer = &Signer::for_test("live_pttl_is_bounded_window_not_absolute_epoch");
+    let nonce = &Nonce::fresh();
 
     // A window of ~600s from the REAL clock: retain_until = now + 600.
     let window_secs: i64 = 600;
     let retain_until = now_unix() + window_secs;
 
     let rt = runtime();
-    let store = node(&rt, &url);
+    let node = Node::connect(&rt, &url);
     assert_eq!(
-        insert(&rt, &store, signer, nonce, retain_until),
+        node.insert(signer, nonce, retain_until),
         Ok(ReplayDecision::Fresh),
         "first sight is Fresh"
     );
 
     // Probe PTTL on the exact key inserted.
-    let key = composite_key(signer, AUD, nonce);
+    let key = composite_key(signer, nonce);
     let mut conn = raw_conn(&url);
     let pttl_ms: i64 = redis::cmd("PTTL")
         .arg(&key)
@@ -338,92 +201,9 @@ fn live_pttl_is_bounded_window_not_absolute_epoch() {
 // recovery deterministically (no container stop/start, no blind sleeps).
 // ---------------------------------------------------------------------------
 
-/// The replica's admin connection URL, or `None` to skip. Hard-fails under
-/// MCP_RE_REQUIRE_LIVE_INFRA so CI cannot score the multi-replica proof as a green
-/// skip.
-fn replica_admin_url() -> Option<String> {
-    let url = std::env::var("MCP_RE_TEST_REDIS_REPLICA_URL")
-        .ok()
-        .filter(|u| !u.trim().is_empty());
-    if url.is_none() && require_live_infra() {
-        panic!(
-            "MCP_RE_REQUIRE_LIVE_INFRA is set but MCP_RE_TEST_REDIS_REPLICA_URL is unavailable \
-             — the WAIT-quorum multi-replica proof MUST run under CI, not skip"
-        );
-    }
-    url
-}
-
 /// WAIT timeout for the quorum insert: short enough to keep the test snappy, long
 /// enough not to flake under CI load (a shortfall costs exactly this once).
 const WAIT_TIMEOUT_MS: u64 = 1_500;
-
-/// A `WAIT 1`-quorum store over a fresh primary connection: a fresh insert must be
-/// acknowledged by at least one replica within `WAIT_TIMEOUT_MS` or it fails closed.
-fn wait_quorum_node(
-    rt: &tokio::runtime::Runtime,
-    primary_url: &str,
-) -> RedisAsyncAtomicReplayStore {
-    rt.block_on(RedisAsyncAtomicReplayStore::connect_with_wait_quorum(
-        primary_url,
-        mcp_re_proxy::async_redis_store::system_clock(),
-        Some((1, WAIT_TIMEOUT_MS)),
-    ))
-    .expect("connect the store to the primary Redis")
-}
-
-fn raw_conn(url: &str) -> redis::Connection {
-    redis::Client::open(url)
-        .expect("open redis client")
-        .get_connection()
-        .expect("redis connection")
-}
-
-/// `(host, port)` parsed from a `redis://host:port[/db]` URL — the REPLICAOF target.
-fn host_port(url: &str) -> (String, u16) {
-    let s = url.strip_prefix("redis://").unwrap_or(url);
-    let s = s.split('/').next().unwrap_or(s);
-    let (host, port) = s.rsplit_once(':').expect("redis url is host:port");
-    (
-        host.to_string(),
-        port.parse().expect("redis port is numeric"),
-    )
-}
-
-/// `connected_slaves:N` from the primary's `INFO replication`, or -1 if absent.
-fn primary_connected_slaves(primary: &mut redis::Connection) -> i64 {
-    let info: String = redis::cmd("INFO")
-        .arg("replication")
-        .query(primary)
-        .expect("INFO replication on primary");
-    info.lines()
-        .find_map(|l| l.trim().strip_prefix("connected_slaves:"))
-        .and_then(|v| v.trim().parse().ok())
-        .unwrap_or(-1)
-}
-
-/// True when the replica reports it is a slave with its master link up.
-fn replica_link_up(replica: &mut redis::Connection) -> bool {
-    let info: String = redis::cmd("INFO")
-        .arg("replication")
-        .query(replica)
-        .expect("INFO replication on replica");
-    let role_slave = info.lines().any(|l| l.trim() == "role:slave");
-    let link_up = info.lines().any(|l| l.trim() == "master_link_status:up");
-    role_slave && link_up
-}
-
-/// Poll `cond` until true or a 20s deadline, then panic — never a blind sleep.
-fn poll_until<F: FnMut() -> bool>(what: &str, mut cond: F) {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while Instant::now() < deadline {
-        if cond() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-    panic!("timed out after 20s waiting for: {what}");
-}
 
 /// The Amendment-1 distributed proof, on the store the serving path builds: against a
 /// real primary+replica Redis, prove (1) a healthy replica-acked WAIT-quorum insert is
@@ -434,95 +214,41 @@ fn poll_until<F: FnMut() -> bool>(what: &str, mut cond: F) {
 #[test]
 fn wait_quorum_shortfall_and_recovery_against_a_replica() {
     let (Some(primary_url), Some(replica_url)) = (redis_url(), replica_admin_url()) else {
-        eprintln!(
-            "SKIP wait_quorum_shortfall_and_recovery_against_a_replica: \
-             MCP_RE_TEST_REDIS_URL / MCP_RE_TEST_REDIS_REPLICA_URL unset (no replica topology)"
+        skip(
+            "wait_quorum_shortfall_and_recovery_against_a_replica",
+            Missing::ReplicaTopology,
         );
         return;
     };
 
-    let mut primary = raw_conn(&primary_url);
-    let mut replica = raw_conn(&replica_url);
-    let (master_host, master_port) = host_port(&primary_url);
-
-    struct ReattachOnDrop {
-        replica_url: String,
-        master_host: String,
-        master_port: u16,
-    }
-
-    impl Drop for ReattachOnDrop {
-        fn drop(&mut self) {
-            let Ok(mut conn) =
-                redis::Client::open(self.replica_url.as_str()).and_then(|c| c.get_connection())
-            else {
-                return;
-            };
-            let _ = redis::cmd("REPLICAOF")
-                .arg(self.master_host.as_str())
-                .arg(self.master_port)
-                .query::<()>(&mut conn);
-        }
-    }
-
-    let _reattach_guard = ReattachOnDrop {
-        replica_url: replica_url.clone(),
-        master_host: master_host.clone(),
-        master_port,
-    };
+    let mut topology = Topology::open(&primary_url, &replica_url);
 
     // A future expiry so the inserted key carries a real multi-second TTL window
     // and persists across the phases below (a past expiry would clamp to ~1ms and
     // vanish between calls). Test-name-derived signer plus a per-run suffix for a key
-    // space of this run's own (see `run_id`).
-    let signer = &format!(
-        "did:example:host#wait_quorum_shortfall_and_recovery-{}",
-        run_id()
-    );
+    // space of this run's own (see `signer_for`).
+    let signer = &Signer::for_test("wait_quorum_shortfall_and_recovery");
     let expires_at = now_unix() + 600;
 
     // Ensure a clean starting topology: replica attached + link up + visible.
-    let _: () = redis::cmd("REPLICAOF")
-        .arg(&master_host)
-        .arg(master_port)
-        .query(&mut replica)
-        .expect("attach replica to primary");
-    poll_until("replica master_link_status:up", || {
-        replica_link_up(&mut replica)
-    });
-    poll_until("primary connected_slaves>=1", || {
-        primary_connected_slaves(&mut primary) >= 1
-    });
+    topology.attach();
 
     let rt = runtime();
-    let store = wait_quorum_node(&rt, &primary_url);
+    let node = Node::connect_with_wait_quorum(&rt, &primary_url, WAIT_TIMEOUT_MS);
 
     // (1) Healthy: WAIT 1 is satisfied by the attached replica → Fresh.
     assert_eq!(
-        insert(
-            &rt,
-            &store,
-            signer,
-            &mcp_re_test_paths::unique_test_nonce(),
-            expires_at
-        ),
+        node.insert(signer, &Nonce::fresh(), expires_at),
         Ok(ReplayDecision::Fresh),
         "a replica-acked WAIT-quorum insert must be Fresh"
     );
 
     // (2) Shortfall: detach the replica, confirm the primary sees zero replicas,
     //     then a fresh insert's WAIT 1 cannot be met → fail closed, never Fresh.
-    let _: () = redis::cmd("REPLICAOF")
-        .arg("NO")
-        .arg("ONE")
-        .query(&mut replica)
-        .expect("detach replica (REPLICAOF NO ONE)");
-    poll_until("primary connected_slaves==0", || {
-        primary_connected_slaves(&mut primary) == 0
-    });
+    topology.detach();
 
-    let shortfall_nonce = mcp_re_test_paths::unique_test_nonce();
-    let shortfall = insert(&rt, &store, signer, &shortfall_nonce, expires_at);
+    let shortfall_nonce = Nonce::fresh();
+    let shortfall = node.insert(signer, &shortfall_nonce, expires_at);
     assert!(
         matches!(shortfall, Err(ReplayStoreError::Unavailable { .. })),
         "a WAIT-quorum shortfall must fail closed as ReplayStoreError::Unavailable, got {shortfall:?}"
@@ -536,7 +262,7 @@ fn wait_quorum_shortfall_and_recovery_against_a_replica() {
     // (3) Same-nonce retry after the shortfall: the SET NX landed on the primary,
     //     so the nonce is burned — the retry must NOT be Fresh (Replay or another
     //     fail-closed are both acceptable per Amendment 1; Fresh is not).
-    let retry = insert(&rt, &store, signer, &shortfall_nonce, expires_at);
+    let retry = node.insert(signer, &shortfall_nonce, expires_at);
     assert_ne!(
         retry,
         Ok(ReplayDecision::Fresh),
@@ -544,30 +270,12 @@ fn wait_quorum_shortfall_and_recovery_against_a_replica() {
     );
 
     // (4) Recovery: reattach + resync the replica, then a NEW nonce is Fresh again.
-    let _: () = redis::cmd("REPLICAOF")
-        .arg(&master_host)
-        .arg(master_port)
-        .query(&mut replica)
-        .expect("reattach replica to primary");
-    poll_until("replica link up after reattach", || {
-        replica_link_up(&mut replica)
-    });
-    poll_until("primary connected_slaves>=1 after reattach", || {
-        primary_connected_slaves(&mut primary) >= 1
-    });
+    topology.reattach();
     assert_eq!(
-        insert(
-            &rt,
-            &store,
-            signer,
-            &mcp_re_test_paths::unique_test_nonce(),
-            expires_at
-        ),
+        node.insert(signer, &Nonce::fresh(), expires_at),
         Ok(ReplayDecision::Fresh),
         "after replica reattach + resync, a fresh nonce must be Fresh again"
     );
-
-    // Cleanup: leave the topology attached for any subsequent test in the lane.
 }
 
 /// The Amendment-1 shortfall on a POOLED store, without touching the topology: a quorum
@@ -580,49 +288,26 @@ fn wait_quorum_shortfall_and_recovery_against_a_replica() {
 #[test]
 fn a_pooled_store_fails_closed_on_every_connection_when_the_quorum_cannot_be_met() {
     let Some(url) = redis_url() else {
-        eprintln!(
-            "SKIP a_pooled_store_fails_closed_on_every_connection_when_the_quorum_cannot_be_met: \
-             MCP_RE_TEST_REDIS_URL unset (no Redis available in this environment)"
+        skip(
+            "a_pooled_store_fails_closed_on_every_connection_when_the_quorum_cannot_be_met",
+            Missing::Redis,
         );
         return;
     };
     let attached = u32::try_from(primary_connected_slaves(&mut raw_conn(&url)).max(0))
         .expect("a replica count fits u32");
-    let signer = &format!("did:example:host#pooled-shortfall-{}", run_id());
+    let signer = &Signer::for_test("pooled-shortfall");
     let rt = runtime();
-    let pooled = |quorum: u32| {
-        std::sync::Arc::new(
-            rt.block_on(RedisAsyncAtomicReplayStore::connect_pooled(
-                &url,
-                mcp_re_proxy::async_redis_store::system_clock(),
-                Some((quorum, 300)),
-                32,
-            ))
-            .expect("connect a 32-connection pool to MCP_RE_TEST_REDIS_URL Redis"),
-        )
-    };
+    let pooled = |quorum: u32| connect_pool(&rt, &url, Some((quorum, 300)), 32);
     let retain_until = expires_soon();
-    let concurrently = |store: &std::sync::Arc<RedisAsyncAtomicReplayStore>, keys: Vec<String>| {
-        rt.block_on(async {
-            let mut set = tokio::task::JoinSet::new();
-            for key in keys {
-                let store = std::sync::Arc::clone(store);
-                set.spawn(async move {
-                    let insert = ReplayInsert::new(&key, TEST_ACTOR, retain_until, 0);
-                    store.atomic_insert_if_absent(insert).await
-                });
-            }
-            set.join_all().await
-        })
-    };
     let keys = |n| -> Vec<String> {
         (0..n)
-            .map(|_| composite_key(signer, AUD, &mcp_re_test_paths::unique_test_nonce()))
+            .map(|_| composite_key(signer, &Nonce::fresh()))
             .collect()
     };
 
     if attached > 0 {
-        let met = concurrently(&pooled(attached), keys(64));
+        let met = insert_concurrently(&rt, &pooled(attached), keys(64), retain_until);
         assert!(
             met.iter().all(|r| *r == Ok(ReplayDecision::Fresh)),
             "a quorum of the {attached} attached replicas admits: {met:?}"
@@ -631,7 +316,7 @@ fn a_pooled_store_fails_closed_on_every_connection_when_the_quorum_cannot_be_met
 
     let unmet = pooled(attached + 1);
     let shortfall_keys = keys(64);
-    let shortfall = concurrently(&unmet, shortfall_keys.clone());
+    let shortfall = insert_concurrently(&rt, &unmet, shortfall_keys.clone(), retain_until);
     assert!(
         shortfall
             .iter()
@@ -639,7 +324,7 @@ fn a_pooled_store_fails_closed_on_every_connection_when_the_quorum_cannot_be_met
         "WAIT {} against {attached} replicas fails closed on every connection: {shortfall:?}",
         attached + 1
     );
-    let retry = concurrently(&unmet, shortfall_keys);
+    let retry = insert_concurrently(&rt, &unmet, shortfall_keys, retain_until);
     assert!(
         retry.iter().all(|r| *r != Ok(ReplayDecision::Fresh)),
         "a nonce burned by a shortfall is never Fresh on retry: {retry:?}"

@@ -1719,7 +1719,10 @@ nt_rust_test(
 # Self-skips unless MCP_RE_TEST_OCSP_RESPONDER_URL (+ DER paths) is set.
 nt_rust_test(
     name = "integration_ext_test",
-    srcs = glob(["tests/integration_ext/*.rs"]),
+    srcs = glob([
+        "tests/integration_ext/*.rs",
+        "tests/integration_ext/*/*.rs",
+    ]),
     crate_root = "tests/integration_ext/main.rs",
     # Each suite is `#![cfg(feature = ...)]`; without these the binary links and runs
     # ZERO tests while reporting PASSED.
