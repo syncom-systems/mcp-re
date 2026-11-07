@@ -30,6 +30,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+from typing import NamedTuple
 
 from workflow_reader import parse, shell_commands
 
@@ -83,36 +84,107 @@ def invocation_lines(path: Path, root: Path) -> list[tuple[int, str, bool]]:
     return [(n, line, True) for n, line in enumerate(text.splitlines(), 1)]
 
 
+def _scanned_files(root: Path) -> list[Path]:
+    """Every non-archive file the scan globs match, glob by glob."""
+    return [path for glob in SCAN_GLOBS for path in sorted(root.glob(glob))
+            if path.is_file() and not _is_archive(path, root)]
+
+
+def _line_findings(rel: Path, lineno: int, line: str, prose: bool) -> list[str]:
+    if not INVOCATION.search(line):
+        return []
+    # This gate's OWN prose names the forbidden flag in order to explain
+    # it; so do the runbooks' warning paragraphs. A document line that quotes
+    # `-- --ignored` next to the word NEVER/NOT is a warning, not a command.
+    if prose and re.search(r"\b(NEVER|NOT|never use|forbidden)\b", line):
+        return []
+    found: list[str] = []
+    if "--ignored" in line:
+        found.append(
+            f"{rel}:{lineno}: `--ignored` selects ZERO tests here "
+            f"({BENCH} is not #[ignore]) — the run measures nothing and "
+            f"exits 0. Use `--exact`, or call scripts/local_slo_lane.sh"
+        )
+    if re.search(r"\bcargo\s+test\b", line):
+        found.append(
+            f"{rel}:{lineno}: the bench runs through Cargo, which builds a "
+            f"different binary from a different feature set than the one that "
+            f"ships. Run //mcp-re-proxy:tls_load_harness_bench, or call "
+            f"scripts/local_slo_lane.sh"
+        )
+    return found
+
+
 def scan(root: Path) -> list[str]:
     """Return one finding per broken bench invocation."""
-    findings: list[str] = []
-    for glob in SCAN_GLOBS:
-        for path in sorted(root.glob(glob)):
-            if not path.is_file() or _is_archive(path, root):
-                continue
-            rel = path.relative_to(root)
-            for lineno, line, prose in invocation_lines(path, root):
-                if not INVOCATION.search(line):
-                    continue
-                # This gate's OWN prose names the forbidden flag in order to explain
-                # it; so do the runbooks' warning paragraphs. A document line that quotes
-                # `-- --ignored` next to the word NEVER/NOT is a warning, not a command.
-                if prose and re.search(r"\b(NEVER|NOT|never use|forbidden)\b", line):
-                    continue
-                if "--ignored" in line:
-                    findings.append(
-                        f"{rel}:{lineno}: `--ignored` selects ZERO tests here "
-                        f"({BENCH} is not #[ignore]) — the run measures nothing and "
-                        f"exits 0. Use `--exact`, or call scripts/local_slo_lane.sh"
-                    )
-                if re.search(r"\bcargo\s+test\b", line):
-                    findings.append(
-                        f"{rel}:{lineno}: the bench runs through Cargo, which builds a "
-                        f"different binary from a different feature set than the one that "
-                        f"ships. Run //mcp-re-proxy:tls_load_harness_bench, or call "
-                        f"scripts/local_slo_lane.sh"
-                    )
-    return findings
+    return [
+        finding
+        for path in _scanned_files(root)
+        for lineno, line, prose in invocation_lines(path, root)
+        for finding in _line_findings(path.relative_to(root), lineno, line, prose)
+    ]
+
+
+class Case(NamedTuple):
+    """One shape the gate must judge: the file text, where it lives, how many findings."""
+
+    name: str
+    text: str
+    path: Path
+    want: int
+
+
+def _cases(label: str, bad: Path, lane: Path, flow: Path) -> list[Case]:
+    """Each shape the gate must judge."""
+    return [Case(*c) for c in [
+        # The exact shape that shipped, in each spelling the tree can hold.
+        ("--ignored on bazel run", f"bazel run -c opt {label} -- --ignored\n", bad, 1),
+        ("--ignored as a test_arg", f"bazel test {label} --test_arg=--ignored\n", bad, 1),
+        ("--ignored behind the script's variable",
+         'bazel run -c opt "$' + 'BENCH" -- --ignored\n', lane, 1),
+        ("--ignored in the image's binary form", f"{BENCH} {BENCH} --ignored\n", bad, 1),
+        # Cargo builds a different binary; with --ignored it is both defects.
+        ("the bench through Cargo",
+         f"cargo test -p mcp-re-proxy --test {BENCH} {BENCH} -- --exact\n", bad, 1),
+        ("Cargo AND --ignored",
+         f"cargo test -p mcp-re-proxy --test {BENCH} {BENCH} -- --ignored\n", bad, 2),
+        # Prose that NAMES the flag to warn about it is not an invocation to fix.
+        ("a warning paragraph",
+         f"Use `--exact`, NEVER `bazel run {label} -- --ignored` — it selects zero "
+         f"tests.\n", bad, 0),
+        ("prose naming the harness", f"The load harness ({BENCH}.rs) drives it.\n", bad, 0),
+        # The correct forms pass.
+        ("the correct bazel run", f"bazel run -c opt {label} -- {BENCH} --exact --nocapture\n",
+         bad, 0),
+        ("the correct variable form",
+         'bazel run -c opt "$' + f'BENCH" -- {BENCH} --exact --nocapture\n', lane, 0),
+        ("the correct image form", f"{BENCH} {BENCH} --exact --nocapture\n", bad, 0),
+        # A script's command continued across lines is one command.
+        ("--ignored on a continued line",
+         f"bazel run -c opt {label} \\\n  -- --ignored\n", lane, 1),
+        # A script's comment is not an invocation, NEVER or not.
+        ("a comment in a script", f"# bazel run {label} -- --ignored\n", lane, 0),
+        ("--ignored in a workflow step",
+         f"jobs:\n  a:\n    steps:\n      - run: bazel run {label} -- --ignored\n", flow, 1),
+        # A flag belongs to the segment that holds it, not to a neighbour.
+        ("a correct bench chained to an unrelated ignored test",
+         f"jobs:\n  a:\n    steps:\n      - run: bazel run {label} -- {BENCH} --exact && "
+         f"bazel test //other:t --test_arg=--ignored\n", flow, 0),
+        ("a broken bench chained after a correct step",
+         f"jobs:\n  a:\n    steps:\n      - run: true && bazel run {label} -- --ignored\n", flow, 1),
+        ("a workflow comment is not an invocation",
+         f"jobs:\n  a:\n    steps:\n      # bazel run {label} -- --ignored\n      - run: true\n", flow, 0),
+    ]]
+
+
+def _expect(root: Path, case: Case) -> bool:
+    case.path.write_text(case.text)
+    got = scan(root)
+    case.path.write_text("")
+    if len(got) != case.want:
+        print(f"SELFTEST FAILED: {case.name}: expected {case.want} finding(s), got {got}")
+        return False
+    return True
 
 
 def selftest() -> int:
@@ -126,56 +198,7 @@ def selftest() -> int:
         (root / ".github" / "workflows").mkdir(parents=True)
         flow = root / ".github" / "workflows" / "w.yml"
         label = f"//mcp-re-proxy:{BENCH}"
-
-        def expect(name: str, text: str, path: Path, want: int) -> bool:
-            path.write_text(text)
-            got = scan(root)
-            path.write_text("")
-            if len(got) != want:
-                print(f"SELFTEST FAILED: {name}: expected {want} finding(s), got {got}")
-                return False
-            return True
-
-        cases = [
-            # The exact shape that shipped, in each spelling the tree can hold.
-            ("--ignored on bazel run", f"bazel run -c opt {label} -- --ignored\n", bad, 1),
-            ("--ignored as a test_arg", f"bazel test {label} --test_arg=--ignored\n", bad, 1),
-            ("--ignored behind the script's variable",
-             'bazel run -c opt "$' + 'BENCH" -- --ignored\n', lane, 1),
-            ("--ignored in the image's binary form", f"{BENCH} {BENCH} --ignored\n", bad, 1),
-            # Cargo builds a different binary; with --ignored it is both defects.
-            ("the bench through Cargo",
-             f"cargo test -p mcp-re-proxy --test {BENCH} {BENCH} -- --exact\n", bad, 1),
-            ("Cargo AND --ignored",
-             f"cargo test -p mcp-re-proxy --test {BENCH} {BENCH} -- --ignored\n", bad, 2),
-            # Prose that NAMES the flag to warn about it is not an invocation to fix.
-            ("a warning paragraph",
-             f"Use `--exact`, NEVER `bazel run {label} -- --ignored` — it selects zero "
-             f"tests.\n", bad, 0),
-            ("prose naming the harness", f"The load harness ({BENCH}.rs) drives it.\n", bad, 0),
-            # The correct forms pass.
-            ("the correct bazel run", f"bazel run -c opt {label} -- {BENCH} --exact --nocapture\n",
-             bad, 0),
-            ("the correct variable form",
-             'bazel run -c opt "$' + f'BENCH" -- {BENCH} --exact --nocapture\n', lane, 0),
-            ("the correct image form", f"{BENCH} {BENCH} --exact --nocapture\n", bad, 0),
-            # A script's command continued across lines is one command.
-            ("--ignored on a continued line",
-             f"bazel run -c opt {label} \\\n  -- --ignored\n", lane, 1),
-            # A script's comment is not an invocation, NEVER or not.
-            ("a comment in a script", f"# bazel run {label} -- --ignored\n", lane, 0),
-            ("--ignored in a workflow step",
-             f"jobs:\n  a:\n    steps:\n      - run: bazel run {label} -- --ignored\n", flow, 1),
-            # A flag belongs to the segment that holds it, not to a neighbour.
-            ("a correct bench chained to an unrelated ignored test",
-             f"jobs:\n  a:\n    steps:\n      - run: bazel run {label} -- {BENCH} --exact && "
-             f"bazel test //other:t --test_arg=--ignored\n", flow, 0),
-            ("a broken bench chained after a correct step",
-             f"jobs:\n  a:\n    steps:\n      - run: true && bazel run {label} -- --ignored\n", flow, 1),
-            ("a workflow comment is not an invocation",
-             f"jobs:\n  a:\n    steps:\n      # bazel run {label} -- --ignored\n      - run: true\n", flow, 0),
-        ]
-        if not all(expect(*c) for c in cases):
+        if not all(_expect(root, c) for c in _cases(label, bad, lane, flow)):
             return 1
 
     print("slo invocation gate selftest: PASS")
