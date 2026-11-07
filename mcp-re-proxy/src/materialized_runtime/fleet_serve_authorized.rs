@@ -23,7 +23,24 @@
 //! no `Default`, no `Clone`, no serialization. `structural://proxy/fleet_serve/sole_route`
 //! (probes S30 and S31) compiles the two forgeries and requires the compiler to refuse them.
 
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
 use crate::async_fleet::FleetConfig;
+use crate::config_snapshot::ServerConfigSnapshot;
+use crate::ServerOptions;
+
+/// What the fleet is configured and ended by — the inputs [`crate::app::serve_fleet`]
+/// consumes besides the proxy it serves and the witness. Plain values with nothing to
+/// forge: the authority to serve is [`FleetServeAuthorized`], not these.
+pub(crate) struct FleetServing {
+    /// The snapshot the accept loop re-reads per connection.
+    pub(crate) config_snapshot: Arc<ServerConfigSnapshot>,
+    pub(crate) serve_options: Arc<ServerOptions>,
+    /// The caller owns the flag (the binary wires it to SIGTERM/SIGINT; a test flips it
+    /// directly).
+    pub(crate) shutdown: Arc<AtomicBool>,
+}
 
 /// Authorization to serve one fleet, issued by the lifecycle gate and consumed by the
 /// serve.

@@ -130,10 +130,11 @@ def test_every_component_the_encoding_produces_has_a_classification():
     from pathlib import Path as _Path
 
     _sys.path.insert(0, str(_Path(__file__).resolve().parent))
-    from _fingerprint import fingerprint_unit, load_trust_boundaries
+    from _fingerprint import fingerprint_unit
     from _manifest import load_verification
     from _assumptions import load_assumptions
     from _toolchain_lock import load_toolchains
+    from _trust_boundaries import load_trust_boundaries
 
     doc = load_verification()
     toolchains = load_toolchains()
