@@ -2793,6 +2793,12 @@ description = "The credential a communication-establishment mechanism associated
 paths = [
   "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mod.rs",
   "mcp-re-proxy/src/communication_assurance/channel_associated_credential/rustls_adapter.rs",
+  "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mechanism_harness/authority.rs",
+  "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mechanism_harness/handshake.rs",
+  "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mechanism_harness/leaf.rs",
+  "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mechanism_harness/mod.rs",
+  "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mechanism_harness/peers.rs",
+  "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mechanism_harness/tls_config.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
