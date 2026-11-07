@@ -319,22 +319,43 @@ pub(crate) mod test_support {
     use crate::cli;
     use crate::deployment_request::DeploymentRequest;
 
-    /// A parsed `DeploymentRequest` for `source`, built through the REAL parser so the test
-    /// cannot drift from what the CLI actually produces. An empty `tls_key` is how the
-    /// parser represents delegated TLS, so it is passed through rather than defaulted.
-    ///
-    /// SHARED because two owners need the same fixture and neither should carry a second
-    /// copy of it: the composition root's controls, and the key-file custody subtree's.
-    pub(crate) fn config_with(
-        source: &str,
-        seed: &str,
-        tls_key: &str,
-    ) -> crate::deployment_request::DeploymentRequest {
-        let (name, mut extra): (&str, Vec<&str>) = match source {
-            "file" => ("file", vec![]),
+    /// The flags every fixture carries whatever its key source.
+    const COMMON_FLAGS: &[&str] = &[
+        "--bind",
+        "127.0.0.1:8443",
+        "--audience",
+        "did:web:server-1.mcp.example.com",
+        "--server-signer",
+        "did:web:server-1.mcp.example.com",
+        "--server-key-id",
+        "server-key-1",
+        "--tls-cert",
+        "/cert",
+        "--client-ca",
+        "/ca",
+        "--trust",
+        "/trust.json",
+        "--inner-http-url",
+        "http://127.0.0.1:8080/mcp",
+        "--target-uri",
+        "https://mcp.example.com/mcp",
+        "--mcp-protocol-version",
+        "2026-07-28",
+        "--delegated-trust-epoch",
+        "epoch-min",
+        "--replay-redis-url",
+        "redis://127.0.0.1:6379",
+        "--replay-durability-tier",
+        "redis-wait-quorum:1:100",
+    ];
+
+    /// The `--key-source` value for `source` and the flags that source needs.
+    fn source_flags(source: &str) -> (&str, &'static [&'static str]) {
+        match source {
+            "file" => ("file", &[]),
             "pkcs11" => (
                 "pkcs11",
-                vec![
+                &[
                     "--pkcs11-module",
                     "/m.so",
                     "--pkcs11-token-label",
@@ -347,7 +368,7 @@ pub(crate) mod test_support {
             ),
             "aws-kms" => (
                 "aws-kms",
-                vec![
+                &[
                     "--aws-kms-region",
                     "us-east-1",
                     "--aws-kms-key-id",
@@ -356,46 +377,31 @@ pub(crate) mod test_support {
             ),
             "gcp-kms" => (
                 "gcp-kms",
-                vec![
+                &[
                     "--gcp-kms-key-version",
                     "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
                 ],
             ),
             other => panic!("no fixture for --key-source {other}"),
-        };
-        let mut argv: Vec<&str> = vec![
-            "--bind",
-            "127.0.0.1:8443",
-            "--audience",
-            "did:web:server-1.mcp.example.com",
-            "--server-signer",
-            "did:web:server-1.mcp.example.com",
-            "--server-key-id",
-            "server-key-1",
-            "--tls-cert",
-            "/cert",
-            "--client-ca",
-            "/ca",
-            "--trust",
-            "/trust.json",
-            "--inner-http-url",
-            "http://127.0.0.1:8080/mcp",
-            "--target-uri",
-            "https://mcp.example.com/mcp",
-            "--mcp-protocol-version",
-            "2026-07-28",
-            "--delegated-trust-epoch",
-            "epoch-min",
-            "--replay-redis-url",
-            "redis://127.0.0.1:6379",
-            "--replay-durability-tier",
-            "redis-wait-quorum:1:100",
-            "--key-source",
-            name,
-            "--trust-domain",
-            "mcp.example.com",
-        ];
-        argv.append(&mut extra);
+        }
+    }
+
+    /// A parsed `DeploymentRequest` for `source`, built through the REAL parser so the test
+    /// cannot drift from what the CLI actually produces. An empty `tls_key` is how the
+    /// parser represents delegated TLS, so it is passed through rather than defaulted.
+    ///
+    /// SHARED because two owners need the same fixture and neither should carry a second
+    /// copy of it: the composition root's controls, and the key-file custody subtree's.
+    pub(crate) fn config_with(
+        source: &str,
+        seed: &str,
+        tls_key: &str,
+    ) -> crate::deployment_request::DeploymentRequest {
+        let (name, extra) = source_flags(source);
+        let mut argv: Vec<&str> = COMMON_FLAGS.to_vec();
+        argv.extend_from_slice(&["--key-source", name]);
+        argv.extend_from_slice(&["--trust-domain", "mcp.example.com"]);
+        argv.extend_from_slice(extra);
         if !seed.is_empty() {
             argv.extend_from_slice(&["--signing-key-seed", seed]);
         }
@@ -716,9 +722,31 @@ pub(crate) mod test_support {
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_state_carries_what_the_planes_would_otherwise_re_derive() {
-        let state = DeploymentConfigState::new(RecognisedStates {
+    /// The server identity the legal fixture names, over its delegated signing state.
+    fn legal_server_identity() -> server_identity::ServerIdentityFacts {
+        server_identity::classify_and_validate(
+            &test_support::legal_config(),
+            delegated_signing::classify_and_validate(&test_support::legal_config())
+                .0
+                .as_ref(),
+        )
+        .0
+        .expect("the legal fixture has an identity")
+    }
+
+    /// Push revocation over a networked trust epoch.
+    fn pushed_epoch_revocation() -> TrustRevocationState {
+        test_support::revocation_posture(
+            crate::revocation_tier::RevocationTier::Push { t_secs: 30 },
+            Some(5),
+            Some(("redis://127.0.0.1:6379", "mcp-re:trust:epoch")),
+        )
+    }
+
+    /// Every owner's state recognised from its own fixture: the whole posture a legal
+    /// deployment carries.
+    fn fully_recognised_states() -> RecognisedStates {
+        RecognisedStates {
             admission:
                 admission::classify_and_validate(&test_support::enforcing_admission_config())
                     .0
@@ -731,16 +759,7 @@ mod tests {
             freshness: freshness::classify_and_validate(&test_support::legal_config())
                 .0
                 .expect("the legal fixture names a bounded freshness window"),
-            server_identity: crate::config_state::server_identity::classify_and_validate(
-                &crate::config_state::test_support::legal_config(),
-                crate::config_state::delegated_signing::classify_and_validate(
-                    &crate::config_state::test_support::legal_config(),
-                )
-                .0
-                .as_ref(),
-            )
-            .0
-            .expect("the legal fixture has an identity"),
+            server_identity: legal_server_identity(),
             key_file_access: key_file_access::classify(&test_support::legal_config()),
             topology: topology::classify(&test_support::legal_config()).0,
             shard_topology: topology::classify(&test_support::legal_config()).1,
@@ -784,13 +803,14 @@ mod tests {
                 .expect("an absolute target"),
             retention: test_support::retention_at("/var/lib/mcp-re/evidence".to_string()),
             channel_credential_custody: test_support::channel_custody_delegated_pkcs11("tls"),
-            trust_revocation: test_support::revocation_posture(
-                crate::revocation_tier::RevocationTier::Push { t_secs: 30 },
-                Some(5),
-                Some(("redis://127.0.0.1:6379", "mcp-re:trust:epoch")),
-            ),
+            trust_revocation: pushed_epoch_revocation(),
             verified_context: VerifiedContextState::Trusted,
-        });
+        }
+    }
+
+    #[test]
+    fn the_state_carries_what_the_planes_would_otherwise_re_derive() {
+        let state = DeploymentConfigState::new(fully_recognised_states());
         assert!(state.trust_revocation().has_networked_epoch());
         assert_eq!(state.custody().exposure(), PrivateKeyExposure::NonExporting);
         assert_eq!(
