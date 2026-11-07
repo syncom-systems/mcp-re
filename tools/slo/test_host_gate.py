@@ -24,6 +24,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import host_gate  # noqa: E402
+import host_gate_capacity  # noqa: E402
+import host_gate_config  # noqa: E402
 import host_locks  # noqa: E402
 from arbiter_error import ArbiterError  # noqa: E402
 from job_identity import JobIdentity  # noqa: E402
@@ -80,7 +82,7 @@ class Job:
         self.holder = None
 
     def admit(self, **bounds) -> "Job":
-        self.holder = host_gate.admit_job(self.paths, self.ident, self.worker.pid,
+        self.holder = host_gate.admit_job(self.paths, self.ident, host_gate.Watch(self.worker.pid),
                                           bounds={**FAST, **bounds})
         return self
 
@@ -258,16 +260,16 @@ def test_the_hook_consults_the_guard() -> None:
     p = fresh()
     old_environ = dict(os.environ)
     os.environ["RUNNER_TEMP"] = str(p["root"])
-    real_free_gb = host_gate.free_gb
+    real_free_gb = host_gate_capacity.free_gb
     try:
-        host_gate.free_gb = lambda _volume: 3.0
+        host_gate_capacity.free_gb = lambda _volume: 3.0
         rc = runner_arbiter.cmd_job_started(p, ordinary(10))
         check("a starved host refuses through the hook entry point", False,
               detail=f"returned {rc} instead of raising")
     except ArbiterError:
         check("a starved host refuses through the hook entry point", True)
     finally:
-        host_gate.free_gb = real_free_gb
+        host_gate_capacity.free_gb = real_free_gb
         os.environ.clear()
         os.environ.update(old_environ)
 
@@ -284,7 +286,7 @@ def test_the_hook_consults_the_guard() -> None:
     p2 = fresh()
     os.environ["RUNNER_TEMP"] = str(p2["root"])
     try:
-        host_gate.free_gb = lambda _volume: 400.0
+        host_gate_capacity.free_gb = lambda _volume: 400.0
         rc = runner_arbiter.cmd_job_started(p2, ordinary(11))
         check("a host with room admits through the hook entry point", rc == 0)
         check("and the admitted job DID get a lock holder",
@@ -295,7 +297,7 @@ def test_the_hook_consults_the_guard() -> None:
     except ArbiterError as exc:
         check("a host with room admits through the hook entry point", False, str(exc))
     finally:
-        host_gate.free_gb = real_free_gb
+        host_gate_capacity.free_gb = real_free_gb
         os.environ.clear()
         os.environ.update(old_environ)
 
@@ -575,7 +577,7 @@ def test_quiescence() -> None:
     # POISON PILL for the load5/load15 clauses. Re-evaluate that same reading against a
     # load1-only predicate: it PASSES. So those two clauses are what carry the refusal --
     # they are load-bearing, not decorative, and dropping them reinstates the defect.
-    load1_only_verdict = failed[0] <= ncpu * host_gate.Q_LOAD1 * 1.30
+    load1_only_verdict = failed[0] <= ncpu * host_gate_config.Q_LOAD1 * 1.30
     check("PILL: a load1-only predicate admits the failed reading",
           load1_only_verdict,
           f"load1 fraction {failed[0] / ncpu:.2f} vs idle floor 0.10 — barely separable")
@@ -584,7 +586,7 @@ def test_quiescence() -> None:
     result = host_gate.await_quiescence(wait_s=60, loadavg=lambda: quiet, sleep=lambda s: None)
     check("a genuinely quiet host is admitted", result["established"])
     check("admission required consecutive samples",
-          len(result["samples"]) >= host_gate.Q_SAMPLES)
+          len(result["samples"]) >= host_gate_config.Q_SAMPLES)
 
     # A single quiet sample among noisy ones must not admit: the counter has to reset.
     # The noisy tail is infinite because `sleep` is stubbed out here -- the loop spins far
@@ -615,18 +617,18 @@ def test_participation() -> None:
               "LANG=C\nACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/x/hook.sh\n") == "/opt/x/hook.sh")
     check("an .env without the hook yields None",
           host_gate.hook_from_env_text("LANG=C\nPATH=/usr/bin\n") is None)
-    result = host_gate.verify_participation(vm_read_env=None, vm_check_exec=None)
+    result = host_gate.verify_participation(host_gate.VmProbes())
     vm_entry = [e for e in result["runners"] if e["name"] == "dev1-linux"][0]
     check("an unreachable VM is NOT counted as participating", not vm_entry["participating"])
     check("every registered runner is evaluated",
-          len(result["runners"]) == len(host_gate.REGISTERED_RUNNERS)
+          len(result["runners"]) == len(host_gate_config.REGISTERED_RUNNERS)
           and len(result["runners"]) >= 3)
     check("the VM is one of them", any(e["kernel"] == "linux-vm" for e in result["runners"]))
 
     # A declared-but-absent hook must not count: the declaration is not the mechanism.
-    declared_only = host_gate.verify_participation(
-        vm_read_env=lambda p: "ACTIONS_RUNNER_HOOK_JOB_STARTED=/nope/missing.sh\n",
-        vm_check_exec=lambda p: False)
+    declared_only = host_gate.verify_participation(host_gate.VmProbes(
+        read_env=lambda p: "ACTIONS_RUNNER_HOOK_JOB_STARTED=/nope/missing.sh\n",
+        check_exec=lambda p: False))
     vm_entry = [e for e in declared_only["runners"] if e["name"] == "dev1-linux"][0]
     check("a declared but non-executable hook is not participation",
           not vm_entry["participating"])
@@ -640,8 +642,8 @@ def test_drain_refusal_names_the_blocker() -> None:
     ran most of an hour. The bound must be short, and the refusal must name the blocker.
     """
     print("\na drain that gives up names the blocker and releases (blast radius)")
-    check("the drain bound is at most 30 minutes", host_gate.DRAIN_WAIT_S <= 30 * 60,
-          f"{host_gate.DRAIN_WAIT_S}s")
+    check("the drain bound is at most 30 minutes", host_gate_config.DRAIN_WAIT_S <= 30 * 60,
+          f"{host_gate_config.DRAIN_WAIT_S}s")
     paths = fresh()
     blocker = admitted(paths, ordinary(7, runner="dev1"))
     message = refusal(paths, slo(), drain_wait=1)
@@ -734,8 +736,8 @@ def test_vm_reported_jobs_block_drain() -> None:
 
 def test_heavy_slot() -> None:
     print("\none heavy job on the host at a time; the fast lane is never in it")
-    saved = host_gate.HEAVY_RUNNERS
-    host_gate.HEAVY_RUNNERS = frozenset({"dev1", "dev1-mcp-re"})
+    saved = host_gate_config.HEAVY_RUNNERS
+    host_gate_config.HEAVY_RUNNERS = frozenset({"dev1", "dev1-mcp-re"})
     try:
         paths = fresh()
         code_bazel = admitted(paths, ordinary(10, "dev1"))
@@ -777,7 +779,7 @@ def test_heavy_slot() -> None:
               and not host_locks.holders(paths["root"]))
         doomed.end()
     finally:
-        host_gate.HEAVY_RUNNERS = saved
+        host_gate_config.HEAVY_RUNNERS = saved
 
 
 def test_stopped_participants_are_quiet() -> None:
@@ -795,10 +797,10 @@ def test_stopped_participants_are_quiet() -> None:
     check("an unreadable process table is not 'stopped'",
           not host_gate.runner_is_stopped(root, unreadable_table))
 
-    stopped_vm = host_gate.verify_participation(vm_read_env=None, vm_stopped=True)
+    stopped_vm = host_gate.verify_participation(host_gate.VmProbes(stopped=True))
     vm_entry = [e for e in stopped_vm["runners"] if e["name"] == "dev1-linux"][0]
     check("a VM Lima reports Stopped participates", vm_entry["participating"])
-    unreachable = host_gate.verify_participation(vm_read_env=None, vm_stopped=False)
+    unreachable = host_gate.verify_participation(host_gate.VmProbes(stopped=False))
     vm_entry = [e for e in unreachable["runners"] if e["name"] == "dev1-linux"][0]
     check("a running-but-unreachable VM still does not", not vm_entry["participating"])
 
@@ -809,7 +811,7 @@ def test_the_holder_needs_something_to_watch() -> None:
     ghost = subprocess.Popen(["true"])
     ghost.wait()
     try:
-        host_gate.admit_job(paths, ordinary(30), ghost.pid, bounds=FAST)
+        host_gate.admit_job(paths, ordinary(30), host_gate.Watch(ghost.pid), bounds=FAST)
         check("a job whose worker is already gone is refused", False, "admitted")
     except ArbiterError as exc:
         check("a job whose worker is already gone is refused", "already gone" in str(exc), str(exc))
@@ -832,7 +834,7 @@ def test_the_hook_returns_while_the_holder_lives() -> None:
         f"p = host_gate.paths(Path({str(paths['root'])!r}), Path({str(paths['mirror'])!r}))",
         "host_gate.ensure_layout(p)",
         f"ident = JobIdentity('dev1-fast-1', {CODE_REPO!r}, '', {CI_WORKFLOW!r}, '40', '1', 'fast')",
-        f"host_gate.admit_job(p, ident, {worker.pid}, bounds={FAST!r})",
+        f"host_gate.admit_job(p, ident, host_gate.Watch({worker.pid}), bounds={FAST!r})",
         "print('admitted')",
     ])
     hook = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE,
@@ -870,8 +872,8 @@ def lease(paths: dict, *command: str, **env: str) -> subprocess.Popen:
 
 def test_local_lease() -> None:
     print("\na command run by hand takes the heavy slot, waits for CI, and lets go on exit")
-    saved = host_gate.HEAVY_RUNNERS
-    host_gate.HEAVY_RUNNERS = frozenset({"dev1"})
+    saved = host_gate_config.HEAVY_RUNNERS
+    host_gate_config.HEAVY_RUNNERS = frozenset({"dev1"})
     try:
         paths = fresh()
         tmp = Path(tempfile.mkdtemp())
@@ -936,14 +938,14 @@ def test_local_lease() -> None:
         check("a SIGKILLed lease leaves no lock behind",
               within(lambda: locks(paths)["heavy"] == "free") is not None, str(locks(paths)))
     finally:
-        host_gate.HEAVY_RUNNERS = saved
+        host_gate_config.HEAVY_RUNNERS = saved
 
 
 def main() -> int:
     print("host-gate controls — temp directories only, no /opt, no runner")
     # The heavy slot serializes dev1 jobs; the older tests admit several at once, so they run
     # with it off, and test_heavy_slot switches it on for itself.
-    host_gate.HEAVY_RUNNERS = frozenset()
+    host_gate_config.HEAVY_RUNNERS = frozenset()
     for fn in (test_identification, test_reserve_then_drain, test_ordinary_first_then_slo,
                test_second_slo_cannot_overlap, test_simultaneous_admission, test_fail_closed,
                test_completion_releases_on_every_path, test_crash_leaves_closed_not_open,

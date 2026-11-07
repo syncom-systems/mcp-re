@@ -30,7 +30,7 @@ pub(super) fn read(args: &[String]) -> Result<Flags, String> {
         let value = tokens
             .next()
             .ok_or_else(|| format!("flag {flag} requires a value"))?;
-        if names_a_flag(value) {
+        if Flags::names_a_flag(value) {
             return Err(format!(
                 "flag {flag} requires a value; {value} is a flag, not its value"
             ));
@@ -50,13 +50,112 @@ pub(super) fn read(args: &[String]) -> Result<Flags, String> {
     Ok(flags)
 }
 
-/// Whether a token is a spelling some family owns, switch or value-taking.
-///
-/// A scratch accumulator probes the switch set, so the switch spellings stay single-sourced
-/// in their families. A leading `--` alone is not enough: a raw base64url key can begin
-/// with it.
-fn names_a_flag(token: &str) -> bool {
-    Flags::default().take_switch(token) || Flags::owns(token)
+/// One family's claim on a value-taking flag, and how to hand the flag to it.
+struct Route {
+    owns: fn(&str) -> bool,
+    take: fn(&mut Flags, &str, &str) -> Result<(), String>,
+}
+
+impl Flags {
+    /// The families in routing order, each beside the predicate that claims its flags.
+    const ROUTES: [Route; 14] = [
+        Route {
+            owns: super::identity_flags::IdentityFlags::owns,
+            take: |flags, flag, value| {
+                flags.identity.take(flag, value);
+                Ok(())
+            },
+        },
+        Route {
+            owns: super::serving_flags::ServingFlags::owns,
+            take: |flags, flag, value| {
+                flags.serving.take(flag, value);
+                Ok(())
+            },
+        },
+        Route {
+            owns: super::protocol_flags::ProtocolFlags::owns,
+            take: |flags, flag, value| flags.protocol.take(flag, value),
+        },
+        Route {
+            owns: super::runtime_flags::RuntimeFlags::owns,
+            take: |flags, flag, value| flags.runtime.take(flag, value),
+        },
+        Route {
+            owns: super::channel_flags::ChannelFlags::owns,
+            take: |flags, flag, value| flags.channel.take(flag, value),
+        },
+        Route {
+            owns: super::signing_source_flags::SigningSourceFlags::owns,
+            take: |flags, flag, value| flags.signing_source.take(flag, value),
+        },
+        Route {
+            owns: super::peer_identity_flags::PeerIdentityFlags::owns,
+            take: |flags, flag, value| flags.peer_identity.take(flag, value),
+        },
+        Route {
+            owns: super::revocation_flags::RevocationFlags::owns,
+            take: |flags, flag, value| flags.revocation.take(flag, value),
+        },
+        Route {
+            owns: super::storage_flags::StorageFlags::owns,
+            take: |flags, flag, value| flags.storage.take(flag, value),
+        },
+        Route {
+            owns: super::currency_flags::CurrencyFlags::owns,
+            take: |flags, flag, value| flags.currency.take(flag, value),
+        },
+        Route {
+            owns: super::admission_flags::AdmissionFlags::owns,
+            take: |flags, flag, value| flags.admission.take(flag, value),
+        },
+        Route {
+            owns: super::authorization_flags::AuthorizationFlags::owns,
+            take: |flags, flag, value| flags.authorization.take(flag, value),
+        },
+        Route {
+            owns: super::audit_flags::AuditFlags::owns,
+            take: |flags, flag, value| flags.audit.take(flag, value),
+        },
+        Route {
+            owns: super::delegated_signing_flags::DelegatedSigningFlags::owns,
+            take: |flags, flag, value| flags.delegated_signing.take(flag, value),
+        },
+    ];
+
+    /// Route one valueless flag to the family that owns it, reporting whether one did.
+    fn take_switch(&mut self, flag: &str) -> bool {
+        self.signing_source.take_switch(flag)
+            || self.identity.take_switch(flag)
+            || self.serving.take_switch(flag)
+            || self.peer_identity.take_switch(flag)
+    }
+
+    /// Whether a token is a spelling some family owns, switch or value-taking.
+    ///
+    /// A scratch accumulator probes the switch set, so the switch spellings stay
+    /// single-sourced in their families. A leading `--` alone is not enough: a raw
+    /// base64url key can begin with it.
+    fn names_a_flag(token: &str) -> bool {
+        let mut scratch = Self::default();
+        scratch.take_switch(token) || scratch.owns(token)
+    }
+
+    /// Whether this value-taking flag belongs to some family: the routing set of `take`.
+    fn owns(&self, flag: &str) -> bool {
+        Self::ROUTES.iter().any(|route| (route.owns)(flag))
+    }
+
+    /// Route one value-taking flag to the family that owns it.
+    ///
+    /// One entry per family in [`Self::ROUTES`], and the families are disjoint: a flag
+    /// belongs to exactly one, so this is a routing table and not a decision.
+    fn take(&mut self, flag: &str, value: &str) -> Result<(), String> {
+        match Self::ROUTES.iter().find(|route| (route.owns)(flag)) {
+            Some(route) => (route.take)(self, flag, value),
+            None => Err(refused_or_unknown(flag)),
+        }
+    }
 }
 
 /// A flag no family owns.

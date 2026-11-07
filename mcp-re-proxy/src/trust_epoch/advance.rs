@@ -79,7 +79,7 @@ pub(crate) fn advance(url: &str, epoch_key: &str) -> Result<i64, String> {
         let client = redis::Client::open(url)
             .map_err(|e| format!("open redis {}: {e}", RedactedLocator::of(url)))?;
         let mut conn = client
-            .get_connection_with_timeout(super::TRUST_EPOCH_TIMEOUT)
+            .get_connection_with_timeout(super::redis_reader::TRUST_EPOCH_TIMEOUT)
             .map_err(|e| format!("connect: {e}"))?;
         advance_command(epoch_key, generation)
             .query::<i64>(&mut conn)

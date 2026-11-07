@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 
 from _mutation_lane_support import UNITS, expect_manifest_error, lane, make_probe
+from _registries import path as registry_path
 
 
 def test_a_weakening_that_changes_nothing_is_refused_by_the_loader():
@@ -19,7 +20,7 @@ def test_a_weakening_that_changes_nothing_is_refused_by_the_loader():
     `check-registries`, which loads it."""
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw)
-        registry = root / "verification" / "policy" / "mutation-probes.toml"
+        registry = registry_path("mutation-probes", root)
         registry.parent.mkdir(parents=True)
         registry.write_text(
             '[[probe]]\nid = "T-01"\nunit = "u"\nconjunct = "c"\npath = "a.rs"\n'

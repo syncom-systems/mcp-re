@@ -223,7 +223,7 @@ question.
 | externally operated service exercised | **yes, 2026-09-08**: `witness.agentactioncapsule.org`, end to end through the shipped `mcp-re-auditor` |
 
 The third row is one lane —
-`transparency_e2e_test::the_auditor_binary_registers_with_a_live_external_service` — and it is
+`transparency_e2e_test::live::the_auditor_binary_registers_with_a_live_external_service` — and it is
 opt-in (`MCP_RE_LIVE_TRANSPARENCY_SERVICE`, `MCP_RE_LIVE_TRANSPARENCY_PIN`), deliberately off
 the merge path, because a red build must never mean somebody else's server is down. With the
 variables unset it prints that it MEASURED NOTHING rather than passing quietly. What survives
