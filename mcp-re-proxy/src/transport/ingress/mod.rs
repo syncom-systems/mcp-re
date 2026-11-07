@@ -44,6 +44,7 @@ pub use v2::AttestedRevocation;
 pub use v2::LbAssertionV2;
 pub use v2::LbAssertionV2Binding;
 pub use v2::LbAssertionV2Rejection;
+pub use v2::LbAssertionV2Trust;
 pub use v2_binding_refusal::LbAssertionV2BindingRefusal;
 
 use mcp_re_core::MaxClockSkew;

@@ -342,8 +342,9 @@ mod tests {
     #[tokio::test]
     async fn nonces_retained_to_the_same_instant_share_one_lease() {
         let gateway = counting_gateway().await;
-        let (base, grants, txns, ttls) = (&gateway.base, &gateway.grants, &gateway.txns, &gateway.ttls);
-        let store = EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock())
+        let (base, grants, txns, ttls) =
+            (&gateway.base, &gateway.grants, &gateway.txns, &gateway.ttls);
+        let store = EtcdAsyncAtomicReplayStore::connect_with(base, fixed_clock())
             .expect("an http gateway endpoint is servable");
         for i in 0..25 {
             assert_eq!(
@@ -399,7 +400,7 @@ mod tests {
         let gateway = counting_gateway().await;
         let (base, ttls) = (&gateway.base, &gateway.ttls);
         let store =
-            EtcdAsyncAtomicReplayStore::connect_with(&base, divergence(7).retention_clock(|| NOW))
+            EtcdAsyncAtomicReplayStore::connect_with(base, divergence(7).retention_clock(|| NOW))
                 .expect("an http gateway endpoint is servable");
         store
             .atomic_insert_if_absent(ReplayInsert::new("k|a|n1", TEST_ACTOR, NOW + 300, 0))
@@ -411,7 +412,7 @@ mod tests {
         let gateway = counting_gateway().await;
         let (base, ttls) = (&gateway.base, &gateway.ttls);
         let fast = EtcdAsyncAtomicReplayStore::connect_with(
-            &base,
+            base,
             divergence(ahead).retention_clock(move || NOW + ahead),
         )
         .expect("an http gateway endpoint is servable");
@@ -430,7 +431,7 @@ mod tests {
     async fn an_expired_lease_is_never_reused() {
         let gateway = counting_gateway().await;
         let (base, grants) = (&gateway.base, &gateway.grants);
-        let store = EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock())
+        let store = EtcdAsyncAtomicReplayStore::connect_with(base, fixed_clock())
             .expect("an http gateway endpoint is servable");
         store
             .atomic_insert_if_absent(ReplayInsert::new("k|a|n1", TEST_ACTOR, NOW + 5, 0))
@@ -590,10 +591,9 @@ mod tests {
         const CONFIGURED: &str = "http://ops:hunter2@etcd internal:2379";
         let client = Client::builder(TokioExecutor::new())
             .build(GatewayConnector::for_endpoint("http://127.0.0.1:1").expect("servable"));
-        let err =
-            wire::exchange(&client, CONFIGURED, "/v3/kv/txn", &Value::Null)
-                .await
-                .expect_err("a URI hyper cannot parse must not build a request");
+        let err = wire::exchange(&client, CONFIGURED, "/v3/kv/txn", &Value::Null)
+            .await
+            .expect_err("a URI hyper cannot parse must not build a request");
         let ReplayStoreError::Unavailable { details } = err;
         assert!(
             !details.contains("hunter2"),

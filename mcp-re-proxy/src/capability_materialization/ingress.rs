@@ -44,11 +44,13 @@ pub fn build_attested_ingress_binding(
         keys.push((key_id.clone(), key));
     }
     crate::transport::ingress::LbAssertionV2Binding::new(
-        source,
-        &attested.audience,
-        keys,
-        attested.identities.iter().cloned(),
-        crate::transport::ingress::DEFAULT_LB_ASSERTION_MAX_AGE,
+        crate::transport::ingress::LbAssertionV2Trust {
+            source,
+            expected_audience: attested.audience.clone(),
+            keys,
+            ingress_identities: attested.identities.to_vec(),
+            max_age: crate::transport::ingress::DEFAULT_LB_ASSERTION_MAX_AGE,
+        },
     )
     .map(Some)
     .map_err(refusal_message)
