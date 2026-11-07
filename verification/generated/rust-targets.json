@@ -725,7 +725,12 @@
    "package": "mcp-re-conformance",
    "root": "mcp-re-conformance/tests/scitt_vectors_test.rs",
    "srcs": [
-    "mcp-re-conformance/tests/scitt_vectors_test.rs"
+    "mcp-re-conformance/tests/scitt_vectors_test.rs",
+    "mcp-re-conformance/tests/scitt_vectors_test/bytes.rs",
+    "mcp-re-conformance/tests/scitt_vectors_test/manifest.rs",
+    "mcp-re-conformance/tests/scitt_vectors_test/material.rs",
+    "mcp-re-conformance/tests/scitt_vectors_test/vectors.rs",
+    "mcp-re-conformance/tests/scitt_vectors_test/verdict.rs"
    ],
    "testonly": true,
    "verus_deps": []
@@ -2822,6 +2827,10 @@
     "mcp-re-proxy/tests/integration/tls_test/serving.rs",
     "mcp-re-proxy/tests/integration/tls_test/signers.rs",
     "mcp-re-proxy/tests/serving_fixtures/mod.rs",
+    "mcp-re-proxy/tests/startup_transcript/capture.rs",
+    "mcp-re-proxy/tests/startup_transcript/classify.rs",
+    "mcp-re-proxy/tests/startup_transcript/event.rs",
+    "mcp-re-proxy/tests/startup_transcript/fields.rs",
     "mcp-re-proxy/tests/startup_transcript/mod.rs"
    ],
    "testonly": true,
@@ -2914,6 +2923,10 @@
     "mcp-re-proxy/tests/integration/tls_test/serving.rs",
     "mcp-re-proxy/tests/integration/tls_test/signers.rs",
     "mcp-re-proxy/tests/serving_fixtures/mod.rs",
+    "mcp-re-proxy/tests/startup_transcript/capture.rs",
+    "mcp-re-proxy/tests/startup_transcript/classify.rs",
+    "mcp-re-proxy/tests/startup_transcript/event.rs",
+    "mcp-re-proxy/tests/startup_transcript/fields.rs",
     "mcp-re-proxy/tests/startup_transcript/mod.rs"
    ],
    "testonly": true,
@@ -8026,7 +8039,14 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/tests/mock-pkcs11/src/lib.rs",
    "srcs": [
-    "mcp-re-proxy/tests/mock-pkcs11/src/lib.rs"
+    "mcp-re-proxy/tests/mock-pkcs11/src/attributes.rs",
+    "mcp-re-proxy/tests/mock-pkcs11/src/find.rs",
+    "mcp-re-proxy/tests/mock-pkcs11/src/function_list.rs",
+    "mcp-re-proxy/tests/mock-pkcs11/src/lib.rs",
+    "mcp-re-proxy/tests/mock-pkcs11/src/session.rs",
+    "mcp-re-proxy/tests/mock-pkcs11/src/sign.rs",
+    "mcp-re-proxy/tests/mock-pkcs11/src/state.rs",
+    "mcp-re-proxy/tests/mock-pkcs11/src/token.rs"
    ],
    "testonly": true,
    "verus_deps": []
@@ -10323,7 +10343,12 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/examples/saturation_loadgen.rs",
    "srcs": [
-    "mcp-re-proxy/examples/saturation_loadgen.rs"
+    "mcp-re-proxy/examples/saturation_loadgen.rs",
+    "mcp-re-proxy/examples/saturation_loadgen/args.rs",
+    "mcp-re-proxy/examples/saturation_loadgen/client.rs",
+    "mcp-re-proxy/examples/saturation_loadgen/corpus.rs",
+    "mcp-re-proxy/examples/saturation_loadgen/report.rs",
+    "mcp-re-proxy/examples/saturation_loadgen/response.rs"
    ],
    "testonly": false,
    "verus_deps": []
