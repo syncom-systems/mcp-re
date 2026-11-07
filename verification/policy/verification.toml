@@ -3285,7 +3285,12 @@ pilot = "verus-candidate"
 id = "proxy.trust_revocation_classification"
 class = "V0"
 description = "Which revocation posture a deployment requests and which witnesses each state form requires: every legal state form is classified and accepted, a bounded cache needs no cadence, each state holds its cadence to the window it claims, and a zero cadence — a spinning reloader — is refused in every state and from a programmatic config as well as a document."
-paths = ["mcp-re-proxy/src/config_state/trust_revocation.rs"]
+paths = [
+  "mcp-re-proxy/src/config_state/trust_revocation/classify.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/epoch_source.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/mod.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/validate.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -3328,7 +3333,10 @@ class = "V0"
 description = "Which locators name a trust document at all, and on what terms: a networked epoch source is handed over as a paired locator and key or not at all, a URL-shaped posture requires its URL to be one, a locator that names nothing resolves no source, and the stored path is the operator's string verbatim rather than a normalization of it."
 paths = [
   "mcp-re-proxy/src/config_state/trust_document.rs",
-  "mcp-re-proxy/src/config_state/trust_revocation.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/classify.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/epoch_source.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/mod.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/validate.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -3350,7 +3358,10 @@ id = "proxy.trust_configuration_state_sole_producer"
 class = "V0"
 description = "Neither trust-configuration value can be assembled outside its owning module: `TrustRevocationState`'s `kind` is bare-private and its enum type is private too, so only the classifier produces a posture and the witnesses it declares are the ones that classifier decided; `TrustDocumentSource`'s `path` is bare-private and `new` is its only, fallible, constructor, so every locator is one that was accepted. States nothing about WHICH posture or WHICH locator is right, which is `proxy.trust_configuration_state`'s."
 paths = [
-  "mcp-re-proxy/src/config_state/trust_revocation.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/classify.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/epoch_source.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/mod.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation/validate.rs",
   "mcp-re-proxy/src/config_state/trust_document.rs",
 ]
 exported_contracts = []

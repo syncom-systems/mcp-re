@@ -2008,7 +2008,7 @@ conjunct = "a successfully classified state carries the witnesses its own state 
 # A zero cadence names no legal state: `Halt::sleep(0)` sets a deadline already in the past,
 # so `--trust` is re-read and the signer directory rebuilt continuously on a spinning
 # thread. The CRL machine refused it; this one had to be taught to.
-path = "mcp-re-proxy/src/config_state/trust_revocation.rs"
+path = "mcp-re-proxy/src/config_state/trust_revocation/validate.rs"
 anchor = """
     if secs == 0 {
 """
@@ -2028,7 +2028,7 @@ conjunct = "each state holds its cadence to the revocation window it claims"
 # The witness that makes a tier's claim true rather than advertised: a key removed from
 # `--trust` keeps resolving until the file is re-read, so a cadence longer than the declared
 # window is a deployment stating a revocation latency it cannot keep.
-path = "mcp-re-proxy/src/config_state/trust_revocation.rs"
+path = "mcp-re-proxy/src/config_state/trust_revocation/validate.rs"
 anchor = """
     if secs > ceiling {
 """
@@ -2047,7 +2047,7 @@ conjunct = "a networked trust-epoch source is handed over as a paired locator an
 # Classifying every push deployment as networked is the "or not at all" half deleted: a
 # deployment with no epoch source would be handed a locator it never named. The pairing is
 # what stops one deployment's store being read under another's key.
-path = "mcp-re-proxy/src/config_state/trust_revocation.rs"
+path = "mcp-re-proxy/src/config_state/trust_revocation/classify.rs"
 anchor = """
             if epoch.source.is_some() {
                 RequestedState::PushNetworked { t_secs: *t_secs }
@@ -3789,10 +3789,10 @@ path = "mcp-re-transport/src/request.rs"
 # LITERAL strings: the anchor contains Rust byte escapes (b'\r'), and a TOML basic string
 # would turn them into the control characters themselves before the lane ever saw the text.
 anchor = '''
-            .any(|b| b == b'\r' || b == b'\n' || b == 0 || (b < 0x20 && b != b'\t') || b == 0x7F)
+    (b < 0x20 && b != b'\t') || b == 0x7F
 '''
 weakening = '''
-            .any(|_b| false)
+    b == 0x7F
 '''
 expect_red = [
   "//mcp-re-transport:mcp_re_transport_test#request::tests::a_crlf_in_a_header_value_is_rejected_not_sanitised",

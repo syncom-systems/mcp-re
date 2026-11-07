@@ -189,7 +189,10 @@ _PROXY_LIB_SRCS = [
     "src/config_state/topology.rs",
     "src/config_state/transport.rs",
     "src/config_state/trust_document.rs",
-    "src/config_state/trust_revocation.rs",
+    "src/config_state/trust_revocation/classify.rs",
+    "src/config_state/trust_revocation/epoch_source.rs",
+    "src/config_state/trust_revocation/mod.rs",
+    "src/config_state/trust_revocation/validate.rs",
     # Layer A's boundary: assembly, report-all, and the refusal-precedence contract.
     "src/config_state/validation/mod.rs",
     "src/config_state/validation/recognition.rs",
