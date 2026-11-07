@@ -5843,7 +5843,7 @@ id = "M215-proxy-a-host-a-parser-would-rewrite-is-refused"
 unit = "proxy.kms_endpoint_authority"
 theorem = "THM-0089"
 conjunct = "a host whose last label is a number is admitted only when it already IS the address it resolves to"
-path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"
+path = "mcp-re-proxy/src/kms_endpoint_policy/host.rs"
 anchor = """
     if read_as_an_address && std::net::Ipv4Addr::from_str(host).is_err() {
 """
@@ -5851,7 +5851,7 @@ weakening = """
     if false {
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::check_host_refuses_a_host_a_parser_would_rewrite_to_a_different_address",
+  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::host::tests::check_host_refuses_a_host_a_parser_would_rewrite_to_a_different_address",
   "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::a_host_that_ends_in_a_number_must_already_be_the_address_it_resolves_to",
 ]
 note = """
@@ -5871,7 +5871,7 @@ id = "M216-proxy-the-host-allowlist-is-what-a-resolver-can-answer-for"
 unit = "proxy.kms_endpoint_authority"
 theorem = "THM-0089"
 conjunct = "a host carrying percent-, IDNA- or separator-encoding is refused rather than resolved to a different host than the text reads"
-path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"
+path = "mcp-re-proxy/src/kms_endpoint_policy/host.rs"
 anchor = """
         .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')))
 """
@@ -5900,7 +5900,7 @@ id = "M217-proxy-a-port-whose-text-and-value-differ-is-refused"
 unit = "proxy.kms_endpoint_authority"
 theorem = "THM-0089"
 conjunct = "a port whose text and the value a URL parser reads differ is refused"
-path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"
+path = "mcp-re-proxy/src/kms_endpoint_policy/host.rs"
 anchor = """
     if port.len() > 1 && port.starts_with('0') {
 """
@@ -5908,7 +5908,7 @@ weakening = """
     if false {
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::check_port_refuses_a_port_whose_text_and_value_differ",
+  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::host::tests::check_port_refuses_a_port_whose_text_and_value_differ",
 ]
 note = """
 THE LEADING-ZERO REFUSAL IS SOLE for its own shape, and separate from the digits-only check

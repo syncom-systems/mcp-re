@@ -785,12 +785,6 @@ status = "unreviewed"
 # docs/architecture/review-dispositions.md.
 
 [[debt]]
-path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"
-baseline_prod_loc = 270
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
 path = "mcp-re-proxy/src/managed_worker/mod.rs"
 baseline_prod_loc = 268
 baseline_sha = "d1fc5fa"
