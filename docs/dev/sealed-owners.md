@@ -749,7 +749,7 @@ the fabrication rather than deprecate it.
 
 ```text
 cargo test -p mcp-re-proxy --lib -- …credential_key_correspondence:: …credential_public_key_evidence:: \
-                                    …signing_key_evidence:: tls::delegated_credential_key_correspondence_tests::
+                                    …signing_key_evidence:: tls::delegated::delegated_credential_key_correspondence_tests::
     test result: ok. 22 passed; 0 failed       # with all three fields opened to pub(crate)
 
 verify-structural --probe S09 --probe S10 --probe S11

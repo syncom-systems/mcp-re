@@ -125,7 +125,7 @@ mod handshakes {
     }
 
     /// A server config over `anchors`, with resumption gated by `epoch` — the same wiring
-    /// `tls.rs` installs, reproduced here so the test can move the epoch under a live store.
+    /// `tls/` installs, reproduced here so the test can move the epoch under a live store.
     fn server_config(
         anchors: &[CertificateDer<'static>],
         server_chain: Vec<CertificateDer<'static>>,

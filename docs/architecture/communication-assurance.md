@@ -108,7 +108,7 @@ The current EX-004 census is reinterpreted as migration evidence rather than a l
 
 ### Identity extraction
 
-Current location: `mcp-re-proxy/src/tls.rs`
+Current location: `mcp-re-proxy/src/tls/mod.rs`
 
 Current proposition:
 
@@ -132,7 +132,7 @@ General semantic part:
 
 ### CRL posture
 
-Current location: `mcp-re-proxy/src/tls.rs`
+Current location: `mcp-re-proxy/src/tls/mod.rs`
 
 Candidate target:
 
@@ -142,7 +142,7 @@ Do not migrate until its exact input/output proposition is designed. It may be s
 
 ### Per-request peer admission
 
-Current location: `mcp-re-proxy/src/tls.rs`
+Current location: `mcp-re-proxy/src/tls/mod.rs`
 
 Candidate target:
 
@@ -152,7 +152,7 @@ This is not assumed to belong under the certificate mechanism. It is deliberatel
 
 ### Delegated resolver validation
 
-Current location: `mcp-re-proxy/src/tls.rs`
+Current location: `mcp-re-proxy/src/tls/mod.rs`
 
 Candidate target:
 
@@ -162,7 +162,7 @@ Its current Ed25519/X.509 details remain mechanism-specific beneath the general 
 
 ### Header hygiene
 
-Current location: `mcp-re-proxy/src/tls.rs` / transport boundary
+Current location: `mcp-re-proxy/src/tls/mod.rs` / transport boundary
 
 Candidate target:
 
@@ -172,7 +172,7 @@ This likely belongs outside communication evidence entirely. Do not place it und
 
 ### Serving options record
 
-Current location: `mcp-re-proxy/src/tls.rs`
+Current location: `mcp-re-proxy/src/tls/mod.rs`
 
 Candidate target:
 
@@ -338,7 +338,7 @@ The parser boundary is recorded as ASSUMED or UNSUPPORTED under ADR-MCPRE-059 as
 Semantic source **at slice-1 plan time** — §8.14 records what was built, and none of these
 three lines describes the tree today:
 
-- `mcp-re-proxy/src/tls.rs::extract_identity`
+- `mcp-re-proxy/src/tls/mod.rs::extract_identity`
 - the `IdentityPolicy` / `IdentitySource` semantics then in `mcp-re-proxy/src/transport.rs`
 - the generic value-shape rule then misleadingly named `validate_asserted_identity_value`,
   **deleted by RA3-002** once its callers asked `PeerIdentityValue::interpret` directly

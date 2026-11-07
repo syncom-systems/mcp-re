@@ -2079,7 +2079,7 @@ about what the deployment may say.
 
 ## NP-073 — an ingress assertion binds to the request in hand
 
-**Controls:** `mcp-re-proxy` `lib#tls::routing_header_tests` (1) — `the_ingress_assertion_header_is_read_only_when_exactly_one_is_present`; `mcp-re-proxy` `lib#transport::ingress::tests` (1) — `the_frozen_format_is_domain_separated_by_its_version_tag`; `mcp-re-proxy` `lib#transport::ingress::v2::tests` (14) — `v2_audience_mismatch_is_rejected`, `v2_bad_signature_is_rejected`, `v2_cross_request_is_rejected`, `v2_expiry_is_enforced_but_future_expiry_is_accepted`, `v2_malformed_enum_discriminant_is_rejected`, `v2_malformed_framing_is_rejected`, `v2_recorded_facts_admission_fails_closed`, `v2_signing_preimage_is_length_prefixed_and_unambiguous`, `v2_stale_and_future_are_rejected`, `v2_tampered_field_breaks_signature`, `v2_to_wire_round_trips_through_parse`, `v2_unknown_key_id_is_rejected`, `v2_untrusted_ingress_identity_is_rejected`, `v2_valid_assertion_is_accepted_and_records_facts` — over the one frozen format.
+**Controls:** `mcp-re-proxy` `lib#tls::request_guard::routing_header_tests` (1) — `the_ingress_assertion_header_is_read_only_when_exactly_one_is_present`; `mcp-re-proxy` `lib#transport::ingress::tests` (1) — `the_frozen_format_is_domain_separated_by_its_version_tag`; `mcp-re-proxy` `lib#transport::ingress::v2::tests` (14) — `v2_audience_mismatch_is_rejected`, `v2_bad_signature_is_rejected`, `v2_cross_request_is_rejected`, `v2_expiry_is_enforced_but_future_expiry_is_accepted`, `v2_malformed_enum_discriminant_is_rejected`, `v2_malformed_framing_is_rejected`, `v2_recorded_facts_admission_fails_closed`, `v2_signing_preimage_is_length_prefixed_and_unambiguous`, `v2_stale_and_future_are_rejected`, `v2_tampered_field_breaks_signature`, `v2_to_wire_round_trips_through_parse`, `v2_unknown_key_id_is_rejected`, `v2_untrusted_ingress_identity_is_rejected`, `v2_valid_assertion_is_accepted_and_records_facts` — over the one frozen format.
 **Statement.** *An accepted ingress assertion carries a signature that verifies under a
 KNOWN key id, over a length-prefixed and unambiguous preimage, binds to the hash of the
 request in hand, is inside its window — stale and implausibly-future rejected, a future
@@ -2117,7 +2117,7 @@ verify perfectly and still be described as more than it is.
 
 ## NP-077 — a routing header is well-formed and singular, or the request fails closed
 
-**Controls:** `transport/mod.rs` (5), `mcp-re-proxy/src/tls.rs` (1).
+**Controls:** `transport/mod.rs` (5), `mcp-re-proxy/src/tls/request_guard.rs` (1).
 **Statement.** *An absent routing header passes and a well-formed one passes; a duplicate, an
 empty and a malformed one each FAIL CLOSED; and request-header parsing skips the request
 line and is case-insensitive.*
@@ -2914,7 +2914,7 @@ instance**, still unclaimed on main.
 
 ## NP-116 — channel peer resolution yields nothing where the channel carries no identity
 
-**Controls:** `mcp-re-proxy/src/tls.rs` (2).
+**Controls:** `mcp-re-proxy/src/tls/peer.rs` (2).
 **Statement.** *An absent acceptance resolves NO identity, and an LB-assertion deployment
 resolves no transport identity at all even while a live accepted credential is in hand.*
 **If false.** The proxy produces a transport identity in a deployment where the channel is

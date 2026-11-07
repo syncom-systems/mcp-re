@@ -100,16 +100,6 @@ status = "unreviewed"
 # and the correspondence refusal's rendering landed at its own owner. An ordinary ratchet
 # decrease, not a measurement correction — the bytes changed, so the origin/main-identical
 # precondition does not hold and the entry is pinned at what it now measures.
-[[debt]]
-path = "mcp-re-proxy/src/tls.rs"
-# #1250: `ServerLimits`, the request's limits, moves to `deployment_request`, and
-# `ServerOptions` carries the narrower `ServedLimits` instead of the whole request bag:
-# 643 -> 518.
-baseline_prod_loc = 518
-baseline_sha = "8ad919901"
-status = "reviewed-exception"
-review_ref = "EX-004 in docs/architecture/review-dispositions.md"
-
 # EX-003's disposition is implemented. `verify.rs` no longer exists: 1373 production lines
 # became 21 modules under `verify/`, every one of them under the threshold, so the entry is
 # REMOVED rather than moved — a debt that is paid leaves the registry.
