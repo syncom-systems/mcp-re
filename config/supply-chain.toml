@@ -92,7 +92,7 @@ allow = [
 # last crate in the graph holding 0.10. The exception is scoped to its subtree, NOT
 # granted globally, because x509-ocsp hashes nothing we sign — it uses those traits for
 # OCSP CertID/DER machinery, and our own call site deliberately avoids handing it our
-# `Sha256` (see the hand-built CertID in mcp-re-proxy/src/ocsp.rs). Delete the skip-tree
+# `Sha256` (see the hand-built CertID in mcp-re-proxy/src/ocsp/cert_id.rs). Delete the skip-tree
 # the day x509-ocsp ships on digest 0.11; `sha2` and `block-buffer` stay unconditionally
 # single-version.
 #
