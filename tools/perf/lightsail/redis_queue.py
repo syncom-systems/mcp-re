@@ -37,6 +37,10 @@ def endpoint(url: str) -> tuple[str, int]:
     return parsed.hostname or "127.0.0.1", parsed.port or 6379
 
 
+#: RESP replies that are one converted line: a simple string and an integer.
+_SCALAR_REPLIES = {b"+": bytes.decode, b":": int}
+
+
 class Conn:
     """A minimal RESP2 client: one socket, blocking, enough for INFO / CLIENT / CONFIG."""
 
@@ -59,23 +63,23 @@ class Conn:
         line, _, self.buf = self.buf.partition(b"\r\n")
         return line
 
+    def _bulk(self, n: int):
+        if n < 0:
+            return None
+        while len(self.buf) < n + 2:
+            self._fill()
+        data, self.buf = self.buf[:n], self.buf[n + 2:]
+        return data.decode(errors="replace")
+
     def reply(self):
         line = self._line()
         kind, rest = line[:1], line[1:]
-        if kind == b"+":
-            return rest.decode()
+        if kind in _SCALAR_REPLIES:
+            return _SCALAR_REPLIES[kind](rest)
         if kind == b"-":
             raise RuntimeError(rest.decode())
-        if kind == b":":
-            return int(rest)
         if kind == b"$":
-            n = int(rest)
-            if n < 0:
-                return None
-            while len(self.buf) < n + 2:
-                self._fill()
-            data, self.buf = self.buf[:n], self.buf[n + 2:]
-            return data.decode(errors="replace")
+            return self._bulk(int(rest))
         if kind == b"*":
             return [self.reply() for _ in range(int(rest))]
         raise ValueError(f"unexpected RESP reply {line[:40]!r}")
@@ -192,23 +196,38 @@ class Sampler(threading.Thread):
             conn.close()
 
 
+def _mean_or_none(values):
+    values = list(values)
+    return statistics.mean(values) if values else None
+
+
+def _rate(samples: list[dict], counter: str, span: float):
+    """Calls per second of `counter` across the window, or None when it spans no time."""
+    return (samples[-1][counter] - samples[0][counter]) / span if span > 0 else None
+
+
+def _loaded_stats(loaded: list[dict]) -> dict:
+    """Queueing over the samples in which the store held connections."""
+    return {
+        "blocked_fraction_mean": _mean_or_none(s["store_blocked"] / s["store_conns"] for s in loaded),
+        "qbuf_per_conn_mean_bytes": _mean_or_none(statistics.mean(s["qbuf"]) for s in loaded),
+        "qbuf_max_bytes": max((max(s["qbuf"]) for s in loaded), default=0),
+    }
+
+
 def summarize(samples: list[dict]) -> dict:
     """Pool occupancy and queueing over the samples given (already cut to a window)."""
     if len(samples) < 2:
         return {"available": False, "reason": f"{len(samples)} sample(s) in the window"}
     span = samples[-1]["t"] - samples[0]["t"]
-    loaded = [s for s in samples if s["store_conns"]]
-    per_conn = [statistics.mean(s["qbuf"]) for s in loaded]
     return {
         "available": True, "samples": len(samples),
         "store_conns_max": max(s["store_conns"] for s in samples),
         "store_conns_mean": statistics.mean(s["store_conns"] for s in samples),
         "blocked_in_wait_mean": statistics.mean(s["store_blocked"] for s in samples),
-        "blocked_fraction_mean": statistics.mean(s["store_blocked"] / s["store_conns"] for s in loaded) if loaded else None,
-        "qbuf_per_conn_mean_bytes": statistics.mean(per_conn) if per_conn else None,
-        "qbuf_max_bytes": max((max(s["qbuf"]) for s in loaded), default=0),
-        "set_per_s": (samples[-1]["set_calls"] - samples[0]["set_calls"]) / span if span > 0 else None,
-        "wait_per_s": (samples[-1]["wait_calls"] - samples[0]["wait_calls"]) / span if span > 0 else None,
+        **_loaded_stats([s for s in samples if s["store_conns"]]),
+        "set_per_s": _rate(samples, "set_calls", span),
+        "wait_per_s": _rate(samples, "wait_calls", span),
         "replica_gap_bytes": _replica_gaps(samples),
     }
 

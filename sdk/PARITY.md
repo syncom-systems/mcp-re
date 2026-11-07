@@ -62,7 +62,7 @@ behaviour**, in both languages, mirrored:
 
 | Dimension | What to measure | Covered by |
 | --- | --- | --- |
-| **Concurrency** | peak in-flight exchanges; that a bound is honoured; that bounding delays rather than drops | `test_transport.py` / `transport.test.ts` — `concurrency` |
+| **Concurrency** | peak in-flight exchanges; that a bound is honoured; that bounding delays rather than drops | `test_transport_shutdown.py` / `transport.test.ts` — `concurrency` |
 | **Resource bounds** | invalid bounds refused, not silently deadlocking | same — invalid-bound cases |
 | **Error propagation** | which exception type/shape a caller sees; wire code vs local condition | `failure delivery` groups |
 | **Lifecycle** | double-start, close, restart; what is checked at open vs per-request | `lifecycle` groups |

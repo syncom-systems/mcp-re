@@ -73,44 +73,25 @@ def _find(pattern: re.Pattern[str], text: str, what: str, path: str) -> str:
     return match.group(1)
 
 
-def check(root: Path) -> list[str]:
-    """Return a list of failures; empty means the gate passes."""
-    posture_path = root / POSTURE_MODULE
-    declaring_path = root / DECLARING_MODULE
-    for path in (posture_path, declaring_path):
-        if not path.is_file():
-            return [f"missing {path.relative_to(root)}"]
+def _all_failures(variants: list[str], listed: list[str]) -> list[str]:
+    """`Seam::ALL` drives the runtime completeness check, so a variant missing from it is
+    invisible to `assert_complete` as well as to this gate."""
+    failures = [
+        f"Seam::{variant} is not in Seam::ALL, so nothing checks that it is "
+        f"ever declared ({POSTURE_MODULE})"
+        for variant in variants
+        if variant not in listed
+    ]
+    failures += [
+        f"Seam::ALL lists Seam::{name}, which is not a variant"
+        for name in listed
+        if name not in variants
+    ]
+    return failures
 
-    posture_src = posture_path.read_text(encoding="utf-8")
-    for child in sorted((root / POSTURE_MODULE_DIR).glob("*.rs")):
-        posture_src += child.read_text(encoding="utf-8")
-    declaring_src = declaring_path.read_text(encoding="utf-8")
 
-    variants = ENUM_VARIANT.findall(
-        _find(ENUM_BLOCK, posture_src, "`pub enum Seam`", POSTURE_MODULE)
-    )
-    listed = ALL_ENTRY.findall(
-        _find(ALL_BLOCK, posture_src, "`Seam::ALL`", POSTURE_MODULE)
-    )
-    declared = DECLARE_CALL.findall(declaring_src)
-
+def _declaration_failures(variants: list[str], declared: list[str]) -> list[str]:
     failures: list[str] = []
-
-    if not variants:
-        failures.append(f"`pub enum Seam` in {POSTURE_MODULE} has no variants")
-
-    # `Seam::ALL` drives the runtime completeness check, so a variant missing from it is
-    # invisible to `assert_complete` as well as to this gate.
-    for variant in variants:
-        if variant not in listed:
-            failures.append(
-                f"Seam::{variant} is not in Seam::ALL, so nothing checks that it is "
-                f"ever declared ({POSTURE_MODULE})"
-            )
-    for name in listed:
-        if name not in variants:
-            failures.append(f"Seam::ALL lists Seam::{name}, which is not a variant")
-
     for variant in variants:
         count = declared.count(variant)
         if count == 0:
@@ -126,13 +107,41 @@ def check(root: Path) -> list[str]:
                 f"transcript states one capability's posture more than once, and a "
                 f"reader has no way to know which line governs."
             )
-
-    for name in set(declared) - set(variants):
-        failures.append(
-            f"{DECLARING_MODULE} declares Seam::{name}, which is not a Seam variant"
-        )
-
+    failures += [
+        f"{DECLARING_MODULE} declares Seam::{name}, which is not a Seam variant"
+        for name in set(declared) - set(variants)
+    ]
     return failures
+
+
+def _posture_source(root: Path) -> str:
+    source = (root / POSTURE_MODULE).read_text(encoding="utf-8")
+    for child in sorted((root / POSTURE_MODULE_DIR).glob("*.rs")):
+        source += child.read_text(encoding="utf-8")
+    return source
+
+
+def check(root: Path) -> list[str]:
+    """Return a list of failures; empty means the gate passes."""
+    for path in (root / POSTURE_MODULE, root / DECLARING_MODULE):
+        if not path.is_file():
+            return [f"missing {path.relative_to(root)}"]
+
+    posture_src = _posture_source(root)
+    declaring_src = (root / DECLARING_MODULE).read_text(encoding="utf-8")
+
+    variants = ENUM_VARIANT.findall(
+        _find(ENUM_BLOCK, posture_src, "`pub enum Seam`", POSTURE_MODULE)
+    )
+    listed = ALL_ENTRY.findall(
+        _find(ALL_BLOCK, posture_src, "`Seam::ALL`", POSTURE_MODULE)
+    )
+    declared = DECLARE_CALL.findall(declaring_src)
+
+    failures: list[str] = []
+    if not variants:
+        failures.append(f"`pub enum Seam` in {POSTURE_MODULE} has no variants")
+    return failures + _all_failures(variants, listed) + _declaration_failures(variants, declared)
 
 
 _SELFTEST_POSTURE = """\
@@ -158,53 +167,45 @@ def _selftest_tree(tmp: Path, declaring: str) -> Path:
     return root
 
 
-def selftest() -> int:
-    """A gate that cannot fail proves nothing, so prove it fails on each defect."""
-    cases: list[tuple[str, str, str | None]] = [
-        (
-            "both seams declared",
-            "posture.declare(Seam::Alpha, a);\nposture.declare(Seam::Beta, b);\n",
-            None,
-        ),
-        (
-            "a seam that is never declared",
-            "posture.declare(Seam::Alpha, a);\n",
-            "Seam::Beta is never declared",
-        ),
-        (
-            "a seam declared twice",
-            "posture.declare(Seam::Alpha, a);\nposture.declare(Seam::Alpha, a2);\n"
-            "posture.declare(Seam::Beta, b);\n",
-            "Seam::Alpha is declared 2 times",
-        ),
-        (
-            "a declaration naming no variant",
-            "posture.declare(Seam::Alpha, a);\nposture.declare(Seam::Beta, b);\n"
-            "posture.declare(Seam::Gamma, g);\n",
-            "which is not a Seam variant",
-        ),
-    ]
+_SELFTEST_CASES: list[tuple[str, str, str | None]] = [
+    (
+        "both seams declared",
+        "posture.declare(Seam::Alpha, a);\nposture.declare(Seam::Beta, b);\n",
+        None,
+    ),
+    (
+        "a seam that is never declared",
+        "posture.declare(Seam::Alpha, a);\n",
+        "Seam::Beta is never declared",
+    ),
+    (
+        "a seam declared twice",
+        "posture.declare(Seam::Alpha, a);\nposture.declare(Seam::Alpha, a2);\n"
+        "posture.declare(Seam::Beta, b);\n",
+        "Seam::Alpha is declared 2 times",
+    ),
+    (
+        "a declaration naming no variant",
+        "posture.declare(Seam::Alpha, a);\nposture.declare(Seam::Beta, b);\n"
+        "posture.declare(Seam::Gamma, g);\n",
+        "which is not a Seam variant",
+    ),
+]
 
-    failed = False
-    with tempfile.TemporaryDirectory() as raw:
-        for name, declaring, expected in cases:
-            tmp = Path(raw) / name.replace(" ", "_")
-            tmp.mkdir()
-            failures = check(_selftest_tree(tmp, declaring))
-            if expected is None:
-                ok = not failures
-            else:
-                ok = any(expected in f for f in failures)
-            print(f"  {'ok  ' if ok else 'FAIL'}  {name}")
-            if not ok:
-                failed = True
-                print(f"        expected {expected!r}, got {failures}")
 
+def _verdict(name: str, failures: list[str], expected: str | None) -> bool:
+    ok = not failures if expected is None else any(expected in f for f in failures)
+    print(f"  {'ok  ' if ok else 'FAIL'}  {name}")
+    if not ok:
+        print(f"        expected {expected!r}, got {failures}")
+    return ok
+
+
+def _selftest_variant_missing_from_all() -> bool:
     # A variant absent from ALL is checked against the real enum shape rather than the
     # fixture, because the fixture's ALL is what the other cases keep honest.
     with tempfile.TemporaryDirectory() as raw:
-        tmp = Path(raw)
-        root = tmp / "tree"
+        root = Path(raw) / "tree"
         (root / "mcp-re-proxy" / "src").mkdir(parents=True)
         (root / POSTURE_MODULE).write_text(
             _SELFTEST_POSTURE.replace("        Seam::Beta,\n", ""), encoding="utf-8"
@@ -213,14 +214,19 @@ def selftest() -> int:
             "posture.declare(Seam::Alpha, a);\nposture.declare(Seam::Beta, b);\n",
             encoding="utf-8",
         )
-        failures = check(root)
-        ok = any("not in Seam::ALL" in f for f in failures)
-        print(f"  {'ok  ' if ok else 'FAIL'}  a variant missing from Seam::ALL")
-        if not ok:
-            failed = True
-            print(f"        got {failures}")
+        return _verdict("a variant missing from Seam::ALL", check(root), "not in Seam::ALL")
 
-    if failed:
+
+def selftest() -> int:
+    """A gate that cannot fail proves nothing, so prove it fails on each defect."""
+    results = []
+    with tempfile.TemporaryDirectory() as raw:
+        for name, declaring, expected in _SELFTEST_CASES:
+            tmp = Path(raw) / name.replace(" ", "_")
+            tmp.mkdir()
+            results.append(_verdict(name, check(_selftest_tree(tmp, declaring)), expected))
+    results.append(_selftest_variant_missing_from_all())
+    if not all(results):
         print("seam-posture gate: SELFTEST FAILED")
         return 1
     print("seam-posture gate: selftest passed")

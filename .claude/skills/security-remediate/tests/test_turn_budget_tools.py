@@ -83,7 +83,10 @@ def _package(td: str, **over) -> str:
     return path
 
 
-def _dispose(td: str, pkg: str, *extra: str, tier: str = "senior", attempt: str = "att-1"):
+def _dispose(td: str, pkg: str, *extra: str, **flags: str):
+    """Run dispose.py; `flags` may set `tier` and `attempt`."""
+    flags = {"tier": "senior", "attempt": "att-1"} | flags
+    tier, attempt = flags["tier"], flags["attempt"]
     return _py("dispose.py", "--ledger", os.path.join(td, "ledger.jsonl"),
                "--log", os.path.join(td, "progress"), "--package", pkg,
                "--attempt", attempt, "--run", "run-1", "--tier", tier, "--model", "opus", *extra)
@@ -283,7 +286,9 @@ else:
 '''
 
 
-def _check(td: str, phase: str, *extra: str, verdict: dict | None = None, tier: str = "local"):
+def _check(td: str, phase: str, *extra: str, **options):
+    """Run check.py; `options` may set `verdict` (the stub gate's answer) and `tier`."""
+    verdict, tier = options.get("verdict"), options.get("tier", "local")
     gate = os.path.join(td, "stub_gate.py")
     open(gate, "w", encoding="utf-8").write(STUB_GATE % {"scripts": SCRIPTS})
     env = dict(os.environ, STUB_VERDICT=json.dumps(verdict or {"verdict": "ok"}))

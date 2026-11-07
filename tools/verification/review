@@ -53,6 +53,7 @@ from _approvals import (  # noqa: E402
 )
 import _registries  # noqa: E402
 from _fingerprint import (  # noqa: E402
+    Registries,
     fingerprint_theorem,
     fingerprint_unit,
     theorem_premises,
@@ -67,6 +68,7 @@ from _review import (  # noqa: E402
     closure_satisfied,
     load_reviews,
     review_root,
+    Basis,
     root_completeness,
     theorem_assurance,
 )
@@ -392,7 +394,7 @@ def main() -> int:
 
     units = doc.get("unit", [])
     current = {
-        unit["id"]: fingerprint_unit(unit, doc, toolchains, assumptions) for unit in units
+        unit["id"]: fingerprint_unit(unit, Registries(doc, toolchains, assumptions)) for unit in units
     }
     premises = theorem_premises(theorems, current, assumptions)
     review_digests = theorem_review_digests(theorems, fingerprints, premises, current)
@@ -421,12 +423,14 @@ def main() -> int:
         return 1
     assurance = theorem_assurance(
         theorems,
-        fingerprints,
-        load_reviews(review_root(REPO_ROOT)),
-        derived["states"],
-        premises,
-        backing,
-        review_digests,
+        Basis(
+            fingerprints,
+            load_reviews(review_root(REPO_ROOT)),
+            derived["states"],
+            premises,
+            backing,
+            review_digests,
+        ),
     )
 
     roots = root_completeness(theorems, assurance)

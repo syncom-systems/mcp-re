@@ -7,6 +7,7 @@ Cases for `test_theorem_review.py`, which runs them.
 from __future__ import annotations
 
 from _review import (
+    Basis,
     theorem_assurance,
 )
 from _theorem_review_support import (
@@ -60,7 +61,7 @@ def test_an_unestablished_premise_denies_every_claim_above_it():
         if tid != "THM-0001"
     }
     result = theorem_assurance(
-        doc, fps, reviews, {UNIT: ("FRESH", "fixture")}, no_premises(doc), BACKED, digests
+        doc, Basis(fps, reviews, {UNIT: ("FRESH", "fixture")}, no_premises(doc), BACKED, digests)
     )
     assert [result[tid]["currently_verified"] for tid in ("THM-0001", "THM-0002", "THM-0003")] == [
         False,

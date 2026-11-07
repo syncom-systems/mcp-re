@@ -55,6 +55,7 @@ from "I could not establish that this was reviewed" to `REVIEWED`.
 
 from __future__ import annotations
 
+from _review_assurance import Basis
 from _review_assurance import theorem_assurance
 from _review_model import (
     AXES,
@@ -86,6 +87,7 @@ from _review_state import (
 
 __all__ = [
     "AXES",
+    "Basis",
     "CAUSE_PRECEDENCE",
     "COMPLETE",
     "COMPONENT_CAUSE",

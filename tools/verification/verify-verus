@@ -58,6 +58,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
+from _fingerprint import Registries  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _lanes import BY_NAME  # noqa: E402
 from _manifest import REPO_ROOT, ManifestError, load_verification  # noqa: E402
@@ -409,7 +410,7 @@ def main() -> int:
         # Taken BEFORE the prover runs, and recorded alongside the result: the record must
         # say which source was measured, not which source exists when someone later reads
         # it. This is the binding the issuer checks.
-        measured_at = fingerprint_unit(unit, doc, toolchains, assumptions)["fingerprint"]
+        measured_at = fingerprint_unit(unit, Registries(doc, toolchains, assumptions))["fingerprint"]
 
         def record(
             result: str,

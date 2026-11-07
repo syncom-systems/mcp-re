@@ -107,6 +107,61 @@ def _confirm_action_result(params: dict) -> dict:
     }
 
 
+async def _send_json(send, payload: dict) -> None:
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-type", b"application/json")],
+        }
+    )
+    await send({"type": "http.response.body", "body": json.dumps(payload).encode()})
+
+
+async def _read_body(receive) -> bytes:
+    """Buffer the (single) request body so it can be inspected and, if not ours, replayed
+    verbatim to the SDK server."""
+    body = b""
+    more = True
+    while more:
+        message = await receive()
+        body += message.get("body", b"")
+        more = message.get("more_body", False)
+    return body
+
+
+def _parse_rpc(body: bytes):
+    try:
+        return json.loads(body)
+    except (ValueError, TypeError):
+        return None
+
+
+def _is_tools_call(rpc) -> bool:
+    return isinstance(rpc, dict) and rpc.get("method") == "tools/call"
+
+
+def _is_confirm_call(rpc) -> bool:
+    if not _is_tools_call(rpc):
+        return False
+    params = rpc.get("params")
+    return isinstance(params, dict) and params.get("name") == _CONFIRM_TOOL
+
+
+def _replay_once(body: bytes):
+    """A `receive` that hands the buffered body to the SDK server once, then disconnects."""
+    sent = False
+
+    async def replay():
+        nonlocal sent
+        if not sent:
+            sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return {"type": "http.disconnect"}
+
+    return replay
+
+
 class ConfirmActionShim:
     """A path-agnostic ASGI shim: intercept a JSON-RPC `tools/call` for
     `confirm_action` and answer it directly with the MRTR result shape; delegate all
@@ -119,74 +174,32 @@ class ConfirmActionShim:
         self.posts = 0
         self.tools_calls = 0
 
-    async def __call__(self, scope, receive, send):
-        if (
+    def _is_call_count_probe(self, scope) -> bool:
+        return (
             self.count_calls
             and scope["type"] == "http"
             and scope.get("method") == "GET"
             and scope.get("path") == CALL_COUNT_PATH
-        ):
-            payload = json.dumps(
-                {"posts": self.posts, "tools_call": self.tools_calls}
-            ).encode()
-            await send(
-                {
-                    "type": "http.response.start",
-                    "status": 200,
-                    "headers": [(b"content-type", b"application/json")],
-                }
-            )
-            await send({"type": "http.response.body", "body": payload})
+        )
+
+    async def __call__(self, scope, receive, send):
+        if self._is_call_count_probe(scope):
+            await _send_json(send, {"posts": self.posts, "tools_call": self.tools_calls})
             return
         if scope["type"] != "http" or scope.get("method") != "POST":
             await self.app(scope, receive, send)
             return
         self.posts += 1
-        # Buffer the (single) request body so we can inspect it and, if not ours,
-        # replay it verbatim to the SDK server.
-        body = b""
-        more = True
-        while more:
-            message = await receive()
-            body += message.get("body", b"")
-            more = message.get("more_body", False)
-        rpc = None
-        try:
-            rpc = json.loads(body)
-        except (ValueError, TypeError):
-            rpc = None
-        if isinstance(rpc, dict) and rpc.get("method") == "tools/call":
+        body = await _read_body(receive)
+        rpc = _parse_rpc(body)
+        if _is_tools_call(rpc):
             self.tools_calls += 1
-        if (
-            isinstance(rpc, dict)
-            and rpc.get("method") == "tools/call"
-            and isinstance(rpc.get("params"), dict)
-            and rpc["params"].get("name") == _CONFIRM_TOOL
-        ):
+        if _is_confirm_call(rpc):
             result = _confirm_action_result(rpc["params"])
-            payload = json.dumps(
-                {"jsonrpc": "2.0", "id": rpc.get("id"), "result": result}
-            ).encode()
-            await send(
-                {
-                    "type": "http.response.start",
-                    "status": 200,
-                    "headers": [(b"content-type", b"application/json")],
-                }
-            )
-            await send({"type": "http.response.body", "body": payload})
+            await _send_json(send, {"jsonrpc": "2.0", "id": rpc.get("id"), "result": result})
             return
         # Not ours — replay the buffered body to the SDK server.
-        sent = False
-
-        async def replay():
-            nonlocal sent
-            if not sent:
-                sent = True
-                return {"type": "http.request", "body": body, "more_body": False}
-            return {"type": "http.disconnect"}
-
-        await self.app(scope, replay, send)
+        await self.app(scope, _replay_once(body), send)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -163,16 +164,26 @@ packet_case("a packet this tree lacks is refused", "verification/reviews/packets
 packet_case("an empty packet is refused", "   ", "`packet` is empty")
 
 print("\nan owner-approval ledger packet is read, not merely found")
-def ledger_case(name, rec, lines, expect, theorems_toml=""):
+
+
+class LedgerTree(NamedTuple):
+    """What the tree holds for a correction to be read against: the approval ledger's lines
+    and the theorem registry's text."""
+
+    lines: list
+    theorems_toml: str = ""
+
+
+def ledger_case(name, rec, tree, expect):
     import hashlib
     import tempfile as _t
     with _t.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "docs" / "security").mkdir(parents=True)
         (root / "verification" / "policy").mkdir(parents=True)
-        (root / "verification" / "policy" / "theorems.toml").write_text(theorems_toml)
+        (root / "verification" / "policy" / "theorems.toml").write_text(tree.theorems_toml)
         rows = []
-        for line in lines:
+        for line in tree.lines:
             line = {"ruling": "r", "approved_by": "o", "approved": "d", **line}
             line.setdefault("sha256", hashlib.sha256(line["text"].encode()).hexdigest())
             rows.append(json.dumps(line))
@@ -195,33 +206,35 @@ SIGNED_N = '[[theorem]]\nid = "THM-0001"\nstatement = "n"\n'
 ledger_case(
     "an approval of something else is not this correction's authority",
     record(packet=LEDGER),
-    [{"source": "a ruling", "text": "about THM-0002", "surfaces": ["THM-0002"]}],
+    LedgerTree([{"source": "a ruling", "text": "about THM-0002", "surfaces": ["THM-0002"]}]),
     "no line there speaks about THM-0001",
 )
 ledger_case(
     "an entry approval signing the corrected text admits the own-claim correction",
     record(packet=LEDGER),
-    [{"source": ENTRY_SRC, "text": SIGNED_N}],
+    LedgerTree([{"source": ENTRY_SRC, "text": SIGNED_N}]),
     None,
 )
 ledger_case(
     "an entry approval signing OTHER text refuses the own-claim correction",
     record(packet=LEDGER),
-    [{"source": ENTRY_SRC, "text": SIGNED_N.replace('"n"', '"something else"')}],
+    LedgerTree([{"source": ENTRY_SRC, "text": SIGNED_N.replace('"n"', '"something else"')}]),
     "do not sign the corrected text",
 )
 ledger_case(
     "a dependency correction is backed by the approval of the premise that moved",
     record(packet=LEDGER, changed_components=["theorem_dependencies"]),
-    [{"source": "a ruling", "text": "THM-0002 restated", "surfaces": ["THM-0002"]}],
+    LedgerTree(
+        [{"source": "a ruling", "text": "THM-0002 restated", "surfaces": ["THM-0002"]}],
+        theorems_toml='[[theorem]]\nid = "THM-0001"\ndepends_on = ["THM-0002"]\n'
+        '[[theorem]]\nid = "THM-0002"\ndepends_on = []\n',
+    ),
     None,
-    theorems_toml='[[theorem]]\nid = "THM-0001"\ndepends_on = ["THM-0002"]\n'
-    '[[theorem]]\nid = "THM-0002"\ndepends_on = []\n',
 )
 ledger_case(
     "a ledger line whose sha256 does not cover its text refuses everything",
     record(packet=LEDGER),
-    [{"source": ENTRY_SRC, "text": SIGNED_N, "sha256": "0" * 64}],
+    LedgerTree([{"source": ENTRY_SRC, "text": SIGNED_N, "sha256": "0" * 64}]),
     "does not cover",
 )
 

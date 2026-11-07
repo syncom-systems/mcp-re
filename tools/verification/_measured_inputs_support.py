@@ -18,6 +18,7 @@ sys.path.insert(0, str(HERE))
 
 import _tree  # noqa: E402
 from _assumptions import load_assumptions  # noqa: E402
+from _fingerprint import Registries  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import load_verification  # noqa: E402
 from _toolchain_lock import load_toolchains  # noqa: E402
@@ -35,10 +36,12 @@ def measure(unit: dict, doc=None, assumptions=None, boundaries=None) -> dict:
     the documents the encoding reads."""
     return fingerprint_unit(
         unit,
-        DOC if doc is None else doc,
-        TOOLCHAINS,
-        ASSUMPTIONS if assumptions is None else assumptions,
-        boundaries,
+        Registries(
+            DOC if doc is None else doc,
+            TOOLCHAINS,
+            ASSUMPTIONS if assumptions is None else assumptions,
+            boundaries,
+        ),
     )
 
 

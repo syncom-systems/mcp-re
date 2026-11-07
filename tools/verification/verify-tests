@@ -64,6 +64,7 @@ from _ecosystems import unit_ecosystem  # noqa: E402
 from _ecosystems import valid_target  # noqa: E402
 from _ecosystems import vitest_report_path  # noqa: E402
 from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
+from _fingerprint import Registries  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _lanes import claims  # noqa: E402
 from _manifest import REPO_ROOT, ManifestError, load_verification  # noqa: E402
@@ -176,7 +177,7 @@ def _rerun_unread(
     for name in names:
         _clear_report(eco, target, runtime)
         again = subprocess.run(
-            test_argv(eco, crate, target, [name], runtime),
+            test_argv(eco, target, [name], runtime),
             cwd=_cwd(eco, crate),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -245,7 +246,7 @@ def run_selection(
     result is this lane's and is one rule — a declared symbol that did not report success
     is a failure, whether it failed, was skipped, or never ran.
     """
-    argv = test_argv(eco, crate, target, paths, runtime)
+    argv = test_argv(eco, target, paths, runtime)
     _clear_report(eco, target, runtime)
     proc = subprocess.run(
         argv,
@@ -520,7 +521,7 @@ def main(argv: list[str] | None = None) -> int:
     for unit in units:
         # Taken before the tests run: the record must say which source was measured, not
         # which source exists when someone later reads it.
-        measured_at = fingerprint_unit(unit, doc, toolchains, assumptions)["fingerprint"]
+        measured_at = fingerprint_unit(unit, Registries(doc, toolchains, assumptions))["fingerprint"]
         print(f"verify-tests: {unit['id']}")
         ok, detail = measure_unit(unit, toolchains)
         write_record(

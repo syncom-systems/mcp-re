@@ -233,12 +233,12 @@ def test_a_rust_target_is_run_as_its_bazel_label():
     """The label is the whole selection: Bazel resolves it from the workspace root, runs it
     fresh, streams libtest's own lines, and passes each declared name as `--exact`. A
     doctest target runs whole, because a doctest's reported name embeds its line."""
-    argv = test_argv(RUST, None, UNIT, ["a::b"])
+    argv = test_argv(RUST, UNIT, ["a::b"])
     assert argv[:3] == ["bazel", "test", UNIT]
     assert "--nocache_test_results" in argv, "a cached result describes an earlier run"
     assert "--test_output=streamed" in argv
     assert argv[-2:] == ["--test_arg=--exact", "--test_arg=a::b"]
-    assert not any(a.startswith("--test_arg") for a in test_argv(RUST, None, DOCTEST, ["x"]))
+    assert not any(a.startswith("--test_arg") for a in test_argv(RUST, DOCTEST, ["x"]))
     assert not valid_target(RUST, "")
 
 
@@ -369,7 +369,7 @@ def test_a_typescript_battery_names_the_runtime_it_runs_on():
     """The Node half of the same property. `npx vitest` resolved whatever node was on PATH,
     so the battery's result described an unnamed runtime (#747)."""
     try:
-        test_argv(TYPESCRIPT, "sdk/typescript", "vitest", ["test/x.test.ts > a"])
+        test_argv(TYPESCRIPT, "vitest", ["test/x.test.ts > a"])
     except ValueError as exc:
         assert "runtime" in str(exc), exc
     else:
@@ -377,9 +377,7 @@ def test_a_typescript_battery_names_the_runtime_it_runs_on():
 
 
 def test_the_typescript_command_runs_the_pinned_node_and_not_npx():
-    argv = test_argv(
-        TYPESCRIPT, "sdk/typescript", "vitest", ["test/x.test.ts > a"], "22.23.2"
-    )
+    argv = test_argv(TYPESCRIPT, "vitest", ["test/x.test.ts > a"], "22.23.2")
     assert argv[0] == ".node-v22/node_modules/node/bin/node", argv
     assert "npx" not in argv, "npx would resolve a node of its own"
     assert argv[1].endswith("vitest.mjs"), argv
@@ -410,7 +408,7 @@ def test_a_runtime_is_asked_its_version_in_every_ecosystem_that_has_one():
 def test_a_python_battery_names_the_interpreter_it_runs_on():
     """No runtime, no command. A default would reintroduce the unpinned interpreter."""
     try:
-        test_argv(PYTHON, "sdk/python", "pytest", ["tests/test_x.py::test_y"])
+        test_argv(PYTHON, "pytest", ["tests/test_x.py::test_y"])
     except ValueError as exc:
         assert "interpreter" in str(exc), exc
     else:
@@ -418,9 +416,7 @@ def test_a_python_battery_names_the_interpreter_it_runs_on():
 
 
 def test_the_python_command_runs_the_prepared_environment_for_that_runtime():
-    argv = test_argv(
-        PYTHON, "sdk/python", "pytest", ["tests/test_x.py::test_y"], "3.11.15"
-    )
+    argv = test_argv(PYTHON, "pytest", ["tests/test_x.py::test_y"], "3.11.15")
     assert argv[0] == ".venv-cp311/bin/python", argv
     assert "uv" not in argv, "the lane must not resolve or sync its own environment"
     assert argv[-1] == "tests/test_x.py::test_y"
@@ -485,8 +481,8 @@ def test_a_run_that_collected_nothing_is_not_called_unreadable():
 
 def test_two_runtimes_are_two_environments():
     """A shared environment would make the second measurement the first one again."""
-    first = test_argv(PYTHON, "p", "pytest", ["t::a"], "3.10.20")[0]
-    second = test_argv(PYTHON, "p", "pytest", ["t::a"], "3.14.7")[0]
+    first = test_argv(PYTHON, "pytest", ["t::a"], "3.10.20")[0]
+    second = test_argv(PYTHON, "pytest", ["t::a"], "3.14.7")[0]
     assert first != second, (first, second)
 
 

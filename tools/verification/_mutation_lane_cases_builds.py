@@ -151,7 +151,7 @@ def test_every_rust_target_kind_runs_through_the_one_seam():
         "//mcp-re-client:mcp_re_client_cli_test",
         "//mcp-re-http-profile:mcp_re_http_profile_doc_test",
     ):
-        argv = test_argv(RUST, None, label, ["sym"])
+        argv = test_argv(RUST, label, ["sym"])
         assert argv[:3] == ["bazel", "test", label], argv
     # And the lane asks the seam rather than answering for itself.
     assert "target_argv(" not in inspect.getsource(lane.run_battery)

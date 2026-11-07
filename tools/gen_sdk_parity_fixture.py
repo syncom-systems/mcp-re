@@ -84,14 +84,16 @@ def case(signed, inputs) -> dict:
     }
 
 
-def build() -> dict:
-    cases = {}
-    meta = {"seed_b64": b64(SEED), "key_id": KEY_ID}
+META = {"seed_b64": b64(SEED), "key_id": KEY_ID}
 
+
+def _software_cases() -> dict:
     # An ordinary software-custody request.
-    cases["software_tools_list"] = case(
-        mcp_re_sdk.sign_request(SEED, KEY_ID, **BASE), {**BASE, **meta}
-    )
+    cases = {
+        "software_tools_list": case(
+            mcp_re_sdk.sign_request(SEED, KEY_ID, **BASE), {**BASE, **META}
+        )
+    }
 
     # A routed tools/call with non-empty params and a string JSON-RPC id.
     routed = dict(
@@ -103,14 +105,23 @@ def build() -> dict:
         nonce="nonce-parity-0002-128bit",
     )
     cases["software_tools_call_routed"] = case(
-        mcp_re_sdk.sign_request(SEED, KEY_ID, **routed), {**routed, **meta}
+        mcp_re_sdk.sign_request(SEED, KEY_ID, **routed), {**routed, **META}
     )
+    return cases
 
+
+def _non_exporting_signer() -> Signer:
+    return Signer.from_device(SIGNER_ID, KEY_ID, SigningDevice.from_seed(SEED))
+
+
+def _custody_cases() -> dict:
     # Non-exporting custody MUST equal software custody byte-for-byte: the key moved
     # behind a device, the signed preimage did not change.
-    ne = Signer.from_device(SIGNER_ID, KEY_ID, SigningDevice.from_seed(SEED))
-    cases["non_exporting_tools_list"] = case(ne.sign_request(**BASE), {**BASE, **meta})
+    ne = _non_exporting_signer()
+    return {"non_exporting_tools_list": case(ne.sign_request(**BASE), {**BASE, **META})}
 
+
+def _continuation_cases() -> dict:
     # An ADR-MCPS-047 MRTR answer leg carrying a signed continuation.
     cont = dict(
         BASE,
@@ -121,10 +132,23 @@ def build() -> dict:
         cont_irr_value="CQybwHow5Uec0w7Tb6kcd7vWOEhRNCCGhfvkNUGvIIA",
         cont_request_state="opaque-state-xyz",
     )
-    cases["continuation_answer_leg"] = case(
-        mcp_re_sdk.sign_request(SEED, KEY_ID, **cont), {**cont, **meta}
+    return {
+        "continuation_answer_leg": case(
+            mcp_re_sdk.sign_request(SEED, KEY_ID, **cont), {**cont, **META}
+        )
+    }
+
+
+def _binding_case(args: dict, provider, ctx: BindingRequestContext, **json_options) -> dict:
+    """One signed request carrying `provider`'s binding, with the arguments that made it."""
+    bindings_json = json.dumps([provider.spec(ctx)], **json_options)
+    return case(
+        mcp_re_sdk.sign_request(SEED, KEY_ID, **args, bindings_json=bindings_json),
+        {**args, **META, "bindings_json": bindings_json},
     )
 
+
+def _binding_cases() -> dict:
     # Provider-supplied artifact bindings: the core digests the artifact, so both SDKs
     # must land on the same digest AND the same evidence bytes.
     ctx = BindingRequestContext(
@@ -133,14 +157,6 @@ def build() -> dict:
         method=BASE["method"],
     )
     opaque = OpaqueBytesProvider("human-approval", GENERIC_MATERIAL)
-    opaque_args = dict(BASE, nonce="nonce-parity-0004-128bit")
-    cases["binding_opaque_bytes"] = case(
-        mcp_re_sdk.sign_request(
-            SEED, KEY_ID, **opaque_args, bindings_json=json.dumps([opaque.spec(ctx)])
-        ),
-        {**opaque_args, **meta, "bindings_json": json.dumps([opaque.spec(ctx)])},
-    )
-
     reference = AuthzSystemReferenceProvider(
         "pdp-decision",
         ARTIFACT_MATERIAL,
@@ -148,27 +164,25 @@ def build() -> dict:
         reference_scheme_id="scheme-1",
         reference_value="grant-123",
     )
-    ref_args = dict(BASE, nonce="nonce-parity-0005-128bit")
-    cases["binding_authz_system_reference"] = case(
-        mcp_re_sdk.sign_request(
-            SEED, KEY_ID, **ref_args, bindings_json=json.dumps([reference.spec(ctx)])
-        ),
-        {**ref_args, **meta, "bindings_json": json.dumps([reference.spec(ctx)])},
-    )
-
     # The ADR-MCPRE-065 authorization decision. Pinned because this producer contributes
     # TWO things from one input — the carried document and the `pdp-decision` binding the
     # core mints over its exact bytes — and a binding that derived either half differently
     # would emit evidence the other SDK's caller could not reproduce.
     decision = AuthorizationDecisionProvider(DECISION_JWS)
-    decision_args = dict(BASE, nonce="nonce-parity-0008-128bit")
-    cases["binding_authorization_decision"] = case(
-        mcp_re_sdk.sign_request(
-            SEED, KEY_ID, **decision_args, bindings_json=json.dumps([decision.spec(ctx)])
+    return {
+        "binding_opaque_bytes": _binding_case(
+            dict(BASE, nonce="nonce-parity-0004-128bit"), opaque, ctx
         ),
-        {**decision_args, **meta, "bindings_json": json.dumps([decision.spec(ctx)])},
-    )
+        "binding_authz_system_reference": _binding_case(
+            dict(BASE, nonce="nonce-parity-0005-128bit"), reference, ctx
+        ),
+        "binding_authorization_decision": _binding_case(
+            dict(BASE, nonce="nonce-parity-0008-128bit"), decision, ctx
+        ),
+    }
 
+
+def _notification_cases() -> dict:
     # A one-way NOTIFICATION. Pinned because the two SDKs could drift here in a way the
     # request cases cannot show: the envelope omits `id` entirely, and a binding that
     # emitted `"id": null` instead would be dispatched by the serving path as a REQUEST.
@@ -185,12 +199,18 @@ def build() -> dict:
         created=BASE["created"],
         expires=BASE["expires"],
     )
-    cases["notification_initialized"] = case(
-        mcp_re_sdk.sign_notification(SEED, KEY_ID, **note), {**note, **meta}
-    )
-    # And under non-exporting custody: same bytes, key behind the device.
-    cases["notification_non_exporting"] = case(ne.sign_notification(**note), {**note, **meta})
+    return {
+        "notification_initialized": case(
+            mcp_re_sdk.sign_notification(SEED, KEY_ID, **note), {**note, **META}
+        ),
+        # And under non-exporting custody: same bytes, key behind the device.
+        "notification_non_exporting": case(
+            _non_exporting_signer().sign_notification(**note), {**note, **META}
+        ),
+    }
 
+
+def _non_ascii_cases() -> dict:
     # Non-ASCII, carried raw as UTF-8 in both the params and a binding's reference
     # value. Python's `json.dumps` escapes non-ASCII to `\uXXXX` by default while
     # `JSON.stringify` emits the codepoint, so a serializer that reaches these bytes
@@ -215,12 +235,22 @@ def build() -> dict:
         target_uri=wide["target_uri"],
         method=wide["method"],
     )
-    wide_json = json.dumps([wide_binding.spec(wide_ctx)], ensure_ascii=False)
-    cases["non_ascii_params_and_binding"] = case(
-        mcp_re_sdk.sign_request(SEED, KEY_ID, **wide, bindings_json=wide_json),
-        {**wide, **meta, "bindings_json": wide_json},
-    )
+    return {
+        "non_ascii_params_and_binding": _binding_case(
+            wide, wide_binding, wide_ctx, ensure_ascii=False
+        )
+    }
 
+
+def build() -> dict:
+    cases = {
+        **_software_cases(),
+        **_custody_cases(),
+        **_continuation_cases(),
+        **_binding_cases(),
+        **_notification_cases(),
+        **_non_ascii_cases(),
+    }
     return {
         "schema": "mcp-re-sdk-parity/v1",
         "comment": (
