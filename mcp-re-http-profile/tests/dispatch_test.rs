@@ -156,18 +156,18 @@ fn verified_request(
         .expect("full verify")
 }
 
+/// The verified evidence of `client-key-1` signing `block` under a nonce nobody has used.
+fn verified_from_client_a(block: &HttpRequestEvidenceBlock) -> VerifiedMcpRequest {
+    verified_request(&client_a_key(), "client-key-1", &unique_test_nonce(), block)
+}
+
 // ---------- replay ---------------------------------------------------------
 
 /// Acceptance #1: duplicate nonce for the same actor/audience/profile fails replay.
 #[test]
 fn duplicate_nonce_same_actor_audience_profile_is_replay() {
     let block = request_block(audience("verifier-1"), None);
-    let ev = verified_request(
-        &client_a_key(),
-        "client-key-1",
-        &unique_test_nonce(),
-        &block,
-    );
+    let ev = verified_from_client_a(&block);
     let cache = InMemoryReplayCache::new(no_skew());
     let cfg = permissive_cfg();
 
@@ -240,12 +240,7 @@ impl ReplayCache for DurableTestCache {
 #[test]
 fn fleet_strict_rejects_single_process_reference_cache() {
     let block = request_block(audience("verifier-1"), None);
-    let ev = verified_request(
-        &client_a_key(),
-        "client-key-1",
-        &unique_test_nonce(),
-        &block,
-    );
+    let ev = verified_from_client_a(&block);
     let cache = InMemoryReplayCache::new(no_skew());
     let cfg = DispatchConfig { fleet_strict: true };
 
@@ -259,12 +254,7 @@ fn fleet_strict_rejects_single_process_reference_cache() {
 #[test]
 fn fleet_strict_admits_durable_cache() {
     let block = request_block(audience("verifier-1"), None);
-    let ev = verified_request(
-        &client_a_key(),
-        "client-key-1",
-        &unique_test_nonce(),
-        &block,
-    );
+    let ev = verified_from_client_a(&block);
     let cache = DurableTestCache(InMemoryReplayCache::new(no_skew()));
     let cfg = DispatchConfig { fleet_strict: true };
 
@@ -311,12 +301,7 @@ fn matching_ctx() -> RetainedContinuation<'static> {
 #[test]
 fn continuation_round_trips_through_dispatch() {
     let block = continuation_block();
-    let ev = verified_request(
-        &client_a_key(),
-        "client-key-1",
-        &unique_test_nonce(),
-        &block,
-    );
+    let ev = verified_from_client_a(&block);
     let cache = InMemoryReplayCache::new(no_skew());
 
     let outcome = dispatch_request(&ev, &cache, Some(matching_ctx()), &permissive_cfg())
@@ -324,67 +309,44 @@ fn continuation_round_trips_through_dispatch() {
     assert!(outcome.continuation_verified());
 }
 
-/// Acceptance #5: a continuation with changed `requestState` fails.
-#[test]
-fn continuation_changed_request_state_fails() {
-    let block = continuation_block();
-    let ev = verified_request(
-        &client_a_key(),
-        "client-key-1",
-        &unique_test_nonce(),
-        &block,
-    );
+/// Dispatch a fresh continuation request against `retained` and return the refusal it
+/// meets: whatever the retained context says, the binding must fail.
+fn continuation_binding_failure(
+    retained: Option<RetainedContinuation<'static>>,
+    expectation: &str,
+) -> DispatchError {
+    let ev = verified_from_client_a(&continuation_block());
     let cache = InMemoryReplayCache::new(no_skew());
-    let ctx = retained_over(PREV_BASE, IRR_BASE, b"tampered-request-state");
-
-    let err = dispatch_request(&ev, &cache, Some(ctx), &permissive_cfg())
-        .expect_err("changed requestState must fail");
+    let err = dispatch_request(&ev, &cache, retained, &permissive_cfg()).expect_err(expectation);
     assert_eq!(
         err,
         DispatchError::Profile(HttpProfileError::ContinuationBindingFailed)
     );
+    err
+}
+
+/// Acceptance #5: a continuation with changed `requestState` fails.
+#[test]
+fn continuation_changed_request_state_fails() {
+    let ctx = retained_over(PREV_BASE, IRR_BASE, b"tampered-request-state");
+    let err = continuation_binding_failure(Some(ctx), "changed requestState must fail");
     assert_eq!(err.wire_code(), "mcp-re.continuation_binding_failed");
 }
 
 /// Acceptance #6: a continuation with the wrong previous-request evidence fails.
 #[test]
 fn continuation_wrong_previous_request_evidence_fails() {
-    let block = continuation_block();
-    let ev = verified_request(
-        &client_a_key(),
-        "client-key-1",
-        &unique_test_nonce(),
-        &block,
-    );
-    let cache = InMemoryReplayCache::new(no_skew());
     let ctx = retained_over(b"a-different-previous-request", IRR_BASE, REQ_STATE);
-
-    let err = dispatch_request(&ev, &cache, Some(ctx), &permissive_cfg())
-        .expect_err("wrong previous-request evidence must fail");
-    assert_eq!(
-        err,
-        DispatchError::Profile(HttpProfileError::ContinuationBindingFailed)
-    );
+    continuation_binding_failure(Some(ctx), "wrong previous-request evidence must fail");
 }
 
 /// Acceptance #7: a continuation with the wrong input-required response evidence fails.
 #[test]
 fn continuation_wrong_input_required_response_evidence_fails() {
-    let block = continuation_block();
-    let ev = verified_request(
-        &client_a_key(),
-        "client-key-1",
-        &unique_test_nonce(),
-        &block,
-    );
-    let cache = InMemoryReplayCache::new(no_skew());
     let ctx = retained_over(PREV_BASE, b"a-different-input-required-response", REQ_STATE);
-
-    let err = dispatch_request(&ev, &cache, Some(ctx), &permissive_cfg())
-        .expect_err("wrong input-required response evidence must fail");
-    assert_eq!(
-        err,
-        DispatchError::Profile(HttpProfileError::ContinuationBindingFailed)
+    continuation_binding_failure(
+        Some(ctx),
+        "wrong input-required response evidence must fail",
     );
 }
 
@@ -392,21 +354,7 @@ fn continuation_wrong_input_required_response_evidence_fails() {
 /// unverifiable binding must never be admitted.
 #[test]
 fn continuation_without_retained_context_fails_closed() {
-    let block = continuation_block();
-    let ev = verified_request(
-        &client_a_key(),
-        "client-key-1",
-        &unique_test_nonce(),
-        &block,
-    );
-    let cache = InMemoryReplayCache::new(no_skew());
-
-    let err = dispatch_request(&ev, &cache, None, &permissive_cfg())
-        .expect_err("missing continuation context must fail closed");
-    assert_eq!(
-        err,
-        DispatchError::Profile(HttpProfileError::ContinuationBindingFailed)
-    );
+    continuation_binding_failure(None, "missing continuation context must fail closed");
 }
 
 /// A spliced continuation must NOT burn the nonce: the replay insert is last, so
@@ -414,12 +362,7 @@ fn continuation_without_retained_context_fails_closed() {
 #[test]
 fn failed_continuation_does_not_burn_the_nonce() {
     let block = continuation_block();
-    let ev = verified_request(
-        &client_a_key(),
-        "client-key-1",
-        &unique_test_nonce(),
-        &block,
-    );
+    let ev = verified_from_client_a(&block);
     let cache = InMemoryReplayCache::new(no_skew());
     let bad_ctx = retained_over(PREV_BASE, IRR_BASE, b"tampered");
 
