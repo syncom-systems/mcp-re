@@ -2557,6 +2557,10 @@
    "srcs": [
     "mcp-re-proxy/tests/common/mod.rs",
     "mcp-re-proxy/tests/integration_async/admission_currency_serving_test.rs",
+    "mcp-re-proxy/tests/integration_async/admission_currency_serving_test/fixtures.rs",
+    "mcp-re-proxy/tests/integration_async/admission_currency_serving_test/outage.rs",
+    "mcp-re-proxy/tests/integration_async/admission_currency_serving_test/rig.rs",
+    "mcp-re-proxy/tests/integration_async/admission_currency_serving_test/wire.rs",
     "mcp-re-proxy/tests/integration_async/async_replay_test.rs",
     "mcp-re-proxy/tests/integration_async/authorization_serving_test.rs",
     "mcp-re-proxy/tests/integration_async/config_snapshot_hot_reload_test.rs",
@@ -2615,6 +2619,10 @@
    "srcs": [
     "mcp-re-proxy/tests/common/mod.rs",
     "mcp-re-proxy/tests/integration_async/admission_currency_serving_test.rs",
+    "mcp-re-proxy/tests/integration_async/admission_currency_serving_test/fixtures.rs",
+    "mcp-re-proxy/tests/integration_async/admission_currency_serving_test/outage.rs",
+    "mcp-re-proxy/tests/integration_async/admission_currency_serving_test/rig.rs",
+    "mcp-re-proxy/tests/integration_async/admission_currency_serving_test/wire.rs",
     "mcp-re-proxy/tests/integration_async/async_replay_test.rs",
     "mcp-re-proxy/tests/integration_async/authorization_serving_test.rs",
     "mcp-re-proxy/tests/integration_async/config_snapshot_hot_reload_test.rs",
