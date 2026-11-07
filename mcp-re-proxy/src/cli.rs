@@ -64,7 +64,79 @@ struct Flags {
     delegated_signing: delegated_signing_flags::DelegatedSigningFlags,
 }
 
+/// One family's claim on a value-taking flag, and how to hand the flag to it.
+struct Route {
+    owns: fn(&str) -> bool,
+    take: fn(&mut Flags, &str, &str) -> Result<(), String>,
+}
+
 impl Flags {
+    /// The families in routing order, each beside the predicate that claims its flags.
+    const ROUTES: [Route; 14] = [
+        Route {
+            owns: identity_flags::IdentityFlags::owns,
+            take: |flags, flag, value| {
+                flags.identity.take(flag, value);
+                Ok(())
+            },
+        },
+        Route {
+            owns: serving_flags::ServingFlags::owns,
+            take: |flags, flag, value| {
+                flags.serving.take(flag, value);
+                Ok(())
+            },
+        },
+        Route {
+            owns: protocol_flags::ProtocolFlags::owns,
+            take: |flags, flag, value| flags.protocol.take(flag, value),
+        },
+        Route {
+            owns: runtime_flags::RuntimeFlags::owns,
+            take: |flags, flag, value| flags.runtime.take(flag, value),
+        },
+        Route {
+            owns: channel_flags::ChannelFlags::owns,
+            take: |flags, flag, value| flags.channel.take(flag, value),
+        },
+        Route {
+            owns: signing_source_flags::SigningSourceFlags::owns,
+            take: |flags, flag, value| flags.signing_source.take(flag, value),
+        },
+        Route {
+            owns: peer_identity_flags::PeerIdentityFlags::owns,
+            take: |flags, flag, value| flags.peer_identity.take(flag, value),
+        },
+        Route {
+            owns: revocation_flags::RevocationFlags::owns,
+            take: |flags, flag, value| flags.revocation.take(flag, value),
+        },
+        Route {
+            owns: storage_flags::StorageFlags::owns,
+            take: |flags, flag, value| flags.storage.take(flag, value),
+        },
+        Route {
+            owns: currency_flags::CurrencyFlags::owns,
+            take: |flags, flag, value| flags.currency.take(flag, value),
+        },
+        Route {
+            owns: admission_flags::AdmissionFlags::owns,
+            take: |flags, flag, value| flags.admission.take(flag, value),
+        },
+        Route {
+            owns: authorization_flags::AuthorizationFlags::owns,
+            take: |flags, flag, value| flags.authorization.take(flag, value),
+        },
+        Route {
+            owns: audit_flags::AuditFlags::owns,
+            take: |flags, flag, value| flags.audit.take(flag, value),
+        },
+        Route {
+            owns: delegated_signing_flags::DelegatedSigningFlags::owns,
+            take: |flags, flag, value| flags.delegated_signing.take(flag, value),
+        },
+    ];
+
     /// Route one valueless flag to the family that owns it, reporting whether one did.
     fn take_switch(&mut self, flag: &str) -> bool {
         self.signing_source.take_switch(flag)
@@ -73,61 +145,20 @@ impl Flags {
             || self.peer_identity.take_switch(flag)
     }
 
-    /// The routing set of `take`.
+    /// Whether this value-taking flag belongs to some family: the routing set of `take`.
     fn owns(flag: &str) -> bool {
-        identity_flags::IdentityFlags::owns(flag)
-            || serving_flags::ServingFlags::owns(flag)
-            || protocol_flags::ProtocolFlags::owns(flag)
-            || runtime_flags::RuntimeFlags::owns(flag)
-            || channel_flags::ChannelFlags::owns(flag)
-            || signing_source_flags::SigningSourceFlags::owns(flag)
-            || peer_identity_flags::PeerIdentityFlags::owns(flag)
-            || revocation_flags::RevocationFlags::owns(flag)
-            || storage_flags::StorageFlags::owns(flag)
-            || currency_flags::CurrencyFlags::owns(flag)
-            || admission_flags::AdmissionFlags::owns(flag)
-            || authorization_flags::AuthorizationFlags::owns(flag)
-            || audit_flags::AuditFlags::owns(flag)
-            || delegated_signing_flags::DelegatedSigningFlags::owns(flag)
+        Self::ROUTES.iter().any(|route| (route.owns)(flag))
     }
 
     /// Route one value-taking flag to the family that owns it.
     ///
-    /// One line per family, and the families are disjoint: a flag belongs to exactly one,
-    /// so this is a routing table and not a decision.
+    /// One entry per family in [`Self::ROUTES`], and the families are disjoint: a flag
+    /// belongs to exactly one, so this is a routing table and not a decision.
     fn take(&mut self, flag: &str, value: &str) -> Result<(), String> {
-        if identity_flags::IdentityFlags::owns(flag) {
-            self.identity.take(flag, value);
-        } else if serving_flags::ServingFlags::owns(flag) {
-            self.serving.take(flag, value);
-        } else if protocol_flags::ProtocolFlags::owns(flag) {
-            self.protocol.take(flag, value)?;
-        } else if runtime_flags::RuntimeFlags::owns(flag) {
-            self.runtime.take(flag, value)?;
-        } else if channel_flags::ChannelFlags::owns(flag) {
-            self.channel.take(flag, value)?;
-        } else if signing_source_flags::SigningSourceFlags::owns(flag) {
-            self.signing_source.take(flag, value)?;
-        } else if peer_identity_flags::PeerIdentityFlags::owns(flag) {
-            self.peer_identity.take(flag, value)?;
-        } else if revocation_flags::RevocationFlags::owns(flag) {
-            self.revocation.take(flag, value)?;
-        } else if storage_flags::StorageFlags::owns(flag) {
-            self.storage.take(flag, value)?;
-        } else if currency_flags::CurrencyFlags::owns(flag) {
-            self.currency.take(flag, value)?;
-        } else if admission_flags::AdmissionFlags::owns(flag) {
-            self.admission.take(flag, value)?;
-        } else if authorization_flags::AuthorizationFlags::owns(flag) {
-            self.authorization.take(flag, value)?;
-        } else if audit_flags::AuditFlags::owns(flag) {
-            self.audit.take(flag, value)?;
-        } else if delegated_signing_flags::DelegatedSigningFlags::owns(flag) {
-            self.delegated_signing.take(flag, value)?;
-        } else {
-            return Err(argv::refused_or_unknown(flag));
+        match Self::ROUTES.iter().find(|route| (route.owns)(flag)) {
+            Some(route) => (route.take)(self, flag, value),
+            None => Err(argv::refused_or_unknown(flag)),
         }
-        Ok(())
     }
 
     /// The request this command line describes.
