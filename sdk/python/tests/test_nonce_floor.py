@@ -9,7 +9,7 @@ for every request while every signature still verified.
 import pytest
 
 from mcp_re_sdk.custody import McpReSdkError
-from mcp_re_sdk.transport import MIN_NONCE_CHARS, _checked_nonce, _default_nonce
+from mcp_re_sdk.transport_freshness import MIN_NONCE_CHARS, _checked_nonce, _default_nonce
 
 
 def test_the_default_generator_clears_the_floor():

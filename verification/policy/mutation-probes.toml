@@ -4974,12 +4974,12 @@ id = "M180-python-trust-anchor-completeness"
 unit = "sdk_python.trust_anchor_completeness"
 theorem = "THM-0094"
 conjunct = "an incomplete delegated-verification anchor is refused at construction rather than defaulted"
-path = "sdk/python/python/mcp_re_sdk/transport.py"
+path = "sdk/python/python/mcp_re_sdk/transport_config.py"
 anchor = """
-        if missing:
+    if missing:
 """
 weakening = """
-        if False:
+    if False:
 """
 expect_red = [
   "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[issuer_key_id]",
@@ -4999,12 +4999,12 @@ id = "M181-python-denylist-bare-string"
 unit = "sdk_python.trust_anchor_completeness"
 theorem = "THM-0094"
 conjunct = "a bare-string denylist is refused rather than expanded one entry per character"
-path = "sdk/python/python/mcp_re_sdk/transport.py"
+path = "sdk/python/python/mcp_re_sdk/transport_config.py"
 anchor = """
-        if isinstance(self.revoked_identifiers, (str, bytes, bytearray)):
+    if isinstance(identifiers, (str, bytes, bytearray)):
 """
 weakening = """
-        if False:
+    if False:
 """
 expect_red = [
   "pytest#tests/test_transport.py::test_a_bare_string_denylist_is_refused_rather_than_expanded_per_character",
@@ -5023,12 +5023,12 @@ id = "M182-python-denylist-entry-shape"
 unit = "sdk_python.trust_anchor_completeness"
 theorem = "THM-0094"
 conjunct = "a denylist entry that cannot match an identifier is refused rather than silently revoking nothing"
-path = "sdk/python/python/mcp_re_sdk/transport.py"
+path = "sdk/python/python/mcp_re_sdk/transport_config.py"
 anchor = """
-        if bad:
+    if bad:
 """
 weakening = """
-        if False:
+    if False:
 """
 expect_red = [
   "pytest#tests/test_transport.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad0]",
@@ -5117,10 +5117,10 @@ theorem = "THM-0094"
 conjunct = "a verdict whose outcome is not success reaches the application as a correlated JSON-RPC error and never as a result"
 path = "sdk/python/python/mcp_re_sdk/transport.py"
 anchor = """
-            if verified.outcome != "success":
+        if verified.outcome != "success":
 """
 weakening = """
-            if False:
+        if False:
 """
 expect_red = [
   "pytest#tests/test_transport_replay.py::test_a_verified_rejection_receipt_is_delivered_as_an_error_not_a_result",
@@ -5187,12 +5187,12 @@ id = "M189-python-absent-wire-code-is-substituted"
 unit = "sdk_python.verdict_delivery"
 theorem = "THM-0094"
 conjunct = "a wire code the receipt did not carry is delivered as the SDK's own named condition rather than passed through as an error the application cannot act on"
-path = "sdk/python/python/mcp_re_sdk/transport.py"
+path = "sdk/python/python/mcp_re_sdk/transport_envelope.py"
 anchor = """
-                    verified.wire_code or _NO_PEER_WIRE_CODE,
+        verified.wire_code or _NO_PEER_WIRE_CODE,
 """
 weakening = """
-                    verified.wire_code,
+        verified.wire_code,
 """
 expect_red = [
   "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[None]",
@@ -5211,7 +5211,7 @@ id = "M190-python-sign-time-nonce-floor"
 unit = "sdk_python.nonce_floor"
 theorem = "THM-0094"
 conjunct = "no request and no notification is signed under a nonce below the 128-bit floor, and a sub-floor or non-string factory result fails closed at sign time"
-path = "sdk/python/python/mcp_re_sdk/transport.py"
+path = "sdk/python/python/mcp_re_sdk/transport_freshness.py"
 anchor = """
     if not isinstance(nonce, str) or len(nonce) < MIN_NONCE_CHARS:
 """
@@ -5235,7 +5235,7 @@ id = "M191-python-verified-reply-is-rebuilt"
 unit = "sdk_python.reply_envelope"
 theorem = "THM-0094"
 conjunct = "what reaches the session is rebuilt from the one member the verified reply carried, and a verified reply that is not a JSON-RPC response is refused rather than dispatched"
-path = "sdk/python/python/mcp_re_sdk/transport.py"
+path = "sdk/python/python/mcp_re_sdk/transport_envelope.py"
 anchor = """
     response = _plain_response_object(json.loads(body))
 """
@@ -5334,10 +5334,10 @@ theorem = "THM-0094"
 conjunct = "a client->server response, which MCP-RE profiles no carrier for, is refused rather than signed as a fabricated notification"
 path = "sdk/python/python/mcp_re_sdk/transport.py"
 anchor = """
-                if not isinstance(message, JSONRPCRequest):
+        if not isinstance(message, JSONRPCRequest):
 """
 weakening = """
-                if False:
+        if False:
 """
 expect_red = [
   "pytest#tests/test_transport.py::test_a_client_side_response_is_refused_rather_than_carried_as_a_notification",
@@ -5378,7 +5378,7 @@ id = "M197-python-no-member-the-receipt-did-not-carry"
 unit = "sdk_python.execution_report"
 theorem = "THM-0094"
 conjunct = "a member the verified receipt did not carry is not invented for the application"
-path = "sdk/python/python/mcp_re_sdk/transport.py"
+path = "sdk/python/python/mcp_re_sdk/transport_envelope.py"
 anchor = """
         if value is not None:
 """
@@ -5430,12 +5430,10 @@ theorem = "THM-0094"
 conjunct = "a condition this SDK originated is reported under the SDK's own prefix, never as a frozen mcp-re.* token the peer did not send"
 path = "sdk/python/python/mcp_re_sdk/transport.py"
 anchor = """
-            # condition", so it can never be read as something the peer said.
-            message = _error_message(request.id, f"mcp-re-sdk: {type(e).__name__}: {e}")
+    return _error_message(request_id, f"mcp-re-sdk: {type(error).__name__}: {error}")
 """
 weakening = """
-            # condition", so it can never be read as something the peer said.
-            message = _error_message(request.id, str(e))
+    return _error_message(request_id, str(error))
 """
 expect_red = [
   "pytest#tests/test_transport.py::test_a_value_error_that_is_not_a_token_is_labelled_a_local_condition",
@@ -5581,12 +5579,12 @@ id = "M205-python-the-continuation-ceiling-is-enforced"
 unit = "sdk_python.continuation_drive"
 theorem = "THM-0094"
 conjunct = "an elicitation past the continuation budget fails the call closed rather than resolving it"
-path = "sdk/python/python/mcp_re_sdk/transport.py"
+path = "sdk/python/python/mcp_re_sdk/transport_continuation.py"
 anchor = """
-            if round_index > config.max_continuation_rounds:
+    if elicitation.round > config.max_continuation_rounds:
 """
 weakening = """
-            if False:
+    if False:
 """
 expect_red = [
   "pytest#tests/test_transport_replay.py::test_the_continuation_round_ceiling_is_enforced_before_the_caller_is_asked",
@@ -5605,12 +5603,12 @@ id = "M206-python-an-unanswerable-elicitation-is-refused"
 unit = "sdk_python.continuation_drive"
 theorem = "THM-0094"
 conjunct = "an elicitation with no handler fails the call closed rather than resolving it"
-path = "sdk/python/python/mcp_re_sdk/transport.py"
+path = "sdk/python/python/mcp_re_sdk/transport_continuation.py"
 anchor = """
-            if config.answer_input_required is None:
+    if config.answer_input_required is None:
 """
 weakening = """
-            if False:
+    if False:
 """
 expect_red = [
   "pytest#tests/test_transport_replay.py::test_an_unanswerable_elicitation_is_refused_not_delivered_as_a_result",
@@ -5667,15 +5665,15 @@ theorem = "THM-0094"
 conjunct = "the value returned by sign_request is the one POSTed and the one passed to the verifier, and nothing is re-derived or re-serialized for it"
 path = "sdk/python/python/mcp_re_sdk/transport.py"
 anchor = """
-            reply = await poster(signed.method, signed.target_uri, signed.headers, signed.body())
+        reply = await self.poster(signed.method, signed.target_uri, signed.headers, signed.body())
 """
 weakening = """
-            reply = await poster(
-                signed.method,
-                signed.target_uri,
-                signed.headers,
-                json.dumps(json.loads(signed.body())).encode(),
-            )
+        reply = await self.poster(
+            signed.method,
+            signed.target_uri,
+            signed.headers,
+            json.dumps(json.loads(signed.body())).encode(),
+        )
 """
 expect_red = [
   "pytest#tests/test_transport.py::test_the_verifier_is_shown_the_bytes_that_were_transmitted",
@@ -5768,7 +5766,7 @@ unit = "sdk_python.authorization_binding"
 # NO `theorem` KEY: THM-0094's ratified scope excludes this unit from its closure. M201
 # carries the quotation.
 conjunct = "the binding specs are serialized canonically and byte-identically to the TypeScript twin"
-path = "sdk/python/python/mcp_re_sdk/transport.py"
+path = "sdk/python/python/mcp_re_sdk/transport_binding.py"
 anchor = """
         ensure_ascii=False,
 """
@@ -13145,12 +13143,12 @@ id = "M547-python-a-verified-receipt-without-a-wire-code-is-given-a-peer-token"
 unit = "sdk_python.verdict_delivery"
 theorem = "THM-0094"
 conjunct = "a member the receipt did not carry is not invented for it: no `mcp-re.*` token stands in for an absent wire code"
-path = "sdk/python/python/mcp_re_sdk/transport.py"
+path = "sdk/python/python/mcp_re_sdk/transport_envelope.py"
 anchor = """
-                    verified.wire_code or _NO_PEER_WIRE_CODE,
+        verified.wire_code or _NO_PEER_WIRE_CODE,
 """
 weakening = """
-                    verified.wire_code or "mcp-re.response_sig_invalid",
+        verified.wire_code or "mcp-re.response_sig_invalid",
 """
 expect_red = [
   "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[None]",

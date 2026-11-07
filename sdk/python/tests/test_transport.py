@@ -42,8 +42,12 @@ from mcp_re_sdk import (  # noqa: E402
     mcp_re_http_transport,
 )
 from mcp_re_sdk.mtls import MtlsTransportError  # noqa: E402
-from mcp_re_sdk.transport import _binding_context
-from mcp_re_sdk.transport import _authz_binding_digest, _bindings_json, _pump  # noqa: E402
+from mcp_re_sdk.transport import _Dispatcher, _pump  # noqa: E402
+from mcp_re_sdk.transport_binding import (  # noqa: E402
+    _authz_binding_digest,
+    _binding_context,
+    _bindings_json,
+)
 
 CLIENT_SEED = bytes([11]) * 32
 TARGET = "https://proxy.internal:8600/mcp"
@@ -100,7 +104,7 @@ async def _send(config, poster, message, correlation=None):
     write_stream, write_reader = anyio.create_memory_object_stream(8)
     await write_stream.send(SessionMessage(message))
     await write_stream.aclose()
-    await _pump(config, poster, write_reader, read_writer, correlation)
+    await _pump(_Dispatcher(config, poster, read_writer, correlation), write_reader)
 
     out = []
     while True:
@@ -276,10 +280,12 @@ async def test_a_refused_client_side_response_does_not_cancel_other_exchanges():
     seen = []
     with _capturing_notification_failures(seen):
         await _pump(
-            _config(),
-            _throwing_poster(McpReError("mcp-re.replay_detected")),
+            _Dispatcher(
+                _config(),
+                _throwing_poster(McpReError("mcp-re.replay_detected")),
+                read_writer,
+            ),
             write_reader,
-            read_writer,
         )
 
     delivered = []
@@ -444,7 +450,7 @@ async def test_one_exchanges_network_error_does_not_take_down_the_session():
     for rid in (1, 2, 3):
         await write_stream.send(SessionMessage(_request(id=rid)))
     await write_stream.aclose()
-    await _pump(_config(), poster, write_reader, read_writer)
+    await _pump(_Dispatcher(_config(), poster, read_writer), write_reader)
 
     out = []
     while True:
@@ -492,7 +498,7 @@ async def test_a_transport_deadline_does_not_synthesize_what_the_peer_never_said
     for rid in (1, 2):
         await write_stream.send(SessionMessage(_request(id=rid)))
     await write_stream.aclose()
-    await _pump(_config(), poster, write_reader, read_writer, store)
+    await _pump(_Dispatcher(_config(), poster, read_writer, store), write_reader)
 
     out = []
     while True:
@@ -1225,7 +1231,7 @@ async def _drive(config, poster, count: int):
     for i in range(count):
         await write_stream.send(SessionMessage(_request(id=i)))
     await write_stream.aclose()
-    await _pump(config, poster, write_reader, read_writer)
+    await _pump(_Dispatcher(config, poster, read_writer), write_reader)
 
     replies = []
     for _ in range(count):
