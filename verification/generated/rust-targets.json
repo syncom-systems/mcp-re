@@ -1319,7 +1319,10 @@
    "package": "mcp-re-http-profile",
    "root": "mcp-re-http-profile/tests/delegation_e2e_test.rs",
    "srcs": [
-    "mcp-re-http-profile/tests/delegation_e2e_test.rs"
+    "mcp-re-http-profile/tests/delegation_e2e_test.rs",
+    "mcp-re-http-profile/tests/delegation_e2e_test/fixtures.rs",
+    "mcp-re-http-profile/tests/delegation_e2e_test/signing.rs",
+    "mcp-re-http-profile/tests/delegation_e2e_test/verify.rs"
    ],
    "testonly": true,
    "verus_deps": []
