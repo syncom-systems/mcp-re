@@ -299,10 +299,10 @@ function-level exception. The §8 questions answered for it:
 
 1. *What does it own?* The order startup acts in. 2. *Independent authorities?* None that
 remain in it: classification lives in `startup_plan` and `config_state`, teardown in each
-plane and in `MaterializingRuntime`. What was left was a sequence of eleven steps that
+plane and in `MaterializingRuntime`. What was left was a sequence of named steps that
 each hand a value to the next. 6–7. *Facts reconstructed or ordered only by locals?* The
 order of effects and the unwind order. Both survive the split: the stages are called in the
-transcript's order from one 40-line function, and `Startup` holds the runtime as its last
+transcript's order from one 44-line function, and `Startup` holds the runtime as its last
 field, with the proxy a caller-owned local declared after it, so a failure at any `?` still
 reclaims in the runtime's own order.
 
