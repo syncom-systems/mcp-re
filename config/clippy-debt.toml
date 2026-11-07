@@ -198,10 +198,11 @@ count = 29
 # count measured by this gate.
 # 74 -> 71: the rotation loop, the resumption handshake and the registration tests lost nested sites.
 # 77 -> 74: the ocsp split and the proxy decompositions before it removed sites; count measured by this gate.
+# 71 -> 70: the blocking-mtls `Content-Length` scan became an iterator pipeline; count measured by this gate.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 71
+count = 70
 
 # 0 -> 4: the same measurement correction as `arithmetic_side_effects` above; 1 -> 0 when
 # the trust-epoch reader's second, GET-based read path was folded into the one MGET read.

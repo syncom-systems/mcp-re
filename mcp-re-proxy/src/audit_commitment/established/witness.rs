@@ -231,17 +231,23 @@ mod tests {
         );
     }
 
+    /// Mint a witness for `sent` at crossing `K` from a fresh provider, then redeem it for
+    /// `other` against that same provider.
+    async fn redeem_for<K: Crossing>(
+        sent: &CanonicalEvent,
+        other: &CanonicalEvent,
+    ) -> Result<(), WitnessRefusal> {
+        let provider = provider([Step::Commit]);
+        let witness = provider.commit::<K>(sent, bound()).await.expect("minted");
+        witness.redeem(other, &provider).map(|_| ())
+    }
+
     #[tokio::test]
     async fn redeem_refuses_a_witness_for_another_event() {
         let sent = fixtures::envelope(0, "actor-a");
-        let provider = provider([Step::Commit]);
-        let witness = provider
-            .commit::<Outcome>(&sent, bound())
-            .await
-            .expect("minted");
         let other = fixtures::envelope(1, "actor-a");
         assert_eq!(
-            witness.redeem(&other, &provider).map(|_| ()),
+            redeem_for::<Outcome>(&sent, &other).await,
             Err(WitnessRefusal::AnotherEvent)
         );
     }
@@ -250,14 +256,9 @@ mod tests {
     #[tokio::test]
     async fn redeem_refuses_a_witness_from_another_run() {
         let sent = fixtures::envelope(0, "actor-a");
-        let provider = provider([Step::Commit]);
-        let witness = provider
-            .commit::<Intent>(&sent, bound())
-            .await
-            .expect("minted");
         let other_run = fixtures::envelope_in(fixtures::OTHER_RUN, 0, "actor-a");
         assert_eq!(
-            witness.redeem(&other_run, &provider).map(|_| ()),
+            redeem_for::<Intent>(&sent, &other_run).await,
             Err(WitnessRefusal::AnotherEvent)
         );
     }
@@ -265,13 +266,8 @@ mod tests {
     #[tokio::test]
     async fn redeem_refuses_a_witness_for_other_bytes() {
         let (sent, same_id_other_bytes) = fixtures::same_id_other_content();
-        let provider = provider([Step::Commit]);
-        let witness = provider
-            .commit::<Intent>(&sent, bound())
-            .await
-            .expect("minted");
         assert_eq!(
-            witness.redeem(&same_id_other_bytes, &provider).map(|_| ()),
+            redeem_for::<Intent>(&sent, &same_id_other_bytes).await,
             Err(WitnessRefusal::OtherContent)
         );
     }

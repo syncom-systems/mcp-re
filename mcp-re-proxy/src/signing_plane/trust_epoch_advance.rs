@@ -89,7 +89,7 @@ pub(super) fn observe_trust_epoch(
     if Some(counter) == last.counter() {
         return EpochStep::Proceed;
     }
-    apply_epoch_advance(rotor, signer, counter, last, halt)
+    apply_epoch_advance(rotor, scope, counter, last)
 }
 
 /// FAIL CLOSED FOR MINTING when the shared epoch is unreadable or regressed.
@@ -128,12 +128,12 @@ fn refuse_to_mint_without_a_comparable_epoch(
 /// here would report a revocation that never happened and never look at it again.
 fn apply_epoch_advance(
     rotor: &mut crate::delegated_wiring::ProdDelegatedRotor,
-    signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
+    scope: &RotationScope<'_>,
     counter: i64,
     last: &mut TrustEpoch,
-    halt: &crate::managed_worker::Halt,
 ) -> EpochStep {
     use crate::delegated_server_signer::rotation_backoff;
+    let (signer, halt) = (scope.signer, scope.halt);
     let label = last.at(counter);
     let outcome = rotor.advance_trust_epoch(counter, now_unix());
     super::mint_successor::announce_lifecycle(rotor);

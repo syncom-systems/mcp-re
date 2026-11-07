@@ -26,12 +26,10 @@ use super::sf_dictionary::split_parameters;
 /// values, so both spellings verify under one signature and the raw header stops matching
 /// the signed bytes. The inner list is held to the same rule in `covered_components`.
 fn check_tail_spelling(param_tail: &str) -> Result<(), HttpProfileError> {
-    if param_tail.is_empty() {
-        return Ok(());
-    }
-    let misspelled = !param_tail.starts_with(';')
-        || has_empty_segment(param_tail)
-        || has_space_outside_quotes(param_tail);
+    let misspelled = !param_tail.is_empty()
+        && (!param_tail.starts_with(';')
+            || has_empty_segment(param_tail)
+            || has_space_outside_quotes(param_tail));
     if misspelled {
         return Err(HttpProfileError::MalformedEvidence(
             "signature parameter spacing",
