@@ -7,14 +7,14 @@
       "THM-0043": "sha256:1ece28b4aeef476884140e0c2e594036d64eea9a19110eef6dd085af4296adb7",
       "THM-0046": "sha256:ea9c7a5680ae2326df8620d90806dbfb5506edb8a25a65d5b2ed5afe334d4e8f",
       "THM-0069": "sha256:bfc9434b2493163f5f79dc4f242cb0a20e33897b02d6753f2c5aacc27968b479",
-      "THM-0070": "sha256:ac2d4cb3a06802a917154f8414b82e28546e3168e186a953900b25b2096b92f9",
+      "THM-0070": "sha256:9a6ea4566846df5c0a6627e5b8c9286d8e4037470e829fe815d6eec5d67eeb31",
       "THM-0081": "sha256:cc31afc20983e87adddbc6f4a1903c95d4f8c8d89a866c978acbd86bb710cab2",
       "THM-0085": "sha256:230b5ea11a72fe5be53a20956fd31241e12d7e8e9a98c677dfdaba354e5fdebf"
     },
     "theorem_id": "THM-0071",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G9.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.",
+  "notes": "Agent re-read 2026-11-08. THM-0071's own statement, security consequence, scope, severity, depends_on and review requirement are byte-identical; its fingerprint moved only through THM-0070's corrected claim in its dependency closure (verification/claim-corrections/THM-0071-thm-0070-scope-propagation-2026-11-03.json). Its supporting units proxy.audit_vocabulary_import and proxy.refusal_provenance have no source diff since the last record, and the cited tests live in those unchanged files. The THM-0070 correction is the stderr offer-order scope paragraph, which THM-0071 does not rely on: it claims typed provenance reaching the record, not stream order. Conclusion: the claim holds. This record is NOT an owner signature: it attests the agent's substantive reading only. Nothing under verification/claim-corrections/ is edited; the correction records stay as the history, and a correction record is not an approval. Evidence class as registered: the V0 units are tested, mutation-probed and structurally probed, not machine-checked proofs. No mutation, SDK-matrix or Verus lane was run for this record; the cited tests named below were run through Bazel and pass.\n\nEarlier record notes (still the provenance of the earlier readings, reviewer then: mats@sundvall.name): Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G9.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -65,14 +65,14 @@
       "THM-0043": "sha256:1ece28b4aeef476884140e0c2e594036d64eea9a19110eef6dd085af4296adb7",
       "THM-0046": "sha256:ea9c7a5680ae2326df8620d90806dbfb5506edb8a25a65d5b2ed5afe334d4e8f",
       "THM-0069": "sha256:bfc9434b2493163f5f79dc4f242cb0a20e33897b02d6753f2c5aacc27968b479",
-      "THM-0070": "sha256:ac2d4cb3a06802a917154f8414b82e28546e3168e186a953900b25b2096b92f9",
+      "THM-0070": "sha256:9a6ea4566846df5c0a6627e5b8c9286d8e4037470e829fe815d6eec5d67eeb31",
       "THM-0081": "sha256:cc31afc20983e87adddbc6f4a1903c95d4f8c8d89a866c978acbd86bb710cab2",
       "THM-0085": "sha256:230b5ea11a72fe5be53a20956fd31241e12d7e8e9a98c677dfdaba354e5fdebf"
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:87b63d9f06bdf4ed257eee891c8a8e0317fa785be698b070262b4b9044a7fa78",
-  "reviewed_fingerprint": "sha256:2b59216016047aec6425a22e403a59d471645cac4ce4330fa6f1bf99347c7a58",
-  "reviewer": "mats@sundvall.name",
+  "review_digest": "sha256:a0e700cbc8ee17641f4587eea6bf60aba161e73a6a008f4ec9f65af1f9550101",
+  "reviewed_fingerprint": "sha256:cc325187ec814c99544b4e91d3ffad159955777281a348c660f73c3b1ac0a59e",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0071"
 }
