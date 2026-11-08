@@ -2127,6 +2127,7 @@ tested_symbols = [
   "//mcp-re-http-profile:dispatch_test#continuation_wrong_input_required_response_evidence_fails",
   "//mcp-re-http-profile:dispatch_test#continuation_without_retained_context_fails_closed",
   "//mcp-re-http-profile:dispatch_test#failed_continuation_does_not_burn_the_nonce",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verified_request::tests::the_replay_key_carries_each_established_fact_in_its_own_field",
 ]
 proved_symbols = ["mcp_re_http_profile::dispatch::prepare_http_dispatch"]
 features = ["verify"]
