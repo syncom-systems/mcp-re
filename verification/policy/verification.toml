@@ -6722,6 +6722,7 @@ paths = [
   # claim standing on a fingerprint that never moved.
   "mcp-re-proxy/src/signing_plane/rotation.rs",
   "mcp-re-proxy/src/signing_plane/rotation/wait.rs",
+  "mcp-re-proxy/src/signing_plane/rotation/failed_attempt.rs",
   # r11 R11-571, and the same argument one level down. `rotation.rs` was registered; the two
   # modules the loop was SPLIT INTO were not, so the mint-honesty rule and the epoch-advance
   # rule sat in no fingerprint at all. Both are transitions of this credential:
