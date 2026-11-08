@@ -139,8 +139,7 @@ mod tests {
     #[test]
     fn a_window_that_is_not_whole_seconds_is_refused_by_name() {
         for (created, expires, named) in [(0.5, 2.0, "created"), (1.0, f64::NAN, "expires")] {
-            let Err(refused) = signing(Window { created, expires }).args(Call::Notification)
-            else {
+            let Err(refused) = signing(Window { created, expires }).args(Call::Notification) else {
                 panic!("{created}/{expires} must be refused");
             };
             assert!(refused.reason.starts_with(named), "{}", refused.reason);

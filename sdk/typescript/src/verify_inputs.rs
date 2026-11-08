@@ -112,7 +112,7 @@ mod tests {
     use super::Transmitted;
     use super::Trust;
     use super::Verification;
-    
+
     fn verification(now: f64, retired_until: Option<f64>) -> Verification {
         Verification {
             answer: Answer {
