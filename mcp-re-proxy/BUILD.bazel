@@ -627,6 +627,7 @@ _PROXY_LIB_SRCS = [
     # snapshot and rotation worker; retires the snapshot before it stops rotating.
     "src/signing_plane/mod.rs",
     "src/signing_plane/rotation.rs",
+    "src/signing_plane/rotation/failed_attempt.rs",
     "src/signing_plane/rotation/wait.rs",
     "src/signing_plane/trust_epoch_advance.rs",
     "src/signing_plane/epoch_watch.rs",

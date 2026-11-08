@@ -22,7 +22,7 @@ use mcp_re_http_profile::custody::IssuanceRefusal;
 
 use crate::clock::now_unix;
 
-use super::rotation_jitter;
+use super::rotation::FailedAttempt;
 
 /// What one scheduled rotation attempt leaves the loop with.
 pub(super) enum RotationStep {
@@ -111,11 +111,13 @@ fn back_off_after_failure(
     cause: String,
     current_still_valid: bool,
 ) -> RotationStep {
-    use crate::delegated_server_signer::rotation_backoff;
     let metrics = signer.metrics();
-    let consecutive_failures = metrics.record_failure();
-    let ttl = signer.seconds_to_expiry(now_unix());
-    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter);
+    let attempt = FailedAttempt::record(signer);
+    let (consecutive_failures, ttl, backoff) = (
+        attempt.consecutive_failures,
+        attempt.time_to_expiry,
+        attempt.backoff,
+    );
     if current_still_valid {
         eprintln!(
             "mcp-re-proxy: WARNING: delegated successor issuance FAILED ({}) but the \
@@ -144,10 +146,9 @@ fn back_off_after_failure(
             backoff.as_millis(),
         );
     }
-    if halt.sleep(backoff) {
-        return RotationStep::Halt;
-    }
-    RotationStep::Continue(consecutive_failures)
+    attempt
+        .wait(halt)
+        .map_or(RotationStep::Halt, RotationStep::Continue)
 }
 
 /// What an operator is told about an issuance that adopted nothing: the cause the custody
