@@ -5067,6 +5067,11 @@ tested_symbols = [
   "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::both_verification_paths_take_the_signed_request_owner",
   "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::the_shipped_path_reconstructs_no_second_request",
   "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::the_correspondence_rules_would_catch_each_regression",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::the_transport_receives_the_request_that_was_signed",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::the_answer_must_match_the_kind_of_message_that_was_signed",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::an_acknowledgement_of_a_different_notification_is_refused",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::a_reply_to_a_different_request_is_refused",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::a_present_null_id_is_answered_as_a_request_addressed_to_null",
 ]
 
 [[unit]]
@@ -12288,6 +12293,7 @@ tested_symbols = [
   "//mcp-re-client-core:mcp_re_client_core_test#request::evidence_precondition_tests::a_structurally_invalid_binding_cannot_reach_signing",
   "//mcp-re-client-core:mcp_re_client_core_test#request::evidence_precondition_tests::a_valid_binding_still_signs",
   "//mcp-re-client-core:mcp_re_client_core_test#request::notification_tests::a_signed_notification_carries_no_id_at_all",
+  "//mcp-re-client-core:mcp_re_client_core_test#request::notification_tests::the_signed_request_reports_the_id_its_body_carries",
   "//mcp-re-client-core:mcp_re_client_core_test#request::notification_tests::the_id_key_is_absent_rather_than_null",
   "//mcp-re-client-core:mcp_re_client_core_test#request::notification_tests::a_signed_notification_carries_the_ordinary_rfc_9421_evidence",
   "//mcp-re-client-core:mcp_re_client_core_test#request::notification_tests::a_continuation_on_a_notification_is_refused_locally",
