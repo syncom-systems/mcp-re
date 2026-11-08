@@ -28,7 +28,6 @@ use serde_json::Value;
 mod arrival;
 mod plain_reply;
 
-use arrival::request_id;
 use arrival::Arrival;
 pub(crate) use plain_reply::plain_error_from_rejection;
 pub(crate) use plain_reply::plain_response_from_verified;
@@ -183,12 +182,9 @@ impl ClientProxy {
             .get(route_id)
             .ok_or_else(|| ProxyError::UnknownRoute(route_id.to_string()))?;
 
-        // ABSENT `id` is what makes a JSON-RPC message a NOTIFICATION (§4.1), and both the
-        // signer and the serving path classify on exactly that key's absence. `null` is not
-        // the same thing: it is a PRESENT id, so defaulting to it turned every one-way
-        // notification into a request the server dispatched to the backend and answered with
-        // a bodied reply nothing was awaiting.
-        let id = request_id(plain_request).cloned();
+        // The signed request is the one authority on whether this is a one-way notification
+        // and on the id the reply is addressed to: the body that was signed decides both, so
+        // the response path cannot classify the message differently from the signer.
         let signed = self.sign_request(route, plain_request, params)?;
 
         // Forward to the remote MCP-RE endpoint.
@@ -207,7 +203,7 @@ impl ClientProxy {
             response: &response,
             now_unix,
         };
-        if id.is_none() {
+        if signed.is_notification() {
             return self.verify_notification_ack(route, &signed, arrival);
         }
         let verified = self.verify_reply(route, &signed, arrival)?;
@@ -215,7 +211,7 @@ impl ClientProxy {
         // The request id the PROXY signed, not the one the server echoed. The plain
         // reply is addressed to the local client's outstanding call, and taking the id
         // from the response body would let the server redirect the answer.
-        let request_id = id.unwrap_or(Value::Null);
+        let request_id = signed.request_id().cloned().unwrap_or(Value::Null);
         read_outcome(verified, &response, request_id)
     }
 
@@ -251,7 +247,7 @@ impl ClientProxy {
         )
         .with_headers(route.extra_headers.clone());
         Ok(build_signed_message(
-            McpMessage::new(request_id(plain_request), &method, req_params),
+            McpMessage::new(plain_request.get("id"), &method, req_params),
             &route.target_uri,
             &inputs,
             &self.signing_key,
@@ -610,6 +606,46 @@ mod tests {
         [required_verification, anchored_verification]
     }
 
+    /// The path is chosen by the identity the SIGNED request carries. A bodyless 202 is not
+    /// an answer to a request with an id, and a bodied reply is not an answer to a
+    /// notification: each is refused rather than accepted down the other path.
+    #[test]
+    fn the_answer_must_match_the_kind_of_message_that_was_signed() {
+        let request = reply_request();
+        let note = notification();
+        for verification in variants() {
+            let (proxy, _) = proxy_over(
+                verification(),
+                Some(ROOT_KID),
+                Some(delegated_202(&request)),
+            );
+            assert!(proxy
+                .handle(ROUTE_ID, &request, &call_params(&|| NOW))
+                .is_err());
+            let (proxy, _) =
+                proxy_over(verification(), Some(ROOT_KID), Some(delegated_reply(&note)));
+            assert!(proxy
+                .handle(ROUTE_ID, &note, &call_params(&|| NOW))
+                .is_err());
+        }
+    }
+
+    /// A present JSON `null` id is a request: it takes the reply path and is answered with
+    /// that `null`, neither the server's echoed id nor an absent one.
+    #[test]
+    fn a_present_null_id_is_answered_as_a_request_addressed_to_null() {
+        let plain = json!({"jsonrpc": "2.0", "id": null, "method": "tools/call", "params": {"name": "read"}});
+        let response = delegated_reply(&plain);
+        for verification in variants() {
+            let (proxy, _) = proxy_over(verification(), Some(ROOT_KID), Some(response.clone()));
+            let out = proxy
+                .handle(ROUTE_ID, &plain, &call_params(&|| NOW))
+                .expect("a null-id request takes the reply path");
+            assert_eq!(out.kind, ResponseKind::Success);
+            assert_eq!(out.plain_response.get("id"), Some(&Value::Null));
+        }
+    }
+
     /// A signed refusal of a notification is a verdict, not a channel failure.
     #[test]
     fn a_verified_rejection_of_a_notification_is_a_rejection_not_a_gateway_failure() {
@@ -887,7 +923,8 @@ mod tests {
     #[test]
     fn a_reply_to_a_different_request_is_refused() {
         let plain = reply_request();
-        let other = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "write"}});
+        let other =
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "write"}});
         let (proxy, _) = proxy_over(required_verification(), None, Some(delegated_reply(&other)));
         let err = proxy
             .handle(ROUTE_ID, &plain, &call_params(&|| NOW))
@@ -1052,7 +1089,6 @@ mod tests {
              is what makes the correspondence a fact rather than a caller obligation."
         );
     }
-
 
     /// The rules detect what they claim to.
     #[test]

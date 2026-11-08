@@ -25,7 +25,6 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::RequestRoleEvidence;
-use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::PROFILE_TAG;
 use serde_json::json;
 use serde_json::Map;
@@ -39,6 +38,7 @@ use serde_json::Value;
 pub struct SignedRequest {
     request: HttpRequest,
     evidence: RequestRoleEvidence,
+    request_id: Option<Value>,
 }
 
 impl SignedRequest {
@@ -62,6 +62,17 @@ impl SignedRequest {
     /// binds a later signed response (`response.request_evidence == this`).
     pub fn evidence(&self) -> &RequestRoleEvidence {
         &self.evidence
+    }
+
+    /// The JSON-RPC `id` the signed body carries, absent for a notification. Present JSON
+    /// `null` is a present id, not an absent one.
+    pub fn request_id(&self) -> Option<&Value> {
+        self.request_id.as_ref()
+    }
+
+    /// Whether the signed body is a one-way notification: it carries no `id`.
+    pub fn is_notification(&self) -> bool {
+        self.request_id.is_none()
     }
 
     /// Consume the signed request, returning the owned [`HttpRequest`].
@@ -148,17 +159,7 @@ pub fn build_signed_message(
     signing_key: &SigningKey,
 ) -> Result<SignedRequest, HttpProfileError> {
     build_signed_request_with(message, target_uri, inputs, |request, block| {
-        sign_request_full(
-            request,
-            block,
-            signing_key,
-            &RequestSignature {
-                key_id: &inputs.key_id,
-                created: inputs.created,
-                expires: inputs.expires,
-                nonce: &inputs.nonce,
-            },
-        )
+        sign_request_full(request, block, signing_key, &inputs.request_signature())
     })
 }
 
@@ -173,17 +174,7 @@ pub fn build_signed_message_with_signer(
 ) -> Result<SignedRequest, HttpProfileError> {
     // The full-profile client composes the evidence block first, then signs over it.
     build_signed_request_with(message, target_uri, inputs, |request, block| {
-        sign_request_full_with_signer(
-            request,
-            block,
-            sign_base,
-            &RequestSignature {
-                key_id: &inputs.key_id,
-                created: inputs.created,
-                expires: inputs.expires,
-                nonce: &inputs.nonce,
-            },
-        )
+        sign_request_full_with_signer(request, block, sign_base, &inputs.request_signature())
     })
 }
 
@@ -201,6 +192,7 @@ pub(crate) fn build_signed_request_with(
     ) -> Result<RequestRoleEvidence, HttpProfileError>,
 ) -> Result<SignedRequest, HttpProfileError> {
     check_preconditions(&message, target_uri, inputs)?;
+    let request_id = message.id.cloned();
     let mut headers = vec![("content-type".to_owned(), "application/json".to_owned())];
     headers.extend(inputs.extra_headers.iter().cloned());
     let mut request = HttpRequest {
@@ -221,7 +213,11 @@ pub(crate) fn build_signed_request_with(
     // two ends from drifting apart.
     block.validate(PROFILE_TAG)?;
     let evidence = sign(&mut request, &block)?;
-    Ok(SignedRequest { request, evidence })
+    Ok(SignedRequest {
+        request,
+        evidence,
+        request_id,
+    })
 }
 
 /// Everything the client refuses to sign, decided before any byte is composed.
@@ -534,6 +530,29 @@ mod notification_tests {
     /// envelope is checked against the rule that actually decides its fate.
     fn reads_as_a_notification(body: &Value) -> bool {
         body.get("method").is_some() && body.get("id").is_none()
+    }
+
+    /// The identity the signed request reports is the identity its body carries: absent for a
+    /// notification, and a present JSON `null` stays a present id (a request, not a
+    /// notification).
+    #[test]
+    fn the_signed_request_reports_the_id_its_body_carries() {
+        let notification = signed_notification();
+        assert!(notification.is_notification());
+        assert_eq!(notification.request_id(), None);
+        assert!(body_of(&notification).get("id").is_none());
+        for id in [Value::Null, Value::from(7), Value::from("a")] {
+            let signed = build_signed_message(
+                McpMessage::new(Some(&id), "tools/list", Map::new()),
+                TARGET,
+                &inputs(),
+                &key(),
+            )
+            .expect("signs");
+            assert!(!signed.is_notification(), "{id}");
+            assert_eq!(signed.request_id(), Some(&id));
+            assert_eq!(body_of(&signed)["id"], id);
+        }
     }
 
     #[test]

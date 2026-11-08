@@ -11,6 +11,7 @@ use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::HttpContinuation;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
+use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::PROFILE_TAG;
 
 /// The already-resolved inputs for one RFC 9421 signed request.
@@ -92,6 +93,16 @@ impl RequestSigningInputs {
             extra_headers: Vec::new(),
             admission: None,
             authorization_decision: PresentedDecision::default(),
+        }
+    }
+
+    /// The RFC 9421 parameters these inputs state for the signature.
+    pub(crate) fn request_signature(&self) -> RequestSignature<'_> {
+        RequestSignature {
+            key_id: &self.key_id,
+            created: self.created,
+            expires: self.expires,
+            nonce: &self.nonce,
         }
     }
 
