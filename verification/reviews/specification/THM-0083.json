@@ -7,7 +7,7 @@
     "theorem_id": "THM-0083",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-R2-REVIEW-4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 4f9eb062 after the CodeQL remediation (work/security-audit-2026-09-22-r12/CODEQL-REREVIEW.md): test sources only; the accept-any-server TLS test verifier was replaced by verification against the test's server CA, no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded. Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written. Read in verification/reviews/packets/epic-1201-assurance-closure-2026-10-21.md: verdict CLEAN, cause source movement.  Evidence class as registered; V0 units are tested and probed, not machine-checked proofs.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read http_profile.request_envelope and proxy.outstanding_id_provenance. The request envelope is untouched; in envelope/response.rs validate_response_envelope was split into require_jsonrpc_version, response_outcome, require_error_shape, require_response_only and require_correlation, and the checks run in the same order with the same refusal clauses (not an object, jsonrpc, both or neither of result and error, error shape, result not an object, method or params present, id absent or mismatched, a notification never correlating); the in-file tests are unchanged. On the serving side a search of mcp-re-proxy/src shows validate_request_envelope called once in production, in request_admission.rs, and the decided OutstandingId is carried by the admitted envelope to answer_dispatched, which now receives it together with the dispatched exchange rather than as a separate argument; every other call is inside a test module. outstanding_id_provenance_test.rs is unchanged. The claim, scope and premises are unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -23,10 +23,10 @@
         "governing_boundaries": "sha256:cacb3466f29a65ae5fa8795401d8d57887c519b4875599a2a9b56e238440e097",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        "mutation_probes": "sha256:8f1d5ca6748e5f1066766d7cf8196f361940c214f5f6e4e65ecaa02b5ab0a091",
+        "mutation_probes": "sha256:cde447aab73651288d65a0e1f7c7ff3716fbcb9fa9cf8f7398ff95895d6bd60c",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:aecc36bf200f08fecbe6e55a51cf913a056bf57eb0cffa7e835cf273409f6d4b",
+        "source_inputs": "sha256:3989106c12ecf9bb31fe59e3c70ceed20a25884cdb0c6a55d0b2d112ac28bc8b",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:5f4b04f462436cb67903a740154b6c1b70fba99eeebed6f0cf360bd77e33de15",
         "test_selection": "sha256:1566be660f22ba42c5d0458188eea94c898f9321cf19930d4908c297a75ecab7",
@@ -46,11 +46,11 @@
         "mutation_probes": "sha256:f3b2fbf3fd462d8ec2c42c84d452138f733a8e95e52eda7199ff87aeca9f629f",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:3ab11140b7f041eb69ff66fb0c609ddc606c344869e1ef861c2057dd9fa13030",
+        "source_inputs": "sha256:ad5d4b59dbdd0e449288920a64700f87662ccafc46d6962812afe2cdb4c35639",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:a8c715a095dc17197d1e65f1e560323f4e22fdead35c894af4f6ce3b11cfcdd3",
         "test_selection": "sha256:8d5d76ec7edef906432e6f86442c02151a3e127562ab1ddd061d45e726b881f4",
-        "test_sources": "sha256:94dfaa338808959316751debd390baf2894b099a7cb4e4220d54664b9bfba57c",
+        "test_sources": "sha256:c470da46f277f367ea6d539ff07db4b0b1ff2a00fdf22a4dee74cbb9074952ab",
         "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "unit_id": "sha256:8988bbb728df2a144c392ce5267e0ab6cf882acbace12de6a69d186ca61b328d"
       }
@@ -59,8 +59,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:10d9d3d489eabc490afdf99b51afe8e6a81dca155e498f0b8b48f93ebb1f4e14",
+  "review_digest": "sha256:58f4676e424d89363a06cee68ba84216ef3162c9f051ecb403df96bd0373eb7f",
   "reviewed_fingerprint": "sha256:f51f19ff25e327d0839275a5da3ecb0f589d5eec151b7da0da841a3e6c51620d",
-  "reviewer": "agent:claude-opus-5-5 (exec #1201; prepared for owner ratification, not an owner signature)",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0083"
 }

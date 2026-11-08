@@ -7,7 +7,7 @@
     "theorem_id": "THM-0124",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G11.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. It replaces a record naming the owner as reviewer, because that record's fingerprint no longer matched; that record stays in git history. Read client.deployment_config and client.validated_config_sole_producer: mcp-re-client/src/config/validated.rs and validation.rs have no diff; config/mod.rs changed only inside its tests module, where bound_route, header_source, header, load and assert_refused build the same route JSON and check the same refusal fragments (does not send, and no other header, not a Bearer credential, binding to nothing, config text cannot restate, and the success cases). Production lines of mod.rs are unchanged. The claim holds. The mutation lane was not run, and no test was run. Evidence class as registered (V0).",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -24,7 +24,7 @@
         "mutation_probes": "sha256:8f15f8eb4ec1b5bb065e6ff77c2971da0bd0425bc20bfbf286ffb7e1ce69a151",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:5e609cb87b1e8db98e35ce3d4a0b72aecc58a33411a74e332e7122323559faf4",
+        "source_inputs": "sha256:b73e21bc303da9a76e361cfdd8f80f0f43c400d81c3e2aeb893c1e7881b86af3",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:2903bfe91f37554a05779f7935024114241b9f368eca4afa120e9b8523f94e59",
         "test_selection": "sha256:c568528cd516e9be700a83572e058c706573b746e000a9e20b9e06f4ea7474ae",
@@ -57,8 +57,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:99f6419cdd7c67053f0ecf1ec72422333fcd391c5bfe6efa4b680037b3bca28a",
+  "review_digest": "sha256:9a382804a34b5e03bd094252b7ced5a8825305798e441bc463a2e784093e34ea",
   "reviewed_fingerprint": "sha256:55362f309c2599f77207cc94bcfe5c82d136fda9175efd8bc906dce54aae8f81",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0124"
 }

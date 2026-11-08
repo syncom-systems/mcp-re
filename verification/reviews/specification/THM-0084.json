@@ -7,7 +7,7 @@
     "theorem_id": "THM-0084",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G11.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. It replaces a record naming the owner as reviewer, because that record's fingerprint no longer matched. Read client.proxy_request_correspondence (mcp-re-client-proxy/src/proxy.rs and proxy/arrival.rs). ClientProxy::handle still builds one SignedRequest, forwards round_trip(signed.request()), and passes &signed to verify_reply (which derives ResponseExpectation::for_signed(signed)) or to verify_notification_ack (which verifies against signed.request()); the only differences are that the response and the verification instant travel as one Arrival value, that the id is read through request_id, and that sign_request now calls build_signed_message with an McpMessage, which dispatches a present id to a request and an absent id to a notification exactly as the old two-armed match did. The source-scanning tests still find the same call shapes in handle, verify_reply and verify_notification_ack; their item-end scanner was extracted into end_of_item with the same brace-depth rule. No second request is constructed. The claim, scope and premises are unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -24,7 +24,7 @@
         "mutation_probes": "sha256:f66a90fca06ad85b1114ffb98fb8d962e18a02d5bc4afa1ce733f374599f2493",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:ebe835151a62ffba42b8f4f8a192c6fa8aa471999f76b369cd6d8089f3284594",
+        "source_inputs": "sha256:c5668c965026291ec24aa280b41bf8c083e224adca8cdfae9120e601f111c05a",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:1d01515e6067940deb26b04e59c10b09222dc5c61b30c6e8712afd4454cbf39b",
         "test_selection": "sha256:cd9dde906b4b5d6edd02847c7cca3396fa9374d4fdc5b3df467f0bb98ec6ddd0",
@@ -37,8 +37,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:f39a486bf93bda3402d11ecef4c68af130e1349de7bde120318ebdc7301c7f38",
+  "review_digest": "sha256:0bc46228c3d445dcc31ef62069bb147c95f66c071b0ebaefdb9c9ffe3f6d960f",
   "reviewed_fingerprint": "sha256:0645e05383a9a48cf8582e102f17bcb49240d7024c32ea716e34884cf6d292f9",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0084"
 }

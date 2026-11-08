@@ -7,7 +7,7 @@
     "theorem_id": "THM-0012",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G8.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read proxy.materialized_lifecycle_sole_producer (proxy.runtime_lifecycle and proxy.runtime_lifecycle_sole_mutator did not change). In materialized_runtime.rs, serve takes one FleetServing in place of the config snapshot, serve options and shutdown flag, and passes it to app::serve_fleet; the order is unchanged: the fleet is served first, serving_events(&served) decides which events are applied, transition_and_reclaim runs only after an Ok serve, and a failed serve runs shutdown() without recording. The unit's sole-producer structural probe is carried by the structural gates, which passed on the pull requests that merged these changes. The claim, premises and dependencies are unchanged. The previous record of this theorem names mats@sundvall.name as reviewer; this agent record replaces it as the current reading, and the earlier record stays in git history. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor, and every tested symbol the unit names still names a test function.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -24,7 +24,7 @@
         "mutation_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:bbc4bf3f2203f1ad7dfdc8325c0dd304188abd027ea6cc6aaeb4a24ceb574c33",
+        "source_inputs": "sha256:282d0a8310d825939193fcd736606c6276007fcac4c24bd1c53378555f01f887",
         "structural_probes": "sha256:19624eb1d372e37813a1b3857dfe8a902313606f7cc8483e79ec8fbd9f4e1967",
         "test_evidence_definition": "sha256:c5e1c68ea152595684086731dba641c4e601aaf3fd6377ae475b7f4167f02f33",
         "test_selection": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
@@ -77,8 +77,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:dadd7d8cf0766f540e8f0b5a7b9bbdd934c09409c9d0fcdd6e0461a837bdcfdf",
+  "review_digest": "sha256:a39ba00f215b32525340397aacf90110579ba1bb5178dd4028843276eb3b054a",
   "reviewed_fingerprint": "sha256:403ab4d7601a33ebded4a631f479b1433652d22daeda5dcaba0b9c33646dd9b4",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0012"
 }

@@ -7,7 +7,7 @@
     "theorem_id": "THM-0107",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G3_G4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. It replaces a record naming the owner as reviewer, because that record's fingerprint no longer matched; that record stays in git history. Read proxy.etcd_replay_adapter: async_etcd_store.rs became async_etcd_store.rs plus wire.rs, lease_pool.rs and test_gateways.rs. Compared function by function against the old file: the stale-retention guard still runs first with the same now; the lease TTL is still compute_ttl_secs(retain_until, now); a pooled lease is reused, a lease granted for a miss is offered to the pool, a failed transaction on a reused lease forgets it and retries once on a freshly granted one, and a lease is never revoked; the lease id is parsed fail-closed; the put-if-absent is the same CREATE_REVISION==0 transaction under the lease with the constant value; every transport, status, oversize, parse and timeout outcome is Unavailable, under one deadline over the whole exchange (Wire::post). gateway.rs only folds its two stream variants behind one Duplex view; protocol.rs has no diff. 14 of 17 cited tests have identical bodies; the three that differ (a_lease_outlives_the_horizon_by_the_declared_divergence, an_expired_lease_is_never_reused, nonces_retained_to_the_same_instant_share_one_lease) keep every assertion and take the gateway through a struct and the pool through its renamed methods. The claim holds. Every cited Rust test still exists by name; I compared each one's body with its body at the last record's commit and name the ones that differ. Helper functions that unchanged test bodies call were not all diffed. The mutation lane was not run. Evidence class as registered.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -21,13 +21,13 @@
         "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "governing_boundaries": "sha256:aa35c17fbc56ed6ecf581deee28141e2e97afdda97692a1a7c7331ad621b0b4f",
+        "governing_boundaries": "sha256:32c0a0a433f0af3fc7887bb653d845015b510fffd31e92e8cc96c299a9ad1e5e",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        "mutation_probes": "sha256:5409700ef234d93c41e5341974b0d745773b860181b3517246387df813259e5f",
+        "mutation_probes": "sha256:5c7454cb068ea7915dca15f0f82e917044e79288f76fc060f36192b87ff106fa",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:72f13cb26da31f81d0ff1b05d30c0b99cb95e2cd8d59b4c5dbe1a92e4e2b8911",
+        "source_inputs": "sha256:eea2219670c42e4b3d5bdb947ebd80a9d4134fe23f2874a1a70e8b345b78a1a3",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:d9be999494aa810203d0febc755d6cd61825d1db7997bad816725072ff0a1ebe",
         "test_selection": "sha256:3182f163b452caef81462361cd320c5641dcae63160d81b46b0cdb3be553c4ac",
@@ -40,8 +40,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:8a3972fdec0128659bd21df284c453b151f6741cdadd13a09297c675160e0e07",
+  "review_digest": "sha256:2afa1f4847f4e52c7e5bab406a9358877de3a87037be24e3e4957fe81f7c2914",
   "reviewed_fingerprint": "sha256:1ff5880d37d5f3d436e628e459a38cb1fecd0ccfd5a3920d41c12763353df7ec",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0107"
 }

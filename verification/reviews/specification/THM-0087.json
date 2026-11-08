@@ -15,7 +15,7 @@
     "theorem_id": "THM-0087",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-R2-REVIEW-4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. It replaces a record naming the owner as reviewer, because that record's fingerprint no longer matched; that record stays in git history. Read proxy.continuation_correlation_store (no source diff since the last record; only the governing boundary path lists moved) and proxy.continuation_key_provenance (answer_leg.rs: production lines unchanged; the test RecordingStore gained a Tier enum and an outage mode in place of a separate UnreachableStore, and the two cited operand tests are byte-identical). The key is still derived from the carried product's actor on both legs, and a read that admits nothing still does not consume. All 19 cited tests have identical bodies. The claim holds. Every cited Rust test still exists by name; I compared each one's body with its body at the last record's commit and name the ones that differ. Helper functions that unchanged test bodies call were not all diffed. The mutation lane was not run. Evidence class as registered.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -30,7 +30,7 @@
         "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "governing_boundaries": "sha256:ec3091b42a9e78c167ef864ac830663db861da4ab61e37936c13e83fcf439eed",
+        "governing_boundaries": "sha256:e2189c50fb742a9eda506b14bafc39d5491b56145fbe715128df4bfd4aa24e17",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "mutation_probes": "sha256:5ae15977136c885eab731677c77212e6792bdf6076c43109bec295b4276b4d2a",
@@ -56,7 +56,7 @@
         "mutation_probes": "sha256:0bd98336e6248fbc9f5b45670a342a8266ec845edcb459f4aa429f623e87a569",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:7fb9f9dabf50d475e9a12df64809c4f1fb30ae0b8e5c5e9daa90e706e275f8e6",
+        "source_inputs": "sha256:711dcea87a2d7af064e8211b61b9feef3d2a3ea78e3d84ed67a2546791974214",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:3e330e880ebb2a786a0d1ad44a2b69b744b6d7948361eea3b05c26b0e5e325bb",
         "test_selection": "sha256:f4c514cc90f00be1a86c00f84d7ad71720596542183749b72c02e7bbe238ceae",
@@ -77,8 +77,8 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:e75adaefa23b040edbcdb078dca51f38b26023f0aa9f45cde5a8cd1254485037",
+  "review_digest": "sha256:cdd18901d30756ba245ffbb8be4eb84bc5474e0ba685d558752c44f5436d7ec7",
   "reviewed_fingerprint": "sha256:fce8be82a3365a338d6337159f624fca41fb309a668b645f576aeb62e1f3e979",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0087"
 }

@@ -7,7 +7,7 @@
     "theorem_id": "THM-0089",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G7.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 4f9eb062 after the CodeQL remediation (work/security-audit-2026-09-22-r12/CODEQL-REREVIEW.md): test sources only; the accept-any-server TLS test verifier was replaced by verification against the test's server CA, no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded. Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written. Read in verification/reviews/packets/epic-1201-assurance-closure-2026-10-21.md: verdict CLEAN-NOTE, cause source movement (shared harness).  Evidence class as registered; V0 units are tested and probed, not machine-checked proofs.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read proxy.kms_endpoint_authority. kms_endpoint_policy/mod.rs was split into scheme, authority and host stages (host.rs holds check_host, check_bracketed, check_numeric_tail and check_port); kms_endpoint_authority now runs split_scheme, bare_authority and split_host_port in the same order as the old inline body. I compared the old and new production text clause by clause: the https/http scheme gate, the empty-authority refusal, the query-or-fragment refusal, the userinfo refusal, the bracketed-IPv6 check, the literal-name character set, the numeric-tail IPv4 rewrite refusal, the port checks (non-numeric, leading zero, over 65535) and the plaintext-loopback-by-address rule are the same conditions with the same messages. authority.rs and endpoint.rs (the KmsEndpoint producer) are unchanged, so the single decision and its consumers stand. The unit's tests moved into helpers: the hostile-character and admission corpora are the same sets, the refusal tests assert the same redaction (the configured token and userinfo never appear), and the client-side check now reads the host and port through ureq 3's http::Uri after the ureq upgrade, with an added check that the resolver does not canonicalize an admitted numeric host to another spelling, which is stricter than before. The claim, scope and premises are unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -23,14 +23,14 @@
         "governing_boundaries": "sha256:34fb4dfb2b0c2af6f4ca702b13dcb529bdec0648624304e2f16e9a77279b70ea",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        "mutation_probes": "sha256:7c925460ed42fade1f0f8a5d7b09823981283bcfcc3e4176e3c848d3cf484dc8",
+        "mutation_probes": "sha256:64cf1936bc789cd77042f559eaa608688b4a12998aa9b6933555297eca36d451",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:8f5a5106beac5f21d97de67aaeb605edb14c8d4b1847afe021d5753a49687a33",
+        "source_inputs": "sha256:f0f8752f8ce91c2d8d77a8e81fd26962c75796e4982a7fe6b2088d643aabd37e",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:d08894d0d3a7eed56474f71766faac5a7831b424eb5ac2c02dcef99960ee2431",
-        "test_selection": "sha256:684b7fad2f554d06d66f782a3f52da761c74b96c3e85b38d3584bf3e4d6945f2",
-        "test_sources": "sha256:94dfaa338808959316751debd390baf2894b099a7cb4e4220d54664b9bfba57c",
+        "test_selection": "sha256:b9f3a8f6a94d1326f3292bf3ad958e3052b361b2b4312dffefc6d7cb78f3ea00",
+        "test_sources": "sha256:c470da46f277f367ea6d539ff07db4b0b1ff2a00fdf22a4dee74cbb9074952ab",
         "trusted_assumptions": "sha256:2ba838c415493a955677ea89856614466b73a3eff24f8fa9d8802c49a34c0acf",
         "unit_id": "sha256:85ce049d49c995c9adf4afa8552e7a276a070525649af164d495b3bfcec0d81d"
       }
@@ -39,8 +39,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:2e8960e252cef4c0ec1a03ea951dd45a90d504cb0e8554babb164916e113a913",
+  "review_digest": "sha256:6ea172c79ac364aebe0d1fc47572b093552056ad3060a0f87fc5407ca92a118f",
   "reviewed_fingerprint": "sha256:e72c8e86f82919aa6ff4b0e74981dfdd72fe41bb0147193e8bddc1b0d297d4c3",
-  "reviewer": "agent:claude-opus-5-5 (exec #1201; prepared for owner ratification, not an owner signature)",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0089"
 }

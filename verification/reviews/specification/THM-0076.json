@@ -23,7 +23,7 @@
     "theorem_id": "THM-0076",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G11.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. It replaces a record naming the owner as reviewer, because that record's fingerprint no longer matched. Read client.response_binding_disposition and client.response_signer_authorization, both over mcp-re-client-core/src/response.rs. The production half of response.rs (everything above the test module) is byte-identical to the reviewed one; response_expectation.rs and delegated_evidence.rs have no diff. Only delegated_tests changed. The helpers it gained (sign_success, live_window, first_delegated_kid, bound_rejection, preflight_rejection, verify, verify_at, verify_pinned, verify_202, revoked_verdict) reproduce the inline setup of the old tests: custody from the same seeded factory (so a delegated kid is deterministic across instances), the same live 300-second signing window at NOW, an empty revocation set unless the test revokes one, and ResponseExpectation::for_signed with the issuer pin only where the test sets one. I diffed the changed tests that carry the claim and each keeps its assertions: the unpinned, root-pinned, other-root-pinned and delegated-kid-pinned cases for success, rejection and a 202; revocation by delegated kid, by issuer kid, by jti and of a rejection receipt, each expecting DelegationRevoked; the unsigned, direct-root and unbound-signature refusals; and the both-paths-failed refusal that returns the bound verdict. Request signing in the tests goes through build_signed_message with an McpMessage, as in the production proxy. The claim, scope and premises are unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -42,7 +42,7 @@
         "mutation_probes": "sha256:7e04bcdaf238e840b8704f44b494ef6d1f084f88290c8cbbafa35c30c70397ef",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:74acd0ca2f837b6229fb59925acde6d4f4c0c8a976110fa411710777336bb53d",
+        "source_inputs": "sha256:508d5ad9a5ba42ee369d0ea1bcb056c296bc5e75348c5f5a8572c63abc01e1ae",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:76a9faea1acf118b3960272f664a14d32d48c8674c7674741abddd2ec03c0611",
         "test_selection": "sha256:35b14f53b8c51788a824b51631b1c4b033947b6d4f6d8283e02423b96b9c940c",
@@ -62,7 +62,7 @@
         "mutation_probes": "sha256:412331e5b36180a17d617f1c460d3a7e0e41de4e96c157d18ef523237da6982c",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:5a75893b7bcf48aefdffefe38d07452d60a53160f9bbe92b6aaf26852f8068bf",
+        "source_inputs": "sha256:c2d8a021b762b9aa46681d5cb9eeee471c503806adb8868de39c3f038e76242a",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:ac9ace5d660de05521b8ba4c162f28a29fe08db71cff75dc2d4e0d8f1ed5b9be",
         "test_selection": "sha256:c945f75fc2f776011e26fd76fbff4f3959f8a01ff6b244373e1a9aff37c0ab1f",
@@ -91,8 +91,8 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:454bb1cb6c9bbc4db9fba0a67b63e24041a56210572183ed5ee9abfe19d2091f",
+  "review_digest": "sha256:87a4e6c2a780d53bff8f2e86274e66eb77cf60a17977f790ff963fbdecfedda0",
   "reviewed_fingerprint": "sha256:85db395bd03211097e6a2fea99370444452ce77a2fd61c70f1611519c3c2b3af",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0076"
 }

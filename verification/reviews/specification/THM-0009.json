@@ -9,11 +9,11 @@
     "theorem_id": "THM-0009",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G3_G4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read after CI formatting (rustfmt over the nonce-cleanup test edits) and the clock-free unique_test_nonce (process id, process address, counter; work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): formatting and the test-only helper only; claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded. Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written. Read in verification/reviews/packets/epic-1201-assurance-closure-2026-10-21.md: verdict CLEAN, cause dependency change (core proof_dependencies).  Evidence class as registered; V0 units are tested and probed, not machine-checked proofs.\n\nAgent re-review after the ASM-0021 re-measurement under Verus 0.2026.10.18.7d82994 (Rust 1.99.1), recorded under delegated owner authority (mats@sundvall.name directive of 2026-10-22); an attributable agent decision, not a personal owner signature. Reading: the only moved premise is ASM-0021, whose entry text changed only in its justification (ceiling 2 `format!` lifted, ceiling 9 `str::replace` stands, still NOT DISCHARGED). The theorem relies on `actor_id` being opaque to the prover with no ensures, which is unchanged. Claim, other premises and dependencies unchanged; the unit's trusted_assumptions component moved with the premise text. Evidence class as registered; no measurement is claimed until the complete run.\n\nAgent re-review after the Verus 0.2026.10.18 compatibility change, recorded under delegated owner authority (mats@sundvall.name directive of 2026-10-22); an attributable agent decision, not a personal owner signature. Reading: the unit's source moved through one site, `check_params` in mcp-re-http-profile/src/verify/floor/params.rs: `match params.tag.as_deref() { Some(PROFILE_TAG) => {}, _ => return Err(UnknownProfileTag) }` became `if params.tag.as_deref() != Some(PROFILE_TAG) { return Err(UnknownProfileTag) }`. The refusal, its error and its position before algorithm resolution are unchanged; the accepted set is still exactly the one profile tag. Claim, premises and dependencies unchanged. Evidence at this revision: `verify-verus` PASS on all 6 V1/V3 units (28 verified in mcp_re_http_profile, non-vacuity probes refused) under Verus 0.2026.10.18.7d82994; //mcp-re-http-profile/... 17/17 Bazel tests pass; lint lane clean. No complete-run measurement is claimed.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read http_profile.continuation_unbypassability. block.rs became block/{actor,audience,continuation,request,response}.rs with the module tree and re-exports kept in block.rs. The 31 tests moved with their types and keep their names (31 before, 31 after). Production code moved as written except two spellings: HttpContinuation::verify's three-way `||` disjunction became three sequential ifs that check the previous-request handle, the response handle and the request-state digest in that order and return the same ContinuationBindingFailed, and rustfmt reflowed one refusal. ArtifactBinding and its vocabulary files are untouched. actor_id stays external_body in block/actor.rs with no ensures (ASM-0021; the assumption's sites and test names follow the move). In verify/floor/request.rs the only change is SignatureOver at the one verify_under call. The dispatch path is unchanged. The claim and the THM-0010 dependency are unchanged. Premise ASM-0021 is re-read on its own axis in this series; this record reads THM-0009 against it. Evidence class as registered. verify-verus passed every Verus unit at this revision (28 verified in mcp_re_http_profile, 5 in mcp_re_core, declared theorems present). The mutation lane was not re-run by this reading; check-registries resolves every probe anchor.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
-      "ASM-0021": "sha256:117d41d9806d890f780f106d69835f9a05e7af3b21dad77eee3f7246a3289723",
+      "ASM-0021": "sha256:ed929a0542043825998717ea11a425b5c395947a2d9a110c9e4bc1068ccde128",
       "ASM-0024": "sha256:7978ee52ad5d1ec5f372e3d7d62ef7f33249715db25ece64a1e15aecfd1f4b77",
       "ASM-0045": "sha256:f95cc5de78b3951882642cae4cddb697c1911270e8b6f8d5b9e0b01ee5728f32",
       "ASM-0046": "sha256:26d794f2ef1ef75a76fdd9867a63e7b6602707b2be1da819fbc3af868009d5cd"
@@ -25,18 +25,18 @@
         "enabled_features": "sha256:27c4aa21ec726789b14de509e34ebb4cfe428bdb49f998ad11a352443ad6f2c0",
         "exported_contracts": "sha256:10f8484b1d404efbfa580ffbf7839bcd5e70ff1a24c125fbc88bd691dc63a19e",
         "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "governing_boundaries": "sha256:3739e545912816fb04703b937073a527e730f9bbdc13a602c15c076f9d90405e",
+        "governing_boundaries": "sha256:8d160976b4160d8bc6b83c2504d2b9398a3dab593b6f602749b1b4ef8ec058ea",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "mutation_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        "proof_dependencies": "sha256:511b1768191f03f6a492f369184acbf645ebbbab096c7547b9ae88141878269b",
+        "proof_dependencies": "sha256:ce0dda53c608ee600d08cbe131a491287daa1f5d4079f1ed0f577a218d8986b6",
         "proved_symbols": "sha256:3911c636660e3d7234079917bdbc93b4356a1d0574560462fde2b8f78c3ae0ea",
-        "source_inputs": "sha256:9636ece32914bb971e9532fb040b853b3407451ccebad8311681a1b0f92d1cbe",
+        "source_inputs": "sha256:f00b1f209248e9082c4a6cbe5ab87b5bc84495381c2e6b07ee138ffdffcdb27c",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:2f236ef81b1ed9ac0ccd56dca3fcfebd269f04f9d5ee0823722d019bb0af5101",
         "test_selection": "sha256:2d7b68233d052413c61b1faadf7baa982f040ae609755ce6c990e4e96b9dfd3a",
-        "test_sources": "sha256:58784b602693956528bb74ed2a03e4269fd74e61ab340f947aa4a9269ecd53d2",
-        "trusted_assumptions": "sha256:97495a894065c139372380f9bc0636a05869ae2d029bd7d457739d2650aaca1f",
+        "test_sources": "sha256:06ece0f2fdf532f18cbf3cfa683911feaaeaab9ad9e35dcc13d0e1101d2fd2df",
+        "trusted_assumptions": "sha256:eee16d47ec824a22a4eaeb243cf5c55b792fb8e195b058a217cf046ce840824c",
         "unit_id": "sha256:6041ce35297da1a6cab42d6d27debe8beda5108c211ba8c236652ca07ef04645"
       }
     },
@@ -46,8 +46,8 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:09ddad2c61326c181195a7b91cbc4ea1623bb50dcbd789339780831cee77a127",
+  "review_digest": "sha256:48c1d954806016125a97b78a94d5264b7a955e0dd32f6c8bd48581fd8e3109a9",
   "reviewed_fingerprint": "sha256:f891aa87da728c7ffd2cd2e7ef98f0f60d8f8419c47a599616bbafa57ca4c171",
-  "reviewer": "agent:claude-sonnet-5-5 (delegated owner authority, directive of 2026-10-22)",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0009"
 }

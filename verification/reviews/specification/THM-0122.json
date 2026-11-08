@@ -7,7 +7,7 @@
     "theorem_id": "THM-0122",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G9.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded. Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written.  Evidence class as registered; V0 units are tested and probed, not machine-checked proofs.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read conformance.audit_vocabulary_drift and core.audit_vocabulary. mcp-re-core/src/audit.rs, audit/ and error.rs have no diff. The guard test mcp-re-conformance/tests/audit_vocabulary_guard_test.rs was split into corpus.rs, producers.rs, source.rs and vocabulary.rs. I compared the old 816-line file with the new five: the same 13 test functions exist; the expected event-set constants, CRATE_SOURCE_TREES, NOT_SCANNED, TARGET_TABLE, CRATE_KINDS, COMPILED_SOURCE_DIRS and SOLE_MINTING_FILES are identical; frozen_wire_codes, production_literals, the slice and event_type const parsers, the quote-pair literal scanner, minting_files, crate_packages, the carrier and projection checks (six carriers, the two From<&_> for McpReError signatures, the wildcard-arm refusal) and the anti-vacuity floors (at least 15 frozen tokens, invalid_signature present, every pinned event in the production region) keep the same predicates and refusals. The execution and accounting category checks are one assert_own_category helper over the same slices and the same other-category disjointness lists. The claim holds. The mutation lane was not run, and no test was run. Evidence class as registered (V0).",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -24,11 +24,11 @@
         "mutation_probes": "sha256:4053e5c49e93a4cfc729e9c47e25dfbd920b0cfa20bbd04d2137f0bd8ee7a895",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:5c279b68854463e171cf90516b5ad0ba0279a80e84a1bd2dcd870fe9984679c9",
+        "source_inputs": "sha256:e38969e8b843bb6a7fa5fcf55a32da3fb26c12e75270f5582da0b608f06d6e31",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:d7a6abcf481faad13ebc031b707c827b647146bfcc255fcb04da2c3290312d31",
         "test_selection": "sha256:dff3ab547b8887c0183100da27a59565db2c212144fc61050e00480b481f5ac2",
-        "test_sources": "sha256:b7a7b922ac9a0dccc6565b66bafbbd9fa1db4538a6c7c2f61faaa77e2bbe4126",
+        "test_sources": "sha256:e5cd29976d6400ff74088ea174ddda43d50fbfc8b2d1217ca32a728f7770394b",
         "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "unit_id": "sha256:f832484b9b84d83a2a0548070af18e3bf234031d89e0a93c92a7a82b67af1268"
       },
@@ -57,8 +57,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:5cfdfae9f28286b314cf0820d7863705beeb78e09dd1505894e8275ca17419c5",
+  "review_digest": "sha256:bc145d099f6dd77525ef6ba59e170af819e2f904f95cccba56dc9bf54fe2aa48",
   "reviewed_fingerprint": "sha256:c88332a76128e15a8f704754e3871ac787819d986fb67a1409d3fad36176544e",
-  "reviewer": "agent:claude-opus-5-5 (exec #1201; prepared for owner ratification, not an owner signature)",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0122"
 }

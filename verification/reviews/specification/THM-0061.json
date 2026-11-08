@@ -7,7 +7,7 @@
     "theorem_id": "THM-0061",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G11.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read client.execution_contract, client.proxy_reply_disposition and client.receipt_contract_carriage. response.rs production is unchanged; execution_contract.rs and result_classification.rs are unchanged; result_class.rs changed only in its tests (assert_each_refused over the same malformed and unrecognized resultType bodies and the same two errors). In mcp-re-client-proxy, build_signed_message(McpMessage) replaced the request-or-notification branch on the id key's presence and the same request_id helper is read by the signer and the verification path; Arrival carries the reply and its arrival instant together. The execution-contract tests compare the same fields as tuples (unstated, did-not-run distinct from unstated, unrecognized tokens refused, retry refusal). The previous record named the owner as reviewer; it is replaced because its fingerprint no longer matched the tree, and the owner's earlier reading stays in git history. The claim, premises and dependencies are unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor, and every tested symbol the unit names still names a test function.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -24,7 +24,7 @@
         "mutation_probes": "sha256:3eb5de06c957b54fe7dd6e400831e2e875ada800374da9468e824fd9f1471d3e",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:f7878a31aabd96531dc3673680ced062998dcca415fcf5d435be0954b17d93b8",
+        "source_inputs": "sha256:d0723a52833aaed5100a47adbc5c78805b4d9754bd77804ba58cc649841a82e0",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:7f2ea912b2b5b9546622d57e43c2f209080b24b187a67c3643fcbbde555eb4f0",
         "test_selection": "sha256:e24a1853707ef5f73cdb45148605ac4b02b74851f437a4c3a9686f2984a93896",
@@ -44,7 +44,7 @@
         "mutation_probes": "sha256:78ac5ecd383b08674f7fefebd8e8aabbcb8a7f1964cf3b33390d13d457386e5e",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:ebe835151a62ffba42b8f4f8a192c6fa8aa471999f76b369cd6d8089f3284594",
+        "source_inputs": "sha256:c5668c965026291ec24aa280b41bf8c083e224adca8cdfae9120e601f111c05a",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:aa8d29a9920701ef0687378826f5dbfb358823c754d99a340e07d6a10434c343",
         "test_selection": "sha256:89ceb94e9e1f38bdd082bf70b4db7dc754d4410bc677c332385d3c44ecd9e6d2",
@@ -64,7 +64,7 @@
         "mutation_probes": "sha256:ef16692b7e6d3c4ce3ee341a77db0ab8239aeb575f68057ed5112887b1b3bdc9",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:0423c9fb91bc81cf506566c9f37f297950cba3cf2773866793cc15ae60a85145",
+        "source_inputs": "sha256:dee6e5676070e383fec140c4afb6741e0fd8a67c91574bc93e58d3981297cc0e",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:3160e70f18c4feabddfc6e5baf7c7075ae86511ee84b0814a052481a64569389",
         "test_selection": "sha256:78bf360727defc49207dd90a595a86c4d65eefb48e5d70acd27bd7e36095c0fd",
@@ -77,8 +77,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:7684ddd4219169d38cfadd06a694e4828c13dca558922d84c59ce35ac2b4af4e",
+  "review_digest": "sha256:6768de07d94fcd54e850bf1c1f1d227c01fd496a52b5d5ed03018fec38755f70",
   "reviewed_fingerprint": "sha256:0b5ec6c9032561d5de456796d26561cb1e60935441c5c8b0360f9b681e56ec87",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0061"
 }

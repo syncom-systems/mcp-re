@@ -12,7 +12,7 @@
     "theorem_id": "THM-0085",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G9.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 4f9eb062 after the CodeQL remediation (work/security-audit-2026-09-22-r12/CODEQL-REREVIEW.md): test sources only; the accept-any-server TLS test verifier was replaced by verification against the test's server CA, no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded. Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written. Read in verification/reviews/packets/epic-1201-assurance-closure-2026-10-21.md: verdict CLEAN, cause implementation change (plumbing).  Evidence class as registered; V0 units are tested and probed, not machine-checked proofs.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read proxy.refusal_audit_emission. The receipt module (receipt/mod.rs and audit_event.rs: the two emitters rejection and response_rejection, the typed projections cause.core_verdict() and cause.authorization_facet, record_to before the signed_rejection mint, and the pub(super) mint) has no diff since the last review. In http_profile_serve/mod.rs the refusal funnel is unchanged in shape: refuse still passes the Refusal and a derived disposition to responses.refuse, and disposition now takes the exchange progress by mutable reference and enters the terminal through p.refuse() (#1209) before matching retry_semantics(). The accepted-reply assembly (reply_assembly/accepted.rs) used to call response_rejection directly and now reaches the same emitter through refuse_accepted, which calls responses.refuse with RefusalPoint::Response; so the direct emitter routes the test counts fell from five to four (EMITTER_ROUTES), the rest of the test is unchanged, and the one route that left still passes through an emitter that records before it mints. This is other merged work (#1256), not part of the Code Health refactor. The claim, scope and premises are unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -29,11 +29,11 @@
         "mutation_probes": "sha256:d735ebddb01ee65646990d5de3b34ca1c3c4f723a43aee996455a84e2ee6ac73",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:7f9ca2fe9dedee7fb37cde81fa95f3e5f39942f06e1054a76e0c85794d0fe50a",
+        "source_inputs": "sha256:9b5d81b555554a021e708b5ee6dc0642700633853e34f7f4c80e763adc8fd50f",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:ac2abbd6ef9e9c31c26e8083592b60f5bccfaa0b85fbc6bd4ee9ba99e4a42f35",
         "test_selection": "sha256:d6795f43ff343440f7327421455ecd0a7693d6085bc3a6c2055e6dcb393d8684",
-        "test_sources": "sha256:94dfaa338808959316751debd390baf2894b099a7cb4e4220d54664b9bfba57c",
+        "test_sources": "sha256:c470da46f277f367ea6d539ff07db4b0b1ff2a00fdf22a4dee74cbb9074952ab",
         "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "unit_id": "sha256:dd16b9d20078768afae8aa1853774d8c1c1f0b63d8f39fd7666a6592a39dcfd3"
       }
@@ -47,8 +47,8 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:85717f2ed259befa1b795b138bd5e052849d0b28236195463dc5b86864231286",
+  "review_digest": "sha256:5da202da6360bc98d41a02a2f95cecfb34f3bf5cfeb41f48f741a88f0cd74049",
   "reviewed_fingerprint": "sha256:f39497f8ded64f01ddd3473783578ac80f0419bc6d4c875ae833319bdda0005f",
-  "reviewer": "agent:claude-opus-5-5 (exec #1201; prepared for owner ratification, not an owner signature)",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0085"
 }

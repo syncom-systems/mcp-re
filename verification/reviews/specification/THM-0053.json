@@ -7,7 +7,7 @@
     "theorem_id": "THM-0053",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G1_G10.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read http_profile.admission_assertion. delegation/jose/ and admission/ have no change since the record; admission_policy.rs changed one doc comment (EnforcedAdmission::budgets, the skew decision of #1269). The cited admission::tests that exercise issuer trust, signature, credential type and algorithm, profile and audience, validity window, the verifier's own budget and its boundary, future-dated issue, kid disagreement and malformed compact form live in files that are unchanged. Only the governing boundary path lists moved. The previous record named the owner as reviewer; it is replaced because its fingerprint no longer matched the tree, and the owner's earlier reading stays in git history. The claim, premises and dependencies are unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor, and every tested symbol the unit names still names a test function.",
   "review_components": {
     "encoding_version": 1,
     "premises": {
@@ -21,13 +21,13 @@
         "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "governing_boundaries": "sha256:11367cbeafd094904552d7c934e3899a6e8ea758b330f0bf673f51618e621fd3",
+        "governing_boundaries": "sha256:abab826c4ce7e540fe09c8340b1dfee9735e4c2866052ca860006b0ef643f114",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "mutation_probes": "sha256:0614f755c16cf8104e62432f4dff461452e62fdcf6cd7af4579e21257f48a06c",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:35ebd58f2f7e1a8e681e2c9445ac4e23bc68de28a71a5a3a6b144de16b52601b",
+        "source_inputs": "sha256:d95e0e6b6344d326db020403f03b034586e27939c4a199a4f524fee632f5ce13",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:88b3ade506cacca3bf4ad04d04d6047fda9163e14cc383be6305523aea5061d6",
         "test_selection": "sha256:314118886e00501e47e85e334cfc78cf39d0a20a382ff579d5805c4d709b89c9",
@@ -60,8 +60,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:a50b9eb681efe166c04095a42e9c6d9615fe691fcdb6e6649f54ed5efbf9e009",
+  "review_digest": "sha256:00acbeb6bfa748d845d046fb42e75266484b3e6f4017c2cfe22d533a7f5390f3",
   "reviewed_fingerprint": "sha256:4b5654d1fceac97126075e40b41086da8d9f836aeb7cf63f6dd8a89252da6440",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0053"
 }

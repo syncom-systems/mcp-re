@@ -9,7 +9,7 @@
     "theorem_id": "THM-0036",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G6.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read proxy.trust_document_locator and proxy.trust_configuration_state_sole_producer. The pairing lives in EpochSource, whose fields were private to the trust_revocation module and are now pub(in crate::config_state::trust_revocation): the same module subtree, with the locator and key still handed over together and validated together. trust_document.rs is unchanged and the trust_revocation split is a move of the same lines (see THM-0035). The claim, premises and dependencies are unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs. The mutation lane was not re-run by this reading; check-registries resolves every probe anchor, and every tested symbol the unit names still names a test function. The previous record named the owner as reviewer; it is replaced because its fingerprint no longer matched the tree, and it remains in git history. Owner ratification of this reading is the owner's act.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -26,7 +26,7 @@
         "mutation_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:202071714cfe5e250772da89dfc79e37b279f1122a86df8c77158f0cb9b7fed4",
+        "source_inputs": "sha256:fecaaac9e8e4700173c60c41ff8b4281b660ba29a4ec68700b19f9e5327280e6",
         "structural_probes": "sha256:b73fb9f690a2ba436d8d1ce9051acc84903671d1a84c0369f75884e647c359f3",
         "test_evidence_definition": "sha256:288dacfbe3810e3e9f46e9cf651ae80766b028b0dd0c0e6dec52ef6172efbc83",
         "test_selection": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
@@ -43,10 +43,10 @@
         "governing_boundaries": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        "mutation_probes": "sha256:1bc81c47f78d6e3c223b9f62d608ee8276f0052e4bb3208232fb20c7e391544d",
+        "mutation_probes": "sha256:a5931177efd782c6ec6b314849b166a9239137dcce7417772f6be6c6478d17bb",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:202071714cfe5e250772da89dfc79e37b279f1122a86df8c77158f0cb9b7fed4",
+        "source_inputs": "sha256:fecaaac9e8e4700173c60c41ff8b4281b660ba29a4ec68700b19f9e5327280e6",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:cb47f00a82a0b8f13dda29726dbaa196c0b1b41f766c1c1e87fd0798ff020b1b",
         "test_selection": "sha256:05d4742470cf71c9cbdba3054a8f4ef3737739cbb3165d02590a4f8fd096e77a",
@@ -61,8 +61,8 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:f1a2fd42b746e33413a61aebb88b1931c1cac7f4e3da381bf8fc5c3c4ce752e3",
+  "review_digest": "sha256:7d12a629fffe2865cb977927b3ab02258a5d6d507305a7983799bf64f3f09818",
   "reviewed_fingerprint": "sha256:2a2ac674932da0c90e2cd4f7ef3a744428dbbf4b63a409d09fb90459c85eb2eb",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0036"
 }

@@ -7,7 +7,7 @@
     "theorem_id": "THM-0112",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G9.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 4f9eb062 after the CodeQL remediation (work/security-audit-2026-09-22-r12/CODEQL-REREVIEW.md): test sources only; the accept-any-server TLS test verifier was replaced by verification against the test's server CA, no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read at the nonce-literal cleanup (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): hard-coded request nonces in tests whose property does not depend on the nonce's value now come from the test-only `unique_test_nonce`, dev-dependency wiring and one helper in mcp-re-test-paths added; every deterministic vector, committed fixture, collision-shaped input and malformed-nonce control keeps its literal; no test or assertion removed or weakened. Claim, premises, dependencies and entry text unchanged. Re-read after CI formatting (rustfmt over the nonce-cleanup test edits) and the clock-free unique_test_nonce (process id, process address, counter; work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): formatting and the test-only helper only; claim, premises, dependencies and entry text unchanged. Re-read after the replay-race salt stopped defaulting a missing clock to a literal 0 (work/security-audit-2026-09-22-r12/NONCE-REREVIEW.md): one test helper only; claim, premises, dependencies and entry text unchanged. Re-read in the post-architecture assurance-closure campaign (MCPRE-218, #1171) against the semantic changes to its supporting units over a0b944c4..72127a07, recorded in verification/reviews/packets/assurance-closure-rereview-2026-10-14.md, and ratified in the owner's batch ruling of 2026-10-14 (verification/reviews/rulings/mcpre-218-assurance-closure-2026-10-14.md). Claim, premises and dependencies unchanged; the review digest is re-recorded. Agent re-review for epic #1201 (ADR-MCPRE-070), prepared under the owner's directive of 2026-10-21 transcribed in verification/reviews/rulings/epic-1201-authority-closure-2026-10-21.md. This record is NOT an owner signature: it attests the agent's substantive reading only, and the owner's ratification is the ledger line that ruling file names, which does not exist when this record is written. Read in verification/reviews/packets/epic-1201-assurance-closure-2026-10-21.md: verdict CLEAN, cause source movement.  Re-read after the owner directions of 2026-10-21 were applied (packet section 'Addendum 2'): its identity moved after the packet's 11d940f9 measurement only through test_sources, from one added test, outcome_before_success_test.rs::required::a_window_that_lapses_during_g2_is_refused_by_the_client_never_accepted (ADR-MCPRE-070 O5); no test or assertion was removed or weakened, and the reading is unchanged. Evidence class as registered; V0 units are tested and probed, not machine-checked proofs.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. Read proxy.retained_record_content and proxy.retained_record_at_the_store. retained_record.rs: RetainedHopRecord::of is now #[cfg(test)] (production builds a record with over(committed.retained(), response) from retained_request, the same builder); covered_set.rs has no diff. durability.rs: the writer, queue and marker-stage code moved into writer_thread.rs, retention_queue.rs and marker_stage.rs; EvidenceRetention::retain became test-only (#[cfg(test)]), so the three cited store tests exercise the writer through the test entry while production goes reserve then complete over the same projection. That is a narrower route to the same record, and this theorem is about what a record holds, not when it is written (THM-0088). The three store tests keep every assertion; they read the archive field instead of archive(). The retention integration test moved to transparency_e2e_test/retention.rs with the same assertions through the Scratch helpers. The claim holds. Every cited Rust test still exists by name; I compared each one's body with its body at the last record's commit and name the ones that differ. Helper functions that unchanged test bodies call were not all diffed. The mutation lane was not run. Evidence class as registered.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -24,7 +24,7 @@
         "mutation_probes": "sha256:0993201653df34db0730a548bf7f67be81adbf3231112bf0e45e364bd70fba3e",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:83fb10193ad88337f04cbce6b159f61a6be7ad803776f800db70c86f79d1062e",
+        "source_inputs": "sha256:e9a222611267dc6893bc99f8b9e2c9ca34cb03f69278e22885ddbed85f23895b",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:8d0bdd955d9c6432c4f2a81fabcad090935eeace41f692a7d508ddcc8736c2d0",
         "test_selection": "sha256:4dada5580c620406aea2ad77da0a3e9e33f0aaa6a4ff1017f7822e441295d4f7",
@@ -44,11 +44,11 @@
         "mutation_probes": "sha256:7dd7d2575b108ed5faa5abc9b345cfdaf3c6b85520200bf1ec8c04dbbe028511",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:17a23f29cb5ec29a5be22752f8861bb6a949cbc69ff22ac767aef1aaec89bb55",
+        "source_inputs": "sha256:482bb5c36db30dc90849f27a71fb5e487df5232d350e467c9ed489c9da541986",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:c1811420909e7ea6f3bd57a824a9ba68b5d2d6c51aa95bfae25bbeb91c6edcf0",
-        "test_selection": "sha256:3b874c0767b2087e02b17ea2faad4934a94b9b04ae422e2bf3f75ea304494882",
-        "test_sources": "sha256:8aae287093e67dec34a3c3ad1f79d85585214fcb1128bb1c8107ba63c3664984",
+        "test_selection": "sha256:8833250bec80dc0b5edef2a5e2ee1cdb661d57c8f21d2ba8e524d59ca4fa9b2f",
+        "test_sources": "sha256:6303eeed566fa034be06059a89558bad73c9a1a0fe742a69e9e5424245f2f609",
         "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "unit_id": "sha256:bcdf1542592b3449f343d783a33be2bbdcaaf1e409428d46ccae11cc49ce5853"
       }
@@ -57,8 +57,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:89f36297a102773ccc8d08766fdaa5de9e5ccfb32e9b0290ff8a346af0e0dec6",
+  "review_digest": "sha256:921e45a0a81077d3de0ae0e2bc460c582a3086e95e2e53e8afa7e54c699721fd",
   "reviewed_fingerprint": "sha256:29c9bb8d600e2fa44bd5d4ef34495a8a46f62b9b28e02bde575c1fa9a6b31b9e",
-  "reviewer": "agent:claude-opus-5-5 (exec #1201; prepared for owner ratification, not an owner signature)",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0112"
 }

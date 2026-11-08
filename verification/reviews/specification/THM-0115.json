@@ -7,7 +7,7 @@
     "theorem_id": "THM-0115",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G7.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "notes": "Agent re-read after the Code Health refactor, 2026-11-07, under the owner directive transcribed in verification/reviews/rulings/agent-rereview-after-refactor-2026-11-07.md. This record is NOT an owner signature: it attests the agent's substantive reading only. It replaces a record naming the owner as reviewer, because that record's fingerprint no longer matched; that record stays in git history. Read proxy.remote_signer_call_aws and proxy.remote_signer_call_gcp: mod.rs and quota_signals.rs have no diff. wire_limits.rs: read_error_body takes the ureq 3 response and still reads at most MAX_ERROR_BODY_BYTES of the body. The adapters keep the status and the body as one value (RemoteSignerFailure::status_body from Failure::Status). The two cited truncation tests differ only in building their response through ureq::http; the other 13 are identical. The claim holds. Every cited Rust test still exists by name; I compared each one's body with its body at the last record's commit and name the ones that differ. Helper functions that unchanged test bodies call were not all diffed. The mutation lane was not run. Evidence class as registered.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -24,7 +24,7 @@
         "mutation_probes": "sha256:7a0f7ad89009c76ee93cc51bbbbda6a381a672f79b1aa6d21207bad6b2a38cfd",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:19de092233fd0d2b4e85b1b8597271e357f8852220ecfac4fd24c897f603a9f2",
+        "source_inputs": "sha256:545a7e30f5193ac12df5a92839f0ee2070a723c597f3e22105f68228f25cacb3",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:54308a45e507dd66a28d9e30581c96ed59e7dddcbfe95ca453d58ab5f93a53e9",
         "test_selection": "sha256:961e67397df730d0fa7d32a045d26abc6cf04e58d221d3bb82ad29418d021dde",
@@ -44,7 +44,7 @@
         "mutation_probes": "sha256:062b1be69056306982534787a420692e731db9ee64cc76dd564ebafc44f897d0",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:19de092233fd0d2b4e85b1b8597271e357f8852220ecfac4fd24c897f603a9f2",
+        "source_inputs": "sha256:545a7e30f5193ac12df5a92839f0ee2070a723c597f3e22105f68228f25cacb3",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:c0bf96811b2d00044048cfece9f5e126d20f4b4119f28b9526add948addbd066",
         "test_selection": "sha256:11fa8ad33fa763a254e2f501184ac7478cd0785c98a538ebf22a836311fde62c",
@@ -57,8 +57,8 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:6e72856060178143767a3c2214d8efa708d552c33f095e0d17d99df0182810e9",
+  "review_digest": "sha256:da308aa4db15ee60fea4f5bcb55c3fa918eb756962cbb0fcf343b46d5ce969cf",
   "reviewed_fingerprint": "sha256:8a261e0cf571539e43ea0c4a9856fbde6b271f85919e1ce12778bed45c5e00d9",
-  "reviewer": "mats@sundvall.name",
+  "reviewer": "agent:claude-sonnet-5-5 (session_01Mm7DPSxgQDWEXwRP8RY8Wj; not an owner signature)",
   "subject": "THM-0115"
 }
