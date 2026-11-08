@@ -270,9 +270,12 @@ path = "sdk/python/src/lib.rs"
 # MCPRE-199: a refusal crosses into Python typed, and the refusal channel and device seam
 # are `refusal.rs`'s: 686 (measured at c198ef0) -> 683.
 # MCPRE-200: the version, profile-tag and skew-bound accessors are `core_facts.rs`, what the
-# core reports about itself: 683 (measured at 75e64d0) -> 672. `baseline_sha` names that parent.
-baseline_prod_loc = 672
-baseline_sha = "75e64d0"
+# core reports about itself: 683 (measured at 75e64d0) -> 672.
+# The entry points that come in pairs are written once in `entry_points.rs`, the signing and
+# verification arguments are `sign_inputs.rs` and `verify_inputs.rs`, and the values returned
+# are `results.rs`: 672 -> 202. `baseline_sha` names the parent of that change.
+baseline_prod_loc = 202
+baseline_sha = "de854b4f8"
 status = "unreviewed"
 
 [[debt]]
@@ -312,9 +315,12 @@ path = "sdk/typescript/src/lib.rs"
 # MCPRE-199: a refusal crosses into JavaScript typed, and the refusal channel and device
 # seam are `refusal.rs`'s: 649 (measured at c198ef0) -> 645.
 # MCPRE-200: the version, profile-tag and skew-bound accessors are `core_facts.rs`, what the
-# core reports about itself: 645 (measured at 75e64d0) -> 635. `baseline_sha` names that parent.
-baseline_prod_loc = 635
-baseline_sha = "75e64d0"
+# core reports about itself: 645 (measured at 75e64d0) -> 635.
+# The entry points that come in pairs are written once in `entry_points.rs`, the signing and
+# verification arguments are `sign_inputs.rs` and `verify_inputs.rs`, and the values returned
+# are `results.rs`: 635 -> 201. `baseline_sha` names the parent of that change.
+baseline_prod_loc = 201
+baseline_sha = "de854b4f8"
 status = "unreviewed"
 
 # MCPRE-175 gave the local listener an owner subtree. `serve.rs` mixed the accept loop with

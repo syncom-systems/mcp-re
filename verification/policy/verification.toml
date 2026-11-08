@@ -6053,7 +6053,15 @@ tested_symbols = [
 id = "sdk_python.native_binding"
 class = "V0"
 description = "THE PYTHON SDK'S NATIVE BINDING HANDS THE CALLER'S VALUES TO THE BINDING CORE UNCHANGED AND RAISES WHAT IT REPORTS. Each `#[pyfunction]` builds the core's signing or verification arguments from the keyword arguments it is handed — the five continuation keywords each reaching its own handle — passes the transmitted request bytes through untouched, and returns the core's verdict field for field; a wire refusal is raised as `WireRefusal` with the frozen token in `.wire_code`, a device failure as `SigningDeviceFailure` with no wire code and the device's own exception as `__cause__`, and any other refusal as a `ValueError` carrying the core's message, an empty issuer field named by its Python keyword. The anchor, policy, device failure and projection are sdk_binding_core.adapter's. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the interpreter, about PyO3's delivery of arguments and return value beyond the premise ASM-0088 states, or about what the Python layer does with the verdict (the sdk_python.* units)."
-paths = ["sdk/python/src/lib.rs", "sdk/python/src/core_facts.rs", "sdk/python/src/refusal.rs"]
+paths = [
+  "sdk/python/src/lib.rs",
+  "sdk/python/src/entry_points.rs",
+  "sdk/python/src/sign_inputs.rs",
+  "sdk/python/src/verify_inputs.rs",
+  "sdk/python/src/results.rs",
+  "sdk/python/src/core_facts.rs",
+  "sdk/python/src/refusal.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -6063,7 +6071,9 @@ evidence = [
 ]
 tested_symbols = [
   "//sdk/python:native_binding_test#tests::an_issuer_field_is_named_by_its_python_keyword",
-  "//sdk/python:native_binding_test#tests::the_five_continuation_keywords_reach_their_own_handles",
+  "//sdk/python:native_binding_test#sign_inputs::tests::the_five_continuation_keywords_reach_their_own_handles",
+  "//sdk/python:native_binding_test#sign_inputs::tests::each_signing_value_reaches_its_own_argument",
+  "//sdk/python:native_binding_test#verify_inputs::tests::each_verification_value_reaches_its_own_argument",
   "//sdk/python:native_binding_test#core_facts::tests::each_fact_is_the_binding_cores_own",
   "//sdk/python:native_binding_test#refusal::tests::a_device_answer_that_is_not_bytes_is_named_by_its_python_type",
 ]
@@ -6077,7 +6087,15 @@ tested_symbols = [
 id = "sdk_typescript.native_binding"
 class = "V0"
 description = "THE TYPESCRIPT SDK'S NATIVE BINDING HANDS THE CALLER'S VALUES TO THE BINDING CORE AND THROWS WHAT IT REPORTS. Each `#[napi]` function builds the core's signing or verification arguments from the values it is handed, refusing a time or skew that is not a whole in-range number of seconds instead of saturating it, passes the transmitted request bytes through untouched, and returns the core's verdict field for field; a refusal is thrown with its kind in the error's `code` — the frozen token for a wire refusal, `SigningDeviceFailure` for a device that could not sign (what the device threw as its `cause`), `InvalidArg` otherwise — and the core's message, an empty issuer field named by its TypeScript key. The anchor, policy, device failure and projection are sdk_binding_core.adapter's. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the Node runtime, about napi's delivery of arguments and return value beyond the premise ASM-0087 states, or about what the TypeScript layer does with the verdict (the sdk_typescript.* units)."
-paths = ["sdk/typescript/src/lib.rs", "sdk/typescript/src/core_facts.rs", "sdk/typescript/src/refusal.rs"]
+paths = [
+  "sdk/typescript/src/lib.rs",
+  "sdk/typescript/src/entry_points.rs",
+  "sdk/typescript/src/sign_inputs.rs",
+  "sdk/typescript/src/verify_inputs.rs",
+  "sdk/typescript/src/results.rs",
+  "sdk/typescript/src/core_facts.rs",
+  "sdk/typescript/src/refusal.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -6088,6 +6106,11 @@ evidence = [
 tested_symbols = [
   "//sdk/typescript:native_binding_test#tests::a_time_that_is_not_whole_seconds_is_refused",
   "//sdk/typescript:native_binding_test#tests::an_issuer_field_is_named_by_its_typescript_key",
+  "//sdk/typescript:native_binding_test#sign_inputs::tests::the_five_continuation_keys_reach_their_own_handles",
+  "//sdk/typescript:native_binding_test#sign_inputs::tests::each_signing_value_reaches_its_own_argument",
+  "//sdk/typescript:native_binding_test#sign_inputs::tests::a_window_that_is_not_whole_seconds_is_refused_by_name",
+  "//sdk/typescript:native_binding_test#verify_inputs::tests::each_verification_value_reaches_its_own_argument",
+  "//sdk/typescript:native_binding_test#verify_inputs::tests::a_time_that_is_not_whole_seconds_is_refused_by_name",
   "//sdk/typescript:native_binding_test#core_facts::tests::each_fact_is_the_binding_cores_own",
   "//sdk/typescript:native_binding_test#refusal::tests::a_refusal_is_thrown_with_its_kind_in_the_code",
 ]
