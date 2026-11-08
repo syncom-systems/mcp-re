@@ -23,8 +23,14 @@ pub use floor::CryptographicFloorVerifiedRequest;
 
 use crate::block::HttpRequestEvidenceBlock;
 use crate::block::ResolvedActor;
+use crate::replay::HttpReplayKey;
 use crate::AudienceTuple;
 use crate::RequestRoleEvidence;
+#[cfg(feature = "verify")]
+use verus_builtin_macros::verus_spec;
+#[cfg(feature = "verify")]
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 /// A request verified under the **full MCP-RE profile**.
 ///
@@ -69,6 +75,27 @@ pub struct VerifiedMcpRequest {
 }
 
 impl VerifiedMcpRequest {
+    /// The five-field replay key this verified request is admitted under: the profile id,
+    /// signature label, resolved-actor identity, audience hash and nonce it established.
+    /// The one place the key is assembled; dispatch asks the request for it.
+    // Fields are read directly, as `prepare_http_dispatch` did, so the prover relates each
+    // key field to the value it came from: the four string fields are the request's own.
+    #[cfg_attr(feature = "verify", verus_spec(out =>
+        ensures
+            out.profile_id@ == self.floor.profile_id@,
+            out.signature_label@ == self.floor.signature_label@,
+            out.audience_hash@ == self.audience_hash@,
+            out.nonce@ == self.floor.nonce@,
+    ))]
+    pub fn replay_key(&self) -> HttpReplayKey {
+        HttpReplayKey {
+            profile_id: self.floor.profile_id.clone(),
+            signature_label: self.floor.signature_label.clone(),
+            actor_id: self.floor.resolved_actor.actor_id(),
+            audience_hash: self.audience_hash.clone(),
+            nonce: self.floor.nonce.clone(),
+        }
+    }
     /// The floor proposition this product also establishes.
     pub fn floor(&self) -> &CryptographicFloorVerifiedRequest {
         &self.floor
@@ -192,6 +219,22 @@ mod tests {
                 authorization_decision: None,
             },
         }
+    }
+
+    /// The key is the five facts the verifier established, each from its own source: no two
+    /// fields of the key share a value here, so a field read from the wrong source differs.
+    #[test]
+    fn the_replay_key_carries_each_established_fact_in_its_own_field() {
+        let mut full = full();
+        full.floor.signature_label = "label".into();
+        full.floor.nonce = "nonce-1".into();
+        full.audience_hash = "aud-hash".into();
+        let key = full.replay_key();
+        assert_eq!(key.profile_id, "p");
+        assert_eq!(key.signature_label, "label");
+        assert_eq!(key.actor_id, full.floor.resolved_actor.actor_id());
+        assert_eq!(key.audience_hash, "aud-hash");
+        assert_eq!(key.nonce, "nonce-1");
     }
 
     #[test]
