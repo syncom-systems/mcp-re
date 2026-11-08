@@ -27,6 +27,7 @@ use mcp_re_http_profile::DelegationHeader;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
+use mcp_re_http_profile::ResponseSignature;
 use mcp_re_proxy::KmsResponseSigner;
 use mcp_re_proxy::ResponseSigner;
 
@@ -85,9 +86,11 @@ fn assert_direct_root_response_refused(
         &mut direct,
         req,
         |base| kms_signature(root, base),
-        lane.root_kid,
-        NOW - 100,
-        NOW + 200,
+        &ResponseSignature {
+            key_id: lane.root_kid,
+            created: NOW - 100,
+            expires: NOW + 200,
+        },
     )
     .expect("the KMS signs a direct-root RFC 9421 response");
     let downgrade = judge

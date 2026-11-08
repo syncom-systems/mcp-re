@@ -88,7 +88,6 @@ use crate::evidence::RequestRoleEvidence;
 use crate::ids::BODYLESS_REQUEST_COMPONENTS;
 use crate::ids::MCP_PROTOCOL_VERSION_HEADER;
 use crate::ids::MCP_RE_REQUEST_EVIDENCE_HEADER;
-use crate::ids::PROFILE_TAG;
 use crate::ids::REQUEST_LABEL;
 use crate::ids::REQUIRED_RESPONSE_REQ_COMPONENTS;
 use crate::ids::RESPONSE_LABEL;
@@ -125,17 +124,6 @@ fn require_bodyless(headers: &[(String, String)], body: &[u8]) -> Result<(), Htt
         ));
     }
     Ok(())
-}
-
-fn params_for(key_id: &str, created: i64, expires: i64, nonce: Option<&str>) -> SignatureParams {
-    SignatureParams {
-        created: Some(created),
-        expires: Some(expires),
-        nonce: nonce.map(str::to_owned),
-        keyid: Some(key_id.to_owned()),
-        alg: Some(crate::ids::ALG_ED25519.to_owned()),
-        tag: Some(PROFILE_TAG.to_owned()),
-    }
 }
 
 fn emit(
@@ -236,7 +224,7 @@ pub(crate) fn emit_delegated_accepted_202(
             .iter()
             .map(|n| CoveredComponent::req(n)),
     );
-    let params = params_for(signer.kid(), signer.created(), signer.expires(), None);
+    let params = signer.response_signature().params();
     let base = signature_base(
         &components,
         &params,
@@ -295,7 +283,7 @@ pub fn sign_bodyless_request(
     components.extend(crate::sign::conditional_request_components(
         &request.headers,
     )?);
-    let params = params_for(key_id, created, expires, Some(nonce));
+    let params = crate::sign::profile_params(key_id, created, expires, Some(nonce));
     let base = signature_base(&components, &params, &SourceMessage::Request(request))?;
     emit(
         &mut request.headers,

@@ -15,6 +15,7 @@ use mcp_re_http_profile::HttpResponseEvidenceBlock;
 use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResponseRoleEvidence;
+use mcp_re_http_profile::ResponseSignature;
 use mcp_re_http_profile::RetainedHop;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
@@ -194,9 +195,11 @@ pub fn answer_outside_the_full_signer(
             mcp_re_core::b64url_decode(&delegated_key().sign(base))
                 .map_err(|_| HttpProfileError::InvalidSignature)
         },
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
+        &ResponseSignature {
+            key_id: DELEGATED_KID,
+            created: CREATED,
+            expires: EXPIRES,
+        },
     )
     .expect("the ;req signer binds to a request without a block");
     response

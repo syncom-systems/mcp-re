@@ -349,8 +349,8 @@ status = "unreviewed"
 # 391 was measured.
 [[debt]]
 path = "mcp-re-http-profile/src/bodyless/mod.rs"
-baseline_prod_loc = 370
-baseline_sha = "c939c2f"
+baseline_prod_loc = 358
+baseline_sha = "288a777"
 status = "unreviewed"
 
 [[debt]]
@@ -527,8 +527,8 @@ status = "unreviewed"
 # 305 (measured at c939c2f, under a 408 baseline) -> 286. `baseline_sha` names that parent.
 [[debt]]
 path = "mcp-re-http-profile/src/sign.rs"
-baseline_prod_loc = 286
-baseline_sha = "c939c2f"
+baseline_prod_loc = 234
+baseline_sha = "288a777"
 status = "unreviewed"
 
 [[debt]]

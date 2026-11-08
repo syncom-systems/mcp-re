@@ -21,6 +21,7 @@ use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::HttpResponseEvidenceBlock;
 use mcp_re_http_profile::RequestEvidenceDigest;
 use mcp_re_http_profile::RequestRoleEvidence;
+use mcp_re_http_profile::ResponseSignature;
 use mcp_re_http_profile::PROFILE_TAG;
 use mcp_re_http_profile::RESPONSE_EVIDENCE_BLOCK_KEY;
 
@@ -118,9 +119,11 @@ pub fn forge_bound(
             mcp_re_core::b64url_decode(&delegated_key().sign(b))
                 .map_err(|_| HttpProfileError::InvalidSignature)
         },
-        forgery.wire_kid,
-        CREATED,
-        EXPIRES,
+        &ResponseSignature {
+            key_id: forgery.wire_kid,
+            created: CREATED,
+            expires: EXPIRES,
+        },
     )
     .expect("sign");
     rsp
@@ -147,9 +150,11 @@ pub fn forge_unbound(request: &HttpRequest, forgery: &Forgery<'_>) -> HttpRespon
     mcp_re_http_profile::sign::sign_response_unbound(
         &mut rsp,
         &delegated_key(),
-        forgery.wire_kid,
-        CREATED,
-        EXPIRES,
+        &ResponseSignature {
+            key_id: forgery.wire_kid,
+            created: CREATED,
+            expires: EXPIRES,
+        },
     )
     .expect("sign");
     rsp
@@ -169,9 +174,11 @@ pub fn root_signed_without_a_credential(receipt: &HttpResponse) -> HttpResponse 
     mcp_re_http_profile::sign::sign_response_unbound(
         &mut plain,
         &root_key(),
-        super::fixtures::ROOT_KID,
-        CREATED,
-        EXPIRES,
+        &ResponseSignature {
+            key_id: super::fixtures::ROOT_KID,
+            created: CREATED,
+            expires: EXPIRES,
+        },
     )
     .expect("sign root-signed unbound response");
     plain
