@@ -87,4 +87,40 @@ mod tests {
             REQUIRED_RESPONSE_COMPONENTS.len() + REQUIRED_RESPONSE_REQ_COMPONENTS.len()
         );
     }
+
+    fn response(headers: Vec<(String, String)>) -> HttpResponse {
+        HttpResponse {
+            status: 200,
+            headers,
+            body: b"{}".to_vec(),
+        }
+    }
+
+    #[test]
+    fn sealing_states_the_digest_of_the_body_carried() {
+        let mut r = response(vec![("Content-Digest".into(), "sha-256=:stale:".into())]);
+        seal_response_body(&mut r).expect("no content coding");
+        let digests: Vec<_> = r
+            .headers
+            .iter()
+            .filter(|(n, _)| n.eq_ignore_ascii_case("content-digest"))
+            .collect();
+        assert_eq!(digests.len(), 1, "the signer is the sole author of the digest");
+        assert_eq!(digests[0].1, content_digest_sha256(b"{}"));
+    }
+
+    #[test]
+    fn a_response_already_declaring_a_content_coding_is_not_sealed() {
+        let mut r = response(vec![("Content-Encoding".into(), "gzip".into())]);
+        assert_eq!(
+            seal_response_body(&mut r),
+            Err(HttpProfileError::ContentEncodingPresent)
+        );
+        assert!(
+            !r.headers
+                .iter()
+                .any(|(n, _)| n.eq_ignore_ascii_case("content-digest")),
+            "a refused response carries no digest"
+        );
+    }
 }
