@@ -12425,7 +12425,7 @@ unit = "http_profile.delegated_signing_custody"
 conjunct = "a predecessor displaced by an epoch advance is retired once"
 path = "mcp-re-http-profile/src/custody/mod.rs"
 anchor = """
-        if let (Some(_), Some(p)) = (&successor, previous.filter(|p| now < p.exp())) {
+        if let (Some(_), Some(p)) = (&successor, previous.filter(|p| p.serves_at(now))) {
 """
 weakening = """
         if let (Some(_), Some(p)) = (&successor, previous) {
