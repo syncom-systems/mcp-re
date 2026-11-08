@@ -488,8 +488,8 @@ review_ref = "EX-018 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-http-profile/src/custody/mod.rs"
-baseline_prod_loc = 480
-baseline_sha = "d1fc5fa"
+baseline_prod_loc = 461
+baseline_sha = "288a777"
 status = "unreviewed"
 
 [[debt]]

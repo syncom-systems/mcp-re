@@ -212,7 +212,7 @@ where
                 .is_none_or(|p| p.credential() != a.credential())
         });
         // A predecessor past its `exp` was already retired by `adopt`.
-        if let (Some(_), Some(p)) = (&successor, previous.filter(|p| now < p.exp())) {
+        if let (Some(_), Some(p)) = (&successor, previous.filter(|p| p.serves_at(now))) {
             let event = self.retired(&p, now);
             self.step_events.push(event);
         }
@@ -228,6 +228,13 @@ where
     /// needed. Fail-closed if the root cannot issue and the current key has
     /// expired (ADR-MCPRE-052 §6).
     pub fn ensure_active(&mut self, now: i64) -> Result<(), CustodyError> {
+        self.ensure_live(now).map(|_| ())
+    }
+
+    /// [`ensure_active`](Self::ensure_active), returning the key that may sign at `now`: a
+    /// caller that signs holds the live key itself rather than re-reading `active` and
+    /// trusting that the check above it still describes what it finds.
+    fn ensure_live(&mut self, now: i64) -> Result<&ActiveDelegatedKey, CustodyError> {
         self.step_events.clear();
         let needs = match &self.active {
             None => true,
@@ -245,7 +252,7 @@ where
     /// attempt, now.
     fn issue_now(&mut self, now: i64) -> Result<(), CustodyError> {
         self.next_attempt_at = None;
-        self.issue_if(true, now)
+        self.issue_if(true, now).map(|_| ())
     }
 
     /// Whether a failed root may be approached again at `now`.
@@ -260,20 +267,20 @@ where
         self.next_attempt_at.is_none_or(|at| now >= at)
     }
 
-    fn issue_if(&mut self, needs: bool, now: i64) -> Result<(), CustodyError> {
+    fn issue_if(&mut self, needs: bool, now: i64) -> Result<&ActiveDelegatedKey, CustodyError> {
         if needs && self.attempt_allowed(now) {
             self.attempt_issuance(now)?;
         }
-        match &self.active {
-            Some(a) if now < a.exp() => Ok(()),
-            _ => Err(CustodyError::FailClosedIssuance),
-        }
+        self.active
+            .as_ref()
+            .filter(|a| a.serves_at(now))
+            .ok_or(CustodyError::FailClosedIssuance)
     }
 
     /// One approach to the root: mint a key, ask for a credential over it, and adopt the
     /// pair only if the credential attests the issuance that asked for it.
     fn attempt_issuance(&mut self, now: i64) -> Result<(), CustodyError> {
-        let is_rotation = self.active.as_ref().map(|a| now < a.exp()).unwrap_or(false);
+        let is_rotation = self.active.as_ref().is_some_and(|a| a.serves_at(now));
         let (exp, next_counter) =
             issuance_terms::mintable(now, self.cfg.window.ttl(), self.counter)?;
         let key = (self.factory)();
@@ -340,7 +347,7 @@ where
             now,
             self.cfg.window.overlap(),
         ));
-        if self.active.as_ref().is_some_and(|a| now < a.exp()) {
+        if self.active.as_ref().is_some_and(|a| a.serves_at(now)) {
             return Ok(());
         }
         if let Some(a) = self.active.take() {
@@ -364,14 +371,8 @@ where
         response: &mut HttpResponse,
         request: &HttpRequest,
     ) -> Result<(), CustodyError> {
-        self.ensure_active(now)?;
-        // `ensure_active` returns `Ok` only through the arm matching `Some(a)` with
-        // `now < a.exp`. Written as a refusal rather than asserted: `FailClosedIssuance`
-        // is already this module's verdict for "no key to sign with".
-        let Some(a) = self.active.as_ref() else {
-            return Err(CustodyError::FailClosedIssuance);
-        };
-        let window = SigningWindow::over(Arc::new(a.clone()), now, self.cfg.window.ttl())
+        let live = self.ensure_live(now)?.clone();
+        let window = SigningWindow::over(Arc::new(live), now, self.cfg.window.ttl())
             .ok_or(CustodyError::NoSigningWindow)?;
         sign_delegated_response_full(response, request, &window)
             .map(|_base| ())
