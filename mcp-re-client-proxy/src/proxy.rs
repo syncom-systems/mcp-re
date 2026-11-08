@@ -17,26 +17,24 @@
 use mcp_re_client_core::build_signed_message;
 use mcp_re_client_core::response::verify_delegated_accepted_202_pinned;
 use mcp_re_client_core::verify_delegated_response;
-use mcp_re_client_core::CompositeResponseTrust;
 use mcp_re_client_core::ExecutionContract;
-use mcp_re_client_core::HttpProfileError;
 use mcp_re_client_core::McpMessage;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResponseExpectation;
 use mcp_re_core::SigningKey;
-use serde_json::json;
 use serde_json::Map;
 use serde_json::Value;
 
 mod arrival;
+mod plain_reply;
 
-use arrival::request_id;
 use arrival::Arrival;
+pub(crate) use plain_reply::plain_error_from_rejection;
+pub(crate) use plain_reply::plain_response_from_verified;
 
 use crate::verified_outcome::read_notification_rejection;
 use crate::verified_outcome::read_outcome;
 
-use crate::route::ClientVerification;
 use crate::route::RouteRegistry;
 use crate::transport::ProxyError;
 use crate::transport::RemoteTransport;
@@ -184,12 +182,9 @@ impl ClientProxy {
             .get(route_id)
             .ok_or_else(|| ProxyError::UnknownRoute(route_id.to_string()))?;
 
-        // ABSENT `id` is what makes a JSON-RPC message a NOTIFICATION (§4.1), and both the
-        // signer and the serving path classify on exactly that key's absence. `null` is not
-        // the same thing: it is a PRESENT id, so defaulting to it turned every one-way
-        // notification into a request the server dispatched to the backend and answered with
-        // a bodied reply nothing was awaiting.
-        let id = request_id(plain_request).cloned();
+        // The signed request is the one authority on whether this is a one-way notification
+        // and on the id the reply is addressed to: the body that was signed decides both, so
+        // the response path cannot classify the message differently from the signer.
         let signed = self.sign_request(route, plain_request, params)?;
 
         // Forward to the remote MCP-RE endpoint.
@@ -208,7 +203,7 @@ impl ClientProxy {
             response: &response,
             now_unix,
         };
-        if id.is_none() {
+        if signed.is_notification() {
             return self.verify_notification_ack(route, &signed, arrival);
         }
         let verified = self.verify_reply(route, &signed, arrival)?;
@@ -216,7 +211,7 @@ impl ClientProxy {
         // The request id the PROXY signed, not the one the server echoed. The plain
         // reply is addressed to the local client's outstanding call, and taking the id
         // from the response body would let the server redirect the answer.
-        let request_id = id.unwrap_or(Value::Null);
+        let request_id = signed.request_id().cloned().unwrap_or(Value::Null);
         read_outcome(verified, &response, request_id)
     }
 
@@ -252,7 +247,7 @@ impl ClientProxy {
         )
         .with_headers(route.extra_headers.clone());
         Ok(build_signed_message(
-            McpMessage::new(request_id(plain_request), &method, req_params),
+            McpMessage::new(plain_request.get("id"), &method, req_params),
             &route.target_uri,
             &inputs,
             &self.signing_key,
@@ -293,33 +288,9 @@ impl ClientProxy {
         if let Some(keyid) = &route.expected_server_keyid {
             expectation = expectation.with_expected_issuer_kid(keyid.clone());
         }
-        let verified = match &route.verification {
-            // The route's REQUIRED revocation source (§3 step 7). Consulted with the
-            // credential's delegated_kid / issuer_kid / jti; an empty static list is
-            // the explicit TTL-only posture, never a silent default.
-            ClientVerification::DelegatedRequired(policy, resolve_actor, revocation) => {
-                // Two genuinely different systems, composed into ONE trust authority
-                // before the verifier sees them (MCPRE-172). The route's resolver is
-                // consulted at this request's `now`.
-                let trust =
-                    CompositeResponseTrust::new(resolve_actor.as_ref(), revocation.as_ref());
-                verify_delegated_response(response, &trust, &expectation, policy, now_unix)?
-            }
-            // Trust-anchor lifecycle: the set is BOTH the root resolver and the
-            // revocation source, evaluated at THIS request's `now` so a retiring root's
-            // overlap window closes on time rather than at route-construction time.
-            ClientVerification::DelegatedAnchored(policy, anchors) => {
-                // Read the CURRENT set, so a refreshed manifest that revoked a root
-                // takes effect on the next request rather than the next restart.
-                verify_delegated_response(
-                    response,
-                    &*anchors.load(),
-                    &expectation,
-                    policy,
-                    now_unix,
-                )?
-            }
-        };
+        let verified = route.verification.with_trust(|trust, policy| {
+            verify_delegated_response(response, trust, &expectation, policy, now_unix)
+        })?;
         Ok(verified)
     }
 
@@ -346,33 +317,16 @@ impl ClientProxy {
             return read_notification_rejection(self.verify_reply(route, signed, arrival)?);
         }
         let pin = route.expected_server_keyid.as_deref();
-        match &route.verification {
-            ClientVerification::DelegatedRequired(policy, resolve_actor, revocation) => {
-                let trust =
-                    CompositeResponseTrust::new(resolve_actor.as_ref(), revocation.as_ref());
-                verify_delegated_accepted_202_pinned(
-                    response,
-                    signed.request(),
-                    &trust,
-                    policy,
-                    pin,
-                    now_unix,
-                )?;
-            }
-            // The trust-anchor set is read at THIS message's `now`, exactly as the
-            // bodied path reads it, so a manifest that revoked a root refuses the next
-            // acknowledgement rather than the next restart.
-            ClientVerification::DelegatedAnchored(policy, anchors) => {
-                verify_delegated_accepted_202_pinned(
-                    response,
-                    signed.request(),
-                    &*anchors.load(),
-                    policy,
-                    pin,
-                    now_unix,
-                )?;
-            }
-        }
+        route.verification.with_trust(|trust, policy| {
+            verify_delegated_accepted_202_pinned(
+                response,
+                signed.request(),
+                trust,
+                policy,
+                pin,
+                now_unix,
+            )
+        })?;
         Ok(ProxyResponse {
             // A notification has no reply. The plain JSON-RPC surface is empty rather
             // than a synthesized result the local client never asked for.
@@ -382,546 +336,14 @@ impl ClientProxy {
     }
 }
 
-/// Convert a VERIFIED delegated rejection receipt to a PLAIN JSON-RPC error for the
-/// local client. The proxy has already verified the receipt's signature, so this is a
-/// provable denial, not a guess.
-///
-/// Transparency is about the CARRIER, not about withholding what the server said: the
-/// local client still speaks ordinary JSON-RPC and never emits, parses or negotiates an
-/// RFC 9421 field. The server's frozen wire code and its ADR-MCPRE-058 §10 execution /
-/// retry contract ride in the ordinary `error.data` member, because the party that
-/// decides whether to retry is the local agent and nothing else it can see distinguishes
-/// a refusal that ran nothing from a post-dispatch failure whose side effect a retry
-/// performs twice. A fixed generic error told it neither, so it re-invoked.
-///
-/// Only members the receipt actually carried are emitted. An absent `execution_status`
-/// is a receipt that said nothing, and inventing `not_executed` for it would collapse
-/// "unknown whether it ran" into "it did not run" at the one place that matters.
-pub(crate) fn plain_error_from_rejection(
-    id: Option<&Value>,
-    wire_code: Option<&str>,
-    execution: &ExecutionContract,
-) -> Value {
-    let mut mcp_re_error = serde_json::Map::new();
-    if let Some(wire_code) = wire_code {
-        mcp_re_error.insert("wire_code".into(), json!(wire_code));
-    }
-    for (name, value) in [
-        ("execution_status", &execution.execution_status),
-        ("retry_safety", &execution.retry_safety),
-        ("continuation_status", &execution.continuation_status),
-        ("retention_status", &execution.retention_status),
-    ] {
-        if let Some(value) = value {
-            mcp_re_error.insert(name.into(), json!(value));
-        }
-    }
-    // Class B: assembled as a map. Writing back through `error["data"]` panics unless
-    // `error` is an object, which is a fact about a literal rather than anything the
-    // assignment establishes.
-    let mut error = serde_json::Map::new();
-    error.insert(
-        "code".to_owned(),
-        json!(mcp_re_core::MCP_RE_JSON_RPC_ERROR_CODE),
-    );
-    error.insert(
-        "message".to_owned(),
-        json!("request rejected by the MCP-RE server"),
-    );
-    if !mcp_re_error.is_empty() {
-        error.insert(
-            "data".to_owned(),
-            json!({ "mcp_re_error": Value::Object(mcp_re_error) }),
-        );
-    }
-    let mut envelope = Map::new();
-    envelope.insert("jsonrpc".to_owned(), json!("2.0"));
-    if let Some(id) = id {
-        envelope.insert("id".to_owned(), id.clone());
-    }
-    envelope.insert("error".to_owned(), Value::Object(error));
-    Value::Object(envelope)
-}
-
-/// Rebuild a PLAIN MCP response from a verified signed response: strip the
-/// proxy-owned top-level `_meta` (the RFC 9421 response evidence block) from the
-/// body, returning ordinary JSON-RPC.
-/// The `id` is the one the PROXY signed, not the one the server echoed back: the reply
-/// belongs to the local client's outstanding call, and reading it from the response
-/// body would let a server address its answer to a different one.
-///
-/// A JSON-RPC `error` member is carried through, minus any `error.data.mcp_re_error`
-/// the backend wrote: that member is the proxy's own, written only from a verified
-/// rejection receipt, so it is removed rather than the reply refused. The serving path signs every bodied
-/// backend reply with HTTP 200 — a JSON-RPC error from an MCP backend rides in that
-/// 200 body — so rebuilding the reply from `result` alone reported a failed call as a
-/// successful one returning `null`, dropped the reason, and emitted a message that was
-/// neither a valid JSON-RPC result nor a valid error.
-///
-/// A body that is not a single JSON-RPC response object carrying EXACTLY ONE of
-/// `result` / `error` fails closed. A signed reply is proof the server said this; it is
-/// not proof the server said anything a client can act on, and every other shape — a
-/// top-level array, a bare scalar, an empty `{"jsonrpc":"2.0","id":1}` envelope, both
-/// members at once — has no reading under which "the call completed with result `null`"
-/// is true. Defaulting them to a null result is the same defect as flattening an error
-/// reply: a truthful-looking success the server never sent.
-///
-/// Bytes that are not JSON at all fail the same way, and for the same reason: the bytes
-/// that failed to parse are the RESPONSE to an exchange the remote server has already
-/// executed. Reporting that as a malformed REQUEST hands the caller a 4xx implying its
-/// own message was bad and nothing ran, and a caller that "fixes" its request and
-/// retries re-runs a side effect the server already performed.
-pub(crate) fn plain_response_from_verified(
-    response_body: &[u8],
-    request_id: &Value,
-) -> Result<Value, ProxyError> {
-    let mut object: Value = serde_json::from_slice(response_body).map_err(|_| {
-        ProxyError::FailedClosed(HttpProfileError::MalformedEvidence(
-            "verified reply is not JSON",
-        ))
-    })?;
-    if let Some(result) = object.get_mut("result").and_then(Value::as_object_mut) {
-        result.remove("_meta");
-    }
-    let Some(top) = object.as_object_mut() else {
-        return Err(ProxyError::FailedClosed(
-            HttpProfileError::MalformedEvidence("verified reply is not a JSON-RPC object"),
-        ));
-    };
-    top.remove("_meta");
-    // A JSON-RPC response has no `method`. Its presence is what makes a permissive
-    // union parser pick the REQUEST arm, so a reply carrying both a legal `result` and a
-    // `method` becomes a server->client request the client's session dispatches —
-    // sampling, elicitation, roots — over a channel MCP-RE profiles no carrier for, and
-    // the call whose id was consumed never resolves. Refused rather than dropped, so all
-    // three clients say the same thing about the same bytes.
-    if top.contains_key("method") {
-        return Err(ProxyError::FailedClosed(
-            HttpProfileError::MalformedEvidence(
-                "verified reply carries a top-level method; a JSON-RPC response has none",
-            ),
-        ));
-    }
-    match (top.get("result"), top.get("error")) {
-        (Some(_), Some(_)) => Err(ProxyError::FailedClosed(
-            HttpProfileError::MalformedEvidence(
-                "verified reply carries both a result and an error",
-            ),
-        )),
-        (None, None) => Err(ProxyError::FailedClosed(
-            HttpProfileError::MalformedEvidence(
-                "verified reply carries neither a result nor an error",
-            ),
-        )),
-        (None, Some(error)) => {
-            let mut error = error.clone();
-            if let Some(data) = error.get_mut("data").and_then(Value::as_object_mut) {
-                data.remove("mcp_re_error");
-            }
-            Ok(json!({
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": error,
-            }))
-        }
-        (Some(result), None) => Ok(json!({
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "result": result.clone(),
-        })),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mcp_re_client_core::classify_result;
-    use mcp_re_client_core::continuation_state_of;
+    use mcp_re_client_core::HttpProfileError;
+    use serde_json::json;
+
+    use crate::route::ClientVerification;
     use mcp_re_client_core::HttpResponse;
-    use mcp_re_client_core::ResultClass;
-
-    /// A JSON-RPC error rides in the same HTTP 200 body an ordinary result does, so
-    /// rebuilding the plain reply from `result` alone reported a failed call as a
-    /// success returning null and dropped the reason with it.
-    #[test]
-    fn a_json_rpc_error_reply_is_carried_through_not_flattened_to_a_null_result() {
-        let body = br#"{"jsonrpc":"2.0","id":"srv-1","error":{"code":-32601,"message":"method not found"}}"#;
-        let plain = plain_response_from_verified(body, &json!("req-1")).expect("rebuild");
-
-        assert_eq!(plain["error"]["code"], -32601);
-        assert_eq!(plain["error"]["message"], "method not found");
-        assert!(
-            plain.get("result").is_none(),
-            "an error reply must not also carry a result member"
-        );
-    }
-
-    /// Carrying the error through is only half of it: the classification the local
-    /// client reads must say the call failed. `classify_result` inspects `result`, and
-    /// an error reply has none — an absent `result` classifies as Terminal, which is
-    /// the success label. The signature verifies either way, so nothing downstream can
-    /// recover the difference once the header has been written.
-    #[test]
-    fn a_verified_error_reply_is_classified_as_a_failed_call_not_a_success() {
-        let body = br#"{"jsonrpc":"2.0","id":"srv-1","error":{"code":-32601,"message":"method not found"}}"#;
-        let plain = plain_response_from_verified(body, &json!("req-1")).expect("rebuild");
-
-        // The selection the serving path makes, on the reply it actually holds.
-        let kind = match plain
-            .get("error")
-            .map(|e| e.get("code").and_then(Value::as_i64))
-        {
-            Some(code) => ResponseKind::CallFailed { code },
-            None => match classify_result(plain.get("result")) {
-                ResultClass::Terminal => ResponseKind::Success,
-                _ => unreachable!("this fixture carries an error member"),
-            },
-        };
-
-        assert!(
-            matches!(kind, ResponseKind::CallFailed { code: Some(-32601) }),
-            "an error reply must classify as CallFailed carrying the server's code, got {kind:?}"
-        );
-        assert!(
-            !matches!(kind, ResponseKind::Success),
-            "a failed call must never be announced to the local client as a success"
-        );
-    }
-
-    /// The id belongs to the local client's outstanding call. Taking it from the
-    /// response body would let a server address its answer to a different one.
-    #[test]
-    fn the_reply_carries_the_id_the_proxy_signed_not_the_one_the_server_echoed() {
-        let body = br#"{"jsonrpc":"2.0","id":"server-chosen","result":{"ok":true}}"#;
-        let plain = plain_response_from_verified(body, &json!("req-7")).expect("rebuild");
-        assert_eq!(plain["id"], "req-7");
-        assert_eq!(plain["result"]["ok"], true);
-    }
-
-    /// The proxy-owned response evidence block is stripped from both positions.
-    #[test]
-    fn the_proxy_owned_meta_is_stripped_from_the_plain_reply() {
-        let body =
-            br#"{"jsonrpc":"2.0","id":"s","_meta":{"a":1},"result":{"_meta":{"b":2},"ok":true}}"#;
-        let plain = plain_response_from_verified(body, &json!(1)).expect("rebuild");
-        assert!(plain.get("_meta").is_none());
-        assert!(plain["result"].get("_meta").is_none());
-        assert_eq!(plain["result"]["ok"], true);
-    }
-
-    /// The classification the success arm makes before handing a reply over. A
-    /// non-terminal elicitation reported as `Success` is how an approval nobody gave
-    /// reaches an application as a finished tool result.
-    #[test]
-    fn an_input_required_reply_does_not_classify_as_terminal() {
-        // The discriminator VALUE comes from the profile's own constant, never a
-        // literal: an open-coded copy is one more thing to drift, and the gate that
-        // enforces that is exactly why this reads the way it does.
-        let body = format!(
-            r#"{{"jsonrpc":"2.0","id":"s","result":{{"resultType":"{}","requestState":"st-1"}}}}"#,
-            mcp_re_client_core::INPUT_REQUIRED_RESULT_TYPE
-        );
-        let body = body.as_bytes();
-        let plain = plain_response_from_verified(body, &json!("req-1")).expect("rebuild");
-        assert_eq!(
-            classify_result(plain.get("result")),
-            ResultClass::InputRequired
-        );
-        assert_eq!(
-            continuation_state_of(plain.get("result")).expect("state"),
-            Some("st-1".to_owned())
-        );
-
-        let terminal = br#"{"jsonrpc":"2.0","id":"s","result":{"ok":true}}"#;
-        let plain = plain_response_from_verified(terminal, &json!("req-1")).expect("rebuild");
-        assert_eq!(classify_result(plain.get("result")), ResultClass::Terminal);
-    }
-
-    /// The shapes next to the JSON-RPC-error one. Each used to fall through to
-    /// `result: null` and classify Terminal, so a signed reply that is not a JSON-RPC
-    /// response at all reached the local client as a completed tool call — the same
-    /// defect as flattening an error reply, on its neighbours.
-    #[test]
-    fn a_reply_that_is_not_a_json_rpc_response_fails_closed() {
-        for body in [
-            // An envelope with neither member.
-            br#"{"jsonrpc":"2.0","id":1}"#.as_slice(),
-            // A batch array, a bare scalar, a bare string.
-            br#"[{"jsonrpc":"2.0","id":1,"result":{}}]"#.as_slice(),
-            br#"7"#.as_slice(),
-            br#""ok""#.as_slice(),
-            // Both members at once: no reading of this says the call completed.
-            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true},"error":{"code":-1}}"#.as_slice(),
-            // A legal `result` plus a top-level `method`. A permissive union parser —
-            // which is what both SDKs hand this to — reads it as a server->client
-            // REQUEST and dispatches sampling / elicitation / roots on the peer's
-            // params, while the call whose id it consumed never resolves.
-            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true},"method":"sampling/createMessage","params":{"x":1}}"#.as_slice(),
-        ] {
-            let outcome = plain_response_from_verified(body, &json!("req-1"));
-            assert!(
-                matches!(outcome, Err(ProxyError::FailedClosed(_))),
-                "{} must not be delivered as a success",
-                String::from_utf8_lossy(body),
-            );
-        }
-    }
-
-    /// And the shape that IS a response still rebuilds, `_meta` stripped — the guard
-    /// above refuses malformed evidence, not an ordinary empty result.
-    #[test]
-    fn an_ordinary_result_still_rebuilds() {
-        let body = br#"{"jsonrpc":"2.0","id":"s","result":{}}"#;
-        let plain = plain_response_from_verified(body, &json!(2)).expect("rebuild");
-        assert_eq!(plain["id"], 2);
-        assert_eq!(plain["result"], json!({}));
-    }
-
-    /// Bytes that are not JSON at all are a RESPONSE failure, not a caller error.
-    ///
-    /// Mapping them to `MalformedRequest` renders as HTTP 400 at the ambassador, whose
-    /// own comment justifies that status with "raised entirely locally, before anything
-    /// is signed or sent" — untrue here: the remote server has already executed the
-    /// exchange. A caller that "fixes" its request and retries a 400 re-runs the side
-    /// effect.
-    #[test]
-    fn an_unparseable_verified_reply_is_a_verification_failure_not_a_bad_request() {
-        let outcome = plain_response_from_verified(b"not json at all", &json!("req-1"));
-        assert!(
-            matches!(outcome, Err(ProxyError::FailedClosed(_))),
-            "an unreadable RESPONSE must not be reported as a malformed REQUEST, got {outcome:?}",
-        );
-        assert!(
-            !matches!(outcome, Err(ProxyError::MalformedRequest)),
-            "400 implies the request was never executed",
-        );
-    }
-
-    /// The ADR-MCPRE-058 §10 contract must reach the party that decides whether to
-    /// retry. A fixed generic error told the local agent nothing, so a post-dispatch
-    /// 503 read as an ordinary outage and the retry re-executed the tool call.
-    #[test]
-    fn a_verified_rejection_carries_its_execution_contract_to_the_local_client() {
-        let execution = ExecutionContract {
-            execution_status: Some("possibly_executed".into()),
-            retry_safety: Some("unsafe_without_reconciliation".into()),
-            continuation_status: Some("consumed".into()),
-            retention_status: None,
-        };
-        let plain = plain_error_from_rejection(
-            Some(&json!("req-1")),
-            Some("mcp-re.inner_dispatch_indeterminate"),
-            &execution,
-        );
-        let data = &plain["error"]["data"]["mcp_re_error"];
-        assert_eq!(data["wire_code"], "mcp-re.inner_dispatch_indeterminate");
-        assert_eq!(data["execution_status"], "possibly_executed");
-        assert_eq!(data["retry_safety"], "unsafe_without_reconciliation");
-        assert_eq!(data["continuation_status"], "consumed");
-        assert!(
-            data.get("retention_status").is_none(),
-            "a member the receipt did not carry must not be invented"
-        );
-        // The plain reply is still ordinary JSON-RPC: the local client parses an error,
-        // not an MCP-RE carrier field.
-        assert_eq!(plain["jsonrpc"], "2.0");
-        assert_eq!(plain["id"], "req-1");
-        assert_eq!(
-            plain["error"]["code"],
-            mcp_re_core::MCP_RE_JSON_RPC_ERROR_CODE
-        );
-    }
-
-    /// A receipt that stated nothing must not grow a disposition on the way through.
-    /// Emitting `not_executed` for an absent `execution_status` would turn "unknown
-    /// whether it ran" into "it did not run" at the one place that decides.
-    #[test]
-    fn an_unstated_contract_produces_no_invented_disposition() {
-        let plain = plain_error_from_rejection(
-            Some(&json!(1)),
-            Some("mcp-re.invalid_signature"),
-            &ExecutionContract::default(),
-        );
-        let data = &plain["error"]["data"]["mcp_re_error"];
-        assert_eq!(data["wire_code"], "mcp-re.invalid_signature");
-        assert!(data.get("execution_status").is_none());
-        assert!(data.get("retry_safety").is_none());
-
-        // And a receipt with no wire code either emits no `data` at all rather than an
-        // empty object that reads as a statement.
-        let bare = plain_error_from_rejection(Some(&json!(1)), None, &ExecutionContract::default());
-        assert!(bare["error"].get("data").is_none());
-    }
-
-    /// MCP 2026-07-28 closes the `resultType` set; an unknown one is never resolved
-    /// to terminal, and the success arm turns it into a fail-closed error.
-    #[test]
-    fn an_unrecognized_result_type_is_never_terminal() {
-        let body = br#"{"jsonrpc":"2.0","id":"s","result":{"resultType":"something_new"}}"#;
-        let plain = plain_response_from_verified(body, &json!("req-1")).expect("rebuild");
-        assert_eq!(
-            classify_result(plain.get("result")),
-            ResultClass::Unrecognized
-        );
-    }
-
-    // ---------------------------------------------------------------------------------
-    // THM-0084 — the response is verified against the request THIS proxy sent.
-    //
-    // `client.response_acceptance` establishes what the verifier does with an expectation
-    // and a response. It takes the PAIRING as given, and says so: pairing an expectation
-    // with the request it describes is the caller's obligation. For a raw FFI caller that
-    // is the honest boundary — `ResponseExpectation::new` is public precisely so a binding
-    // that rebuilt the request from scalars can supply one.
-    //
-    // But the SYSTEM ROOT is not an arbitrary caller. It is this shipped path, and here the
-    // obligation is discharged rather than delegated: `handle` builds ONE `SignedRequest`,
-    // hands `signed.request()` to the transport, and derives the expectation from that same
-    // owner. Nothing reconstructs a second request, so there is no second request for the
-    // two halves to disagree about.
-    //
-    // Measured over this file's own source through `include_str!`, which makes the scan a
-    // COMPILE-TIME dependency: if the module moves or is renamed the battery stops
-    // compiling rather than silently measuring nothing.
-    // ---------------------------------------------------------------------------------
-
-    /// This module's own source, at compile time.
-    const PROXY_SRC: &str = include_str!("proxy.rs");
-
-    /// The index just past the brace-delimited item that opens at `lines[start]`.
-    fn end_of_item(lines: &[&str], start: usize) -> usize {
-        let mut depth: i64 = 0;
-        let mut opened = false;
-        for (offset, line) in lines[start..].iter().enumerate() {
-            depth += line.matches('{').count() as i64;
-            depth -= line.matches('}').count() as i64;
-            opened = opened || line.contains('{');
-            if opened && depth <= 0 {
-                return start + offset + 1;
-            }
-        }
-        lines.len()
-    }
-
-    /// Everything outside a `#[cfg(test)]` region — the shipped half of this file.
-    fn production(source: &str) -> String {
-        let mut out = Vec::new();
-        let lines: Vec<&str> = source.lines().collect();
-        let mut i = 0;
-        while i < lines.len() {
-            if lines[i].trim_start().starts_with("#[cfg(test)]") {
-                i = end_of_item(&lines, i);
-                continue;
-            }
-            out.push(lines[i]);
-            i += 1;
-        }
-        out.join("\n")
-    }
-
-    /// The body of `fn <name>`, by brace depth, over code lines only.
-    fn body_of(source: &str, name: &str) -> String {
-        let code: String = source
-            .lines()
-            .filter(|l| !l.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let at = code
-            .find(&format!("fn {name}"))
-            .unwrap_or_else(|| panic!("`fn {name}` is not in this module any more"));
-        let open = at + code[at..].find('{').expect("a body");
-        let chars: Vec<char> = code[open..].chars().collect();
-        let mut depth = 0i64;
-        for (offset, c) in chars.iter().enumerate() {
-            match c {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return chars[..=offset].iter().collect();
-                    }
-                }
-                _ => {}
-            }
-        }
-        chars.iter().collect()
-    }
-
-    /// `handle` signs once, and sends THAT signed request.
-    #[test]
-    fn the_proxy_sends_the_one_request_it_signed() {
-        let handle = body_of(&production(PROXY_SRC), "handle");
-        assert_eq!(
-            handle.matches("self.sign_request(").count(),
-            1,
-            "`handle` must build exactly one signed request. None means the request came \
-             from somewhere this test cannot see; more than one means two requests, and \
-             nothing decides which the response is verified against."
-        );
-        assert!(
-            handle.contains(".round_trip(signed.request())"),
-            "`handle` no longer forwards `signed.request()`. Whatever it sends is then a \
-             request the expectation below was not derived from."
-        );
-    }
-
-    /// Both verification paths receive that same owner, and nothing rebuilds a request.
-    #[test]
-    fn both_verification_paths_take_the_signed_request_owner() {
-        let source = production(PROXY_SRC);
-        let handle = body_of(&source, "handle");
-        for call in [
-            "self.verify_reply(route, &signed,",
-            "self.verify_notification_ack(route, &signed,",
-        ] {
-            assert!(
-                handle.contains(call),
-                "`handle` no longer passes `&signed` to `{call}...`. The expectation would \
-                 then be derived from something other than the request that was sent."
-            );
-        }
-        assert!(
-            body_of(&source, "verify_reply").contains("ResponseExpectation::for_signed(signed)"),
-            "`verify_reply` no longer derives its expectation from the signed request it was \
-             given. `ResponseExpectation::new` takes any request at all — that is what makes \
-             it usable from FFI, and what makes deriving from the owner load-bearing here."
-        );
-        assert!(
-            body_of(&source, "verify_notification_ack").contains("signed.request()"),
-            "the acknowledgement path no longer verifies against `signed.request()`. A \
-             bodyless 202 carries no response block to bind an expectation to, so this \
-             direct hand-off IS the correspondence on that path."
-        );
-    }
-
-    /// No second request is reconstructed anywhere in the shipped path.
-    ///
-    /// The defect this forbids by name: rebuilding an `HttpRequest` and handing it to
-    /// `ResponseExpectation::new` produces an expectation that is well-formed, verifies
-    /// against a well-formed response, and describes a request this proxy never sent.
-    #[test]
-    fn the_shipped_path_reconstructs_no_second_request() {
-        let source = production(PROXY_SRC);
-        assert!(
-            !source.contains("ResponseExpectation::new("),
-            "the shipped client-proxy path calls `ResponseExpectation::new`. That \
-             constructor exists for FFI callers that rebuilt the request from scalars and \
-             hold no `SignedRequest`; in this path the owner is right there, and taking it \
-             is what makes the correspondence a fact rather than a caller obligation."
-        );
-    }
-
-    /// A backend error cannot write the proxy's own `error.data.mcp_re_error` member:
-    /// that member is only ever built from a verified rejection receipt.
-    #[test]
-    fn a_backend_error_cannot_speak_in_the_boundary_mcp_re_error_member() {
-        let body = br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"m","data":{"mcp_re_error":{"execution_status":"not_executed","wire_code":"mcp-re.expired_request"},"detail":"kept"}}}"#;
-        let plain = plain_response_from_verified(body, &json!(1)).expect("rebuild");
-        assert!(plain["error"]["data"].get("mcp_re_error").is_none());
-        assert_eq!(plain["error"]["data"]["detail"], "kept");
-        assert_eq!(plain["error"]["code"], -32000);
-        assert_eq!(plain["error"]["message"], "m");
-    }
 
     // ---------------------------------------------------------------------------------
     // Composition through `ClientProxy::handle`: a real delegated signing round trip over
@@ -1184,6 +606,46 @@ mod tests {
         [required_verification, anchored_verification]
     }
 
+    /// The path is chosen by the identity the SIGNED request carries. A bodyless 202 is not
+    /// an answer to a request with an id, and a bodied reply is not an answer to a
+    /// notification: each is refused rather than accepted down the other path.
+    #[test]
+    fn the_answer_must_match_the_kind_of_message_that_was_signed() {
+        let request = reply_request();
+        let note = notification();
+        for verification in variants() {
+            let (proxy, _) = proxy_over(
+                verification(),
+                Some(ROOT_KID),
+                Some(delegated_202(&request)),
+            );
+            assert!(proxy
+                .handle(ROUTE_ID, &request, &call_params(&|| NOW))
+                .is_err());
+            let (proxy, _) =
+                proxy_over(verification(), Some(ROOT_KID), Some(delegated_reply(&note)));
+            assert!(proxy
+                .handle(ROUTE_ID, &note, &call_params(&|| NOW))
+                .is_err());
+        }
+    }
+
+    /// A present JSON `null` id is a request: it takes the reply path and is answered with
+    /// that `null`, neither the server's echoed id nor an absent one.
+    #[test]
+    fn a_present_null_id_is_answered_as_a_request_addressed_to_null() {
+        let plain = json!({"jsonrpc": "2.0", "id": null, "method": "tools/call", "params": {"name": "read"}});
+        let response = delegated_reply(&plain);
+        for verification in variants() {
+            let (proxy, _) = proxy_over(verification(), Some(ROOT_KID), Some(response.clone()));
+            let out = proxy
+                .handle(ROUTE_ID, &plain, &call_params(&|| NOW))
+                .expect("a null-id request takes the reply path");
+            assert_eq!(out.kind, ResponseKind::Success);
+            assert_eq!(out.plain_response.get("id"), Some(&Value::Null));
+        }
+    }
+
     /// A signed refusal of a notification is a verdict, not a channel failure.
     #[test]
     fn a_verified_rejection_of_a_notification_is_a_rejection_not_a_gateway_failure() {
@@ -1388,6 +850,244 @@ mod tests {
             .expect_err("the canned transport holds no response");
         assert!(matches!(err, ProxyError::Transport(_)));
         assert_eq!(calls.load(Ordering::SeqCst), 1, "absent params are sent");
+    }
+
+    /// A transport that records the request it was handed and answers with a canned reply.
+    struct RecordingTransport {
+        response: HttpResponse,
+        seen: std::sync::Mutex<Vec<HttpRequest>>,
+    }
+
+    impl RemoteTransport for RecordingTransport {
+        fn round_trip(
+            &self,
+            request: &HttpRequest,
+        ) -> Result<HttpResponse, crate::transport::TransportError> {
+            self.seen.lock().expect("lock").push(request.clone());
+            Ok(self.response.clone())
+        }
+    }
+
+    impl RemoteTransport for Arc<RecordingTransport> {
+        fn round_trip(
+            &self,
+            request: &HttpRequest,
+        ) -> Result<HttpResponse, crate::transport::TransportError> {
+            self.as_ref().round_trip(request)
+        }
+    }
+
+    fn proxy_recording(response: HttpResponse) -> (ClientProxy, Arc<RecordingTransport>) {
+        let route = Route {
+            route_id: ROUTE_ID.into(),
+            target_uri: TARGET.into(),
+            audience: audience(),
+            artifact_bindings: bindings(),
+            extra_headers: Vec::new(),
+            expected_server_keyid: None,
+            verification: required_verification(),
+        };
+        let transport = Arc::new(RecordingTransport {
+            response,
+            seen: std::sync::Mutex::new(Vec::new()),
+        });
+        let proxy = ClientProxy::new(
+            RouteRegistry::new().register(route),
+            SigningKey::from_seed_bytes(&CLIENT_SEED),
+            CLIENT_KEY_ID,
+            Box::new(Arc::clone(&transport)),
+        );
+        (proxy, transport)
+    }
+
+    /// Behavioural witness: the transport sees exactly one request, and it is the one signed.
+    #[test]
+    fn the_transport_receives_the_request_that_was_signed() {
+        let plain = reply_request();
+        let (proxy, transport) = proxy_recording(delegated_reply(&plain));
+        proxy
+            .handle(ROUTE_ID, &plain, &call_params(&|| NOW))
+            .expect("the reply to the signed request verifies");
+
+        let seen = transport.seen.lock().expect("lock");
+        assert_eq!(seen.len(), 1, "one exchange sends one request");
+        let expected = signed_for(&plain);
+        let expected = expected.request();
+        assert_eq!(seen[0].method, expected.method);
+        assert_eq!(seen[0].headers, expected.headers);
+        assert_eq!(seen[0].body, expected.body);
+    }
+
+    /// A reply is judged against the request that was sent: one signed for any other
+    /// request is refused, whatever else is well-formed about it.
+    #[test]
+    fn a_reply_to_a_different_request_is_refused() {
+        let plain = reply_request();
+        let other =
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "write"}});
+        let (proxy, _) = proxy_over(required_verification(), None, Some(delegated_reply(&other)));
+        let err = proxy
+            .handle(ROUTE_ID, &plain, &call_params(&|| NOW))
+            .expect_err("a reply bound to another request must be refused");
+        assert!(matches!(err, ProxyError::FailedClosed(_)), "{err:?}");
+    }
+
+    /// The same holds for the acknowledgement of a notification.
+    #[test]
+    fn an_acknowledgement_of_a_different_notification_is_refused() {
+        let plain = notification();
+        let other = json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 2}});
+        let (proxy, _) = proxy_over(required_verification(), None, Some(delegated_202(&other)));
+        let err = proxy
+            .handle(ROUTE_ID, &plain, &call_params(&|| NOW))
+            .expect_err("an acknowledgement bound to another message must be refused");
+        assert!(matches!(err, ProxyError::FailedClosed(_)), "{err:?}");
+    }
+
+    // ---------------------------------------------------------------------------------
+    // THM-0084 — the response is verified against the request THIS proxy sent.
+    //
+    // `client.response_acceptance` establishes what the verifier does with an expectation
+    // and a response. It takes the PAIRING as given, and says so: pairing an expectation
+    // with the request it describes is the caller's obligation. For a raw FFI caller that
+    // is the honest boundary — `ResponseExpectation::new` is public precisely so a binding
+    // that rebuilt the request from scalars can supply one.
+    //
+    // But the SYSTEM ROOT is not an arbitrary caller. It is this shipped path, and here the
+    // obligation is discharged rather than delegated: `handle` builds ONE `SignedRequest`,
+    // hands `signed.request()` to the transport, and derives the expectation from that same
+    // owner. Nothing reconstructs a second request, so there is no second request for the
+    // two halves to disagree about.
+    //
+    // Measured over this file's own source through `include_str!`, which makes the scan a
+    // COMPILE-TIME dependency: if the module moves or is renamed the battery stops
+    // compiling rather than silently measuring nothing.
+    // ---------------------------------------------------------------------------------
+
+    /// This module's own source, at compile time.
+    const PROXY_SRC: &str = include_str!("proxy.rs");
+
+    /// The index just past the brace-delimited item that opens at `lines[start]`.
+    fn end_of_item(lines: &[&str], start: usize) -> usize {
+        let mut depth: i64 = 0;
+        let mut opened = false;
+        for (offset, line) in lines[start..].iter().enumerate() {
+            depth += line.matches('{').count() as i64;
+            depth -= line.matches('}').count() as i64;
+            opened = opened || line.contains('{');
+            if opened && depth <= 0 {
+                return start + offset + 1;
+            }
+        }
+        lines.len()
+    }
+
+    /// Everything outside a `#[cfg(test)]` region — the shipped half of this file.
+    fn production(source: &str) -> String {
+        let mut out = Vec::new();
+        let lines: Vec<&str> = source.lines().collect();
+        let mut i = 0;
+        while i < lines.len() {
+            if lines[i].trim_start().starts_with("#[cfg(test)]") {
+                i = end_of_item(&lines, i);
+                continue;
+            }
+            out.push(lines[i]);
+            i += 1;
+        }
+        out.join("\n")
+    }
+
+    /// The body of `fn <name>`, by brace depth, over code lines only.
+    fn body_of(source: &str, name: &str) -> String {
+        let code: String = source
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let at = code
+            .find(&format!("fn {name}"))
+            .unwrap_or_else(|| panic!("`fn {name}` is not in this module any more"));
+        let open = at + code[at..].find('{').expect("a body");
+        let chars: Vec<char> = code[open..].chars().collect();
+        let mut depth = 0i64;
+        for (offset, c) in chars.iter().enumerate() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return chars[..=offset].iter().collect();
+                    }
+                }
+                _ => {}
+            }
+        }
+        chars.iter().collect()
+    }
+
+    /// `handle` signs once, and sends THAT signed request.
+    #[test]
+    fn the_proxy_sends_the_one_request_it_signed() {
+        let handle = body_of(&production(PROXY_SRC), "handle");
+        assert_eq!(
+            handle.matches("self.sign_request(").count(),
+            1,
+            "`handle` must build exactly one signed request. None means the request came \
+             from somewhere this test cannot see; more than one means two requests, and \
+             nothing decides which the response is verified against."
+        );
+        assert!(
+            handle.contains(".round_trip(signed.request())"),
+            "`handle` no longer forwards `signed.request()`. Whatever it sends is then a \
+             request the expectation below was not derived from."
+        );
+    }
+
+    /// Both verification paths receive that same owner, and nothing rebuilds a request.
+    #[test]
+    fn both_verification_paths_take_the_signed_request_owner() {
+        let source = production(PROXY_SRC);
+        let handle = body_of(&source, "handle");
+        for call in [
+            "self.verify_reply(route, &signed,",
+            "self.verify_notification_ack(route, &signed,",
+        ] {
+            assert!(
+                handle.contains(call),
+                "`handle` no longer passes `&signed` to `{call}...`. The expectation would \
+                 then be derived from something other than the request that was sent."
+            );
+        }
+        assert!(
+            body_of(&source, "verify_reply").contains("ResponseExpectation::for_signed(signed)"),
+            "`verify_reply` no longer derives its expectation from the signed request it was \
+             given. `ResponseExpectation::new` takes any request at all — that is what makes \
+             it usable from FFI, and what makes deriving from the owner load-bearing here."
+        );
+        assert!(
+            body_of(&source, "verify_notification_ack").contains("signed.request()"),
+            "the acknowledgement path no longer verifies against `signed.request()`. A \
+             bodyless 202 carries no response block to bind an expectation to, so this \
+             direct hand-off IS the correspondence on that path."
+        );
+    }
+
+    /// No second request is reconstructed anywhere in the shipped path.
+    ///
+    /// The defect this forbids by name: rebuilding an `HttpRequest` and handing it to
+    /// `ResponseExpectation::new` produces an expectation that is well-formed, verifies
+    /// against a well-formed response, and describes a request this proxy never sent.
+    #[test]
+    fn the_shipped_path_reconstructs_no_second_request() {
+        let source = production(PROXY_SRC);
+        assert!(
+            !source.contains("ResponseExpectation::new("),
+            "the shipped client-proxy path calls `ResponseExpectation::new`. That \
+             constructor exists for FFI callers that rebuilt the request from scalars and \
+             hold no `SignedRequest`; in this path the owner is right there, and taking it \
+             is what makes the correspondence a fact rather than a caller obligation."
+        );
     }
 
     /// The rules detect what they claim to.

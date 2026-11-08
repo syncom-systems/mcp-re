@@ -7,6 +7,8 @@
 
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::AudienceTuple;
+use mcp_re_client_core::CompositeResponseTrust;
+use mcp_re_client_core::DelegatedResponseTrust;
 use mcp_re_client_core::DelegationPolicy;
 use mcp_re_client_core::ResolverOutcome;
 use mcp_re_client_core::RevocationSource;
@@ -63,6 +65,32 @@ pub enum ClientVerification {
     /// request with that request's `now` — so a retiring root stops being trusted the
     /// moment its window closes, rather than at whatever time the route was built.
     DelegatedAnchored(DelegationPolicy, Arc<AnchorSnapshot>),
+}
+
+impl ClientVerification {
+    /// Run `verify` under this route's trust authority and policy.
+    ///
+    /// The one place that turns a route's configured variant into the single trust value a
+    /// verification consults. An anchored route reads its set at the moment of the call, so
+    /// a refreshed manifest that revoked a root refuses the next message rather than the
+    /// next restart; a required route composes its resolver and its revocation source
+    /// into one authority. Every verification of a reply or an acknowledgement goes
+    /// through here, so neither can run under a different trust than the other.
+    pub(crate) fn with_trust<R>(
+        &self,
+        verify: impl FnOnce(&dyn DelegatedResponseTrust, &DelegationPolicy) -> R,
+    ) -> R {
+        match self {
+            ClientVerification::DelegatedRequired(policy, resolve_actor, revocation) => {
+                let trust =
+                    CompositeResponseTrust::new(resolve_actor.as_ref(), revocation.as_ref());
+                verify(&trust, policy)
+            }
+            ClientVerification::DelegatedAnchored(policy, anchors) => {
+                verify(&*anchors.load(), policy)
+            }
+        }
+    }
 }
 
 /// The trust-anchor set behind an atomic swap.

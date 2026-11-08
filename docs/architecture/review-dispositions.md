@@ -3036,6 +3036,22 @@ return to 209 during the remediation campaign.
 
 ---
 
+### EX-017 current disposition — `mcp-re-client-proxy/src/proxy.rs` (appended 2026-11-08)
+
+The record above is historical and is left as written: `proxy.rs` was approved at `531 -> 541`
+under Ruling 14.4. Current measurement, taken with `scripts/module_size_gate.py` against the
+baseline at `288a777` (baseline temporarily set to 1 to read the measured production lines):
+
+| file | EX-017 approved | now | change |
+|---|---|---|---|
+| `mcp-re-client-proxy/src/proxy.rs` | 541 | **342** | the reply-shaping half moved to `proxy/plain_reply.rs`; the source-scanning tests were replaced by behavioural tests |
+
+The file is below its pre-campaign baseline (531), so the one-shot growth authorization is spent
+and matches nothing: its `growth_from_prod_loc` and `growth_ref` are removed from the registry,
+and the baseline is the measurement. The entry keeps `status = "reviewed-exception"` and
+`review_ref = EX-017`; the waiver still expires with the decomposition run, and 342 is still over
+the 200-line threshold, so the entry stays registered. No further growth is authorized.
+
 ## EX-018 — `mcp-re-proxy/src/config_state/transport.rs` — **census complete; action performed; the remainder is a §14 reviewed exception (2026-10-29)**
 
 The twelve questions (ADR-MCPRE-061 §8), answered for the file as a unit (finding

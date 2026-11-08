@@ -5068,6 +5068,11 @@ tested_symbols = [
   "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::both_verification_paths_take_the_signed_request_owner",
   "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::the_shipped_path_reconstructs_no_second_request",
   "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::the_correspondence_rules_would_catch_each_regression",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::the_transport_receives_the_request_that_was_signed",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::the_answer_must_match_the_kind_of_message_that_was_signed",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::an_acknowledgement_of_a_different_notification_is_refused",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::a_reply_to_a_different_request_is_refused",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::a_present_null_id_is_answered_as_a_request_addressed_to_null",
 ]
 
 [[unit]]
@@ -5316,7 +5321,7 @@ evidence = [
 id = "client.proxy_reply_disposition"
 class = "V0"
 description = "WHAT THE SHIPPED PROXY TELLS A LOCAL AGENT A VERIFIED REPLY MEANS, IN BOTH DIRECTIONS AT ONCE: on the rejection path only the members the receipt ACTUALLY CARRIED are emitted — an absent `execution_status` stays absent rather than becoming `not_executed`, an absent `retention_status` is not invented, and a receipt carrying neither a wire code nor a contract emits no `data` member at all rather than an empty object that reads as a statement — while a receipt that DID state its contract carries the frozen wire code and the whole ADR-MCPRE-058 §10 execution/retry contract into the ordinary `error.data` in one object, because the party deciding whether to retry is the local agent. On the success path the rebuild that strips the proxy-owned evidence block leaves the reply's own discriminator INTACT, so an `input_required` reply still classifies non-terminal and a `resultType` this client does not recognize still classifies unrecognized after the rebuild exactly as before it. Neither inventing a disposition nor losing one. States NOTHING about the SHAPE of the rebuilt envelope — which bodies are refused as not being JSON-RPC responses, what is stripped, which id is written — and nothing about whether the receipt's statement is TRUE, which is the serving path's."
-paths = ["mcp-re-client-proxy/src/proxy.rs", "mcp-re-client-proxy/src/proxy/arrival.rs"]
+paths = ["mcp-re-client-proxy/src/proxy.rs", "mcp-re-client-proxy/src/proxy/plain_reply.rs", "mcp-re-client-proxy/src/proxy/arrival.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
@@ -5329,10 +5334,10 @@ evidence = [
 # during the rebuild and reddens the second pair only. A unit holding one pair would report
 # the other weakening as no change at all.
 tested_symbols = [
-  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::a_verified_rejection_carries_its_execution_contract_to_the_local_client",
-  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::an_unstated_contract_produces_no_invented_disposition",
-  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::an_input_required_reply_does_not_classify_as_terminal",
-  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::an_unrecognized_result_type_is_never_terminal",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::plain_reply::tests::a_verified_rejection_carries_its_execution_contract_to_the_local_client",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::plain_reply::tests::an_unstated_contract_produces_no_invented_disposition",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::plain_reply::tests::an_input_required_reply_does_not_classify_as_terminal",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::plain_reply::tests::an_unrecognized_result_type_is_never_terminal",
   "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::a_verified_rejection_of_a_notification_is_a_rejection_not_a_gateway_failure",
 ]
 
@@ -12299,6 +12304,7 @@ tested_symbols = [
   "//mcp-re-client-core:mcp_re_client_core_test#request::evidence_precondition_tests::a_structurally_invalid_binding_cannot_reach_signing",
   "//mcp-re-client-core:mcp_re_client_core_test#request::evidence_precondition_tests::a_valid_binding_still_signs",
   "//mcp-re-client-core:mcp_re_client_core_test#request::notification_tests::a_signed_notification_carries_no_id_at_all",
+  "//mcp-re-client-core:mcp_re_client_core_test#request::notification_tests::the_signed_request_reports_the_id_its_body_carries",
   "//mcp-re-client-core:mcp_re_client_core_test#request::notification_tests::the_id_key_is_absent_rather_than_null",
   "//mcp-re-client-core:mcp_re_client_core_test#request::notification_tests::a_signed_notification_carries_the_ordinary_rfc_9421_evidence",
   "//mcp-re-client-core:mcp_re_client_core_test#request::notification_tests::a_continuation_on_a_notification_is_refused_locally",

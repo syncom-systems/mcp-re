@@ -447,12 +447,10 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-client-proxy/src/proxy.rs"
-baseline_prod_loc = 541
-baseline_sha = "99ff012"
+baseline_prod_loc = 342
+baseline_sha = "288a777"
 status = "reviewed-exception"
 review_ref = "EX-017 in docs/architecture/review-dispositions.md"
-growth_from_prod_loc = 531
-growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
 
 # R11-014 gave the admission authority an owner subtree. `AdmissionVerdict` — what one
 # check could SEE, as against what is true of the call — is its own authority and took its

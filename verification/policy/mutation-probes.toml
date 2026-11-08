@@ -9425,7 +9425,7 @@ id = "M332-client-an-absent-contract-member-is-filled-in"
 unit = "client.proxy_reply_disposition"
 theorem = "THM-0061"
 conjunct = "a rejection body carrying no execution contract YIELDS THE SILENT ONE RATHER THAN A GUESS — which at the proxy's rendering boundary means only the members the receipt actually carried are emitted"
-path = "mcp-re-client-proxy/src/proxy.rs"
+path = "mcp-re-client-proxy/src/proxy/plain_reply.rs"
 anchor = """        if let Some(value) = value {
             mcp_re_error.insert(name.into(), json!(value));
         }
@@ -9436,8 +9436,8 @@ weakening = """        mcp_re_error.insert(
         );
 """
 expect_red = [
-  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::an_unstated_contract_produces_no_invented_disposition",
-  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::a_verified_rejection_carries_its_execution_contract_to_the_local_client",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::plain_reply::tests::an_unstated_contract_produces_no_invented_disposition",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::plain_reply::tests::a_verified_rejection_carries_its_execution_contract_to_the_local_client",
 ]
 note = """
 SILENCE BECOMES A VERDICT, AT THE ONE PLACE THAT DECIDES. The four contract members are
@@ -9465,7 +9465,7 @@ id = "M333-client-the-rebuild-drops-the-reply-discriminator"
 unit = "client.proxy_reply_disposition"
 theorem = "THM-0061"
 conjunct = "an unrecognized value is CARRIED AS UNRECOGNIZED and never read as a known one — which requires that the proxy's rebuild of the plain reply leaves the discriminator the classification is taken over intact"
-path = "mcp-re-client-proxy/src/proxy.rs"
+path = "mcp-re-client-proxy/src/proxy/plain_reply.rs"
 anchor = """    if let Some(result) = object.get_mut("result").and_then(Value::as_object_mut) {
         result.remove("_meta");
     }
@@ -9476,8 +9476,8 @@ weakening = """    if let Some(result) = object.get_mut("result").and_then(Value
     }
 """
 expect_red = [
-  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::an_input_required_reply_does_not_classify_as_terminal",
-  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::an_unrecognized_result_type_is_never_terminal",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::plain_reply::tests::an_input_required_reply_does_not_classify_as_terminal",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::plain_reply::tests::an_unrecognized_result_type_is_never_terminal",
 ]
 note = """
 THE OTHER DIRECTION: NOT AN INVENTED DISPOSITION BUT A LOST ONE, and it hides inside a line
