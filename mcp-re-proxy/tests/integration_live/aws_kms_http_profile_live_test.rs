@@ -36,6 +36,7 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::ResponseSignature;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
@@ -224,9 +225,11 @@ fn run_response_lane(signer: &KmsResponseSigner) {
         &mut rsp,
         &req,
         |base| kms_sign_base(signer, base),
-        RSP_KEY_ID,
-        CREATED,
-        EXPIRES,
+        &ResponseSignature {
+            key_id: RSP_KEY_ID,
+            created: CREATED,
+            expires: EXPIRES,
+        },
     )
     .expect("AWS KMS must sign an RFC 9421 response through the profile seam");
 

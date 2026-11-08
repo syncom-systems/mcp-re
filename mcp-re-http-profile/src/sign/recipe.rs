@@ -34,6 +34,22 @@ pub(crate) fn profile_params(
     }
 }
 
+/// The RFC 9421 parameters one response signature states: who signs, and when the
+/// signature was created and stops being valid. The response-side counterpart of
+/// [`RequestSignature`](super::RequestSignature); a response carries no nonce.
+#[derive(Debug, Clone, Copy)]
+pub struct ResponseSignature<'a> {
+    pub key_id: &'a str,
+    pub created: i64,
+    pub expires: i64,
+}
+
+impl ResponseSignature<'_> {
+    pub(crate) fn params(&self) -> SignatureParams {
+        profile_params(self.key_id, self.created, self.expires, None)
+    }
+}
+
 /// The components a full response signature covers: the response's own, and, when the
 /// response is bound to a request, that request's under `;req`.
 pub(super) fn response_components(bound: bool) -> Vec<CoveredComponent> {
@@ -105,7 +121,11 @@ mod tests {
             .iter()
             .filter(|(n, _)| n.eq_ignore_ascii_case("content-digest"))
             .collect();
-        assert_eq!(digests.len(), 1, "the signer is the sole author of the digest");
+        assert_eq!(
+            digests.len(),
+            1,
+            "the signer is the sole author of the digest"
+        );
         assert_eq!(digests[0].1, content_digest_sha256(b"{}"));
     }
 

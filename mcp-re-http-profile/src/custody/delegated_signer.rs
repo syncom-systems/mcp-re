@@ -11,6 +11,7 @@
 use mcp_re_core::SigningKey;
 
 use crate::block::ActorIdentity;
+use crate::sign::ResponseSignature;
 
 use super::SigningWindow;
 
@@ -46,14 +47,14 @@ impl<'a> DelegatedSigner<'a> {
         self.window.key().delegated_kid()
     }
 
-    /// Unix seconds the signature advertises its validity from.
-    pub(crate) fn created(&self) -> i64 {
-        self.window.created()
-    }
-
-    /// Unix seconds the signature may claim validity until.
-    pub(crate) fn expires(&self) -> i64 {
-        self.window.expires()
+    /// The signature parameters the window states: the credential's `delegated_kid` and the
+    /// window's validity.
+    pub(crate) fn response_signature(&self) -> ResponseSignature<'a> {
+        ResponseSignature {
+            key_id: self.kid(),
+            created: self.window.created(),
+            expires: self.window.expires(),
+        }
     }
 }
 
@@ -75,6 +76,8 @@ mod tests {
             signer.key().public_key().to_bytes(),
             window.key().public_key().to_bytes()
         );
-        assert_eq!((signer.created(), signer.expires()), (1_000, 1_030));
+        let signature = signer.response_signature();
+        assert_eq!(signature.key_id, signer.kid());
+        assert_eq!((signature.created, signature.expires), (1_000, 1_030));
     }
 }

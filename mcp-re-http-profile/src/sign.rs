@@ -28,6 +28,7 @@ mod recipe;
 mod request;
 mod request_block;
 pub(crate) use recipe::profile_params;
+pub use recipe::ResponseSignature;
 use recipe::{response_components, seal_response_body};
 pub(crate) use request::conditional_request_components;
 pub use request::sign_request;
@@ -122,9 +123,7 @@ pub(crate) fn emit_delegated_response_full(
         response,
         request,
         |base| local_sig(signer.key(), base),
-        signer.kid(),
-        signer.created(),
-        signer.expires(),
+        &signer.response_signature(),
     )
 }
 
@@ -151,13 +150,7 @@ pub(crate) fn emit_delegated_response_unbound(
         request_evidence: request_evidence_diagnostic.to_digest(),
     };
     response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
-    sign_response_unbound(
-        response,
-        signer.key(),
-        signer.kid(),
-        signer.created(),
-        signer.expires(),
-    )
+    sign_response_unbound(response, signer.key(), &signer.response_signature())
 }
 
 /// Sign `response` in place with an EXTERNAL signer (Cloud KMS / HSM custody),
@@ -169,12 +162,10 @@ pub fn sign_response_with_signer(
     response: &mut HttpResponse,
     request: &HttpRequest,
     sign_base: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
-    key_id: &str,
-    created: i64,
-    expires: i64,
+    signature: &ResponseSignature<'_>,
 ) -> Result<Vec<u8>, HttpProfileError> {
     request_block::validate_carried(&request.body)?;
-    sign_bound_response(response, request, sign_base, key_id, created, expires)
+    sign_bound_response(response, request, sign_base, signature)
 }
 
 /// The `;req`-bound signing tail, for a caller that has already decided the request's
@@ -183,13 +174,11 @@ fn sign_bound_response(
     response: &mut HttpResponse,
     request: &HttpRequest,
     sign_base: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
-    key_id: &str,
-    created: i64,
-    expires: i64,
+    signature: &ResponseSignature<'_>,
 ) -> Result<Vec<u8>, HttpProfileError> {
     seal_response_body(response)?;
     let components = response_components(true);
-    let params = profile_params(key_id, created, expires, None);
+    let params = signature.params();
     let base = signature_base(
         &components,
         &params,
@@ -216,13 +205,11 @@ fn sign_bound_response(
 pub fn sign_response_unbound(
     response: &mut HttpResponse,
     key: &SigningKey,
-    key_id: &str,
-    created: i64,
-    expires: i64,
+    signature: &ResponseSignature<'_>,
 ) -> Result<(), HttpProfileError> {
     seal_response_body(response)?;
     let components = response_components(false);
-    let params = profile_params(key_id, created, expires, None);
+    let params = signature.params();
     let base = signature_base(&components, &params, &SourceMessage::ResponseOnly(response))?;
     emit_signature(
         &mut response.headers,
@@ -243,6 +230,14 @@ mod tests {
     use crate::digest::content_digest_sha256;
 
     const KID: &str = "delegated-kid-1";
+
+    fn sig() -> ResponseSignature<'static> {
+        ResponseSignature {
+            key_id: KID,
+            created: 1,
+            expires: 2,
+        }
+    }
 
     fn signed(preloaded: &[(&str, &str)]) -> HttpResponse {
         let window = stated_window();
@@ -485,7 +480,7 @@ mod tests {
         )
         .expect("insert");
         let mut r = response.clone();
-        let err = sign_response_with_signer(&mut r, &request, |b| local_sig(key, b), KID, 1, 2)
+        let err = sign_response_with_signer(&mut r, &request, |b| local_sig(key, b), &sig())
             .expect_err("refused");
         assert_eq!(
             err,

@@ -224,7 +224,7 @@ pub(crate) fn emit_delegated_accepted_202(
             .iter()
             .map(|n| CoveredComponent::req(n)),
     );
-    let params = crate::sign::profile_params(signer.kid(), signer.created(), signer.expires(), None);
+    let params = signer.response_signature().params();
     let base = signature_base(
         &components,
         &params,

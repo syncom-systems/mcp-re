@@ -16,6 +16,7 @@ use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::ResponseSignature;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
@@ -669,8 +670,16 @@ fn unbound_signed_response() -> HttpResponse {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":null,"error":{"code":-31000,"message":"no"}}"#.to_vec(),
     };
-    sign_response_unbound(&mut rsp, &server_key(), "server-key-1", CREATED, EXPIRES)
-        .expect("unbound response signing succeeds");
+    sign_response_unbound(
+        &mut rsp,
+        &server_key(),
+        &ResponseSignature {
+            key_id: "server-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+        },
+    )
+    .expect("unbound response signing succeeds");
     rsp
 }
 
@@ -701,8 +710,16 @@ fn an_unbound_receipt_signed_by_a_request_only_actor_fails_actor_binding() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":null,"error":{"code":-31000,"message":"no"}}"#.to_vec(),
     };
-    sign_response_unbound(&mut rsp, &client_key(), "client-key-1", CREATED, EXPIRES)
-        .expect("unbound response signing succeeds");
+    sign_response_unbound(
+        &mut rsp,
+        &client_key(),
+        &ResponseSignature {
+            key_id: "client-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+        },
+    )
+    .expect("unbound response signing succeeds");
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_unbound_response_floor(&rsp, NOW)
         .unwrap_err();

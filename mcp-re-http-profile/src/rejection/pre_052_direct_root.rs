@@ -40,6 +40,7 @@ use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::sign::sign_response_unbound;
 use crate::sign::sign_response_with_signer;
+use crate::sign::ResponseSignature;
 
 use super::rejection_body;
 use super::request_id;
@@ -101,9 +102,11 @@ pub fn sign_pre_052_direct_root_response_base_for_negative_test(
             mcp_re_core::b64url_decode(&key.sign(base))
                 .map_err(|_| HttpProfileError::InvalidSignature)
         },
-        key_id,
-        created,
-        expires,
+        &ResponseSignature {
+            key_id,
+            created,
+            expires,
+        },
     )
     .map(|_base| ())
 }
@@ -141,7 +144,15 @@ pub fn build_pre_052_direct_root_rejection_for_negative_test(
             created,
             expires,
         )?,
-        None => sign_response_unbound(&mut response, key, key_id, created, expires)?,
+        None => sign_response_unbound(
+            &mut response,
+            key,
+            &ResponseSignature {
+                key_id,
+                created,
+                expires,
+            },
+        )?,
     }
     Ok(response)
 }

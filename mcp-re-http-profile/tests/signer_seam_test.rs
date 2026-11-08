@@ -16,6 +16,7 @@ use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RequestSignature;
 use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::ResponseSignature;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
@@ -162,9 +163,11 @@ fn external_signer_response_verifies() {
         &mut rsp,
         &req,
         raw_ed25519_signer(&server_key()),
-        "server-key-1",
-        CREATED,
-        EXPIRES,
+        &ResponseSignature {
+            key_id: "server-key-1",
+            created: CREATED,
+            expires: EXPIRES,
+        },
     )
     .expect("seam sign response");
     Verifier::new(&VerifierPolicy::default(), &resolver())
