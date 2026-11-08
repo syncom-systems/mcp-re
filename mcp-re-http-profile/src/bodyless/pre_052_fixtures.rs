@@ -17,7 +17,7 @@
 //! still compiled by this crate's own batteries, which a feature-only gate would silently
 //! reduce to zero tests.
 //!
-//! A CHILD of `bodyless` because the bodies need `require_bodyless`, `params_for`, `emit`,
+//! A CHILD of `bodyless` because the bodies need `require_bodyless`, `profile_params`, `emit`,
 //! `request_evidence_header` and `check_request_evidence` — all private to the parent. The
 //! crate root would have cost five production widenings to compile a fixture.
 
@@ -61,7 +61,7 @@ pub fn sign_pre_052_root_signed_202_for_negative_test(
             .iter()
             .map(|n| CoveredComponent::req(n)),
     );
-    let params = params_for(key_id, created, expires, None);
+    let params = crate::sign::profile_params(key_id, created, expires, None);
     let base = signature_base(
         &components,
         &params,

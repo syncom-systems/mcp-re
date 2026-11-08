@@ -11,16 +11,11 @@ use mcp_re_core::SigningKey;
 use crate::block::HttpResponseEvidenceBlock;
 use crate::body::insert_meta_block;
 use crate::custody::DelegatedSigner;
-use crate::digest::content_digest_sha256;
 use crate::error::HttpProfileError;
 use crate::evidence::UnboundRequestDiagnostic;
-use crate::ids::ALG_ED25519;
 use crate::ids::PROFILE_TAG;
-use crate::ids::REQUIRED_RESPONSE_COMPONENTS;
-use crate::ids::REQUIRED_RESPONSE_REQ_COMPONENTS;
 use crate::ids::RESPONSE_EVIDENCE_BLOCK_KEY;
 use crate::ids::RESPONSE_LABEL;
-use crate::message::reject_content_encoding;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::sigbase::signature_base;
@@ -28,8 +23,11 @@ use crate::sigbase::CoveredComponent;
 use crate::sigbase::SignatureParams;
 use crate::sigbase::SourceMessage;
 
+mod recipe;
 mod request;
 mod request_block;
+pub(crate) use recipe::profile_params;
+use recipe::{response_components, seal_response_body};
 pub(crate) use request::conditional_request_components;
 pub use request::sign_request;
 pub use request::sign_request_as_given;
@@ -188,30 +186,9 @@ fn sign_bound_response(
     created: i64,
     expires: i64,
 ) -> Result<Vec<u8>, HttpProfileError> {
-    reject_content_encoding(&response.headers)?;
-    set_header(
-        &mut response.headers,
-        "Content-Digest",
-        content_digest_sha256(&response.body),
-    );
-
-    let mut components: Vec<CoveredComponent> = REQUIRED_RESPONSE_COMPONENTS
-        .iter()
-        .map(|n| CoveredComponent::new(n))
-        .collect();
-    components.extend(
-        REQUIRED_RESPONSE_REQ_COMPONENTS
-            .iter()
-            .map(|n| CoveredComponent::req(n)),
-    );
-    let params = SignatureParams {
-        created: Some(created),
-        expires: Some(expires),
-        nonce: None,
-        keyid: Some(key_id.to_owned()),
-        alg: Some(ALG_ED25519.to_owned()),
-        tag: Some(PROFILE_TAG.to_owned()),
-    };
+    seal_response_body(response)?;
+    let components = response_components(true);
+    let params = profile_params(key_id, created, expires, None);
     let base = signature_base(
         &components,
         &params,
@@ -242,25 +219,9 @@ pub fn sign_response_unbound(
     created: i64,
     expires: i64,
 ) -> Result<(), HttpProfileError> {
-    reject_content_encoding(&response.headers)?;
-    set_header(
-        &mut response.headers,
-        "Content-Digest",
-        content_digest_sha256(&response.body),
-    );
-
-    let components: Vec<CoveredComponent> = REQUIRED_RESPONSE_COMPONENTS
-        .iter()
-        .map(|n| CoveredComponent::new(n))
-        .collect();
-    let params = SignatureParams {
-        created: Some(created),
-        expires: Some(expires),
-        nonce: None,
-        keyid: Some(key_id.to_owned()),
-        alg: Some(ALG_ED25519.to_owned()),
-        tag: Some(PROFILE_TAG.to_owned()),
-    };
+    seal_response_body(response)?;
+    let components = response_components(false);
+    let params = profile_params(key_id, created, expires, None);
     let base = signature_base(&components, &params, &SourceMessage::ResponseOnly(response))?;
     emit_signature(
         &mut response.headers,
@@ -292,6 +253,7 @@ mod tests {
     use crate::block::ActorIdentity;
     use crate::custody::ActiveDelegatedKey;
     use crate::custody::SigningWindow;
+    use crate::digest::content_digest_sha256;
 
     const KID: &str = "delegated-kid-1";
 

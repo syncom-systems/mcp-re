@@ -9,8 +9,6 @@ use crate::body::insert_meta_block;
 use crate::digest::content_digest_sha256;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestRoleEvidence;
-use crate::ids::ALG_ED25519;
-use crate::ids::PROFILE_TAG;
 use crate::ids::REQUEST_EVIDENCE_BLOCK_KEY;
 use crate::ids::REQUEST_LABEL;
 use crate::ids::REQUIRED_REQUEST_COMPONENTS;
@@ -24,6 +22,7 @@ use crate::sigbase::SourceMessage;
 
 use super::emit_signature;
 use super::local_sig;
+use super::profile_params;
 use super::set_header;
 
 fn request_components(request: &HttpRequest) -> Result<Vec<CoveredComponent>, HttpProfileError> {
@@ -67,14 +66,7 @@ pub struct RequestSignature<'a> {
 
 impl RequestSignature<'_> {
     fn params(&self) -> SignatureParams {
-        SignatureParams {
-            created: Some(self.created),
-            expires: Some(self.expires),
-            nonce: Some(self.nonce.to_owned()),
-            keyid: Some(self.key_id.to_owned()),
-            alg: Some(ALG_ED25519.to_owned()),
-            tag: Some(PROFILE_TAG.to_owned()),
-        }
+        profile_params(self.key_id, self.created, self.expires, Some(self.nonce))
     }
 }
 
