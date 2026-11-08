@@ -113,8 +113,11 @@ fn back_off_after_failure(
 ) -> RotationStep {
     let metrics = signer.metrics();
     let attempt = FailedAttempt::record(signer);
-    let (consecutive_failures, ttl, backoff) =
-        (attempt.consecutive_failures, attempt.time_to_expiry, attempt.backoff);
+    let (consecutive_failures, ttl, backoff) = (
+        attempt.consecutive_failures,
+        attempt.time_to_expiry,
+        attempt.backoff,
+    );
     if current_still_valid {
         eprintln!(
             "mcp-re-proxy: WARNING: delegated successor issuance FAILED ({}) but the \
