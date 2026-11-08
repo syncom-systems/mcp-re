@@ -203,6 +203,7 @@
     "mcp-re-client-proxy/src/manifest_floor.rs",
     "mcp-re-client-proxy/src/proxy.rs",
     "mcp-re-client-proxy/src/proxy/arrival.rs",
+    "mcp-re-client-proxy/src/proxy/plain_reply.rs",
     "mcp-re-client-proxy/src/route.rs",
     "mcp-re-client-proxy/src/transport.rs",
     "mcp-re-client-proxy/src/verified_outcome.rs"
@@ -227,6 +228,7 @@
     "mcp-re-client-proxy/src/manifest_floor.rs",
     "mcp-re-client-proxy/src/proxy.rs",
     "mcp-re-client-proxy/src/proxy/arrival.rs",
+    "mcp-re-client-proxy/src/proxy/plain_reply.rs",
     "mcp-re-client-proxy/src/route.rs",
     "mcp-re-client-proxy/src/transport.rs",
     "mcp-re-client-proxy/src/verified_outcome.rs"
@@ -253,6 +255,7 @@
     "mcp-re-client-proxy/src/manifest_floor.rs",
     "mcp-re-client-proxy/src/proxy.rs",
     "mcp-re-client-proxy/src/proxy/arrival.rs",
+    "mcp-re-client-proxy/src/proxy/plain_reply.rs",
     "mcp-re-client-proxy/src/route.rs",
     "mcp-re-client-proxy/src/transport.rs",
     "mcp-re-client-proxy/src/verified_outcome.rs"
