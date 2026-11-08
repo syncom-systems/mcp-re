@@ -160,6 +160,12 @@ impl ActiveDelegatedKey {
     pub fn exp(&self) -> i64 {
         self.exp
     }
+
+    /// Whether this key may still sign at `now`. `exp` is exclusive, so the instant it
+    /// names is already past; this is the one place that comparison is written.
+    pub fn serves_at(&self, now: i64) -> bool {
+        now < self.exp
+    }
 }
 
 #[cfg(test)]
@@ -285,6 +291,17 @@ mod tests {
         let active = offer(&request, &header, &request).expect("the exact request");
         assert_eq!((active.nbf(), active.exp()), (NBF, EXP));
         assert_eq!(active.delegated_kid(), request.delegated_kid);
+    }
+
+    /// `exp` is exclusive: the instant it names is already past.
+    #[test]
+    fn a_key_serves_up_to_but_not_at_its_expiry() {
+        let key = delegated();
+        let (header, request, _) = requested(&key);
+        let active = offer(&request, &header, &request).expect("the exact request");
+        assert!(active.serves_at(EXP - 1));
+        assert!(!active.serves_at(EXP));
+        assert!(!active.serves_at(EXP + 1));
     }
 
     /// The revocation identifier is the credential's own `jti`.
