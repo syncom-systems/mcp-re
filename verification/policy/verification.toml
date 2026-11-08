@@ -337,6 +337,7 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#digest::tests::sha256_text_inside_a_quoted_parameter_is_not_a_member",
   "//mcp-re-http-profile:mcp_re_http_profile_test#digest::tests::genuine_member_beside_a_quoted_comma_is_read_once",
   "//mcp-re-http-profile:mcp_re_http_profile_test#digest::tests::parameterised_sha256_member_is_malformed_not_mismatch",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#digest::tests::the_byte_sequence_codec_round_trips_and_refuses_non_base64",
   "//mcp-re-http-profile:mcp_re_http_profile_test#policy::tests::an_algorithm_without_a_verifier_cannot_be_allowlisted",
   "//mcp-re-http-profile:mcp_re_http_profile_test#policy::tests::the_registry_maps_tokens_to_implemented_verifiers",
   "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::request::tests::a_valid_request_consults_the_trust_seam_once_in_the_request_slot",
@@ -7377,6 +7378,9 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::the_delegated_response_block_is_inside_the_digested_body",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_bound_response_advertises_the_handle_of_the_request_it_answers",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::an_unsigned_request_cannot_be_answered_with_a_bound_response",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::recipe::tests::sealing_states_the_digest_of_the_body_carried",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::recipe::tests::only_a_bound_response_covers_request_components",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::recipe::tests::a_response_already_declaring_a_content_coding_is_not_sealed",
 ]
 
 # NP-276, owner Ruling 18.1. Its own unit rather than a clause of the emission binding above:
@@ -7412,6 +7416,7 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_full_response_is_not_signed_over_an_absent_or_invalid_request_block",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_hand_inserted_invalid_block_is_refused_by_the_floor_signer",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::the_bound_floor_signer_refuses_a_request_carrying_an_invalid_block",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::recipe::tests::a_request_states_its_nonce_and_a_response_none",
   "//mcp-re-http-profile:delegated_202_test#no_acknowledgement_is_signed_over_a_notification_carrying_an_invalid_block",
 ]
 
