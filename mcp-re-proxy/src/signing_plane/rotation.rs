@@ -28,9 +28,11 @@ use super::mint_successor::RotationStep;
 use super::trust_epoch_advance::observe_trust_epoch;
 use super::trust_epoch_advance::EpochStep;
 use super::DelegatedEpochWatch;
+pub(super) use failed_attempt::FailedAttempt;
 use wait::wait_for_window;
 pub(super) use wait::RotationScope;
 
+mod failed_attempt;
 mod wait;
 
 /// The cold-path delegated-key rotation thread (ADR-MCPRE-052 §4/§6, ADR-MCPRE-051 §5): a

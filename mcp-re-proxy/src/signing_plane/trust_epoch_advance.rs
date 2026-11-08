@@ -26,8 +26,8 @@ use mcp_re_http_profile::custody::TrustEpoch;
 use mcp_re_http_profile::CustodyError;
 
 use super::epoch_watch::EpochRefusal;
+use super::rotation::FailedAttempt;
 use super::rotation::RotationScope;
-use super::rotation_jitter;
 use super::DelegatedEpochWatch;
 
 /// What the shared trust epoch says to do next.
@@ -102,23 +102,22 @@ fn refuse_to_mint_without_a_comparable_epoch(
     refusal: &EpochRefusal,
     halt: &crate::managed_worker::Halt,
 ) -> EpochStep {
-    use crate::delegated_server_signer::rotation_backoff;
-    let consecutive_failures = signer.metrics().record_failure();
-    let ttl = signer.seconds_to_expiry(now_unix());
-    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter);
+    let attempt = FailedAttempt::record(signer);
     eprintln!(
         "mcp-re-proxy: WARNING: {refusal}; \
          NOT minting (a credential without a comparable epoch is unrevokable). \
          Current key serves until exp then fails closed. \
          consecutive_failures {}, time-to-expiry {}s. Retrying in {}ms.",
-        consecutive_failures,
-        ttl.unwrap_or(0),
-        backoff.as_millis(),
+        attempt.consecutive_failures,
+        attempt.time_to_expiry.unwrap_or(0),
+        attempt.backoff.as_millis(),
     );
-    if halt.sleep(backoff) {
-        return EpochStep::Halt;
-    }
-    EpochStep::Retry(consecutive_failures)
+    retry_or_halt(&attempt, halt)
+}
+
+/// Wait out the attempt's backoff, then retry with its failure count, or halt.
+fn retry_or_halt(attempt: &FailedAttempt, halt: &crate::managed_worker::Halt) -> EpochStep {
+    attempt.wait(halt).map_or(EpochStep::Halt, EpochStep::Retry)
 }
 
 /// Ask the root to re-issue under the new epoch, and read its answer.
@@ -132,7 +131,6 @@ fn apply_epoch_advance(
     counter: i64,
     last: &mut TrustEpoch,
 ) -> EpochStep {
-    use crate::delegated_server_signer::rotation_backoff;
     let (signer, halt) = (scope.signer, scope.halt);
     let label = last.at(counter);
     let outcome = rotor.advance_trust_epoch(counter, now_unix());
@@ -155,23 +153,18 @@ fn apply_epoch_advance(
         // advancing it here would report a revocation that never happened and never look at
         // it again.
         Ok(TrustEpochAdvance::Declined) => {
-            let consecutive_failures = signer.metrics().record_failure();
-            let ttl = signer.seconds_to_expiry(now_unix());
-            let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter);
+            let attempt = FailedAttempt::record(signer);
             eprintln!(
                 "mcp-re-proxy: WARNING: trust epoch advance to {label} NOT APPLIED (root issuer \
                  declined); this replica is STILL SIGNING with its prior-epoch key until that \
                  key's exp ({}s), and mints its next key under {label}; if no issuance succeeds \
                  by then it FAILS CLOSED. The break-glass revocation is not yet in force here. \
                  consecutive_failures {}. Retrying in {}ms.",
-                ttl.unwrap_or(0),
-                consecutive_failures,
-                backoff.as_millis(),
+                attempt.time_to_expiry.unwrap_or(0),
+                attempt.consecutive_failures,
+                attempt.backoff.as_millis(),
             );
-            if halt.sleep(backoff) {
-                return EpochStep::Halt;
-            }
-            EpochStep::Retry(consecutive_failures)
+            retry_or_halt(&attempt, halt)
         }
         // Signing is withdrawn for good (teardown or a dead rotor): nothing serves, nothing
         // to retry, and the loop ends.
@@ -182,19 +175,14 @@ fn apply_epoch_advance(
             EpochStep::Proceed
         }
         Err(_) => {
-            let consecutive_failures = signer.metrics().record_failure();
-            let ttl = signer.seconds_to_expiry(now_unix());
-            let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter);
+            let attempt = FailedAttempt::record(signer);
             eprintln!(
                 "mcp-re-proxy: WARNING: re-issue on trust-epoch advance FAILED (root issuer \
                  unavailable); consecutive_failures {}. Retrying in {}ms.",
-                consecutive_failures,
-                backoff.as_millis(),
+                attempt.consecutive_failures,
+                attempt.backoff.as_millis(),
             );
-            if halt.sleep(backoff) {
-                return EpochStep::Halt;
-            }
-            EpochStep::Retry(consecutive_failures)
+            retry_or_halt(&attempt, halt)
         }
     }
 }
