@@ -13569,10 +13569,10 @@ conjunct = "a time or skew that is not a whole in-range number of seconds is ref
 note = "A JavaScript number becomes the core's `i64` seconds only through `whole_seconds`, because a saturating cast would turn Infinity into an unbounded expiry or skew and NaN into 0. The weakening admits every value; the whole-seconds test must go red."
 path = "sdk/typescript/src/lib.rs"
 anchor = """
-    if !(v.is_finite() && v.fract() == 0.0 && v.abs() <= 9_007_199_254_740_991.0) {
+    if is_whole(v) && is_safe_magnitude(v) {
 """
 weakening = """
-    if false {
+    if true {
 """
 expect_red = [
   "//sdk/typescript:native_binding_test#tests::a_time_that_is_not_whole_seconds_is_refused",

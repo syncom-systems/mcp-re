@@ -11116,8 +11116,12 @@
    "root": "sdk/python/src/lib.rs",
    "srcs": [
     "sdk/python/src/core_facts.rs",
+    "sdk/python/src/entry_points.rs",
     "sdk/python/src/lib.rs",
-    "sdk/python/src/refusal.rs"
+    "sdk/python/src/refusal.rs",
+    "sdk/python/src/results.rs",
+    "sdk/python/src/sign_inputs.rs",
+    "sdk/python/src/verify_inputs.rs"
    ],
    "testonly": false,
    "verus_deps": []
@@ -11136,8 +11140,12 @@
    "root": "sdk/python/src/lib.rs",
    "srcs": [
     "sdk/python/src/core_facts.rs",
+    "sdk/python/src/entry_points.rs",
     "sdk/python/src/lib.rs",
-    "sdk/python/src/refusal.rs"
+    "sdk/python/src/refusal.rs",
+    "sdk/python/src/results.rs",
+    "sdk/python/src/sign_inputs.rs",
+    "sdk/python/src/verify_inputs.rs"
    ],
    "testonly": true,
    "verus_deps": []
@@ -11156,8 +11164,12 @@
    "root": "sdk/typescript/src/lib.rs",
    "srcs": [
     "sdk/typescript/src/core_facts.rs",
+    "sdk/typescript/src/entry_points.rs",
     "sdk/typescript/src/lib.rs",
-    "sdk/typescript/src/refusal.rs"
+    "sdk/typescript/src/refusal.rs",
+    "sdk/typescript/src/results.rs",
+    "sdk/typescript/src/sign_inputs.rs",
+    "sdk/typescript/src/verify_inputs.rs"
    ],
    "testonly": true,
    "verus_deps": []
@@ -11176,8 +11188,12 @@
    "root": "sdk/typescript/src/lib.rs",
    "srcs": [
     "sdk/typescript/src/core_facts.rs",
+    "sdk/typescript/src/entry_points.rs",
     "sdk/typescript/src/lib.rs",
-    "sdk/typescript/src/refusal.rs"
+    "sdk/typescript/src/refusal.rs",
+    "sdk/typescript/src/results.rs",
+    "sdk/typescript/src/sign_inputs.rs",
+    "sdk/typescript/src/verify_inputs.rs"
    ],
    "testonly": false,
    "verus_deps": []
