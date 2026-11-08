@@ -77,4 +77,16 @@ mod tests {
         };
         assert_eq!(attempt.wait(&halt), None);
     }
+
+    #[test]
+    fn recording_counts_the_failure_exactly_once_and_reports_that_count() {
+        let signer = DelegatedServerSigner::new();
+        let first = FailedAttempt::record(&signer);
+        assert_eq!(first.consecutive_failures, 1);
+        assert_eq!(signer.metrics().consecutive_failures(), 1);
+        let second = FailedAttempt::record(&signer);
+        assert_eq!(second.consecutive_failures, 2);
+        assert_eq!(signer.metrics().consecutive_failures(), 2);
+        assert_eq!(second.time_to_expiry, None, "no key is published");
+    }
 }
