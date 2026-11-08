@@ -77,6 +77,19 @@ DECLARE_CALL = re.compile(r"\.declare\(\s*Seam::([A-Z][A-Za-z0-9]*)")
 # posture exactly as a literal `.declare(Seam::X, ..)` does, so it counts as one.
 INSTALL_CALL = re.compile(r"\binstall_capability\(\s*\w+\.stating\(\s*Seam::([A-Z][A-Za-z0-9]*)\s*\)")
 
+# The five production installation paths, each seam with the ONE producer that establishes
+# it and the ONE attachment that consumes its artifact: seam -> (producer, attachment).
+# Completeness and uniqueness above cannot see two valid installs swapped; this table can.
+CAPABILITY_MAP = {
+    "SecurityAuditRecord": ("audit_posture", "with_audit_posture"),
+    "EvidenceRetention": ("evidence_retention", "with_evidence_retention"),
+    "VerifiedContextCarrier": ("verified_context_carrier", "with_verified_context_carrier"),
+    "MrtrContinuationStore": ("mrtr_continuation_store", "with_continuation_store"),
+    "AdmissionCurrency": ("admission_currency", "with_admission_enforcer"),
+}
+PRODUCER_CALL = re.compile(r"serving_capabilities::(\w+)\s*\(")
+ATTACH_NAME = re.compile(r"\bwith_\w+")
+
 # `let (artifact, state) = established.into_parts();` -- the two bindings.
 SPLIT = re.compile(r"let\s*\(\s*(\w+)\s*,\s*(\w+)\s*\)\s*=[^;]*?\.into_parts\(\)\s*;", re.S)
 
@@ -153,6 +166,69 @@ def _disconnected_failures(source: str) -> list[str]:
     return failures
 
 
+def _install_calls(source: str) -> list[tuple[str, str | None, str | None]]:
+    """Each `install_capability(..)` call as (seam, producer, attachment).
+
+    The producer is the last `serving_capabilities::<name>(` before the call; the attachment
+    is the first `with_*` name after the third argument (a closure's parameter commas included).
+    """
+    calls = []
+    prev_end = 0
+    for match in INSTALL_CALL.finditer(source):
+        start = source.index("(", match.start())
+        depth, args, arg_start, end = 0, [], start + 1, len(source)
+        for i in range(start, len(source)):
+            c = source[i]
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                depth -= 1
+                if depth == 0:
+                    args.append(source[arg_start:i])
+                    end = i
+                    break
+            elif c == "," and depth == 1:
+                args.append(source[arg_start:i])
+                arg_start = i + 1
+        producers = PRODUCER_CALL.findall(source[prev_end:match.start()])
+        attach = ATTACH_NAME.search(",".join(args[3:])) if len(args) > 3 else None
+        calls.append((
+            match.group(1),
+            producers[-1] if producers else None,
+            attach.group(0) if attach else None,
+        ))
+        prev_end = end
+    return calls
+
+
+def _correspondence_failures(
+    source: str, expected: dict[str, tuple[str, str]]
+) -> list[str]:
+    """Each mapped seam is installed through its own producer and its own attachment."""
+    failures: list[str] = []
+    calls = _install_calls(source)
+    for seam, (producer, attach) in expected.items():
+        if not any(c[0] == seam for c in calls):
+            failures.append(
+                f"Seam::{seam} is not installed through install_capability: its "
+                f"producer `{producer}` and attachment `{attach}` are unchecked."
+            )
+    for seam, got_producer, got_attach in calls:
+        if seam not in expected:
+            continue
+        producer, attach = expected[seam]
+        if got_producer != producer:
+            failures.append(
+                f"Seam::{seam} is installed from producer `{got_producer}`, expected "
+                f"`{producer}`: the posture stated is not the one the artifact has."
+            )
+        if got_attach != attach:
+            failures.append(
+                f"Seam::{seam} attaches through `{got_attach}`, expected `{attach}`."
+            )
+    return failures
+
+
 def _production(text: str) -> str:
     """A file without its trailing `#[cfg(test)]` region: a test that calls the installer
     states no deployment's posture, so it must not count as a declaration."""
@@ -167,7 +243,7 @@ def _module_source(root: Path, module: str, module_dir: str) -> str:
     return source
 
 
-def check(root: Path) -> list[str]:
+def check(root: Path, expected: dict[str, tuple[str, str]] | None = None) -> list[str]:
     """Return a list of failures; empty means the gate passes."""
     for path in (root / POSTURE_MODULE, root / DECLARING_MODULE):
         if not path.is_file():
@@ -185,6 +261,9 @@ def check(root: Path) -> list[str]:
     declared = DECLARE_CALL.findall(declaring_src) + INSTALL_CALL.findall(declaring_src)
 
     failures: list[str] = _disconnected_failures(declaring_src)
+    failures += _correspondence_failures(
+        declaring_src, CAPABILITY_MAP if expected is None else expected
+    )
     if not variants:
         failures.append(f"`pub enum Seam` in {POSTURE_MODULE} has no variants")
     return failures + _all_failures(variants, listed) + _declaration_failures(variants, declared)
@@ -312,7 +391,36 @@ def _selftest_variant_missing_from_all() -> bool:
             "posture.declare(Seam::Alpha, a);\nposture.declare(Seam::Beta, b);\n",
             encoding="utf-8",
         )
-        return _verdict("a variant missing from Seam::ALL", check(root), "not in Seam::ALL")
+        return _verdict("a variant missing from Seam::ALL", check(root, {}), "not in Seam::ALL")
+
+
+_MAP = {"Alpha": ("prod_a", "with_a"), "Beta": ("prod_b", "with_b")}
+
+
+def _install(seam: str, producer: str, attach: str) -> str:
+    return (
+        f"let established = crate::serving_capabilities::{producer}(cfg)?;\n"
+        f"proxy = install_capability(start.stating(Seam::{seam}), proxy, established, "
+        f"|p, a| p.{attach}(a));\n"
+    )
+
+
+_CORRESPONDENCE_CASES: list[tuple[str, str, str | None]] = [
+    ("correct producer, seam and attachment",
+     _install("Alpha", "prod_a", "with_a") + _install("Beta", "prod_b", "with_b"), None),
+    ("wrong producer",
+     _install("Alpha", "prod_b", "with_a") + _install("Beta", "prod_b", "with_b"),
+     "installed from producer `prod_b`, expected `prod_a`"),
+    ("wrong attachment",
+     _install("Alpha", "prod_a", "with_b") + _install("Beta", "prod_b", "with_b"),
+     "attaches through `with_b`, expected `with_a`"),
+    ("wrong seam (swapped valid seams)",
+     _install("Beta", "prod_a", "with_a") + _install("Alpha", "prod_b", "with_b"),
+     "Seam::Beta is installed from producer `prod_a`, expected `prod_b`"),
+    ("a mapped seam declared literally",
+     _install("Alpha", "prod_a", "with_a") + "posture.declare(Seam::Beta, b);\n",
+     "Seam::Beta is not installed through install_capability"),
+]
 
 
 def selftest() -> int:
@@ -322,8 +430,13 @@ def selftest() -> int:
         for name, declaring, expected in _SELFTEST_CASES:
             tmp = Path(raw) / name.replace(" ", "_")
             tmp.mkdir()
-            results.append(_verdict(name, check(_selftest_tree(tmp, declaring)), expected))
+            results.append(_verdict(name, check(_selftest_tree(tmp, declaring), {}), expected))
     results.append(_selftest_variant_missing_from_all())
+    with tempfile.TemporaryDirectory() as raw:
+        for name, declaring, expected in _CORRESPONDENCE_CASES:
+            tmp = Path(raw) / name.replace(" ", "_")
+            tmp.mkdir()
+            results.append(_verdict(name, check(_selftest_tree(tmp, declaring), _MAP), expected))
     if not all(results):
         print("seam-posture gate: SELFTEST FAILED")
         return 1

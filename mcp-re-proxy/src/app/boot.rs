@@ -175,8 +175,8 @@ impl Startup<'_> {
 }
 
 /// Install one optional capability and state its posture, from the ONE [`Established`]
-/// value: the artifact is attached exactly when the posture says ON, and the seam named in
-/// the call is the one stated. `scripts/seam_posture_gate.py` counts the call as that
+/// value: the artifact is attached exactly when the posture says ON, THEN the seam named in
+/// the call is stated. `scripts/seam_posture_gate.py` counts the call as that
 /// seam's declaration.
 pub(super) fn install_capability<P, T>(
     statement: SeamStatement<'_>,
@@ -185,11 +185,12 @@ pub(super) fn install_capability<P, T>(
     attach: impl FnOnce(P, T) -> P,
 ) -> P {
     let (artifact, state) = established.into_parts();
-    statement.posture.declare(statement.seam, state);
-    match artifact {
+    let installed = match artifact {
         Some(artifact) => attach(target, artifact),
         None => target,
-    }
+    };
+    statement.posture.declare(statement.seam, state);
+    installed
 }
 
 #[cfg(test)]
