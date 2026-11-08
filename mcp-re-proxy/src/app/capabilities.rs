@@ -112,16 +112,14 @@ pub(super) fn with_audit_and_retention(
     let state = start.config.state();
     let established = crate::serving_capabilities::audit_posture(state.audit(), audit)?;
     proxy = install_capability(
-        &mut start.posture,
-        Seam::SecurityAuditRecord,
+        start.stating(Seam::SecurityAuditRecord),
         proxy,
         established,
         HttpProfileProxy::with_audit_posture,
     );
     let established = crate::serving_capabilities::evidence_retention(state.retention())?;
     proxy = install_capability(
-        &mut start.posture,
-        Seam::EvidenceRetention,
+        start.stating(Seam::EvidenceRetention),
         proxy,
         established,
         |proxy, retention| proxy.with_evidence_retention(Arc::new(retention)),
@@ -142,8 +140,7 @@ pub(super) fn with_correlation(
     let established =
         crate::serving_capabilities::verified_context_carrier(state.verified_context());
     proxy = install_capability(
-        &mut start.posture,
-        Seam::VerifiedContextCarrier,
+        start.stating(Seam::VerifiedContextCarrier),
         proxy,
         established,
         HttpProfileProxy::with_verified_context_carrier,
@@ -153,8 +150,7 @@ pub(super) fn with_correlation(
         start.building.control(),
     )?;
     proxy = install_capability(
-        &mut start.posture,
-        Seam::MrtrContinuationStore,
+        start.stating(Seam::MrtrContinuationStore),
         proxy,
         established,
         |proxy, store| {
@@ -183,8 +179,7 @@ pub(super) fn with_admission(
         start.building.control(),
     )?;
     Ok(install_capability(
-        &mut start.posture,
-        Seam::AdmissionCurrency,
+        start.stating(Seam::AdmissionCurrency),
         proxy,
         established,
         HttpProfileProxy::with_admission_enforcer,

@@ -158,19 +158,34 @@ impl<'a> Startup<'a> {
     }
 }
 
+/// The posture line of one named seam, about to be stated.
+pub(super) struct SeamStatement<'a> {
+    posture: &'a mut PostureLog,
+    seam: Seam,
+}
+
+impl Startup<'_> {
+    /// The statement of `seam`'s posture, for [`install_capability`] to make.
+    pub(super) fn stating(&mut self, seam: Seam) -> SeamStatement<'_> {
+        SeamStatement {
+            posture: &mut self.posture,
+            seam,
+        }
+    }
+}
+
 /// Install one optional capability and state its posture, from the ONE [`Established`]
 /// value: the artifact is attached exactly when the posture says ON, and the seam named in
 /// the call is the one stated. `scripts/seam_posture_gate.py` counts the call as that
 /// seam's declaration.
 pub(super) fn install_capability<P, T>(
-    posture: &mut PostureLog,
-    seam: Seam,
+    statement: SeamStatement<'_>,
     target: P,
     established: Established<T>,
     attach: impl FnOnce(P, T) -> P,
 ) -> P {
     let (artifact, state) = established.into_parts();
-    posture.declare(seam, state);
+    statement.posture.declare(statement.seam, state);
     match artifact {
         Some(artifact) => attach(target, artifact),
         None => target,
@@ -192,8 +207,10 @@ mod tests {
     fn an_on_capability_is_attached_and_its_seam_stated() {
         let mut posture = PostureLog::new();
         let out = install_capability(
-            &mut posture,
-            Seam::AdmissionCurrency,
+            SeamStatement {
+                posture: &mut posture,
+                seam: Seam::AdmissionCurrency,
+            },
             Vec::<u8>::new(),
             Established::on(7u8, "on"),
             |mut v, a| {
@@ -209,8 +226,10 @@ mod tests {
     fn an_off_capability_attaches_nothing_and_still_states_its_seam() {
         let mut posture = PostureLog::new();
         let out = install_capability(
-            &mut posture,
-            Seam::EvidenceRetention,
+            SeamStatement {
+                posture: &mut posture,
+                seam: Seam::EvidenceRetention,
+            },
             Vec::<u8>::new(),
             Established::<u8>::off("off"),
             |_, _| unreachable!("an OFF capability has no artifact to attach"),
