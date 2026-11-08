@@ -22,8 +22,9 @@ use crate::clock::StartupReading;
 use crate::config_state::validation::ValidatedDeployment;
 use crate::config_state::InFlightLimitBasis;
 use crate::materializing_runtime::MaterializingRuntime;
+use crate::serving_capabilities::Established;
 use crate::startup_plan::{ChannelEstablishmentPlan, SigningPlan, TrustPlan};
-use crate::startup_posture::PostureLog;
+use crate::startup_posture::{PostureLog, Seam};
 use crate::tls_plane::CrlReference;
 
 /// What the pre-effect readings produced: the clock reading every boot-time consumer
@@ -154,5 +155,67 @@ impl<'a> Startup<'a> {
             posture: PostureLog::new(),
             building,
         })
+    }
+}
+
+/// Install one optional capability and state its posture, from the ONE [`Established`]
+/// value: the artifact is attached exactly when the posture says ON, and the seam named in
+/// the call is the one stated. `scripts/seam_posture_gate.py` counts the call as that
+/// seam's declaration.
+pub(super) fn install_capability<P, T>(
+    posture: &mut PostureLog,
+    seam: Seam,
+    target: P,
+    established: Established<T>,
+    attach: impl FnOnce(P, T) -> P,
+) -> P {
+    let (artifact, state) = established.into_parts();
+    posture.declare(seam, state);
+    match artifact {
+        Some(artifact) => attach(target, artifact),
+        None => target,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What `assert_complete` reports as still unstated: the seam under test is not in it.
+    fn stated_missing(posture: &PostureLog) -> String {
+        posture
+            .assert_complete()
+            .expect_err("other seams are unstated")
+    }
+
+    #[test]
+    fn an_on_capability_is_attached_and_its_seam_stated() {
+        let mut posture = PostureLog::new();
+        let out = install_capability(
+            &mut posture,
+            Seam::AdmissionCurrency,
+            Vec::<u8>::new(),
+            Established::on(7u8, "on"),
+            |mut v, a| {
+                v.push(a);
+                v
+            },
+        );
+        assert_eq!(out, vec![7]);
+        assert!(!stated_missing(&posture).contains("AdmissionCurrency"));
+    }
+
+    #[test]
+    fn an_off_capability_attaches_nothing_and_still_states_its_seam() {
+        let mut posture = PostureLog::new();
+        let out = install_capability(
+            &mut posture,
+            Seam::EvidenceRetention,
+            Vec::<u8>::new(),
+            Established::<u8>::off("off"),
+            |_, _| unreachable!("an OFF capability has no artifact to attach"),
+        );
+        assert!(out.is_empty());
+        assert!(!stated_missing(&posture).contains("EvidenceRetention"));
     }
 }

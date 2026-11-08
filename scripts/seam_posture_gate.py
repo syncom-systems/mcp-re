@@ -4,7 +4,10 @@
 
 WHAT THIS PROVES, exactly: every variant of `startup_posture::Seam` appears in
 `Seam::ALL`, and every variant is passed to `posture.declare(Seam::<X>, ..)` exactly once
-in `app.rs` or a stage module under `app/`. That is a syntactic check over the source of those
+in `app.rs` or a stage module under `app/` -- by a literal `posture.declare(Seam::X, ..)` or by
+`install_capability(&mut start.posture, Seam::X, ..)`, which consumes an `Established` and declares the
+seam it names. An `Established` split by `into_parts` must declare the state half it yields.
+That is a syntactic check over the source of those
 modules, and the claim stops there.
 
 WHAT IT DOES NOT PROVE: that the declared state is the RIGHT one, that the ON and OFF
@@ -68,6 +71,15 @@ ALL_ENTRY = re.compile(r"Seam::([A-Z][A-Za-z0-9]*)")
 # `posture.declare(Seam::OnlineOcspClientRevocation, ocsp_state);`
 DECLARE_CALL = re.compile(r"\.declare\(\s*Seam::([A-Z][A-Za-z0-9]*)")
 
+# `install_capability(&mut start.posture, Seam::AdmissionCurrency, proxy, established, attach)`: the
+# composition root's one operation that consumes an `Established<T>`, attaches the artifact
+# when ON and declares the posture of the seam NAMED in the call. It states that seam's
+# posture exactly as a literal `.declare(Seam::X, ..)` does, so it counts as one.
+INSTALL_CALL = re.compile(r"\binstall_capability\(\s*[^,()]+,\s*Seam::([A-Z][A-Za-z0-9]*)")
+
+# `let (artifact, state) = established.into_parts();` -- the two bindings.
+SPLIT = re.compile(r"let\s*\(\s*(\w+)\s*,\s*(\w+)\s*\)\s*=[^;]*?\.into_parts\(\)\s*;", re.S)
+
 
 def _find(pattern: re.Pattern[str], text: str, what: str, path: str) -> str:
     match = pattern.search(text)
@@ -117,11 +129,41 @@ def _declaration_failures(variants: list[str], declared: list[str]) -> list[str]
     return failures
 
 
+def _disconnected_failures(source: str) -> list[str]:
+    """An `Established` split by `into_parts` must declare the posture half it yields.
+
+    The pair is the point of `Established`: if the state half is bound and never handed to
+    a `declare`, the artifact is installed under no stated posture, or the posture is
+    stated from some other value. `install_capability` is the one place that splits and
+    declares in the same body; any other split must declare its own state binding.
+    """
+    failures: list[str] = []
+    for match in SPLIT.finditer(source):
+        state = match.group(2)
+        tail = source[match.end():]
+        end = re.search(r"\n\s*(?:pub(?:\([^)]*\))?\s+)?fn ", tail)
+        body = tail[: end.start()] if end else tail
+        if not re.search(rf"\.declare\([^;]*?\b{state}\b\s*\)", body, re.S):
+            failures.append(
+                f"an Established is split into (_, {state}) and `{state}` is never "
+                f"declared in the same function: the artifact and its posture are "
+                f"disconnected. Use install_capability(&mut start.posture, Seam::.., ..) or declare "
+                f"`{state}` beside the split."
+            )
+    return failures
+
+
+def _production(text: str) -> str:
+    """A file without its trailing `#[cfg(test)]` region: a test that calls the installer
+    states no deployment's posture, so it must not count as a declaration."""
+    return text.split("#[cfg(test)]", 1)[0]
+
+
 def _module_source(root: Path, module: str, module_dir: str) -> str:
     """A module's root file followed by its direct children, as one text."""
-    source = (root / module).read_text(encoding="utf-8")
+    source = _production((root / module).read_text(encoding="utf-8"))
     for child in sorted((root / module_dir).glob("*.rs")):
-        source += child.read_text(encoding="utf-8")
+        source += _production(child.read_text(encoding="utf-8"))
     return source
 
 
@@ -140,9 +182,9 @@ def check(root: Path) -> list[str]:
     listed = ALL_ENTRY.findall(
         _find(ALL_BLOCK, posture_src, "`Seam::ALL`", POSTURE_MODULE)
     )
-    declared = DECLARE_CALL.findall(declaring_src)
+    declared = DECLARE_CALL.findall(declaring_src) + INSTALL_CALL.findall(declaring_src)
 
-    failures: list[str] = []
+    failures: list[str] = _disconnected_failures(declaring_src)
     if not variants:
         failures.append(f"`pub enum Seam` in {POSTURE_MODULE} has no variants")
     return failures + _all_failures(variants, listed) + _declaration_failures(variants, declared)
@@ -173,9 +215,61 @@ def _selftest_tree(tmp: Path, declaring: str) -> Path:
 
 _SELFTEST_CASES: list[tuple[str, str, str | None]] = [
     (
+        "one seam installed and one declared",
+        "install_capability(&mut start.posture, Seam::Alpha, proxy, est, attach);\n"
+        "posture.declare(Seam::Beta, b);\n",
+        None,
+    ),
+    (
+        "a seam installed twice",
+        "install_capability(&mut start.posture, Seam::Alpha, proxy, est, attach);\n"
+        "install_capability(&mut start.posture, Seam::Alpha, proxy, est, attach);\n"
+        "posture.declare(Seam::Beta, b);\n",
+        "Seam::Alpha is declared 2 times",
+    ),
+    (
+        "a seam both installed and declared",
+        "install_capability(&mut start.posture, Seam::Alpha, proxy, est, attach);\n"
+        "posture.declare(Seam::Alpha, a);\n"
+        "posture.declare(Seam::Beta, b);\n",
+        "Seam::Alpha is declared 2 times",
+    ),
+    (
+        "an installation naming no variant",
+        "install_capability(&mut start.posture, Seam::Alpha, proxy, est, attach);\n"
+        "posture.declare(Seam::Beta, b);\n"
+        "install_capability(&mut start.posture, Seam::Gamma, proxy, est, attach);\n",
+        "which is not a Seam variant",
+    ),
+    (
+        "a seam whose only installation is missing",
+        "posture.declare(Seam::Alpha, a);\n",
+        "Seam::Beta is never declared",
+    ),
+    (
+        "an Established split whose state is never declared",
+        "fn f() {\n    let (artifact, state) = est.into_parts();\n"
+        "    proxy.attach(artifact);\n}\n"
+        "posture.declare(Seam::Alpha, a);\nposture.declare(Seam::Beta, b);\n",
+        "disconnected",
+    ),
+    (
+        "an Established split whose state is declared",
+        "fn f() {\n    let (artifact, state) = est.into_parts();\n"
+        "    posture.declare(Seam::Alpha, state);\n}\n"
+        "posture.declare(Seam::Beta, b);\n",
+        None,
+    ),
+    (
         "both seams declared",
         "posture.declare(Seam::Alpha, a);\nposture.declare(Seam::Beta, b);\n",
         None,
+    ),
+    (
+        "a declaration inside a test region is not a declaration",
+        "posture.declare(Seam::Alpha, a);\n#[cfg(test)]\nmod t { fn f() {\n"
+        "posture.declare(Seam::Beta, b);\n} }\n",
+        "Seam::Beta is never declared",
     ),
     (
         "a seam that is never declared",

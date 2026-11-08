@@ -3,7 +3,7 @@
 //!
 //! Every capability is established in `serving_capabilities`, where its own rule is written
 //! down, and every `into_parts` is consuming: the artifact installed here and the posture
-//! declared after it come from one value, so there is no store under an OFF line and no ON
+//! declared with it come from one value, so there is no store under an OFF line and no ON
 //! line over nothing. Both refusals for a capability that was SELECTED and cannot be
 //! established differ only in what an omitted flag means.
 
@@ -16,6 +16,7 @@ use crate::startup_posture::Seam;
 use crate::transport::TransportBinding;
 use crate::HttpProfileProxy;
 
+use super::boot::install_capability;
 use super::boot::Startup;
 use super::planes::ServingSeam;
 
@@ -109,23 +110,22 @@ pub(super) fn with_audit_and_retention(
     audit: crate::audit_commitment::EstablishedAudit,
 ) -> Result<HttpProfileProxy, String> {
     let state = start.config.state();
-    let (audit, audit_state) =
-        crate::serving_capabilities::audit_posture(state.audit(), audit)?.into_parts();
-    if let Some(audit) = audit {
-        proxy = proxy.with_audit_posture(audit);
-    }
-    start
-        .posture
-        .declare(Seam::SecurityAuditRecord, audit_state);
-
-    let (retention, retention_state) =
-        crate::serving_capabilities::evidence_retention(state.retention())?.into_parts();
-    if let Some(retention) = retention {
-        proxy = proxy.with_evidence_retention(Arc::new(retention));
-    }
-    start
-        .posture
-        .declare(Seam::EvidenceRetention, retention_state);
+    let established = crate::serving_capabilities::audit_posture(state.audit(), audit)?;
+    proxy = install_capability(
+        &mut start.posture,
+        Seam::SecurityAuditRecord,
+        proxy,
+        established,
+        HttpProfileProxy::with_audit_posture,
+    );
+    let established = crate::serving_capabilities::evidence_retention(state.retention())?;
+    proxy = install_capability(
+        &mut start.posture,
+        Seam::EvidenceRetention,
+        proxy,
+        established,
+        |proxy, retention| proxy.with_evidence_retention(Arc::new(retention)),
+    );
     Ok(proxy)
 }
 
@@ -139,31 +139,31 @@ pub(super) fn with_correlation(
     authorization: Option<Arc<dyn AuthorizationEvaluator>>,
 ) -> Result<HttpProfileProxy, String> {
     let state = start.config.state();
-    let (verified_context, verified_context_state) =
-        crate::serving_capabilities::verified_context_carrier(state.verified_context())
-            .into_parts();
-    if let Some(policy) = verified_context {
-        proxy = proxy.with_verified_context_carrier(policy);
-    }
-    start
-        .posture
-        .declare(Seam::VerifiedContextCarrier, verified_context_state);
-
-    let (continuation_store, continuation_state) =
-        crate::serving_capabilities::mrtr_continuation_store(
-            &state.continuation_control().continuation_plan(),
-            start.building.control(),
-        )?
-        .into_parts();
-    if let Some(store) = continuation_store {
-        proxy = proxy.with_continuation_store(
-            store,
-            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
-        );
-    }
-    start
-        .posture
-        .declare(Seam::MrtrContinuationStore, continuation_state);
+    let established =
+        crate::serving_capabilities::verified_context_carrier(state.verified_context());
+    proxy = install_capability(
+        &mut start.posture,
+        Seam::VerifiedContextCarrier,
+        proxy,
+        established,
+        HttpProfileProxy::with_verified_context_carrier,
+    );
+    let established = crate::serving_capabilities::mrtr_continuation_store(
+        &state.continuation_control().continuation_plan(),
+        start.building.control(),
+    )?;
+    proxy = install_capability(
+        &mut start.posture,
+        Seam::MrtrContinuationStore,
+        proxy,
+        established,
+        |proxy, store| {
+            proxy.with_continuation_store(
+                store,
+                crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+            )
+        },
+    );
 
     if let Some(evaluator) = authorization {
         proxy = proxy.with_authorization(evaluator);
@@ -177,18 +177,16 @@ pub(super) fn with_admission(
     proxy: HttpProfileProxy,
 ) -> Result<HttpProfileProxy, String> {
     let state = start.config.state();
-    let (admission, admission_state) = crate::serving_capabilities::admission_currency(
+    let established = crate::serving_capabilities::admission_currency(
         state.admission(),
         state.freshness().max_clock_skew(),
         start.building.control(),
-    )?
-    .into_parts();
-    let proxy = match admission {
-        Some(enforcer) => proxy.with_admission_enforcer(enforcer),
-        None => proxy,
-    };
-    start
-        .posture
-        .declare(Seam::AdmissionCurrency, admission_state);
-    Ok(proxy)
+    )?;
+    Ok(install_capability(
+        &mut start.posture,
+        Seam::AdmissionCurrency,
+        proxy,
+        established,
+        HttpProfileProxy::with_admission_enforcer,
+    ))
 }
