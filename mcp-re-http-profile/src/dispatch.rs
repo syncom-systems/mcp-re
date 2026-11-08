@@ -165,13 +165,7 @@ fn prepare_http_dispatch(
     verified: &VerifiedMcpRequest,
     continuation_ctx: Option<RetainedContinuation<'_>>,
 ) -> Result<(HttpReplayKey, bool), DispatchError> {
-    let replay_key = HttpReplayKey {
-        profile_id: verified.floor.profile_id.clone(),
-        signature_label: verified.floor.signature_label.clone(),
-        actor_id: verified.floor.resolved_actor.actor_id(),
-        audience_hash: verified.audience_hash.clone(),
-        nonce: verified.floor.nonce.clone(),
-    };
+    let replay_key = verified.replay_key();
 
     // MRTR continuation binding (if the block carries one).
     // ADR-MCPRE-059 WP2: written as a match rather than `as_ref().and_then(..)` because
