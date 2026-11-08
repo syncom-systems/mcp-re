@@ -11,6 +11,7 @@ use mcp_re_core::SigningKey;
 use crate::block::HttpResponseEvidenceBlock;
 use crate::body::insert_meta_block;
 use crate::custody::DelegatedSigner;
+use crate::digest::base64_standard_encode;
 use crate::error::HttpProfileError;
 use crate::evidence::UnboundRequestDiagnostic;
 use crate::ids::PROFILE_TAG;
@@ -231,20 +232,6 @@ pub fn sign_response_unbound(
         &base,
         |b| local_sig(key, b),
     )
-}
-
-pub(crate) fn base64_standard_encode(bytes: &[u8]) -> String {
-    use base64::engine::general_purpose::STANDARD;
-    use base64::Engine;
-    STANDARD.encode(bytes)
-}
-
-pub(crate) fn base64_standard_decode(s: &str) -> Result<Vec<u8>, HttpProfileError> {
-    use base64::engine::general_purpose::STANDARD;
-    use base64::Engine;
-    STANDARD
-        .decode(s)
-        .map_err(|_| HttpProfileError::InvalidSignature)
 }
 
 #[cfg(test)]

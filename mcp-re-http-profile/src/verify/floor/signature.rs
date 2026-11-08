@@ -18,7 +18,7 @@ use mcp_re_core::McpReError;
 use crate::error::HttpProfileError;
 use crate::message::single_header;
 use crate::policy::ProfileAlgorithm;
-use crate::sign::base64_standard_decode;
+use crate::digest::base64_standard_decode;
 
 use super::sf_dictionary::member_value;
 

@@ -11,6 +11,18 @@ use sha2::Sha256;
 
 use crate::error::HttpProfileError;
 
+/// The RFC 8941 byte-sequence encoding (standard base64 WITH padding) that the signer and the
+/// verifier both read and write, so neither owns it.
+pub(crate) fn base64_standard_encode(bytes: &[u8]) -> String {
+    STANDARD.encode(bytes)
+}
+
+pub(crate) fn base64_standard_decode(s: &str) -> Result<Vec<u8>, HttpProfileError> {
+    STANDARD
+        .decode(s)
+        .map_err(|_| HttpProfileError::InvalidSignature)
+}
+
 /// Compute the `Content-Digest` header value for `body`.
 pub fn content_digest_sha256(body: &[u8]) -> String {
     let digest = Sha256::digest(body);
@@ -69,6 +81,14 @@ fn is_bare_byte_sequence(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_byte_sequence_codec_round_trips_and_refuses_non_base64() {
+        let bytes = [0u8, 1, 2, 254, 255];
+        let encoded = base64_standard_encode(&bytes);
+        assert_eq!(base64_standard_decode(&encoded).expect("decodes"), bytes);
+        assert!(base64_standard_decode("not base64!").is_err());
+    }
 
     #[test]
     fn digest_round_trip() {

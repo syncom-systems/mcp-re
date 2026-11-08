@@ -527,7 +527,7 @@ status = "unreviewed"
 # 305 (measured at c939c2f, under a 408 baseline) -> 286. `baseline_sha` names that parent.
 [[debt]]
 path = "mcp-re-http-profile/src/sign.rs"
-baseline_prod_loc = 247
+baseline_prod_loc = 234
 baseline_sha = "288a777"
 status = "unreviewed"
 
