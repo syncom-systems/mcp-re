@@ -2,11 +2,11 @@
 //! The composition root installs exactly the continuation capability the seam established.
 //!
 //! `serving_capabilities::continuation` decides what a plan yields, and its own controls
-//! measure that. What they cannot see is the step AFTER: `app.rs` calls `into_parts`,
-//! separating the artifact from the posture, and then chooses whether to attach the store
-//! and which seam state to declare. A defect there falsifies D1b′ while every
-//! `Established<T>` control stays green — the type couples the two locally, and the
-//! coupling ends at the split.
+//! measure that. What they cannot see is the step AFTER: the composition root hands the
+//! `Established` to `install_capability`, which separates the artifact from the posture,
+//! attaches the store and declares the seam it is told. A defect there — a store attached
+//! outside that call, or under another seam's name — falsifies D1b′ while every
+//! `Established<T>` control stays green.
 //!
 //! # Why a source inventory rather than a startup
 //!
@@ -82,13 +82,28 @@ fn app_production() -> String {
     crate::composition_source::composition_production()
 }
 
+/// Whether the single `with_continuation_store(` attachment sits inside an
+/// `install_capability(` call that names `Seam::MrtrContinuationStore`: the artifact is
+/// attached by the installer that also declares that seam's posture, so the two come from
+/// one `Established`. No statement ends between the call and the attachment.
+fn attached_by_the_seams_installer(app: &str) -> bool {
+    let Some(at) = app.find("with_continuation_store(") else {
+        return false;
+    };
+    let before = app.get(..at).unwrap_or_default();
+    let Some(call) = before.rfind("install_capability(") else {
+        return false;
+    };
+    let window = before.get(call..).unwrap_or_default();
+    window.contains("Seam::MrtrContinuationStore") && !window.contains(';')
+}
+
 /// The store is attached ONLY from what the seam established, and only when it established
 /// one.
 ///
-/// Two facts, and the second is the one that carries the claim. `with_continuation_store`
-/// is called once, and its guard is the `Option` that came out of `into_parts` — so the
-/// artifact installed is the seam's artifact, and an OFF posture cannot coexist with an
-/// installed store.
+/// `with_continuation_store` appears once, as the attach closure of the
+/// `install_capability` call naming this seam. The installer attaches an artifact only when
+/// the `Established` carries one, so an OFF posture cannot coexist with an installed store.
 #[test]
 fn the_root_installs_only_the_store_the_seam_established() {
     let app = app_production();
@@ -100,24 +115,12 @@ fn the_root_installs_only_the_store_the_seam_established() {
          a second authority over what this deployment holds, and the posture line declared \
          below describes only one of them"
     );
-
-    let at = app
-        .find("with_continuation_store(")
-        .expect("the composition root must attach the established store");
-    let before = app.get(..at).unwrap_or_default();
-    let guard = before
-        .rfind("if let Some(store) = continuation_store")
-        .expect(
-            "the attachment is not guarded by the Option that came out of `into_parts`. \
-             That Option IS the seam's answer; attaching on any other condition installs a \
-             store the posture does not describe",
-        );
     assert!(
-        before.get(guard..).unwrap_or_default().matches('{').count() == 1,
-        "the guard and the attachment are no longer one block: the attachment has moved \
-         out from under the seam's answer"
+        attached_by_the_seams_installer(&app),
+        "the attachment is not made by the installer that declares Seam::MrtrContinuationStore. \
+         The installer's Option IS the seam's answer; attaching on any other condition installs a \
+         store the posture does not describe"
     );
-
     assert_eq!(
         app.matches("mrtr_continuation_store(").count(),
         1,
@@ -126,7 +129,7 @@ fn the_root_installs_only_the_store_the_seam_established() {
     assert_eq!(
         app.matches("Seam::MrtrContinuationStore").count(),
         1,
-        "the seam is declared other than exactly once in the composition root — `assert_complete` \
+        "the seam is named other than exactly once in the composition root — `assert_complete` \
          refuses that at runtime, and no hermetic lane reaches it"
     );
 }
@@ -185,15 +188,20 @@ fn the_rules_would_catch_each_regression() {
          excludes, so that exclusion may now be exempting a live consumer"
     );
 
-    // A store attached outside the seam's guard is what the first rule catches; prove the
-    // rule can see such a line rather than trusting that it would.
-    let tampered = app.replace(
-        "if let Some(store) = continuation_store",
-        "if true /* always */",
-    );
+    // A store attached under another seam's name is what the first rule catches; prove the
+    // rule can see such a call rather than trusting that it would.
     assert!(
-        !tampered.contains("if let Some(store) = continuation_store"),
-        "the guard the first rule anchors on is no longer spelled this way, so that rule \
-         now passes vacuously"
+        attached_by_the_seams_installer(&app),
+        "the rule fails on the real composition root, so it asserts nothing about a regression"
+    );
+    let tampered = app.replace("Seam::MrtrContinuationStore", "Seam::AdmissionCurrency");
+    assert!(
+        !attached_by_the_seams_installer(&tampered),
+        "the rule still passes when the attachment is installed under another seam's name"
+    );
+    let unguarded = app.replace("install_capability(", "install_unchecked(");
+    assert!(
+        !attached_by_the_seams_installer(&unguarded),
+        "the rule still passes when the attachment is not made by the installer"
     );
 }

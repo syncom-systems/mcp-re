@@ -7025,11 +7025,13 @@ theorem = "THM-0096"
 conjunct = "no production path installs a node-local continuation tier — a deployment that selected nothing installs NO store"
 path = "mcp-re-proxy/src/app/capabilities.rs"
 anchor = """
-    if let Some(store) = continuation_store {
+        |proxy, store| {
+            proxy.with_continuation_store(
 """
 weakening = """
-    type _NodeLocal = crate::continuation_store::InMemoryContinuationStore;
-    if let Some(store) = continuation_store {
+        |proxy, store| {
+            type _NodeLocal = crate::continuation_store::InMemoryContinuationStore;
+            proxy.with_continuation_store(
 """
 expect_red = [
   "//mcp-re-proxy:integration_test#continuation_installation_test::no_production_path_installs_a_node_local_continuation_tier",

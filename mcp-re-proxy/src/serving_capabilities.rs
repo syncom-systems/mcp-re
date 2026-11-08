@@ -34,11 +34,11 @@
 //! statements that have to be kept in agreement — the distinction ADR-MCPRE-057 §18
 //! draws between *requested* and *established*, made structural.
 //!
-//! The `declare` calls stay in `run_validated`. That is deliberate: the posture is the
-//! composition root's statement about the deployment, `assert_complete` runs there, and
-//! `scripts/seam_posture_gate.py` proves every seam is declared exactly once in that one
-//! file. Hiding the declarations inside these functions would move the proof somewhere
-//! the gate cannot see it.
+//! The posture is declared by the composition root, never inside these functions, and
+//! `assert_complete` runs there. An artifact-bearing capability is declared by
+//! `app::boot::install_capability`, which consumes the `Established` and names the seam;
+//! `scripts/seam_posture_gate.py` proves every seam is stated exactly once across `app/`.
+//! Declaring inside these functions would move that proof somewhere the gate cannot see.
 
 use crate::startup_posture::SeamState;
 

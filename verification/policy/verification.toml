@@ -3768,6 +3768,8 @@ tested_symbols = [
   "//mcp-re-proxy:integration_test#app_startup_characterization_test::a_configured_profile_with_no_enrolled_authority_refuses_to_start",
   "//mcp-re-proxy:integration_test#app_startup_characterization_test::an_unopenable_replay_tier_refuses_startup_and_names_why",
   "//mcp-re-proxy:integration_test#app_startup_characterization_test::app_run_refuses_unbuildable_key_sources_and_replay_tiers",
+  "//mcp-re-proxy:proxy_unit_test#app::boot::tests::an_on_capability_is_attached_and_its_seam_stated",
+  "//mcp-re-proxy:proxy_unit_test#app::boot::tests::an_off_capability_attaches_nothing_and_still_states_its_seam",
 ]
 
 [[unit]]
