@@ -9103,6 +9103,7 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::an_identity_naming_another_keyid_is_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::an_identity_the_request_did_not_name_is_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::the_credential_id_is_read_out_of_the_credential",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_key_serves_up_to_but_not_at_its_expiry",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::a_reissue_retires_the_predecessor_under_its_own_credential_id_and_window",
 ]
 
